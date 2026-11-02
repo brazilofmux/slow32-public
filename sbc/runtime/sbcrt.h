@@ -5,6 +5,7 @@
 #define SBCRT_H
 
 #include "eval.h"
+#include "builtin.h"
 
 /* Parse the program's source (embedded in it), lower it as s32-sbc did,
  * check the main unit has nops ops, and run it with main_fn. */

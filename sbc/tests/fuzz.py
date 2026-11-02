@@ -47,6 +47,29 @@ def element(r, name):
     return '%s(%s)' % (name, subscript(r))
 
 
+SVARS = ['S$', 'U$', 'W$(1)', 'W$(2)', 'W$(I%)']
+SLITS = ['""', '"a"', '"abc"', '"Hello"', '"x y"', '"0123456789"']
+
+
+def sexpr(r, depth):
+    """a string expression"""
+    if depth == 0 or r.random() < 0.3:
+        return r.choice(SVARS) if r.random() < 0.6 else r.choice(SLITS)
+    k = r.random()
+    if k < 0.3:
+        return '(' + sexpr(r, depth - 1) + ' + ' + sexpr(r, depth - 1) + ')'
+    f = r.choice(['MID$(%s, %s)', 'MID$(%s, %s, %s)', 'LEFT$(%s, %s)', 'RIGHT$(%s, %s)',
+                  'UCASE$(%s)', 'LCASE$(%s)', 'LTRIM$(%s)', 'RTRIM$(%s)'])
+    pieces = f.split('%s')
+    res = pieces[0]
+    for i in range(1, len(pieces)):
+        res += (sexpr(r, depth - 1) if i == 1 else r.choice(['0', '1', '2', '3', '-1', '5', '10', 'I%', '2.5']))
+        res += pieces[i]
+    if r.random() < 0.2:
+        return r.choice(['CHR$(%s)', 'STR$(%s)', 'SPACE$(%s)', 'HEX$(%s)']) % r.choice(['65', '0', '255', '256', '-1', '3', 'I%', 'A%'])
+    return res
+
+
 def expr(r, depth):
     if depth == 0 or r.random() < 0.3:
         k = r.random()
@@ -58,6 +81,10 @@ def expr(r, depth):
         return '-' + expr(r, depth - 1)
     if k < 0.15:
         return '(NOT ' + expr(r, depth - 1) + ')'
+    if k < 0.34 and k >= 0.3:
+        return r.choice(['LEN(%s)', 'ASC(%s)', 'INSTR(%s, %s)']).replace('%s', sexpr(r, 1), 1).replace('%s', sexpr(r, 1), 1)
+    if k < 0.38 and k >= 0.34:
+        return '(' + sexpr(r, 1) + ' ' + r.choice(['=', '<>', '<', '>', '<=', '>=']) + ' ' + sexpr(r, 1) + ')'
     if k < 0.3 and k >= 0.22:
         return r.choice(['ABS', 'INT', 'FIX', 'SGN', 'SQR', 'SIN', 'COS', 'TAN', 'ATN', 'EXP',
                          'LOG', 'CINT', 'CLNG', 'CSNG', 'CDBL']) + '(' + expr(r, depth - 1) + ')'
@@ -76,10 +103,18 @@ def A_EXPR(r):
 
 def program(seed):
     r = random.Random(seed)
-    lines = ['ON ERROR GOTO 900', 'DIM P%(10), Q&(10), R!(3, 4), S#(10)']
+    lines = ['ON ERROR GOTO 900', 'DIM P%(10), Q&(10), R!(3, 4), S#(10), W$(5)',
+             'S$ = "abc": U$ = "Hello": W$(1) = "x": I% = 2']
     for v in VARS:
         lines.append('%s = %s' % (v, r.choice(EDGE)))
     for i in range(40):
+        if r.random() < 0.2:
+            st = r.choice(SVARS[:4])
+            lines.append('%s = %s' % (st, sexpr(r, 3)))
+            lines.append('PRINT "s%d"; %s; LEN(%s)' % (i, st, st))
+            if r.random() < 0.3:
+                lines.append('IF %s %s %s THEN PRINT "y" ELSE PRINT "n"' % (sexpr(r, 2), r.choice(['=', '<', '>=']), sexpr(r, 2)))
+            continue
         if r.random() < 0.35:
             target = element(r, r.choice(ARRS))
         else:

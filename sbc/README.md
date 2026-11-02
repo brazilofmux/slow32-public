@@ -46,6 +46,13 @@ assignments, conditions, FOR/NEXT, EXIT, calls; no DEF* in the program,
 no GOTO, GOSUB, SHARED, STATIC, arrays, strings or I/O) also gets a C
 version with its variables in C and no env (NF<n>), which a call site
 runs when it may (no TRACE, none of its variables named as a builtin).
+Numeric builtins (ABS, INT, SQR, SIN, CINT, ...) are C in native code;
+strings are native too: a string variable or element is read as a copy,
+literals are made once, `+` and the comparisons are the interpreter's
+`val_add` and `val_compare`, and the string functions (MID$, LEFT$,
+CHR$, LEN, INSTR, ...) go straight to `builtin_call`.  The 97 games:
+964M instructions interpreted, 506M compiled; Mastermind 364M against
+68M.
 
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted
@@ -55,8 +62,11 @@ python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interp
 in every numeric type, conditions, FOR loops (edge bounds and steps,
 nested, EXIT FOR), arrays (every type, one and two dimensions, edge
 and fractional subscripts, ERASE and REDIM) and calls (typed FUNCTIONs,
-one recursive, a SUB with SHARED), errors trapped and printed, and requires the compiled
+one recursive, by-reference parameters, a SUB with SHARED), strings
+(concatenation, the string functions and comparisons over variables,
+elements and literals), errors trapped and printed, and requires the compiled
 program to print what the interpreter prints (2000 of 2000 on
 2026-11-01; moving the INTEGER overflow bound by one in the native code
 is caught, and so is a bounds check one off -- in half the programs --
-and it found the native comparison of a NaN).
+and it found the native comparison of a NaN; concatenating in the
+wrong order is caught in 140 of 200).

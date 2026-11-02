@@ -39,8 +39,8 @@ the oracle.
   elements have native versions behind type guards (c10647ba, 624e186f,
   657a1ea2).  Instructions, interpreter against compiled: nested loops
   443M / 35M, the sieve 4.50M / 1.24M, fib(20) 71.6M / 71.5M.
-- **Gates:** `sbc/tests/run-oracle.py` (391 agree, 25 refused by both, of
-  416: sbasic's tests and the NBS, games and feature collections), and
+- **Gates:** `sbc/tests/run-oracle.py` (393 agree, 25 refused by both, of
+  418: sbasic's tests and the NBS, games and feature collections), and
   `sbc/tests/fuzz.py` (random typed arithmetic, loops and arrays over
   edge values; 2000 of 2000; mutations of the native code caught).
 - **Calls (2026-11-01):** a call of one of the program's FUNCTIONs or
@@ -57,12 +57,16 @@ the oracle.
   temporary), FOR/NEXT paired in the text; the env version stays for
   everything else.  fib(20): 2.27M instructions compiled, 69.3M
   interpreted.
+- **Builtins and strings (2026-11-01):** the numeric builtins are C in
+  native expressions; string variables, elements and literals, `+`, the
+  comparisons and the string functions are native in the main program
+  and the env procedures (the interpreter's `val_add`, `val_compare`,
+  `builtin_call`, no env lookups).  The 97 games: 964M instructions
+  interpreted, 506M compiled (530M before strings); Mastermind 364M /
+  68M (92M before).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path).
-  Parameters are by reference now, as QBasic's (variables linked,
-  elements copied in and out), in both.  Strings;
-  PRINT of numbers; builtin calls (`ABS`, `INT`, `SQR`) in native
-  expressions; `FOR` itself (only `NEXT` is native).
+  PRINT of values; `FOR` itself (only `NEXT` is native).
 
 ## Milestones
 

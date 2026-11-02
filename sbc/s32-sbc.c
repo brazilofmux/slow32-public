@@ -374,7 +374,7 @@ static int emit_args(FILE *out, expr_t *const *args, int n, const char *base, in
  * A statement's native version runs when its guard holds -- every
  * variable it names cached, of the type its name predicts -- and its
  * generic version otherwise.  Types: */
-enum { N_NONE = -1, N_INT = 0, N_LONG, N_SINGLE, N_DOUBLE };
+enum { N_NONE = -1, N_INT = 0, N_LONG, N_SINGLE, N_DOUBLE, N_STRING };
 
 static int predict_name(const char *name) {
     size_t n = strlen(name);
@@ -383,7 +383,7 @@ static int predict_name(const char *name) {
     if (last == '%') return N_INT;
     if (last == '&') return N_LONG;
     if (last == '#') return N_DOUBLE;
-    if (last == '$') return N_NONE;
+    if (last == '$') return N_STRING;
     return N_SINGLE;            /* the guard checks: DEF* may say otherwise */
 }
 
@@ -422,6 +422,29 @@ static int nat_builtin_type(const expr_t *e) {
     return a == N_DOUBLE ? N_DOUBLE : N_SINGLE;
 }
 
+/* The builtins called natively through builtin_call itself (the tree
+ * walk and the lookups skipped, the arguments evaluated in order as the
+ * interpreter evaluates them): string functions, and LEN, ASC, INSTR,
+ * whose values are INTEGERs (a string is at most 4,096 characters) */
+static const struct { const char *name; int type; } rt_builtins[] = {
+    { "MID$", N_STRING }, { "LEFT$", N_STRING }, { "RIGHT$", N_STRING },
+    { "CHR$", N_STRING }, { "STR$", N_STRING }, { "UCASE$", N_STRING },
+    { "LCASE$", N_STRING }, { "LTRIM$", N_STRING }, { "RTRIM$", N_STRING },
+    { "SPACE$", N_STRING }, { "STRING$", N_STRING }, { "HEX$", N_STRING },
+    { "OCT$", N_STRING }, { "LEN", N_INT }, { "ASC", N_INT }, { "INSTR", N_INT },
+    { NULL, 0 }
+};
+
+static int rt_builtin_type(const expr_t *e) {
+    if (e->type != EXPR_CALL || e->call.nargs < 1 || e->call.nargs > 4 ||
+        is_array_name(e->call.name) || proc_index(e->call.name) >= 0)
+        return N_NONE;
+    for (int i = 0; rt_builtins[i].name; i++)
+        if (strcmp(rt_builtins[i].name, e->call.name) == 0)
+            return rt_builtins[i].type;
+    return N_NONE;
+}
+
 /* a variable's native type: in a native procedure a parameter's is its
  * declaration's (AS, or its name's), anything else its name's */
 static int var_ntype(const char *name) {
@@ -433,7 +456,15 @@ static int var_ntype(const char *name) {
 }
 
 /* the native type of e, or N_NONE when it is not done natively */
+static int nat_type_(const expr_t *e);
+
+/* (a native procedure has no strings: one there is not native) */
 static int nat_type(const expr_t *e) {
+    int t = nat_type_(e);
+    return (nat_local && t == N_STRING) ? N_NONE : t;
+}
+
+static int nat_type_(const expr_t *e) {
     int l, r;
     switch (e->type) {
         case EXPR_LITERAL:
@@ -442,38 +473,52 @@ static int nat_type(const expr_t *e) {
                 case VAL_LONG:    return N_LONG;
                 case VAL_SINGLE:  return N_SINGLE;
                 case VAL_DOUBLE:  return N_DOUBLE;
+                case VAL_STRING:  return N_STRING;
                 default:          return N_NONE;
             }
         case EXPR_VARIABLE:
             return var_ntype(e->var.name);
         case EXPR_CALL:
-            if (nat_builtin(e))
+            if (nat_builtin(e)) {
+                if (nat_type(e->call.args[0]) == N_STRING) return N_NONE;
                 return nat_builtin_type(e);
+            }
+            if (rt_builtin_type(e) != N_NONE) {
+                for (int i = 0; i < e->call.nargs; i++)
+                    if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
+                return rt_builtin_type(e);
+            }
             if (is_function_call(e)) {
                 /* its value's type is its name's, unless DEF* is about */
                 if (has_deftype || !args_compilable(e->call.args, e->call.nargs)) return N_NONE;
                 for (int i = 0; i < e->call.nargs; i++)
-                    if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
-                return predict_name(e->call.name);
+                    if (nat_type(e->call.args[i]) == N_NONE || nat_type(e->call.args[i]) == N_STRING)
+                        return N_NONE;
+                return predict_name(e->call.name) == N_STRING ? N_NONE : predict_name(e->call.name);
             }
             if (nat_local || !is_array_name(e->call.name) || e->call.nargs < 1 || e->call.nargs > 8)
                 return N_NONE;
             for (int i = 0; i < e->call.nargs; i++)
-                if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
+                if (nat_type(e->call.args[i]) == N_NONE || nat_type(e->call.args[i]) == N_STRING)
+                    return N_NONE;
             return predict_name(e->call.name);
         case EXPR_UNARY:
             l = nat_type(e->unary.operand);
-            if (l == N_NONE) return N_NONE;
+            if (l == N_NONE || l == N_STRING) return N_NONE;
             if (e->unary.op == OP_NOT && nat_is_float(l)) return N_NONE;
             return l;
         case EXPR_COMPARE:
             l = nat_type(e->compare.left);
             r = nat_type(e->compare.right);
-            return (l == N_NONE || r == N_NONE) ? N_NONE : N_INT;
+            if (l == N_NONE || r == N_NONE) return N_NONE;
+            if ((l == N_STRING) != (r == N_STRING)) return N_NONE;    /* Type mismatch: generic */
+            return N_INT;
         case EXPR_BINARY:
             l = nat_type(e->binary.left);
             r = nat_type(e->binary.right);
             if (l == N_NONE || r == N_NONE) return N_NONE;
+            if (l == N_STRING || r == N_STRING)
+                return (e->binary.op == OP_ADD && l == N_STRING && r == N_STRING) ? N_STRING : N_NONE;
             switch (e->binary.op) {
                 case OP_ADD: case OP_SUB: case OP_MUL:
                     if (nat_is_float(l) || nat_is_float(r))
@@ -505,7 +550,7 @@ static void nat_uses(const expr_t *e, uses_t *u);
 static void nat_vars(const expr_t *e, int *list, int *n);
 
 static void nat_uses(const expr_t *e, uses_t *u) {
-    if (e->type == EXPR_CALL && (is_function_call(e) || nat_builtin(e))) {
+    if (e->type == EXPR_CALL && (is_function_call(e) || nat_builtin(e) || rt_builtin_type(e) != N_NONE)) {
         for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
         return;
     }
@@ -543,7 +588,7 @@ static void nat_vars(const expr_t *e, int *list, int *n) {
 }
 
 static const char *nat_valtype(int t) {
-    static const char *names[] = { "VAL_INTEGER", "VAL_LONG", "VAL_SINGLE", "VAL_DOUBLE" };
+    static const char *names[] = { "VAL_INTEGER", "VAL_LONG", "VAL_SINGLE", "VAL_DOUBLE", "VAL_STRING" };
     return names[t];
 }
 
@@ -650,6 +695,34 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
     char a[32], b[32];
     sprintf(name, "n%d", id);
     const char *ct = nat_is_float(t) ? "double" : "long long";
+    /* a string is a value_t holding one reference, cleared by whoever
+     * takes it */
+    if (t == N_STRING) {
+        switch (e->type) {
+            case EXPR_LITERAL: {
+                /* made once, kept for good */
+                const sb_string_t *ls = e->literal.sval;
+                fprintf(out, "    static sb_string_t *lit%d;\n    if (!lit%d) lit%d = string_alloc(", id, id, id);
+                emit_cstring(out, ls->data, ls->len);
+                fprintf(out, ", %d);\n", ls->len);
+                fprintf(out, "    value_t %s; %s.type = VAL_STRING; %s.sval = lit%d; string_ref(lit%d);\n",
+                        name, name, name, id, id);
+                return t;
+            }
+            case EXPR_VARIABLE:
+                fprintf(out, "    value_t %s = val_copy(%s);\n", name, var_ptr(e->var.name));
+                return t;
+            case EXPR_BINARY: {             /* + of two strings */
+                nat_emit(out, e->binary.left, a);
+                nat_emit(out, e->binary.right, b);
+                fprintf(out, "    value_t %s; err = val_add(&%s, &%s, &%s); VAL_CLEAR(&%s); VAL_CLEAR(&%s); " CHECK "\n",
+                        name, a, b, name, a, b);
+                return t;
+            }
+            default:
+                break;              /* an element, a builtin: below */
+        }
+    }
     switch (e->type) {
         case EXPR_LITERAL:
             if (nat_is_float(t)) fprintf(out, "    double %s = %a;\n", name, e->literal.dval);
@@ -659,6 +732,32 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             fprintf(out, "    %s %s = %s->%s;\n", ct, name, var_ptr(e->var.name), nat_is_float(t) ? "dval" : "ival");
             return t;
         case EXPR_CALL:
+            if (rt_builtin_type(e) != N_NONE) {
+                /* builtin_call itself, the arguments as values of
+                 * their types; its value checked to be of the type
+                 * expected (an internal error otherwise) */
+                int n = e->call.nargs, at[4];
+                char as[4][32];
+                for (int i = 0; i < n; i++) at[i] = nat_emit(out, e->call.args[i], as[i]);
+                fprintf(out, "    value_t av%d[%d], rv%d;\n", id, n, id);
+                for (int i = 0; i < n; i++) {
+                    if (at[i] == N_STRING)
+                        fprintf(out, "    av%d[%d] = %s;\n", id, i, as[i]);
+                    else
+                        fprintf(out, "    av%d[%d].type = %s; av%d[%d].%s = %s;\n", id, i, nat_valtype(at[i]),
+                                id, i, nat_is_float(at[i]) ? "dval" : "ival", as[i]);
+                }
+                fprintf(out, "    err = builtin_call(");
+                emit_cstring(out, e->call.name, (int)strlen(e->call.name));
+                fprintf(out, ", av%d, %d, &rv%d);\n", id, n, id);
+                for (int i = 0; i < n; i++)
+                    if (at[i] == N_STRING) fprintf(out, "    VAL_CLEAR(&av%d[%d]);\n", id, i);
+                fprintf(out, "    " CHECK "\n    if (rv%d.type != %s) { VAL_CLEAR(&rv%d); err = ERR_INTERNAL; goto fail; }\n",
+                        id, nat_valtype(t), id);
+                if (t == N_STRING) fprintf(out, "    value_t %s = rv%d;\n", name, id);
+                else fprintf(out, "    long long %s = rv%d.ival;\n", name, id);
+                return t;
+            }
             if (nat_builtin(e)) {
                 const char *fn = e->call.name;
                 int xt = nat_emit(out, e->call.args[0], a);
@@ -778,7 +877,10 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             }
             sprintf(flat, "f%d", id);
             nat_index(out, j, ix, ixt, n, flat);
-            fprintf(out, "    %s %s = AR[%d]->data[%s].%s;\n", ct, name, j, flat, nat_is_float(t) ? "dval" : "ival");
+            if (t == N_STRING)
+                fprintf(out, "    value_t %s = val_copy(&AR[%d]->data[%s]);\n", name, j, flat);
+            else
+                fprintf(out, "    %s %s = AR[%d]->data[%s].%s;\n", ct, name, j, flat, nat_is_float(t) ? "dval" : "ival");
             return t;
             }
         case EXPR_UNARY: {
@@ -793,8 +895,15 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
         }
         case EXPR_COMPARE: {
             static const char *ops[] = { "==", "!=", "<", ">", "<=", ">=" };
-            nat_emit(out, e->compare.left, a);
+            int lt = nat_emit(out, e->compare.left, a);
             nat_emit(out, e->compare.right, b);
+            if (lt == N_STRING) {
+                /* as val_compare: strcmp's sign */
+                fprintf(out, "    int c%d; err = val_compare(&%s, &%s, &c%d); VAL_CLEAR(&%s); VAL_CLEAR(&%s); " CHECK "\n",
+                        id, a, b, id, a, b);
+                fprintf(out, "    long long %s = (c%d %s 0) ? -1 : 0;\n", name, id, ops[e->compare.op]);
+                return t;
+            }
             /* as val_compare: less, greater, or else equal -- so a NaN
              * compares equal to everything, as in the interpreter */
             fprintf(out, "    long long %s = (((double)%s < (double)%s) ? -1 : ((double)%s > (double)%s) ? 1 : 0) %s 0 ? -1 : 0;\n",
@@ -899,6 +1008,12 @@ static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, 
 /* storing native value x of type t into slot V[v], of type st, as
  * val_coerce and store_into do */
 static void nat_store(FILE *out, const char *slot, int st, const char *x, int t) {
+    if (st == N_STRING || t == N_STRING) {
+        /* (both strings: the callers see to it) store_into's copy, the
+         * reference taken released */
+        fprintf(out, "    err = eval_store(%s, &%s); VAL_CLEAR(&%s); " CHECK "\n", slot, x, x);
+        return;
+    }
     if (st == N_INT || st == N_LONG) {
         if (nat_is_float(t)) {
             fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
@@ -935,7 +1050,8 @@ static int native_eligible(const stmt_t *def, const code_t *c) {
             predict_name(def->proc_def.params[i]) == N_NONE ||
             strncmp(def->proc_def.params[i], "FN", 2) == 0)
             return 0;
-    if (def->type == STMT_FUNC_DEF && predict_name(def->proc_def.name) == N_NONE) return 0;
+    if (def->type == STMT_FUNC_DEF && (predict_name(def->proc_def.name) == N_NONE ||
+                                       predict_name(def->proc_def.name) == N_STRING)) return 0;
     nat_local = 1;
     ldef = def;
     for (int k = 0; k < c->nops && ok; k++) {
@@ -1152,8 +1268,8 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
     char path[1024];
     switch (s->type) {
         case STMT_ASSIGN: {
-            int st = predict_name(s->assign.name);
-            if (st != N_NONE && nat_type(s->assign.value) != N_NONE) {
+            int st = predict_name(s->assign.name), vt = nat_type(s->assign.value);
+            if (st != N_NONE && vt != N_NONE && (st == N_STRING) == (vt == N_STRING)) {
                 uses_t u;
                 u.nv = u.na = 0;
                 u.v[u.nv++] = var_index(s->assign.name);
@@ -1181,10 +1297,12 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
 
         case STMT_ARRAY_ASSIGN: {
             int n = s->array_assign.nindices;
+            int vt0 = nat_type(s->array_assign.value);
             int st = predict_name(s->array_assign.name), native = st != N_NONE && n >= 1 && n <= 8 &&
-                     nat_type(s->array_assign.value) != N_NONE;
+                     vt0 != N_NONE && (st == N_STRING) == (vt0 == N_STRING);
             for (int i = 0; native && i < n; i++)
-                if (nat_type(s->array_assign.indices[i]) == N_NONE) native = 0;
+                if (nat_type(s->array_assign.indices[i]) == N_NONE ||
+                    nat_type(s->array_assign.indices[i]) == N_STRING) native = 0;
             emit_preamble(out, op, k);
             if (native) {
                 /* the subscripts, then the value, then the bounds, as
@@ -1314,9 +1432,10 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             fprintf(b, "    pc = %d;\n", k);
             uses_t u;
             u.nv = u.na = 0;
-            if (nat_type(op->cond) != N_NONE)
+            int ct0 = nat_type(op->cond);
+            if (ct0 != N_NONE && ct0 != N_STRING)
                 nat_uses(op->cond, &u);
-            if (nat_type(op->cond) != N_NONE && u.nv <= 64 && u.na <= 16) {
+            if (ct0 != N_NONE && ct0 != N_STRING && u.nv <= 64 && u.na <= 16) {
                 char x[32];
                 nat_guard(b, &u);
                 fprintf(b, ") {\n");
