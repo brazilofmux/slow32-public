@@ -34,8 +34,11 @@ cached and of the type its name predicts), its generic version
 otherwise.  NEXT steps its own loop natively when that loop is on top
 and its variable cached; elements of the arrays the program DIMs are
 read and stored natively too (pointers cached while `array_generation`
-holds).  Nested loops: 35M instructions against the interpreter's 443M;
-the sieve 1.24M against 4.50M.
+holds); calls of the program's FUNCTIONs and SUBs take their arguments
+from the C (native ones too) and go straight to the call
+(`eval_call_proc`).  Nested loops: 36M instructions against the
+interpreter's 443M; the sieve 1.26M against 4.50M; fib(20) 50.4M
+against 61.3M.
 
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted
@@ -43,8 +46,9 @@ python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interp
 
 `tests/fuzz.py` generates programs of random arithmetic over edge values
 in every numeric type, conditions, FOR loops (edge bounds and steps,
-nested, EXIT FOR) and arrays (every type, one and two dimensions, edge
-and fractional subscripts, ERASE and REDIM), errors trapped and printed, and requires the compiled
+nested, EXIT FOR), arrays (every type, one and two dimensions, edge
+and fractional subscripts, ERASE and REDIM) and calls (typed FUNCTIONs,
+one recursive, a SUB with SHARED), errors trapped and printed, and requires the compiled
 program to print what the interpreter prints (2000 of 2000 on
 2026-11-01; moving the INTEGER overflow bound by one in the native code
 is caught, and so is a bounds check one off -- in half the programs --

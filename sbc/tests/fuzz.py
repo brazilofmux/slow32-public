@@ -58,6 +58,9 @@ def expr(r, depth):
         return '-' + expr(r, depth - 1)
     if k < 0.15:
         return '(NOT ' + expr(r, depth - 1) + ')'
+    if k < 0.22:
+        name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1)])
+        return name + '(' + ', '.join(expr(r, depth - 1) for _ in range(nargs)) + ')'
     return '(' + expr(r, depth - 1) + ' ' + r.choice(BINOPS) + ' ' + expr(r, depth - 1) + ')'
 
 
@@ -75,6 +78,8 @@ def program(seed):
         lines.append('PRINT "%d"; %s' % (i, target))
         if r.random() < 0.04:
             lines.append(r.choice(['ERASE S#', 'REDIM S#(5)', 'ERASE T', 'REDIM P%(20)', 'ERASE Q&: DIM Q&(3)']))
+        if r.random() < 0.08:
+            lines.append('CALL S1(%s): PRINT "S"; Y' % expr(r, 2))
         if r.random() < 0.3:
             lines.append('IF %s THEN PRINT "t%d" ELSE PRINT "f%d"' % (expr(r, 2), i, i))
         if r.random() < 0.25:
@@ -94,6 +99,12 @@ def program(seed):
             lines.append('PRINT "L"; K&; %s' % v)
     lines.append('END')
     lines.append('900 PRINT "E"; ERR: RESUME NEXT')
+    # procedures: typed parameters and values, recursion (bounded), SHARED
+    lines += ['FUNCTION F1%(a%, b!)', 'F1% = a% * 2 + b!', 'END FUNCTION',
+              'FUNCTION F2#(x#)', 'F2# = x# / 3 + 1', 'END FUNCTION',
+              'FUNCTION F3!(n%)', 'IF n% > 3 OR n% < -3 THEN F3! = .5 ELSE F3! = n% * F3!(n% + 1) + 1',
+              'END FUNCTION',
+              'SUB S1(a!)', 'SHARED Y', 'Y = Y + a!', 'END SUB']
     return '\n'.join(lines) + '\n'
 
 

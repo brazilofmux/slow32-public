@@ -43,9 +43,18 @@ the oracle.
   416: sbasic's tests and the NBS, games and feature collections), and
   `sbc/tests/fuzz.py` (random typed arithmetic, loops and arrays over
   edge values; 2000 of 2000; mutations of the native code caught).
-- **Open:** a native calling convention (a FUNCTION call is still the
-  interpreter's `call_proc`: a scope made, arguments through `eval_expr`,
-  the caches fetched again each call -- fib does not speed up); strings;
+- **Calls (2026-11-01):** a call of one of the program's FUNCTIONs or
+  SUBs takes its arguments from the C -- natives too, in a native
+  expression, with the guard's pointers checked again after the call --
+  and goes to `eval_call_proc`; a call's scope and entries come from a
+  pool, its setup is done once per procedure, and ending a call's scope
+  no longer invalidates the caller's caches.  fib(20): 100M (the
+  interpreter, before) -> 61M interpreted, 50M compiled.
+- **Open:** a call is still a scope of named variables (parameters
+  bound by name, the value read back by name); locals in C would be the
+  next step, where a body has no statement the executor must run.
+  Parameters are passed by value, where QBasic passes variables by
+  reference -- a dialect gap to close in both.  Strings;
   PRINT of numbers; builtin calls (`ABS`, `INT`, `SQR`) in native
   expressions; `FOR` itself (only `NEXT` is native).
 

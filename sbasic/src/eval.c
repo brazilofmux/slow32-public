@@ -18,11 +18,19 @@
 #define MAX_PROCS 128
 #define MAX_GOSUB_DEPTH 256
 
+typedef struct compiled_proc compiled_proc_t;
+
 typedef struct {
     char name[64];
     stmt_t *def;
     env_t *static_env;  /* persistent env for STATIC variables */
     code_t *code;       /* its body, lowered on the first call */
+    /* what every call needs, found on the first: the SHARED and STATIC
+     * names of its body, and its C if the program is compiled */
+    int prepared;
+    const char **shared_names, **static_names;
+    int nshared, nstatic;
+    const compiled_proc_t *compiled;
 } proc_entry_t;
 
 typedef struct {
@@ -299,11 +307,11 @@ static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, va
 }
 
 /* SUBs and FUNCTIONs a compiled program has as C (s32-sbc), by name */
-typedef struct {
+struct compiled_proc {
     const char *name;
     main_fn_t fn;
     int nops;
-} compiled_proc_t;
+};
 
 static compiled_proc_t *compiled_procs;
 static int ncompiled_procs;
@@ -327,79 +335,85 @@ static const compiled_proc_t *find_compiled(const char *name) {
 
 /* --- User-defined procedure call --- */
 
-static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
-                          expr_t **arg_exprs, int nargs, value_t *out) {
+/* the first call's work for every call: lower the body, collect its
+ * SHARED and STATIC names, find its C */
+static error_t proc_prepare(proc_entry_t *proc) {
+    stmt_t *def = proc->def;
+    error_t err = ERR_NONE;
+    if (proc->prepared) return ERR_NONE;
+    if (!proc->code)
+        proc->code = lower_stmts(def->proc_def.body, &err);
+    if (err != ERR_NONE) return err;
+    for (int pass = 0; pass < 2; pass++) {
+        stmt_type_t kind = pass ? STMT_STATIC : STMT_SHARED;
+        int n = 0;
+        for (stmt_t *s = def->proc_def.body; s; s = s->next)
+            if (s->type == kind) n += s->shared.nvars;
+        const char **names = n ? malloc(n * sizeof(char *)) : NULL;
+        if (n && !names) return ERR_OUT_OF_MEMORY;
+        n = 0;
+        for (stmt_t *s = def->proc_def.body; s; s = s->next)
+            if (s->type == kind)
+                for (int i = 0; i < s->shared.nvars; i++)
+                    names[n++] = s->shared.varnames[i];
+        if (pass) { proc->static_names = names; proc->nstatic = n; }
+        else { proc->shared_names = names; proc->nshared = n; }
+    }
+    proc->compiled = find_compiled(def->proc_def.name);
+    if (proc->compiled && proc->compiled->nops != proc->code->nops)
+        return ERR_INTERNAL;            /* not the ops its C was written from */
+    proc->prepared = 1;
+    return ERR_NONE;
+}
+
+/* A call, its arguments evaluated (and taken: they are cleared) */
+static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, int nargs, value_t *out) {
     stmt_t *def = proc->def;
     int is_function = (def->type == STMT_FUNC_DEF);
-
-    if (nargs != def->proc_def.nparams)
-        return ERR_ARG_COUNT;
-
-    value_t arg_vals[16];
-    for (int i = 0; i < nargs; i++) {
-        error_t err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
-        if (err != ERR_NONE) {
-            for (int j = 0; j < i; j++) val_clear(&arg_vals[j]);
-            return err;
-        }
+    error_t err = proc_prepare(proc);
+    if (err != ERR_NONE) {
+        for (int i = 0; i < nargs; i++) val_clear(&arg_vals[i]);
+        return err;
     }
 
     env_t *local = env_create_sized(NULL, 16);
+    if (!local) {
+        for (int i = 0; i < nargs; i++) val_clear(&arg_vals[i]);
+        return ERR_OUT_OF_MEMORY;
+    }
 
     for (int i = 0; i < nargs; i++) {
-        env_set(local, def->proc_def.params[i], &arg_vals[i]);
+        /* a parameter named twice is the parser's to refuse; bind the
+         * first as env_set did */
+        int dup = 0;
+        for (int j = 0; j < i; j++)
+            if (strcmp(def->proc_def.params[j], def->proc_def.params[i]) == 0) dup = 1;
+        if (dup) env_set(local, def->proc_def.params[i], &arg_vals[i]);
+        else env_bind(local, def->proc_def.params[i], &arg_vals[i]);
         val_clear(&arg_vals[i]);
     }
 
-    /* Collect and copy-in SHARED variables (pointers into AST, no copy) */
-    const char *shared_names[64];
-    int nshared = 0;
-    for (stmt_t *s = def->proc_def.body; s && nshared < 64; s = s->next) {
-        if (s->type == STMT_SHARED) {
-            for (int i = 0; i < s->shared.nvars && nshared < 64; i++) {
-                shared_names[nshared] = s->shared.varnames[i];
-                nshared++;
-            }
-        }
-    }
-    for (int i = 0; i < nshared; i++) {
-        value_t *gv = env_get(program_global_env, shared_names[i]);
-        if (gv) env_link(local, shared_names[i], gv);
+    /* SHARED variables: the global ones, linked */
+    for (int i = 0; i < proc->nshared; i++) {
+        value_t *gv = env_get(program_global_env, proc->shared_names[i]);
+        if (gv) env_link(local, proc->shared_names[i], gv);
     }
 
-    /* Collect STATIC variables and link to persistent env */
-    const char *static_names[64];
-    int nstatic = 0;
-    for (stmt_t *s = def->proc_def.body; s && nstatic < 64; s = s->next) {
-        if (s->type == STMT_STATIC) {
-            for (int i = 0; i < s->shared.nvars && nstatic < 64; i++) {
-                static_names[nstatic] = s->shared.varnames[i];
-                nstatic++;
-            }
-        }
-    }
-    if (nstatic > 0) {
+    /* STATIC variables: linked to the procedure's persistent env */
+    if (proc->nstatic > 0) {
         if (!proc->static_env)
             proc->static_env = env_create(NULL);
-        for (int i = 0; i < nstatic; i++) {
+        for (int i = 0; i < proc->nstatic; i++) {
             /* env_get auto-creates with default on first access */
-            value_t *sv = env_get(proc->static_env, static_names[i]);
-            if (sv) env_link(local, static_names[i], sv);
+            value_t *sv = env_get(proc->static_env, proc->static_names[i]);
+            if (sv) env_link(local, proc->static_names[i], sv);
         }
     }
 
-    error_t err = ERR_NONE;
-    if (!proc->code)
-        proc->code = lower_stmts(def->proc_def.body, &err);
-    if (err == ERR_NONE) {
-        const compiled_proc_t *cp = find_compiled(def->proc_def.name);
-        if (!cp)
-            err = run_code(local, proc->code, 0);
-        else if (cp->nops != proc->code->nops)
-            err = ERR_INTERNAL;         /* not the ops its C was written from */
-        else
-            err = cp->fn(local, proc->code);
-    }
+    if (proc->compiled)
+        err = proc->compiled->fn(local, proc->code);
+    else
+        err = run_code(local, proc->code, 0);
 
     if (err == ERR_EXIT_SUB && !is_function) err = ERR_NONE;
     if (err == ERR_EXIT_FUNCTION && is_function) err = ERR_NONE;
@@ -416,6 +430,54 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
 
     env_destroy(local);
     return err;
+}
+
+static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
+                          expr_t **arg_exprs, int nargs, value_t *out) {
+    stmt_t *def = proc->def;
+
+    if (nargs != def->proc_def.nparams)
+        return ERR_ARG_COUNT;
+
+    value_t arg_vals[16];
+    for (int i = 0; i < nargs; i++) {
+        error_t err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
+        if (err != ERR_NONE) {
+            for (int j = 0; j < i; j++) val_clear(&arg_vals[j]);
+            return err;
+        }
+    }
+    return call_proc_values(proc, arg_vals, nargs, out);
+}
+
+/* A FUNCTION's call (or a SUB's, out NULL) from compiled code, its
+ * arguments evaluated by it; *cache keeps the procedure found */
+error_t eval_call_proc(const char *name, void **cache, value_t *args, int nargs, value_t *out) {
+    proc_entry_t *proc = *cache;
+    if (!proc) {
+        proc = find_proc(name);
+        if (!proc || (proc->def->type != STMT_FUNC_DEF && proc->def->type != STMT_SUB_DEF)) {
+            for (int i = 0; i < nargs; i++) val_clear(&args[i]);
+            return proc ? ERR_INTERNAL : ERR_UNDEFINED_PROC;
+        }
+        *cache = proc;
+    }
+    if (nargs != proc->def->proc_def.nparams) {
+        for (int i = 0; i < nargs; i++) val_clear(&args[i]);
+        return ERR_ARG_COUNT;
+    }
+    if (out && proc->def->type == STMT_SUB_DEF) {
+        for (int i = 0; i < nargs; i++) val_clear(&args[i]);
+        return ERR_INTERNAL;
+    }
+    if (!out && proc->def->type == STMT_FUNC_DEF) {
+        /* CALL of a FUNCTION: its value dropped */
+        value_t r;
+        error_t err = call_proc_values(proc, args, nargs, &r);
+        if (err == ERR_NONE) val_clear(&r);
+        return err;
+    }
+    return call_proc_values(proc, args, nargs, out);
 }
 
 /* --- Expression evaluation --- */
@@ -2727,6 +2789,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             proc_table[proc_count].def = s;
             proc_table[proc_count].static_env = NULL;
         proc_table[proc_count].code = NULL;
+        proc_table[proc_count].prepared = 0;
+        proc_table[proc_count].shared_names = proc_table[proc_count].static_names = NULL;
+        proc_table[proc_count].nshared = proc_table[proc_count].nstatic = 0;
+        proc_table[proc_count].compiled = NULL;
             proc_count++;
             return ERR_NONE;
         }
@@ -3103,6 +3169,10 @@ static error_t scan_one_stmt(stmt_t *s) {
         proc_table[proc_count].def = s;
         proc_table[proc_count].static_env = NULL;
         proc_table[proc_count].code = NULL;
+        proc_table[proc_count].prepared = 0;
+        proc_table[proc_count].shared_names = proc_table[proc_count].static_names = NULL;
+        proc_table[proc_count].nshared = proc_table[proc_count].nstatic = 0;
+        proc_table[proc_count].compiled = NULL;
         proc_count++;
     }
     /* Recurse into block bodies */
@@ -3419,6 +3489,10 @@ cleanup:
     for (i = 0; i < proc_count; i++) {
         code_free(proc_table[i].code);
         proc_table[i].code = NULL;
+        free(proc_table[i].shared_names);
+        free(proc_table[i].static_names);
+        proc_table[i].shared_names = proc_table[i].static_names = NULL;
+        proc_table[i].prepared = 0;
         if (proc_table[i].static_env) {
             env_destroy(proc_table[i].static_env);
             proc_table[i].static_env = NULL;

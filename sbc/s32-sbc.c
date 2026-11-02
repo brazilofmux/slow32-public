@@ -81,6 +81,50 @@ static int is_array_name(const char *name) {
     return 0;
 }
 
+/* the program's SUBs and FUNCTIONs (top level), each with a cached
+ * pointer to the interpreter's entry (P[j], for eval_call_proc) */
+static struct { const char *name; int nparams, is_function; } procs[1024];
+static int nprocs_known;
+static int has_deftype;         /* DEF*: a name's type is not its suffix's */
+
+static int proc_index(const char *name) {
+    for (int i = 0; i < nprocs_known; i++)
+        if (strcmp(procs[i].name, name) == 0) return i;
+    return -1;
+}
+
+static void scan_program(const stmt_t *s, int top) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_DEFTYPE) has_deftype = 1;
+        if (top && (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) && nprocs_known < 1024) {
+            procs[nprocs_known].name = s->proc_def.name;
+            procs[nprocs_known].nparams = s->proc_def.nparams;
+            procs[nprocs_known].is_function = s->type == STMT_FUNC_DEF;
+            nprocs_known++;
+        }
+        switch (s->type) {
+            case STMT_IF: scan_program(s->if_stmt.then_body, 0); scan_program(s->if_stmt.else_body, 0); break;
+            case STMT_WHILE: scan_program(s->while_stmt.body, 0); break;
+            case STMT_DO_LOOP: scan_program(s->do_loop.body, 0); break;
+            case STMT_SELECT:
+                for (const case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next)
+                    scan_program(cl->body, 0);
+                break;
+            case STMT_SUB_DEF: case STMT_FUNC_DEF: scan_program(s->proc_def.body, 0); break;
+            default: break;
+        }
+    }
+}
+
+/* name(args) that is a call of one of the program's FUNCTIONs, with the
+ * right number of arguments (a wrong number is the executor's error,
+ * before any argument is evaluated) */
+static int is_function_call(const expr_t *e) {
+    int j = proc_index(e->call.name);
+    return j >= 0 && procs[j].is_function && procs[j].nparams == e->call.nargs &&
+           e->call.nargs <= 16 && !is_array_name(e->call.name);
+}
+
 static void scan_array_names(const stmt_t *s) {
     for (; s; s = s->next) {
         switch (s->type) {
@@ -217,6 +261,22 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
             return t;
         }
         case EXPR_CALL:
+            if (is_function_call(e)) {
+                /* the arguments here, then the call: as call_proc */
+                int n = e->call.nargs, ta[16];
+                for (int i = 0; i < n; i++) {
+                    char sub[1024];
+                    snprintf(sub, sizeof sub, "%s->call.args[%d]", path, i);
+                    ta[i] = emit_expr(out, e->call.args[i], sub);
+                }
+                fprintf(out, "    { value_t av[%d];\n", n ? n : 1);
+                for (int i = 0; i < n; i++)
+                    fprintf(out, "      av[%d] = T[%d]; T[%d].type = VAL_INTEGER;\n", i, ta[i], ta[i]);
+                fprintf(out, "      err = eval_call_proc(");
+                emit_cstring(out, e->call.name, (int)strlen(e->call.name));
+                fprintf(out, ", &P[%d], av, %d, &T[%d]); " CHECK " }\n", proc_index(e->call.name), n, t);
+                return t;
+            }
             if (e->call.nargs >= 1 && e->call.nargs <= 8)
                 return emit_call(out, e, path, t);
             /* fall through */
@@ -261,6 +321,13 @@ static int nat_type(const expr_t *e) {
         case EXPR_VARIABLE:
             return predict_name(e->var.name);
         case EXPR_CALL:
+            if (is_function_call(e)) {
+                /* its value's type is its name's, unless DEF* is about */
+                if (has_deftype) return N_NONE;
+                for (int i = 0; i < e->call.nargs; i++)
+                    if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
+                return predict_name(e->call.name);
+            }
             if (!is_array_name(e->call.name) || e->call.nargs < 1 || e->call.nargs > 8)
                 return N_NONE;
             for (int i = 0; i < e->call.nargs; i++)
@@ -310,6 +377,10 @@ static void nat_uses(const expr_t *e, uses_t *u);
 static void nat_vars(const expr_t *e, int *list, int *n);
 
 static void nat_uses(const expr_t *e, uses_t *u) {
+    if (e->type == EXPR_CALL && is_function_call(e)) {
+        for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
+        return;
+    }
     if (e->type == EXPR_CALL) {
         int j = arr_index(e->call.name);
         if (u->na < 16) { u->a[u->na] = j; u->an[u->na] = e->call.nargs; }
@@ -360,6 +431,36 @@ static void nat_range(FILE *out, const char *r, int t) {
 
 static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, const char *flat);
 
+/* the uses of the native statement being written: after a call (which
+ * may CLEAR, ERASE, REDIM) its cached pointers are fetched again and
+ * the guard's condition checked again -- an internal error if it no
+ * longer holds, never a stale pointer */
+static const uses_t *cur_uses;
+
+static void nat_revalidate(FILE *out) {
+    const uses_t *u = cur_uses;
+    fprintf(out, "    if (env_generation != sg || array_generation != sa) {\n");
+    for (int i = 0; i < u->nv; i++) {
+        fprintf(out, "      V[%d] = eval_var_slot(env, ", u->v[i]);
+        emit_cstring(out, vars[u->v[i]], (int)strlen(vars[u->v[i]]));
+        fprintf(out, "); VG[%d] = env_generation;\n", u->v[i]);
+    }
+    for (int i = 0; i < u->na; i++) {
+        fprintf(out, "      AR[%d] = eval_call_array(", u->a[i]);
+        emit_cstring(out, arrs[u->a[i]], (int)strlen(arrs[u->a[i]]));
+        fprintf(out, "); AG[%d] = array_generation;\n", u->a[i]);
+    }
+    fprintf(out, "      if (!(1");
+    for (int i = 0; i < u->nv; i++)
+        fprintf(out, " && V[%d] && V[%d]->type == %s", u->v[i], u->v[i],
+                nat_valtype(predict_name(vars[u->v[i]])));
+    for (int i = 0; i < u->na; i++)
+        fprintf(out, " && AR[%d] && AR[%d]->elem_type == %s && AR[%d]->ndims == %d",
+                u->a[i], u->a[i], nat_valtype(predict_name(arrs[u->a[i]])), u->a[i], u->an[i]);
+    fprintf(out, ")) { err = ERR_INTERNAL; goto fail; }\n"
+                 "      sg = env_generation; sa = array_generation;\n    }\n");
+}
+
 /* code computing e into a fresh C local; its name in *name */
 static int nat_emit(FILE *out, const expr_t *e, char *name) {
     int t = nat_type(e), id = nnat++;
@@ -376,7 +477,25 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             fprintf(out, "    %s %s = V[%d]->%s;\n", ct, name, v, nat_is_float(t) ? "dval" : "ival");
             return t;
         }
-        case EXPR_CALL: {
+        case EXPR_CALL:
+            if (is_function_call(e)) {
+                int n = e->call.nargs, at[16];
+                char as[16][32];
+                for (int i = 0; i < n; i++) at[i] = nat_emit(out, e->call.args[i], as[i]);
+                fprintf(out, "    value_t av%d[%d], rv%d;\n", id, n ? n : 1, id);
+                for (int i = 0; i < n; i++)
+                    fprintf(out, "    av%d[%d].type = %s; av%d[%d].%s = %s;\n", id, i, nat_valtype(at[i]),
+                            id, i, nat_is_float(at[i]) ? "dval" : "ival", as[i]);
+                fprintf(out, "    err = eval_call_proc(");
+                emit_cstring(out, e->call.name, (int)strlen(e->call.name));
+                fprintf(out, ", &P[%d], av%d, %d, &rv%d); " CHECK "\n", proc_index(e->call.name), id, n, id);
+                fprintf(out, "    if (rv%d.type != %s) { VAL_CLEAR(&rv%d); err = ERR_INTERNAL; goto fail; }\n",
+                        id, nat_valtype(t), id);
+                fprintf(out, "    %s %s = rv%d.%s;\n", ct, name, id, nat_is_float(t) ? "dval" : "ival");
+                nat_revalidate(out);
+                return t;
+            }
+            {
             int j = arr_index(e->call.name), n = e->call.nargs, ixt[8];
             char ixs[8][32], flat[32];
             const char *ix[8];
@@ -388,7 +507,7 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             nat_index(out, j, ix, ixt, n, flat);
             fprintf(out, "    %s %s = AR[%d]->data[%s].%s;\n", ct, name, j, flat, nat_is_float(t) ? "dval" : "ival");
             return t;
-        }
+            }
         case EXPR_UNARY: {
             int lt = nat_emit(out, e->unary.operand, a);
             if (e->unary.op == OP_NEG) {
@@ -467,10 +586,18 @@ static void nat_guard(FILE *out, const uses_t *u) {
         emit_cstring(out, arrs[j], (int)strlen(arrs[j]));
         fprintf(out, "); AG[%d] = array_generation; }\n", j);
     }
+    /* the variables' caches fetched if stale (a lookup, nothing made:
+     * a statement run once per call would never find them filled) */
+    for (int i = 0; i < u->nv; i++) {
+        fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { V[%d] = eval_var_slot(env, ",
+                u->v[i], u->v[i], u->v[i]);
+        emit_cstring(out, vars[u->v[i]], (int)strlen(vars[u->v[i]]));
+        fprintf(out, "); VG[%d] = env_generation; }\n", u->v[i]);
+    }
     fprintf(out, "    if (1");
     for (int i = 0; i < u->nv; i++)
-        fprintf(out, " && VG[%d] == env_generation && V[%d] && V[%d]->type == %s",
-                u->v[i], u->v[i], u->v[i], nat_valtype(predict_name(vars[u->v[i]])));
+        fprintf(out, " && V[%d] && V[%d]->type == %s",
+                u->v[i], u->v[i], nat_valtype(predict_name(vars[u->v[i]])));
     for (int i = 0; i < u->na; i++)
         fprintf(out, " && AR[%d] && AR[%d]->elem_type == %s && AR[%d]->ndims == %d",
                 u->a[i], u->a[i], nat_valtype(predict_name(arrs[u->a[i]])), u->a[i], u->an[i]);
@@ -581,6 +708,8 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     emit_preamble(out, op, k);
                     nat_guard(out, &u);
                     fprintf(out, ") {\n");
+                    fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
+                    cur_uses = &u;
                     int t = nat_emit(out, s->assign.value, x);
                     sprintf(slot, "V[%d]", u.v[0]);
                     nat_store(out, slot, st, x, t);
@@ -617,6 +746,8 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     int ixt[8];
                     nat_guard(out, &u);
                     fprintf(out, ") {\n");
+                    fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
+                    cur_uses = &u;
                     for (int i = 0; i < n; i++) {
                         ixt[i] = nat_emit(out, s->array_assign.indices[i], ixs[i]);
                         ix[i] = ixs[i];
@@ -672,6 +803,24 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             if (nl) fprintf(out, "    print_text(\"\\n\");\n");
             return 1;
         }
+        case STMT_CALL: {
+            /* CALL of one of the program's SUBs or FUNCTIONs, the
+             * argument count right (else the executor's error first) */
+            int j = proc_index(s->call_stmt.name), n = s->call_stmt.nargs, ta[16];
+            if (j < 0 || procs[j].nparams != n || n > 16) return 0;
+            emit_preamble(out, op, k);
+            for (int i = 0; i < n; i++) {
+                snprintf(path, sizeof path, "c->ops[%d].s->call_stmt.args[%d]", k, i);
+                ta[i] = emit_expr(out, s->call_stmt.args[i], path);
+            }
+            fprintf(out, "    { value_t av[%d];\n", n ? n : 1);
+            for (int i = 0; i < n; i++)
+                fprintf(out, "      av[%d] = T[%d]; T[%d].type = VAL_INTEGER;\n", i, ta[i], ta[i]);
+            fprintf(out, "      err = eval_call_proc(");
+            emit_cstring(out, s->call_stmt.name, (int)strlen(s->call_stmt.name));
+            fprintf(out, ", &P[%d], av, %d, NULL); " CHECK " }\n", j, n);
+            return 1;
+        }
         case STMT_GOTO:
         case STMT_GOSUB: {
             int t = code_find_label(c, s->goto_stmt.label);
@@ -724,6 +873,8 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
                 char x[32];
                 nat_guard(b, &u);
                 fprintf(b, ") {\n");
+                fprintf(b, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
+                cur_uses = &u;
                 nat_emit(b, op->cond, x);
                 fprintf(b, "    if ((%s != 0) %s 0) ", x, op->invert ? "==" : "!=");
                 emit_goto(b, c, k + 1);
@@ -842,6 +993,7 @@ int main(int argc, char **argv) {
     }
     error_t err;
     scan_array_names(program);
+    scan_program(program, 1);
     code_t *c = lower_stmts(program, &err);
     if (!c) {
         fprintf(stderr, "%s: %s\n", in, error_message(err));
@@ -852,6 +1004,8 @@ int main(int argc, char **argv) {
     if (!out) { fprintf(stderr, "s32-sbc: cannot write %s\n", outpath); return 1; }
     fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n#include <string.h>\n#include <math.h>\n\n", in);
     emit_source(out, text);
+    fprintf(out, "static void *P[%d];   /* each SUB's and FUNCTION's entry, found once */\n\n",
+            nprocs_known ? nprocs_known : 1);
     emit_unit(out, c, "sbc_main", 1);
     /* each SUB and FUNCTION: its body lowered as the runtime will */
     int nprocs = 0, procnops[1024];

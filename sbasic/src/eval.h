@@ -81,6 +81,9 @@ error_t eval_assign_check(env_t *env, const char *name);
 error_t eval_assign_store(env_t *env, const char *name, const value_t *v);
 error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v);
 sb_array_t *eval_call_array(const char *name);
+/* a FUNCTION's call (out its value) or a SUB's (out NULL) with its
+ * arguments evaluated, which it takes; *cache keeps the procedure */
+error_t eval_call_proc(const char *name, void **cache, value_t *args, int nargs, value_t *out);
 error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out);
 error_t print_value(const value_t *v, int tab_spc, int width);
 void print_comma(int width);

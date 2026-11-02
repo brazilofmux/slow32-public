@@ -26,7 +26,8 @@ typedef struct env {
    for a bare variable name (no $/%/# suffix).  First letter is passed. */
 extern val_type_t (*env_deftype_hook)(char first_letter);
 
-/* Bumped whenever variables may be freed (env_clear, env_destroy): a
+/* Bumped whenever variables a running activation may hold pointers to
+ * are freed (env_clear; not env_destroy, a call's scope at its end): a
  * pointer to a variable's value stays good while it is unchanged
  * (compiled programs cache them) */
 extern unsigned env_generation;
@@ -42,6 +43,10 @@ void env_clear(env_t *env);
 /* Get variable value. Auto-creates with default if not found in any scope.
    Returns pointer to stored value (valid until next env operation). */
 value_t *env_get(env_t *env, const char *name);
+
+/* A new variable in a scope that has none of the name (a call's
+ * parameter), set: env_set without the search */
+void env_bind(env_t *env, const char *name, const value_t *val);
 
 /* Set variable in current scope */
 void env_set(env_t *env, const char *name, const value_t *val);
