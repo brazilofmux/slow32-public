@@ -17,7 +17,7 @@
  */
 
 /* --- Per-block hoisted instruction lists (append order: defs before uses) --- */
-static int licm_head[HIR_MAX_BLOCK];  /* first hoisted inst, -1 = none */
+static int *licm_head;  /* first hoisted inst, -1 = none */
 
 /* Loop-optimisation gate.  licm_split parks values in split_head[]
  * TOP-of-block lists and licm_strred/licm_fp64_consts append clones
@@ -26,7 +26,7 @@ static int licm_head[HIR_MAX_BLOCK];  /* first hoisted inst, -1 = none */
  * the passes run only where the target's driver turns them on
  * (hir_codegen.h sets it before calling hir_licm). */
 static int licm_loopopt;
-static int licm_tail[HIR_MAX_BLOCK];  /* last hoisted inst, for O(1) append */
+static int *licm_tail;  /* last hoisted inst, for O(1) append */
 static int licm_next[HIR_MAX_INST];   /* next hoisted inst, -1 = end */
 
 /* --- Old-to-clone mapping --- */
@@ -38,13 +38,13 @@ static int licm_cpin[HIR_MAX_INST];   /* ICONST clone placed in a preheader by
 /* Blocks belonging to ANY natural loop in this function — persists
  * after hir_licm (ssa_vis is per-loop scratch).  Consumed by
  * hcg_mark_loop_consts. */
-static int licm_in_any_loop[HIR_MAX_BLOCK];
+static int *licm_in_any_loop;
 /* DIVERGENCE (f77, port upstream): nesting depth per block -- each
  * natural-loop body found below increments its blocks, so an inner
  * loop's blocks count every enclosing loop.  Consumed by the spill
  * cost in hir_regalloc: a value used in an inner loop is far more
  * expensive to spill than its static use count says. */
-static int licm_depth[HIR_MAX_BLOCK];
+static int *licm_depth;
 
 /* --- Stats --- */
 static int licm_stat_hoisted;
@@ -72,7 +72,21 @@ static int licm_stat_hoisted;
  * the preheader, and no use anywhere else (a use neither clearly
  * before nor clearly after the loop disqualifies).  CALL/CALLHI
  * values are excluded (their result-pair linkage is positional). */
-static int split_head[HIR_MAX_BLOCK];
+static int *split_head;
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int licm_tables_done;
+static void licm_tables(void) {
+    if (licm_tables_done) return;
+    licm_tables_done = 1;
+    hir_blk_table((char **)&licm_head, (int)sizeof(int));
+    hir_blk_table((char **)&licm_tail, (int)sizeof(int));
+    hir_blk_table((char **)&licm_in_any_loop, (int)sizeof(int));
+    hir_blk_table((char **)&licm_depth, (int)sizeof(int));
+    hir_blk_table((char **)&split_head, (int)sizeof(int));
+}
 static int split_frame;
 static int licm_stat_split;
 static char sp_inbody[HIR_MAX_INST];
@@ -89,7 +103,7 @@ static int licm_body[LICM_MAX_BODY];
 static int licm_dominates(int a, int b) {
     int depth;
     depth = 0;
-    while (b >= 0 && depth < HIR_MAX_BLOCK) {
+    while (b >= 0 && depth < hir_blk_cap) {
         if (b == a) return 1;
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];

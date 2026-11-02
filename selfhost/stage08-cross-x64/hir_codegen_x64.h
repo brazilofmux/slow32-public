@@ -50,8 +50,19 @@ static int hx_no_frame;             /* 1 if function needs no frame (no spills, 
 #define HX_VA_NFP        8
 
 /* Block code offsets for jump patching */
-static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
-static int hx_loop_head[HIR_MAX_BLOCK]; /* 1 if block is a back-edge target (loop header) */
+static int *hx_blk_off;  /* code offset of block start, -1=not yet */
+static int *hx_loop_head; /* 1 if block is a back-edge target (loop header) */
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hx_tables_done;
+static void hx_tables(void) {
+    if (hx_tables_done) return;
+    hx_tables_done = 1;
+    hir_blk_table((char **)&hx_blk_off, (int)sizeof(int));
+    hir_blk_table((char **)&hx_loop_head, (int)sizeof(int));
+}
 static int hx_loop_align = 0;           /* loop-header alignment in bytes (S32_LOOP_ALIGN), 0=off */
 static int hx_loop_offset = 0;          /* extra NOP bytes after align, lands loop head at mod-align=offset (S32_LOOP_OFFSET) */
 
@@ -2476,6 +2487,8 @@ static void hx_gen_func(Node *fn) {
 
     /* --- Run HIR pipeline --- */
     licm_stat_hoisted = 0;
+    /* every block table this compiler has, before the first block */
+    ssa_tables(); licm_tables(); rx_tables(); hx_tables();
     hl_func(fn);
     hir_ssa_construct();
     hir_opt();

@@ -90,7 +90,7 @@ static int ra_stat_csplit;
 static int ra_after_stamp[HIR_MAX_INST];
 static int ra_after_tick;
 static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
-static int ra_dom_wl[HIR_MAX_BLOCK];      /* dom-tree walk for after-use rewire */
+static int *ra_dom_wl;      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
@@ -519,9 +519,9 @@ static void ra_extend(int inst, int use_pos) {
  * intermediate block (and the use block and def block themselves).
  */
 
-static int ra_blk_last[HIR_MAX_BLOCK]; /* last position in each block */
-static int ra_bvis[HIR_MAX_BLOCK];     /* visited flags for BFS */
-static int ra_bwl[HIR_MAX_BLOCK];      /* BFS worklist */
+static int *ra_blk_last; /* last position in each block */
+static int *ra_bvis;     /* visited flags for BFS */
+static int *ra_bwl;      /* BFS worklist */
 
 static void ra_backprop(int val, int use_blk) {
     int def_blk;
@@ -569,7 +569,7 @@ static void ra_backprop(int val, int use_blk) {
                 ra_extend(val, ra_blk_last[p]);
                 if (!ra_bvis[p]) {
                     ra_bvis[p] = 1;
-                    if (p != def_blk && wt < HIR_MAX_BLOCK) {
+                    if (p != def_blk && wt < hir_blk_cap) {
                         /* Continue BFS past intermediate blocks, stop at def */
                         ra_bwl[wt] = p;
                         wt = wt + 1;
@@ -1275,7 +1275,7 @@ static int gc_pair_inst[GC_MAX_NODE];
 /* GC_MAX_NODE / 32: ids beyond the node cap could never be coloured
  * anyway, so functions that large stay on intervals. */
 #define LV_W 128
-/* Flattened [HIR_MAX_BLOCK][LV_W]: the selfhost dialect has no 2D
+/* Flattened [hir_blk_cap][LV_W]: the selfhost dialect has no 2D
  * static arrays, and the bound must be a literal (2048 * 128).  Kept
  * to 1MB apiece -- the selfhost assembler has a cumulative BSS
  * budget, and 4MB versions of these were what first blew it. */
@@ -1306,8 +1306,8 @@ static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
 static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
 static int lv_nid;
 static int lv_nw;                  /* words in use: (lv_nid+31)/32 */
-static int lv_bstart[HIR_MAX_BLOCK];  /* ra_order index range per block */
-static int lv_bend[HIR_MAX_BLOCK];
+static int *lv_bstart;  /* ra_order index range per block */
+static int *lv_bend;
 static int lv_on;
 
 static int lv_tracked(int inst) {
@@ -2123,7 +2123,7 @@ static int ra_depth_w(int b) {
 #define RA_FREQ_SCALE 256
 #define RA_FREQ_LOOP 8
 #define RA_FREQ_CAP 4194304
-static int ra_bfreq[HIR_MAX_BLOCK];
+static int *ra_bfreq;
 static int ra_freq_on;                  /* HIR_RA_FREQ=1 */
 static int ra_is_loop_hdr(int b);       /* with the regional spill below */
 
@@ -3634,9 +3634,28 @@ static int gc_rs_nregion;
 static int ra_region_cand;              /* candidates seen (HIR_REGION_FN bisection) */
 static int gc_round_no;                 /* respill rounds, never reset: a stamp */
 static int ra_region_round[HIR_MAX_INST];   /* the round a value was last split in */
-static char ra_in_region[HIR_MAX_BLOCK];
-static int ra_jphi[HIR_MAX_BLOCK];      /* the current split's join phi in each block, -1 */
-static char ra_idf_seen[HIR_MAX_BLOCK];
+static char *ra_in_region;
+static int *ra_jphi;      /* the current split's join phi in each block, -1 */
+static char *ra_idf_seen;
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ra_tables_done;
+static void ra_tables(void) {
+    if (ra_tables_done) return;
+    ra_tables_done = 1;
+    hir_blk_table((char **)&ra_dom_wl, (int)sizeof(int));
+    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bstart, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bend, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bfreq, (int)sizeof(int));
+    hir_blk_table((char **)&ra_in_region, (int)sizeof(char));
+    hir_blk_table((char **)&ra_jphi, (int)sizeof(int));
+    hir_blk_table((char **)&ra_idf_seen, (int)sizeof(char));
+}
 static int ra_stat_join;                /* join phis placed (step 5b.4) */
 static void ra_csplit_on_inst(int i, int old, int nw);   /* with the call splitter below */
 static int ra_web_live_in(int b, int v);                 /* with the phi webs below */
@@ -3679,7 +3698,7 @@ static int ra_new_join_phi(int v, int f) {
 static int ra_region_reach(int b, int v, int d, int e, int m) {
     int lim;
     lim = 0;
-    while (b >= 0 && b < bb_nblk && lim < HIR_MAX_BLOCK) {
+    while (b >= 0 && b < bb_nblk && lim < hir_blk_cap) {
         if (b == e) return m;
         if (ra_jphi[b] >= 0) return ra_jphi[b];
         if (b == d) return v;
@@ -3710,7 +3729,7 @@ static int ra_region_of(int d, int bn) {
     if (d < 0 || bn < 0 || bn == d) return -1;
     e = bn;
     lim = 0;
-    while (lim < HIR_MAX_BLOCK) {
+    while (lim < hir_blk_cap) {
         if (ssa_idom[e] == d) return e;
         if (ssa_idom[e] < 0 || ssa_idom[e] == e) return -1;
         e = ssa_idom[e];
@@ -3733,7 +3752,7 @@ static int ra_region_every_iter(int e) {
     int lim;
     h = e;
     lim = 0;
-    while (h >= 0 && h < bb_nblk && lim < HIR_MAX_BLOCK) {
+    while (h >= 0 && h < bb_nblk && lim < hir_blk_cap) {
         if (licm_depth[h] == licm_depth[e] && ra_is_loop_hdr(h)) break;
         if (ssa_idom[h] == h || ssa_idom[h] < 0) return 1;   /* no loop found: say yes */
         h = ssa_idom[h];
@@ -3764,7 +3783,7 @@ static void ra_region_mark(int e) {
         if (b < 0 || b >= bb_nblk || ra_in_region[b]) continue;
         ra_in_region[b] = 1;
         i = 0;
-        while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+        while (i < ssa_dtc_cnt[b] && nwl < hir_blk_cap) {
             ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
             nwl = nwl + 1;
             i = i + 1;
@@ -3892,7 +3911,7 @@ static int ra_region_plan(int v, int bn, int forwhom, int *pe) {
     if (forwhom >= 0 && forwhom < h_ninst && lv_id[forwhom] >= 0) {
         int lim;
         lim = 0;
-        while (lim < HIR_MAX_BLOCK) {
+        while (lim < hir_blk_cap) {
             int ok;
             ok = 1;
             b = 0;
@@ -3995,7 +4014,7 @@ static int ra_region_commit(int v, int e, int forwhom) {
             }
             ra_jphi[f] = jp;
             nj = nj + 1;
-            if (nwl < HIR_MAX_BLOCK) { ra_dom_wl[nwl] = f; nwl = nwl + 1; }
+            if (nwl < hir_blk_cap) { ra_dom_wl[nwl] = f; nwl = nwl + 1; }
         }
     }
     ra_is_csplit[m] = 0;
@@ -4790,7 +4809,7 @@ static void ra_csplit_on_dom(int cb, int old, int nw) {
     int inst;
     nwl = 0;
     i = 0;
-    while (i < ssa_dtc_cnt[cb] && nwl < HIR_MAX_BLOCK) {
+    while (i < ssa_dtc_cnt[cb] && nwl < hir_blk_cap) {
         ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[cb] + i];
         nwl = nwl + 1;
         i = i + 1;
@@ -4806,7 +4825,7 @@ static void ra_csplit_on_dom(int cb, int old, int nw) {
             }
             ra_csplit_on_phis(b, cb, old, nw);
             i = 0;
-            while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+            while (i < ssa_dtc_cnt[b] && nwl < hir_blk_cap) {
                 ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
                 nwl = nwl + 1;
                 i = i + 1;

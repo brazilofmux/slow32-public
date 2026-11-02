@@ -133,7 +133,6 @@ char *getenv(const char *name);
 int atoi(const char *nptr);
 
 #define HIR_MAX_INST   262144   /* was 16384 */
-#define HIR_MAX_BLOCK  16384   /* was 2048 */
 #define HIR_MAX_CARG   32768   /* was 4096 */
 #define HIR_MAX_PARG 2097152   /* was 32768, then 262144; SQLite's debug build (asserts add blocks) overflowed it */
 
@@ -253,9 +252,82 @@ static int   h_pcnt[HIR_MAX_INST];
 static int   h_nparg;
 
 /* Basic blocks */
-static int   bb_start[HIR_MAX_BLOCK];
-static int   bb_end[HIR_MAX_BLOCK];
+static int  *bb_start;
+static int  *bb_end;
 static int   bb_nblk;
+
+/* The per-function tables grow with the function.  A block-indexed one
+ * holds hir_blk_cap entries, more than bb_nblk; a module registers its
+ * tables once (hir_blk_table) before the first function's blocks are
+ * made, and a new block grows every one together, so none is ever
+ * shorter than another (the fixed 16384 stopped stage08 on the C s32-sbc
+ * writes for a BASIC program: "too many HIR blocks").  A table nobody
+ * registered stays NULL: the first function compiled stops on it.  The
+ * registry has room for instruction-indexed tables too (hir_tab_add's
+ * inst), which stay fixed for now: cc.s32x's heap (stage07's linker
+ * gives it 64MB) is smaller than they are. */
+#define HIR_TABLES 512
+static char **hir_tab[HIR_TABLES];
+static int hir_tab_esz[HIR_TABLES];
+static int hir_tab_inst[HIR_TABLES];    /* 1: instruction-indexed */
+static int hir_ntab;
+static int hir_blk_cap;
+static int hir_blk_based;      /* bb_start, bb_end registered */
+
+/* p's table from oldcap entries of esz bytes to cap, the new ones zero
+ * (as the static tables were) */
+static char *hir_tab_resize(char *p, int esz, int oldcap, int cap) {
+    char *q;
+    int i;
+    q = (char *)realloc(p, (unsigned long)cap * (unsigned long)esz);
+    if (!q) {
+        fdputs("s12cc: out of memory (HIR tables)\n", 2);
+        exit(1);
+    }
+    i = oldcap * esz;
+    while (i < cap * esz) { q[i] = 0; i = i + 1; }
+    return q;
+}
+
+static void hir_tab_add(char **p, int esz, int inst) {
+    if (hir_ntab >= HIR_TABLES) {
+        fdputs("s12cc: too many HIR tables (HIR_TABLES)\n", 2);
+        exit(1);
+    }
+    hir_tab[hir_ntab] = p;
+    hir_tab_esz[hir_ntab] = esz;
+    hir_tab_inst[hir_ntab] = inst;
+    hir_ntab = hir_ntab + 1;
+    if (!inst && hir_blk_cap > 0) *p = hir_tab_resize(*p, esz, 0, hir_blk_cap);
+}
+
+static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, 0); }
+
+/* every table of the kind to need entries at least, from *capp */
+static void hir_tab_grow(int inst, int *capp, int first, int need) {
+    int cap;
+    int i;
+    cap = *capp ? *capp : first;
+    while (cap < need) cap = cap * 2;
+    if (cap == *capp) return;
+    if (getenv("S12CC_TABDBG")) { fdputs(inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
+    i = 0;
+    while (i < hir_ntab) {
+        if (hir_tab_inst[i] == inst)
+            *hir_tab[i] = hir_tab_resize(*hir_tab[i], hir_tab_esz[i], *capp, cap);
+        i = i + 1;
+    }
+    *capp = cap;
+}
+
+static void hir_blk_grow(int need) {
+    if (!hir_blk_based) {
+        hir_blk_based = 1;
+        hir_blk_table((char **)&bb_start, (int)sizeof(int));
+        hir_blk_table((char **)&bb_end, (int)sizeof(int));
+    }
+    hir_tab_grow(0, &hir_blk_cap, 256, need);
+}
 
 /* Current block being built (used by lowering) */
 static int   hl_cur_blk;
@@ -306,14 +378,8 @@ static void hir_reset(void) {
 static int hir_new_block(void) {
     int b;
     b = bb_nblk;
-    if (b >= HIR_MAX_BLOCK) {
-        fdputs("s12cc: too many HIR blocks (fn=", 2);
-        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
-        fdputs(" inl_depth=", 2);
-        fdputuint(2, (unsigned)hl_inl_depth_dbg);
-        fdputs(")\n", 2);
-        exit(1);
-    }
+    /* room for this block and one more (a reader may look one past) */
+    if (b + 2 > hir_blk_cap) hir_blk_grow(b + 2);
     bb_start[b] = -1;  /* set lazily when block becomes current */
     bb_end[b] = -1;
     bb_nblk = bb_nblk + 1;

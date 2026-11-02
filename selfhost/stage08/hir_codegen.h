@@ -274,7 +274,7 @@ static int hcg_slot_off(int fp_off) {
 }
 
 /* Block labels */
-static int hcg_blk_lbl[HIR_MAX_BLOCK];
+static int *hcg_blk_lbl;
 
 /* --- Branch-target forwarding through empty trampoline blocks ---
  * SSA critical-edge splitting leaves blocks whose entire content is
@@ -286,13 +286,13 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * it and skips the bodies of forwarded blocks.  hcg_next_emit[b] is
  * the next non-forwarded block after b — the real fallthrough
  * neighbor once trampolines stop being emitted. */
-static int hcg_fwd[HIR_MAX_BLOCK];
-static int hcg_next_emit[HIR_MAX_BLOCK];
-static int hcg_emit_ord[HIR_MAX_BLOCK];   /* layout order (see compute_fwd) */
+static int *hcg_fwd;
+static int *hcg_next_emit;
+static int *hcg_emit_ord;   /* layout order (see compute_fwd) */
 static int hcg_nord;
-static char hcg_placed[HIR_MAX_BLOCK];
-static int hcg_skip[HIR_MAX_BLOCK]; /* (always 0 now; see hcg_compute_fwd) */
-static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated */
+static char *hcg_placed;
+static int *hcg_skip; /* (always 0 now; see hcg_compute_fwd) */
+static int *hcg_blk_pos; /* estimated byte offset, over-estimated */
 
 /* Deferred jump-table emission (issue #32).  HI_JMPTAB dispatch is emitted
  * inline in .text, but the table of target addresses must live in a
@@ -631,11 +631,30 @@ static int  hcg_stat_retpin;
 #define HCG_RP_MAX 512
 static int  hcg_rp_tick;
 static int  hcg_rp_stamp[HIR_MAX_INST];
-static int  hcg_rp_reach[HIR_MAX_BLOCK];
-static int  hcg_rp_path[HIR_MAX_BLOCK];
+static int  *hcg_rp_reach;
+static int  *hcg_rp_path;
 static int  hcg_rp_s[HCG_RP_MAX];
 static int  hcg_rp_ns;
-static int  hcg_rp_wl[HIR_MAX_BLOCK];
+static int  *hcg_rp_wl;
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hcg_tables_done;
+static void hcg_tables(void) {
+    if (hcg_tables_done) return;
+    hcg_tables_done = 1;
+    hir_blk_table((char **)&hcg_blk_lbl, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_fwd, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_next_emit, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_emit_ord, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_placed, (int)sizeof(char));
+    hir_blk_table((char **)&hcg_skip, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_blk_pos, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_reach, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_path, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_wl, (int)sizeof(int));
+}
 
 static void hcg_use_bump(int v) {
     if (v < 0 || v >= h_ninst) return;
@@ -1163,7 +1182,7 @@ static int hcg_rp_paths_clean(int ret_blk) {
             p = ssa_pred[ssa_pbase[b] + j];
             if (p >= 0 && p < bb_nblk && hcg_rp_reach[p] != hcg_rp_tick) {
                 hcg_rp_reach[p] = hcg_rp_tick;
-                if (nwl < HIR_MAX_BLOCK) {
+                if (nwl < hir_blk_cap) {
                     hcg_rp_wl[nwl] = p;
                     nwl = nwl + 1;
                 }
@@ -1195,7 +1214,7 @@ static int hcg_rp_paths_clean(int ret_blk) {
             if (s >= 0 && s < bb_nblk && hcg_rp_path[s] != hcg_rp_tick &&
                 hcg_rp_reach[s] == hcg_rp_tick) {
                 hcg_rp_path[s] = hcg_rp_tick;
-                if (nwl < HIR_MAX_BLOCK) {
+                if (nwl < hir_blk_cap) {
                     hcg_rp_wl[nwl] = s;
                     nwl = nwl + 1;
                 }
@@ -1224,7 +1243,7 @@ static void hcg_mark_ret_direct(void) {
                     i = 0;
                     while (i < HIR_MAX_INST) { hcg_rp_stamp[i] = 0; i = i + 1; }
                     i = 0;
-                    while (i < HIR_MAX_BLOCK) {
+                    while (i < hir_blk_cap) {
                         hcg_rp_reach[i] = 0;
                         hcg_rp_path[i] = 0;
                         i = i + 1;
@@ -4570,6 +4589,8 @@ static void hcg_func(Node *fn) {
     int b;
 
     /* Lower AST to HIR */
+    /* every block table this compiler has, before the first block */
+    ssa_tables(); licm_tables(); ra_tables(); hcg_tables();
     hl_func(fn);
 
     /* Run SSA construction */

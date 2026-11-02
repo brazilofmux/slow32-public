@@ -13,6 +13,8 @@
  * inline once capacity runs low, so exhausting this is a missed
  * optimisation rather than a failed compile. */
 #define HL_MAX_ALLOCA 8192   /* was 2048 */
+/* inlining and unrolling stop growing a function past this many blocks */
+#define HL_BLOCK_BUDGET 16384
 static int hl_aoff[HL_MAX_ALLOCA];
 static int hl_aslot[HL_MAX_ALLOCA];  /* Node->slot_id; 0 = temp keyed by offset */
 static int hl_ainst[HL_MAX_ALLOCA];
@@ -1703,10 +1705,10 @@ static Node *hl_inl_candidate(Node *call) {
      * lowering finishes, so the budget has to cover them too. */
     if (h_ninst + sz * 16 + 4096 >= HIR_MAX_INST) return NULL;
     /* Blocks too: every splice adds the callee's control flow plus
-     * a continuation, and hir_regalloc's liveness bitsets are sized
-     * against HIR_MAX_BLOCK, so this ceiling must not be raised
-     * casually. */
-    if (bb_nblk + sz + 64 >= HIR_MAX_BLOCK) return NULL;
+     * a continuation.  The tables grow (hir_blk_grow); this is a size
+     * budget, the old ceiling's, so a function already that big is not
+     * made bigger. */
+    if (bb_nblk + sz + 64 >= HL_BLOCK_BUDGET) return NULL;
     return fn;
 }
 
@@ -1823,7 +1825,7 @@ static int hl_unroll_trips(Node *n) {
     sz = hl_inl_size(n->body, hl_unroll_budget + 1);
     if (sz * trips > hl_unroll_budget) return 0;
     if (h_ninst + sz * trips * 16 + 4096 >= HIR_MAX_INST) return 0;
-    if (bb_nblk + (sz + 4) * trips + 64 >= HIR_MAX_BLOCK) return 0;
+    if (bb_nblk + (sz + 4) * trips + 64 >= HL_BLOCK_BUDGET) return 0;
     return trips;
 }
 

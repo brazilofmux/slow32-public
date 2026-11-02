@@ -637,7 +637,7 @@ static int ho_phi_sdom(int a, int b) {
     int depth;
     if (a == b || a < 0 || b < 0) return 0;
     depth = 0;
-    while (depth < HIR_MAX_BLOCK) {
+    while (depth < hir_blk_cap) {
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];
         if (b == a) return 1;
@@ -1433,7 +1433,7 @@ static int ho_mem_fwd(void) {
 static int ho_block_dominates(int a, int b) {
     int depth;
     depth = 0;
-    while (b >= 0 && depth < HIR_MAX_BLOCK) {
+    while (b >= 0 && depth < hir_blk_cap) {
         if (b == a) return 1;
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];

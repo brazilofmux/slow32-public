@@ -18,21 +18,21 @@
  * headroom; ssa_build_cfg still range-checks and aborts cleanly on overflow. */
 #define SSA_SUCC_SZ 131072   /* was 16384 */
 static int ssa_succ[SSA_SUCC_SZ];
-static int ssa_nsucc[HIR_MAX_BLOCK];
-static int ssa_soff[HIR_MAX_BLOCK];
+static int *ssa_nsucc;
+static int *ssa_soff;
 
 #define SSA_MAX_PRED 65536   /* was 8192 */
 static int ssa_pred[SSA_MAX_PRED];
-static int ssa_pbase[HIR_MAX_BLOCK];
-static int ssa_npred[HIR_MAX_BLOCK];
+static int *ssa_pbase;
+static int *ssa_npred;
 
 /* --- RPO --- */
-static int ssa_rpo[HIR_MAX_BLOCK];
-static int ssa_rpo_ord[HIR_MAX_BLOCK];
+static int *ssa_rpo;
+static int *ssa_rpo_ord;
 static int ssa_rpo_cnt;
 
 /* --- Dominators --- */
-static int ssa_idom[HIR_MAX_BLOCK];
+static int *ssa_idom;
 
 /* --- Dominance frontier --- */
 /* Block b's frontier is ssa_dfc[b] entries at ssa_dfv + ssa_dfo[b], in
@@ -44,9 +44,9 @@ static int ssa_idom[HIR_MAX_BLOCK];
  * ssa_dfst stamps the blocks b has been added to, for the duplicates. */
 static int *ssa_dfv;
 static int ssa_dfvcap;
-static int ssa_dfo[HIR_MAX_BLOCK];
-static int ssa_dfc[HIR_MAX_BLOCK];
-static int ssa_dfst[HIR_MAX_BLOCK];
+static int *ssa_dfo;
+static int *ssa_dfc;
+static int *ssa_dfst;
 
 /* --- Promotable variables --- */
 #define SSA_MAX_PROMO 4096   /* was 256 */
@@ -80,7 +80,7 @@ static int ssa_phi_base; /* h_ninst before phi insertion */
 static int ssa_late;     /* ssa_sroa_late is promoting: older phis stay */
 
 /* --- PHI optimization (linked lists per block) --- */
-static int ssa_phi_head[HIR_MAX_BLOCK];
+static int *ssa_phi_head;
 static int ssa_phi_next[HIR_MAX_INST];
 
 /* hl_nparams defined in hir_lower.h (shared) */
@@ -88,8 +88,8 @@ static int ssa_phi_next[HIR_MAX_INST];
 /* --- Dom tree children (flat) --- */
 #define SSA_DTC_MAX 65536   /* was 8192 */
 static int ssa_dtc[SSA_DTC_MAX];
-static int ssa_dtc_base[HIR_MAX_BLOCK];
-static int ssa_dtc_cnt[HIR_MAX_BLOCK];
+static int *ssa_dtc_base;
+static int *ssa_dtc_cnt;
 
 /* --- Rename: per-variable value stack --- */
 /* The stacks are threaded through the push log (from fort370, where
@@ -117,11 +117,38 @@ static int ssa_pprev[SSA_PLOG];
 static int ssa_plog_n;
 
 /* --- Temp arrays (reused across passes) --- */
-static int ssa_vis[HIR_MAX_BLOCK];
-static int ssa_post[HIR_MAX_BLOCK];
-static int ssa_tmp1[HIR_MAX_BLOCK];  /* cnt / wl */
-static int ssa_tmp2[HIR_MAX_BLOCK];  /* has_phi */
-static int ssa_tmp3[HIR_MAX_BLOCK];  /* in_wl */
+static int *ssa_vis;
+static int *ssa_post;
+static int *ssa_tmp1;  /* cnt / wl */
+static int *ssa_tmp2;  /* has_phi */
+static int *ssa_tmp3;  /* in_wl */
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ssa_tables_done;
+static void ssa_tables(void) {
+    if (ssa_tables_done) return;
+    ssa_tables_done = 1;
+    hir_blk_table((char **)&ssa_nsucc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_soff, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_pbase, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_npred, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo_ord, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_idom, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfst, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_phi_head, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_base, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_cnt, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_vis, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_post, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp1, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp2, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp3, (int)sizeof(int));
+}
 
 /* ------------------------------------------------------------ */
 

@@ -385,9 +385,21 @@ static void ra_extend(int inst, int use_pos) {
 
 /* --- Cross-block liveness propagation --- */
 
-static int ra_blk_last[HIR_MAX_BLOCK];
-static int ra_bvis[HIR_MAX_BLOCK];
-static int ra_bwl[HIR_MAX_BLOCK];
+static int *ra_blk_last;
+static int *ra_bvis;
+static int *ra_bwl;
+
+/* This module's block-indexed tables, grown with the function's
+ * blocks (hir_blk_table, hir.h): registered once, before any
+ * block of the first function is made. */
+static int rx_tables_done;
+static void rx_tables(void) {
+    if (rx_tables_done) return;
+    rx_tables_done = 1;
+    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
+}
 
 static void ra_backprop(int val, int use_blk) {
     int def_blk;
@@ -430,7 +442,7 @@ static void ra_backprop(int val, int use_blk) {
             if (p >= 0 && p < bb_nblk && !ra_bvis[p]) {
                 ra_bvis[p] = 1;
                 ra_extend(val, ra_blk_last[p]);
-                if (p != def_blk && wt < HIR_MAX_BLOCK) {
+                if (p != def_blk && wt < hir_blk_cap) {
                     ra_bwl[wt] = p;
                     wt = wt + 1;
                 }
