@@ -3475,16 +3475,32 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
                               op->s->for_stmt.var_name) != 0)
                     k--;
             if (k < 0) {
-                /* no loop running (a GOTO into its body): QBasic's NEXT
-                 * then steps by 0 to a limit of 0, the FOR's own slot
-                 * never set (NBS P055) */
-                for_slot_t z = { op->s, 0.0, 0.0, op->slot + 1, NULL, 0 };
+                /* no loop running (a GOTO into its body, a FOR that
+                 * failed and was resumed past): QBasic's NEXT then has
+                 * its FOR's limit as never set, 0, and its step as the
+                 * FOR states it -- 1 without STEP, a constant one as
+                 * written (compiled into the NEXT), else 0 (NBS P055;
+                 * a FOR whose start overflowed, checked) */
+                double zstep = 0.0;
+                const expr_t *se = op->s->for_stmt.step;
+                if (!se) zstep = 1.0;
+                else if (se->type == EXPR_LITERAL && se->literal.type != VAL_STRING) {
+                    value_t sv = se->literal;
+                    val_to_double(&sv, &zstep);
+                }
+                for_slot_t z = { op->s, 0.0, zstep, op->slot + 1, NULL, 0 };
                 EVAL_CHECK(for_next(env, op->s, &z, &yes));
                 *ppc = yes ? z.body_pc : pc + 1;
                 return ERR_NONE;
             }
             a->nfors = k + 1;
-            EVAL_CHECK(for_next(env, a->fors[k].s, &a->fors[k], &yes));
+            err = for_next(env, a->fors[k].s, &a->fors[k], &yes);
+            if (err != ERR_NONE) {
+                /* the loop is over (RESUME NEXT goes past its NEXT): its
+                 * frame must not be found by a later NEXT of the name */
+                a->nfors = k;
+                return err;
+            }
             if (yes) {
                 *ppc = a->fors[k].body_pc;
             } else {
@@ -3494,7 +3510,10 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
             return ERR_NONE;
         }
         case OP_EXITFOR:
-            if (a->nfors > 0) a->nfors--;
+            /* its own loop's frame, if that is the one on top (a FOR
+             * that failed has none, and an enclosing loop's stays) */
+            if (a->nfors > 0 && a->fors[a->nfors - 1].s == a->c->ops[op->slot].s)
+                a->nfors--;
             *ppc = op->target;
             return ERR_NONE;
         case OP_SELECT:
