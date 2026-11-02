@@ -24,6 +24,22 @@ feature collections in `~/refs/basic/nbs-ecma55-test` (outside the
 tree).  2026-11-01, milestone 1 (expressions, assignments, PRINT, IF
 conditions, GOTO and GOSUB compiled; the rest the executor's): 391
 agree, 25 refused by both, of 416.  Variables are reached through
-cached pointers to their values (good while `env_generation` holds):
-nested loops 161M instructions against the interpreter's 443M, the sieve
-3.15M against 4.50M.
+cached pointers to their values (good while `env_generation` holds);
+SUB and FUNCTION bodies are C functions too.
+
+Milestone 2 (started): a numeric assignment or IF condition has a native
+version -- C `long long` and `double`, the interpreter's rules for each
+type written out -- run when its guard holds (every variable it names
+cached and of the type its name predicts), its generic version
+otherwise.  Nested loops: 84M instructions against the interpreter's
+443M.
+
+```bash
+python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted
+```
+
+`tests/fuzz.py` generates programs of random arithmetic over edge values
+in every numeric type, errors trapped and printed, and requires the
+compiled program to print what the interpreter prints (1000 of 1000 on
+2026-11-01; moving the INTEGER overflow bound by one in the native code
+is caught).

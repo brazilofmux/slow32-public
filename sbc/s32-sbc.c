@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 static void usage(void) {
     fprintf(stderr, "usage: s32-sbc input.bas -o output.c\n");
@@ -170,6 +171,215 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
     }
 }
 
+/* --- Native code (milestone 2): a numeric expression on C long long and
+ * double, the interpreter's rules for each type written out (value.c).
+ * A statement's native version runs when its guard holds -- every
+ * variable it names cached, of the type its name predicts -- and its
+ * generic version otherwise.  Types: */
+enum { N_NONE = -1, N_INT = 0, N_LONG, N_SINGLE, N_DOUBLE };
+
+static int predict_name(const char *name) {
+    size_t n = strlen(name);
+    char last = n ? name[n - 1] : 0;
+    if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0) return N_NONE;
+    if (last == '%') return N_INT;
+    if (last == '&') return N_LONG;
+    if (last == '#') return N_DOUBLE;
+    if (last == '$') return N_NONE;
+    return N_SINGLE;            /* the guard checks: DEF* may say otherwise */
+}
+
+static int nat_is_float(int t) { return t == N_SINGLE || t == N_DOUBLE; }
+
+/* the native type of e, or N_NONE when it is not done natively */
+static int nat_type(const expr_t *e) {
+    int l, r;
+    switch (e->type) {
+        case EXPR_LITERAL:
+            switch (e->literal.type) {
+                case VAL_INTEGER: return N_INT;
+                case VAL_LONG:    return N_LONG;
+                case VAL_SINGLE:  return N_SINGLE;
+                case VAL_DOUBLE:  return N_DOUBLE;
+                default:          return N_NONE;
+            }
+        case EXPR_VARIABLE:
+            return predict_name(e->var.name);
+        case EXPR_UNARY:
+            l = nat_type(e->unary.operand);
+            if (l == N_NONE) return N_NONE;
+            if (e->unary.op == OP_NOT && nat_is_float(l)) return N_NONE;
+            return l;
+        case EXPR_COMPARE:
+            l = nat_type(e->compare.left);
+            r = nat_type(e->compare.right);
+            return (l == N_NONE || r == N_NONE) ? N_NONE : N_INT;
+        case EXPR_BINARY:
+            l = nat_type(e->binary.left);
+            r = nat_type(e->binary.right);
+            if (l == N_NONE || r == N_NONE) return N_NONE;
+            switch (e->binary.op) {
+                case OP_ADD: case OP_SUB: case OP_MUL:
+                    if (nat_is_float(l) || nat_is_float(r))
+                        return (l == N_DOUBLE || r == N_DOUBLE) ? N_DOUBLE : N_SINGLE;
+                    return (l == N_LONG || r == N_LONG) ? N_LONG : N_INT;
+                case OP_DIV: case OP_POW:
+                    return (l == N_DOUBLE || r == N_DOUBLE) ? N_DOUBLE : N_SINGLE;
+                case OP_IDIV: case OP_MOD:
+                case OP_AND: case OP_OR: case OP_XOR: case OP_IMP: case OP_EQV:
+                    /* on floats the result's type depends on the value */
+                    if (nat_is_float(l) || nat_is_float(r)) return N_NONE;
+                    return (l == N_LONG || r == N_LONG) ? N_LONG : N_INT;
+                default:
+                    return N_NONE;
+            }
+        default:
+            return N_NONE;
+    }
+}
+
+/* the variables e names, for the guard */
+static void nat_vars(const expr_t *e, int *list, int *n) {
+    switch (e->type) {
+        case EXPR_VARIABLE: {
+            int v = var_index(e->var.name);
+            for (int i = 0; i < *n; i++) if (list[i] == v) return;
+            if (*n < 64) list[*n] = v;
+            (*n)++;                     /* past 64: the caller goes generic */
+            return;
+        }
+        case EXPR_UNARY: nat_vars(e->unary.operand, list, n); return;
+        case EXPR_BINARY: nat_vars(e->binary.left, list, n); nat_vars(e->binary.right, list, n); return;
+        case EXPR_COMPARE: nat_vars(e->compare.left, list, n); nat_vars(e->compare.right, list, n); return;
+        default: return;
+    }
+}
+
+static const char *nat_valtype(int t) {
+    static const char *names[] = { "VAL_INTEGER", "VAL_LONG", "VAL_SINGLE", "VAL_DOUBLE" };
+    return names[t];
+}
+
+static int nnat;
+
+/* an integer range check of a long long r for type t */
+static void nat_range(FILE *out, const char *r, int t) {
+    if (t == N_INT)
+        fprintf(out, "    if (%s < -32768 || %s > 32767) { err = ERR_OVERFLOW; goto fail; }\n", r, r);
+    else
+        fprintf(out, "    if (%s < -2147483648LL || %s > 2147483647LL) { err = ERR_OVERFLOW; goto fail; }\n", r, r);
+}
+
+/* code computing e into a fresh C local; its name in *name */
+static int nat_emit(FILE *out, const expr_t *e, char *name) {
+    int t = nat_type(e), id = nnat++;
+    char a[32], b[32];
+    sprintf(name, "n%d", id);
+    const char *ct = nat_is_float(t) ? "double" : "long long";
+    switch (e->type) {
+        case EXPR_LITERAL:
+            if (nat_is_float(t)) fprintf(out, "    double %s = %a;\n", name, e->literal.dval);
+            else fprintf(out, "    long long %s = %d;\n", name, e->literal.ival);
+            return t;
+        case EXPR_VARIABLE: {
+            int v = var_index(e->var.name);
+            fprintf(out, "    %s %s = V[%d]->%s;\n", ct, name, v, nat_is_float(t) ? "dval" : "ival");
+            return t;
+        }
+        case EXPR_UNARY: {
+            int lt = nat_emit(out, e->unary.operand, a);
+            if (e->unary.op == OP_NEG) {
+                fprintf(out, "    %s %s = -%s;\n", ct, name, a);
+                if (!nat_is_float(lt)) nat_range(out, name, lt);
+            } else {
+                fprintf(out, "    long long %s = ~%s;\n", name, a);
+            }
+            return t;
+        }
+        case EXPR_COMPARE: {
+            static const char *ops[] = { "==", "!=", "<", ">", "<=", ">=" };
+            nat_emit(out, e->compare.left, a);
+            nat_emit(out, e->compare.right, b);
+            fprintf(out, "    long long %s = ((double)%s %s (double)%s) ? -1 : 0;\n",
+                    name, a, ops[e->compare.op], b);
+            return t;
+        }
+        case EXPR_BINARY: {
+            int lt = nat_emit(out, e->binary.left, a);
+            int rt = nat_emit(out, e->binary.right, b);
+            switch (e->binary.op) {
+                case OP_ADD: case OP_SUB: case OP_MUL: {
+                    char op = e->binary.op == OP_ADD ? '+' : e->binary.op == OP_SUB ? '-' : '*';
+                    if (nat_is_float(t))
+                        fprintf(out, "    double %s = (double)%s %c (double)%s;\n", name, a, op, b);
+                    else {
+                        fprintf(out, "    long long %s = %s %c %s;\n", name, a, op, b);
+                        nat_range(out, name, t);
+                    }
+                    return t;
+                }
+                case OP_DIV:
+                    fprintf(out, "    if ((double)%s == 0.0) { err = ERR_DIVISION_BY_ZERO; goto fail; }\n", b);
+                    fprintf(out, "    double %s = (double)%s / (double)%s;\n", name, a, b);
+                    return t;
+                case OP_POW:
+                    fprintf(out, "    if (((double)%s == 0.0 && (double)%s < 0.0) || ((double)%s < 0.0 && (double)%s != floor((double)%s))) { err = ERR_ILLEGAL_FUNCTION_CALL; goto fail; }\n",
+                            a, b, a, b, b);
+                    fprintf(out, "    double %s = pow((double)%s, (double)%s);\n", name, a, b);
+                    return t;
+                case OP_IDIV: case OP_MOD:
+                    fprintf(out, "    if (%s == 0) { err = ERR_DIVISION_BY_ZERO; goto fail; }\n", b);
+                    if (e->binary.op == OP_IDIV)
+                        fprintf(out, "    long long %s = %s == -1 ? -%s : %s / %s;\n", name, b, a, a, b);
+                    else
+                        fprintf(out, "    long long %s = %s == -1 ? 0 : %s %% %s;\n", name, b, a, b);
+                    nat_range(out, name, t);
+                    return t;
+                case OP_AND: fprintf(out, "    long long %s = (int)%s & (int)%s;\n", name, a, b); return t;
+                case OP_OR:  fprintf(out, "    long long %s = (int)%s | (int)%s;\n", name, a, b); return t;
+                case OP_XOR: fprintf(out, "    long long %s = (int)%s ^ (int)%s;\n", name, a, b); return t;
+                case OP_IMP: fprintf(out, "    long long %s = ~(int)%s | (int)%s;\n", name, a, b); return t;
+                case OP_EQV: fprintf(out, "    long long %s = ~((int)%s ^ (int)%s);\n", name, a, b); return t;
+                default: break;
+            }
+            (void)lt; (void)rt;
+            return t;
+        }
+        default:
+            return t;
+    }
+}
+
+/* the guard: each variable cached and of its predicted type */
+static void nat_guard(FILE *out, const int *list, int n) {
+    fprintf(out, "    if (1");
+    for (int i = 0; i < n; i++)
+        fprintf(out, " && VG[%d] == env_generation && V[%d] && V[%d]->type == %s",
+                list[i], list[i], list[i], nat_valtype(predict_name(vars[list[i]])));
+}
+
+/* storing native value x of type t into slot V[v], of type st, as
+ * val_coerce and store_into do */
+static void nat_store(FILE *out, int v, int st, const char *x, int t) {
+    if (st == N_INT || st == N_LONG) {
+        if (nat_is_float(t)) {
+            fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
+            fprintf(out, "    { long long q = (long long)rint(%s);\n", x);
+            if (st == N_INT) nat_range(out, "q", N_INT);
+            fprintf(out, "    V[%d]->ival = (int)q; }\n", v);
+        } else {
+            if (st == N_INT && t != N_INT) nat_range(out, x, N_INT);
+            fprintf(out, "    V[%d]->ival = (int)%s;\n", v, x);
+        }
+    } else if (st == N_SINGLE) {
+        fprintf(out, "    { double q = (double)%s; if (!(fabs(q) <= 3.4028234663852886e38)) { err = ERR_OVERFLOW; goto fail; }\n"
+                     "      V[%d]->dval = (double)(float)q; }\n", x, v);
+    } else {
+        fprintf(out, "    { double q = (double)%s; if (!(fabs(q) <= 1.7976931348623157e308)) { err = ERR_OVERFLOW; goto fail; }\n"
+                     "      V[%d]->dval = q; }\n", x, v);
+    }
+}
+
 /* --- Statements --- */
 
 static void emit_preamble(FILE *out, const op_t *op, int k) {
@@ -177,17 +387,13 @@ static void emit_preamble(FILE *out, const op_t *op, int k) {
             k, op->basic_line, k);
 }
 
-/* a statement compiled here: 1, or 0 for the executor's */
-static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
-    const stmt_t *s = op->s;
+static void emit_generic_assign(FILE *out, const stmt_t *s, int k) {
     char path[1024];
-    switch (s->type) {
-        case STMT_ASSIGN: {
+    {
             /* the checks (CONST, OPTION EXPLICIT) before the value, as
              * the executor; a variable that passed them once (and is
              * kept) passes them for good */
             int v = var_index(s->assign.name);
-            emit_preamble(out, op, k);
             fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { err = eval_assign_check(env, ", v, v);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
             fprintf(out, "); " CHECK " }\n");
@@ -199,8 +405,38 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             fprintf(out, "    if (V[%d]) err = eval_store(V[%d], &T[%d]); else err = eval_assign_store(env, ", v, v, t);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
             fprintf(out, ", &T[%d]);\n    VAL_CLEAR(&T[%d]); " CHECK "\n", t, t);
+    }
+}
+
+/* a statement compiled here: 1, or 0 for the executor's */
+static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
+    const stmt_t *s = op->s;
+    char path[1024];
+    switch (s->type) {
+        case STMT_ASSIGN: {
+            int st = predict_name(s->assign.name);
+            if (st != N_NONE && nat_type(s->assign.value) != N_NONE) {
+                int list[64], n = 0;
+                list[n++] = var_index(s->assign.name);
+                nat_vars(s->assign.value, list, &n);
+                if (n <= 64) {
+                    char x[32];
+                    emit_preamble(out, op, k);
+                    nat_guard(out, list, n);
+                    fprintf(out, ") {\n");
+                    int t = nat_emit(out, s->assign.value, x);
+                    nat_store(out, list[0], st, x, t);
+                    fprintf(out, "    goto L%d_done;\n    }\n", k);
+                    emit_generic_assign(out, s, k);
+                    fprintf(out, "L%d_done:;\n", k);
+                    return 1;
+                }
+            }
+            emit_preamble(out, op, k);
+            emit_generic_assign(out, s, k);
             return 1;
         }
+
         case STMT_ARRAY_ASSIGN: {
             int n = s->array_assign.nindices;
             emit_preamble(out, op, k);
@@ -280,6 +516,20 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             char path[64];
             snprintf(path, sizeof path, "c->ops[%d].cond", k);
             fprintf(b, "    pc = %d;\n", k);
+            int list[64], n = 0;
+            if (nat_type(op->cond) != N_NONE)
+                nat_vars(op->cond, list, &n);
+            if (nat_type(op->cond) != N_NONE && n <= 64) {
+                char x[32];
+                nat_guard(b, list, n);
+                fprintf(b, ") {\n");
+                nat_emit(b, op->cond, x);
+                fprintf(b, "    if ((%s != 0) %s 0) ", x, op->invert ? "==" : "!=");
+                emit_goto(b, c, k + 1);
+                fprintf(b, " else ");
+                emit_goto(b, c, op->target);
+                fprintf(b, "\n    }\n");
+            }
             int t = emit_expr(b, op->cond, path);
             fprintf(b, "    { int y = val_is_true(&T[%d]); VAL_CLEAR(&T[%d]);\n      if (y %s 0) ",
                     t, t, op->invert ? "==" : "!=");
@@ -370,7 +620,7 @@ int main(int argc, char **argv) {
 
     FILE *out = fopen(outpath, "w");
     if (!out) { fprintf(stderr, "s32-sbc: cannot write %s\n", outpath); return 1; }
-    fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n#include <string.h>\n\n", in);
+    fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n#include <string.h>\n#include <math.h>\n\n", in);
     emit_source(out, text);
     emit_unit(out, c, "sbc_main", 1);
     /* each SUB and FUNCTION: its body lowered as the runtime will */
