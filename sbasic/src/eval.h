@@ -54,6 +54,29 @@ error_t act_step(act_t *a, int *pc);
  * ERROR traps) sets *pc and is 1; anything else ends the unit with
  * *result, 0 */
 int act_transfer(act_t *a, error_t err, int *pc, error_t *result);
+/* GOSUB, its return op pushed (the jump is the caller's) */
+error_t act_gosub(act_t *a, int return_pc);
+
+/* --- The interpreter's operations, for compiled expressions and
+ * statements: each does what the executor does at that point --- */
+
+#include "array.h"
+extern int trace_enabled;
+extern int cur_basic_line;      /* the running statement's line number */
+void eval_trace(const stmt_t *s);
+error_t eval_variable(env_t *env, const char *name, value_t *out);
+error_t eval_unary(unaryop_t op, value_t *operand, value_t *out);
+error_t eval_binary(binop_t op, value_t *left, value_t *right, value_t *out);
+error_t eval_compare(cmpop_t op, value_t *left, value_t *right, value_t *out);
+error_t eval_assign_check(env_t *env, const char *name);
+error_t eval_assign_store(env_t *env, const char *name, const value_t *v);
+error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v);
+sb_array_t *eval_call_array(const char *name);
+error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out);
+error_t print_value(const value_t *v, int tab_spc, int width);
+void print_comma(int width);
+void print_text(const char *s);
+extern int console_width;
 
 /* Current print position (column 0-based, row 1-based) */
 extern int print_col;

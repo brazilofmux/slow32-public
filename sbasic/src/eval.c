@@ -77,7 +77,7 @@ static int on_error_label_idx = -1;  /* -1 = no handler */
 static int on_error_active = 0;      /* currently handling an error? */
 static int on_error_err_code = 0;    /* ERR value */
 static int on_error_err_line = 0;    /* ERL value */
-static int cur_basic_line = 0;       /* the running op's line number, for ERROR n */
+int cur_basic_line = 0;              /* the running op's line number, for ERROR n */
 static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
 static int resume_is_next = 0;       /* set by RESUME stmt for eval_program: 0=retry, 1=next, 2=label */
@@ -89,7 +89,7 @@ static char return_label[64] = "";   /* target label for RETURN label */
 static int eval_depth = 0;
 
 /* TRACE mode: print line numbers as they execute */
-static int trace_enabled = 0;
+int trace_enabled = 0;
 
 /* PEEK/POKE simulated memory (64KB) */
 #define PEEK_POKE_SIZE 65536
@@ -398,6 +398,139 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
     return err;
 }
 
+static inline __attribute__((always_inline)) error_t eval_variable_impl(env_t *env, const char *name, value_t *out) {
+    /* ERR and ERL pseudo-variables */
+    if (strcmp(name, "ERR") == 0) {
+        *out = val_integer(on_error_err_code);
+        return ERR_NONE;
+    }
+    if (strcmp(name, "ERL") == 0) {
+        *out = val_integer(on_error_err_line);
+        return ERR_NONE;
+    }
+    /* Bare niladic builtins, the GW way (k$ = INKEY$, t = TIMER):
+       only when no variable of that name exists; any builtin
+       error falls through to the plain-variable path */
+    value_t *found = env_lookup(env, name);
+    if (found) {
+        *out = val_copy(found);
+        return ERR_NONE;
+    }
+    if (builtin_exists(name)) {
+        if (builtin_call(name, NULL, 0, out) == ERR_NONE)
+            return ERR_NONE;
+    }
+    /* DEF FNM = 123: FNM, no parentheses, calls it */
+    if (strncmp(name, "FN", 2) == 0) {
+        proc_entry_t *fp = find_proc(name);
+        if (fp && fp->def->type == STMT_DEF_FN)
+            return call_def_fn(env, fp->def, NULL, 0, out);
+        if (!fp) return ERR_FUNC_NOT_DEFINED;
+    }
+    value_t *v = env_get(env, name);
+    if (!v) return ERR_OUT_OF_MEMORY;
+    *out = val_copy(v);
+    return ERR_NONE;
+}
+
+error_t eval_variable(env_t *env, const char *name, value_t *out) {
+    return eval_variable_impl(env, name, out);
+}
+
+static inline __attribute__((always_inline)) error_t eval_unary_in(unaryop_t op, value_t *operand, value_t *out) {
+    error_t err;
+    if (op == OP_NEG) {
+        err = val_neg(operand, out);
+    } else {
+        /* NOT, AND, ...: on the operands as integers, rounded half to
+         * even (3.1 AND -1.5 is 3 AND -2) */
+        int iv;
+        err = val_to_integer(operand, &iv);
+        if (err == ERR_NONE) {
+            *out = val_integer(~iv);
+            if (operand->type == VAL_LONG) out->type = VAL_LONG;
+        }
+    }
+    return err;
+}
+
+static inline __attribute__((always_inline)) error_t eval_binary_in(binop_t op, value_t *left, value_t *right, value_t *out) {
+    error_t err = ERR_NONE;
+    switch (op) {
+        case OP_ADD:  err = val_add(left, right, out); break;
+        case OP_STRCAT: {
+            /* & operator: coerce both to strings and concatenate */
+            char lbuf[64], rbuf[64];
+            const char *ls, *rs;
+            int llen, rlen;
+            if (left->type == VAL_STRING) {
+                ls = left->sval ? left->sval->data : "";
+                llen = left->sval ? left->sval->len : 0;
+            } else {
+                val_format_number(left, lbuf, sizeof(lbuf));
+                ls = lbuf; llen = (int)strlen(lbuf);
+            }
+            if (right->type == VAL_STRING) {
+                rs = right->sval ? right->sval->data : "";
+                rlen = right->sval ? right->sval->len : 0;
+            } else {
+                val_format_number(right, rbuf, sizeof(rbuf));
+                rs = rbuf; rlen = (int)strlen(rbuf);
+            }
+            int total = llen + rlen;
+            char *buf = malloc(total + 1);
+            if (!buf) { err = ERR_OUT_OF_MEMORY; break; }
+            memcpy(buf, ls, llen);
+            memcpy(buf + llen, rs, rlen);
+            buf[total] = '\0';
+            *out = val_string(buf, total);
+            free(buf);
+            break;
+        }
+        case OP_SUB:  err = val_sub(left, right, out); break;
+        case OP_MUL:  err = val_mul(left, right, out); break;
+        case OP_DIV:  err = val_div(left, right, out); break;
+        case OP_IDIV: err = val_idiv(left, right, out); break;
+        case OP_MOD:  err = val_mod(left, right, out); break;
+        case OP_POW:  err = val_pow(left, right, out); break;
+        case OP_AND: case OP_OR: case OP_XOR: case OP_IMP: case OP_EQV: {
+            int il, ir;
+            err = val_to_integer(left, &il);
+            if (err == ERR_NONE) err = val_to_integer(right, &ir);
+            if (err == ERR_NONE) {
+                if (op == OP_AND) *out = val_integer(il & ir);
+                else if (op == OP_OR) *out = val_integer(il | ir);
+                else if (op == OP_XOR) *out = val_integer(il ^ ir);
+                else if (op == OP_IMP) *out = val_integer(~il | ir);
+                else *out = val_integer(~(il ^ ir));
+                /* a LONG operand (or one past 16 bits) makes a LONG */
+                if (left->type == VAL_LONG || right->type == VAL_LONG ||
+                    !INT16_OK(il) || !INT16_OK(ir))
+                    out->type = VAL_LONG;
+            }
+            break;
+        }
+        default:      err = ERR_INTERNAL; break;
+    }
+    return err;
+}
+
+static inline __attribute__((always_inline)) error_t eval_compare_in(cmpop_t op, value_t *left, value_t *right, value_t *out) {
+    int cmp, result;
+    EVAL_CHECK(val_compare(left, right, &cmp));
+    switch (op) {
+        case CMP_EQ: result = (cmp == 0); break;
+        case CMP_NE: result = (cmp != 0); break;
+        case CMP_LT: result = (cmp < 0); break;
+        case CMP_GT: result = (cmp > 0); break;
+        case CMP_LE: result = (cmp <= 0); break;
+        case CMP_GE: result = (cmp >= 0); break;
+        default:     result = 0; break;
+    }
+    *out = val_integer(result ? -1 : 0);
+    return ERR_NONE;
+}
+
 static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
     if (!e) return ERR_INTERNAL;
 
@@ -406,57 +539,13 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             *out = val_copy(&e->literal);
             return ERR_NONE;
 
-        case EXPR_VARIABLE: {
-            /* ERR and ERL pseudo-variables */
-            if (strcmp(e->var.name, "ERR") == 0) {
-                *out = val_integer(on_error_err_code);
-                return ERR_NONE;
-            }
-            if (strcmp(e->var.name, "ERL") == 0) {
-                *out = val_integer(on_error_err_line);
-                return ERR_NONE;
-            }
-            /* Bare niladic builtins, the GW way (k$ = INKEY$, t = TIMER):
-               only when no variable of that name exists; any builtin
-               error falls through to the plain-variable path */
-            value_t *found = env_lookup(env, e->var.name);
-            if (found) {
-                *out = val_copy(found);
-                return ERR_NONE;
-            }
-            if (builtin_exists(e->var.name)) {
-                if (builtin_call(e->var.name, NULL, 0, out) == ERR_NONE)
-                    return ERR_NONE;
-            }
-            /* DEF FNM = 123: FNM, no parentheses, calls it */
-            if (strncmp(e->var.name, "FN", 2) == 0) {
-                proc_entry_t *fp = find_proc(e->var.name);
-                if (fp && fp->def->type == STMT_DEF_FN)
-                    return call_def_fn(env, fp->def, NULL, 0, out);
-                if (!fp) return ERR_FUNC_NOT_DEFINED;
-            }
-            value_t *v = env_get(env, e->var.name);
-            if (!v) return ERR_OUT_OF_MEMORY;
-            *out = val_copy(v);
-            return ERR_NONE;
-        }
+        case EXPR_VARIABLE:
+            return eval_variable_impl(env, e->var.name, out);
 
         case EXPR_UNARY: {
             value_t operand;
             EVAL_CHECK(eval_expr(env, e->unary.operand, &operand));
-            error_t err;
-            if (e->unary.op == OP_NEG) {
-                err = val_neg(&operand, out);
-            } else {
-                /* NOT, AND, ...: on the operands as integers, rounded
-                 * half to even (3.1 AND -1.5 is 3 AND -2) */
-                int iv;
-                err = val_to_integer(&operand, &iv);
-                if (err == ERR_NONE) {
-                    *out = val_integer(~iv);
-                    if (operand.type == VAL_LONG) out->type = VAL_LONG;
-                }
-            }
+            error_t err = eval_unary_in(e->unary.op, &operand, out);
             val_clear(&operand);
             return err;
         }
@@ -469,63 +558,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 val_clear(&left);
                 return err;
             }
-
-            switch (e->binary.op) {
-                case OP_ADD:  err = val_add(&left, &right, out); break;
-                case OP_STRCAT: {
-                    /* & operator: coerce both to strings and concatenate */
-                    char lbuf[64], rbuf[64];
-                    const char *ls, *rs;
-                    int llen, rlen;
-                    if (left.type == VAL_STRING) {
-                        ls = left.sval ? left.sval->data : "";
-                        llen = left.sval ? left.sval->len : 0;
-                    } else {
-                        val_format_number(&left, lbuf, sizeof(lbuf));
-                        ls = lbuf; llen = (int)strlen(lbuf);
-                    }
-                    if (right.type == VAL_STRING) {
-                        rs = right.sval ? right.sval->data : "";
-                        rlen = right.sval ? right.sval->len : 0;
-                    } else {
-                        val_format_number(&right, rbuf, sizeof(rbuf));
-                        rs = rbuf; rlen = (int)strlen(rbuf);
-                    }
-                    int total = llen + rlen;
-                    char *buf = malloc(total + 1);
-                    if (!buf) { err = ERR_OUT_OF_MEMORY; break; }
-                    memcpy(buf, ls, llen);
-                    memcpy(buf + llen, rs, rlen);
-                    buf[total] = '\0';
-                    *out = val_string(buf, total);
-                    free(buf);
-                    break;
-                }
-                case OP_SUB:  err = val_sub(&left, &right, out); break;
-                case OP_MUL:  err = val_mul(&left, &right, out); break;
-                case OP_DIV:  err = val_div(&left, &right, out); break;
-                case OP_IDIV: err = val_idiv(&left, &right, out); break;
-                case OP_MOD:  err = val_mod(&left, &right, out); break;
-                case OP_POW:  err = val_pow(&left, &right, out); break;
-                case OP_AND: case OP_OR: case OP_XOR: case OP_IMP: case OP_EQV: {
-                    int il, ir;
-                    err = val_to_integer(&left, &il);
-                    if (err == ERR_NONE) err = val_to_integer(&right, &ir);
-                    if (err == ERR_NONE) {
-                        if (e->binary.op == OP_AND) *out = val_integer(il & ir);
-                        else if (e->binary.op == OP_OR) *out = val_integer(il | ir);
-                        else if (e->binary.op == OP_XOR) *out = val_integer(il ^ ir);
-                        else if (e->binary.op == OP_IMP) *out = val_integer(~il | ir);
-                        else *out = val_integer(~(il ^ ir));
-                        /* a LONG operand (or one past 16 bits) makes a LONG */
-                        if (left.type == VAL_LONG || right.type == VAL_LONG ||
-                            !INT16_OK(il) || !INT16_OK(ir))
-                            out->type = VAL_LONG;
-                    }
-                    break;
-                }
-                default:      err = ERR_INTERNAL; break;
-            }
+            err = eval_binary_in(e->binary.op, &left, &right, out);
             val_clear(&left);
             val_clear(&right);
             return err;
@@ -539,24 +572,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 val_clear(&left);
                 return err;
             }
-            int cmp;
-            err = val_compare(&left, &right, &cmp);
+            err = eval_compare_in(e->compare.op, &left, &right, out);
             val_clear(&left);
             val_clear(&right);
-            if (err != ERR_NONE) return err;
-
-            int result;
-            switch (e->compare.op) {
-                case CMP_EQ: result = (cmp == 0); break;
-                case CMP_NE: result = (cmp != 0); break;
-                case CMP_LT: result = (cmp < 0); break;
-                case CMP_GT: result = (cmp > 0); break;
-                case CMP_LE: result = (cmp <= 0); break;
-                case CMP_GE: result = (cmp >= 0); break;
-                default:     result = 0; break;
-            }
-            *out = val_integer(result ? -1 : 0);
-            return ERR_NONE;
+            return err;
         }
 
         case EXPR_CALL: {
@@ -1123,7 +1142,7 @@ static error_t exec_print_using_expr(env_t *env, stmt_t *s) {
  * the last one (column 56 of 80) it is a new line; a file has no width
  * (QBasic 1.1, checked). */
 #define PRINT_ZONE 14
-static void print_comma(int width) {
+void print_comma(int width) {
     char buf[PRINT_ZONE + 1];
     int col = *active_print_col;
     int next = (col / PRINT_ZONE + 1) * PRINT_ZONE;
@@ -1151,6 +1170,38 @@ static void print_fit(int len, int width) {
 
 /* The items of PRINT, LPRINT or PRINT #, to col_output_fp; width is the
  * line's, 0 for a file */
+/* One PRINT item's value; tab_spc when it was TAB() or SPC(), which
+ * place rather than fit */
+error_t print_value(const value_t *v, int tab_spc, int width) {
+    switch (v->type) {
+        case VAL_INTEGER:
+        case VAL_LONG:
+        case VAL_DOUBLE:
+        case VAL_SINGLE: {
+            /* a space or the minus sign before, a space after */
+            char buf[64], item[72];
+            EVAL_CHECK(val_check_range(v));
+            val_format_number(v, buf, sizeof(buf));
+            snprintf(item, sizeof(item), "%s%s ", buf[0] == '-' ? "" : " ", buf);
+            print_fit((int)strlen(item), width);
+            col_puts(item);
+            break;
+        }
+        case VAL_STRING:
+            if (!tab_spc)
+                print_fit(v->sval->len, width);
+            col_puts(v->sval->data);
+            break;
+        case VAL_RECORD:
+            break;
+    }
+    return ERR_NONE;
+}
+
+void print_text(const char *s) {
+    col_puts(s);
+}
+
 static error_t print_items(env_t *env, print_item_t *items, int nitems, int width) {
     int needs_newline = 1;
     for (int i = 0; i < nitems; i++) {
@@ -1158,30 +1209,9 @@ static error_t print_items(env_t *env, print_item_t *items, int nitems, int widt
         if (item->expr) {
             value_t v;
             EVAL_CHECK(eval_expr(env, item->expr, &v));
-            switch (v.type) {
-                case VAL_INTEGER:
-                case VAL_LONG:
-                case VAL_DOUBLE:
-                case VAL_SINGLE: {
-                    /* a space or the minus sign before, a space after */
-                    char buf[64], item[72];
-                    error_t rerr = val_check_range(&v);
-                    if (rerr != ERR_NONE) return rerr;
-                    val_format_number(&v, buf, sizeof(buf));
-                    snprintf(item, sizeof(item), "%s%s ", buf[0] == '-' ? "" : " ", buf);
-                    print_fit((int)strlen(item), width);
-                    col_puts(item);
-                    break;
-                }
-                case VAL_STRING:
-                    if (!is_tab_spc(item->expr))  /* TAB and SPC place, not fit */
-                        print_fit(v.sval->len, width);
-                    col_puts(v.sval->data);
-                    break;
-                case VAL_RECORD:
-                    break;
-            }
+            error_t perr = print_value(&v, is_tab_spc(item->expr), width);
             val_clear(&v);
+            if (perr != ERR_NONE) return perr;
         }
         if (item->sep == ';') {
             needs_newline = 0;
@@ -1544,18 +1574,25 @@ static int lvalue_is_const(env_t *env, expr_t *e) {
     return 0;
 }
 
-static error_t exec_assign(env_t *env, stmt_t *s) {
-    if (env_is_const(env, s->assign.name))
+/* X = e, before e is evaluated: X is no CONST, and under OPTION EXPLICIT
+ * it exists */
+error_t eval_assign_check(env_t *env, const char *name) {
+    if (env_is_const(env, name))
         return ERR_CONST_REASSIGN;
-
-    /* OPTION EXPLICIT: variable must already exist */
-    if (option_explicit && !env_exists(env, s->assign.name))
+    if (option_explicit && !env_exists(env, name))
         return ERR_UNDEFINED_VAR;
+    return ERR_NONE;
+}
 
+error_t eval_assign_store(env_t *env, const char *name, const value_t *v) {
+    return store_into(env_get(env, name), v);
+}
+
+static error_t exec_assign(env_t *env, stmt_t *s) {
+    EVAL_CHECK(eval_assign_check(env, s->assign.name));
     value_t v;
     EVAL_CHECK(eval_expr(env, s->assign.value, &v));
-
-    error_t err = store_into(env_get(env, s->assign.name), &v);
+    error_t err = eval_assign_store(env, s->assign.name, &v);
     val_clear(&v);
     return err;
 }
@@ -1780,6 +1817,39 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
                          sizes, s->dim_stmt.ndims, option_base);
 }
 
+/* A(i, ...) = v, the subscripts and the value evaluated (an array not
+ * DIMmed yet is made) */
+error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v) {
+    sb_array_t *arr = array_find(name);
+    value_t *slot;
+    if (!arr)
+        arr = array_implicit(name, nidx);
+    if (!arr)
+        return ERR_UNDEFINED_VAR;
+    EVAL_CHECK(array_get(name, indices, nidx, &slot));
+    return store_into(slot, v);
+}
+
+/* The array an expression name(args) reads, when that is what it does
+ * (no FUNCTION or DEF FN of the name, and the array exists); NULL
+ * otherwise -- the interpreter's own route then decides */
+sb_array_t *eval_call_array(const char *name) {
+    proc_entry_t *proc = find_proc(name);
+    if (proc && (proc->def->type == STMT_FUNC_DEF || proc->def->type == STMT_DEF_FN))
+        return NULL;
+    return array_find(name);
+}
+
+/* arr(indices), an array eval_call_array gave */
+error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out) {
+    value_t *elem;
+    if (nidx != arr->ndims)
+        return ERR_WRONG_DIMS;
+    EVAL_CHECK(array_get(arr->name, indices, nidx, &elem));
+    *out = val_copy(elem);
+    return ERR_NONE;
+}
+
 static error_t exec_array_assign(env_t *env, stmt_t *s) {
     int indices[MAX_ARRAY_DIMS];
     for (int i = 0; i < s->array_assign.nindices; i++) {
@@ -1792,21 +1862,7 @@ static error_t exec_array_assign(env_t *env, stmt_t *s) {
 
     value_t v;
     EVAL_CHECK(eval_expr(env, s->array_assign.value, &v));
-
-    /* Coerce to array element type */
-    sb_array_t *arr = array_find(s->array_assign.name);
-    if (!arr)
-        arr = array_implicit(s->array_assign.name, s->array_assign.nindices);
-    if (!arr) {
-        val_clear(&v);
-        return ERR_UNDEFINED_VAR;
-    }
-
-    value_t *slot;
-    error_t err = array_get(s->array_assign.name, indices,
-                            s->array_assign.nindices, &slot);
-    if (err == ERR_NONE)
-        err = store_into(slot, &v);
+    error_t err = eval_array_store(s->array_assign.name, s->array_assign.nindices, indices, &v);
     val_clear(&v);
     return err;
 }
@@ -2446,10 +2502,16 @@ static error_t exec_mid_assign(env_t *env, stmt_t *s) {
 
 /* --- Statement dispatch --- */
 
-error_t eval_stmt(env_t *env, stmt_t *s) {
+/* TRACE ON's [line] before a statement */
+void eval_trace(const stmt_t *s) {
     if (trace_enabled && s->type != STMT_REM && s->type != STMT_LABEL
         && s->type != STMT_DATA && s->type != STMT_TRACE)
         col_printf("[%d] ", s->line);
+}
+
+error_t eval_stmt(env_t *env, stmt_t *s) {
+    if (trace_enabled)
+        eval_trace(s);
     switch (s->type) {
         case STMT_PRINT:        return exec_print(env, s);
         case STMT_LPRINT:       return exec_lprint(env, s);
@@ -3135,6 +3197,13 @@ error_t act_step(act_t *a, int *ppc) {
     return act_step_in(a, ppc);
 }
 
+error_t act_gosub(act_t *a, int return_pc) {
+    (void)a;
+    if (gosub_top >= MAX_GOSUB_DEPTH) return ERR_STACK_OVERFLOW;
+    gosub_stack[gosub_top++] = return_pc;
+    return ERR_NONE;
+}
+
 int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
     int pc = *ppc;
     op_t *op = &a->c->ops[pc];
@@ -3293,4 +3362,16 @@ cleanup:
     }
     sb_term_shutdown();
     return result;
+}
+
+error_t eval_unary(unaryop_t op, value_t *operand, value_t *out) {
+    return eval_unary_in(op, operand, out);
+}
+
+error_t eval_binary(binop_t op, value_t *left, value_t *right, value_t *out) {
+    return eval_binary_in(op, left, right, out);
+}
+
+error_t eval_compare(cmpop_t op, value_t *left, value_t *right, value_t *out) {
+    return eval_compare_in(op, left, right, out);
 }

@@ -10,8 +10,9 @@
  * source is embedded; at run time the runtime lowers it again, by the
  * same code, and the C checks it has the ops it was written from.
  *
- * Milestone 0: the pipeline.  Every op but a jump is still the
- * executor's; what M1 compiles itself replaces act_step op by op. */
+ * Milestone 1: expressions, assignments, PRINT, IF conditions, GOTO and
+ * GOSUB are C here, calling the interpreter's operations (eval.h); the
+ * rest is still the executor's, op by op. */
 #include "program.h"
 #include "parser.h"
 #include "lower.h"
@@ -49,35 +50,240 @@ static void emit_goto(FILE *out, const code_t *c, int t) {
     else fprintf(out, "goto L%d;", t);
 }
 
+/* --- Expressions: C on temporaries T[], calling the interpreter's
+ * operations.  path is the C that reaches the node at run time (from
+ * the op's statement), for what is not compiled: eval_expr on it. --- */
+
+static int ntemp, maxtemp;
+static int cur_op;
+
+static int new_temp(void) {
+    if (++ntemp > maxtemp) maxtemp = ntemp;
+    return ntemp - 1;
+}
+
+/* a C string literal of n bytes */
+static void emit_cstring(FILE *out, const char *p, int n) {
+    fputc('"', out);
+    for (int i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)p[i];
+        if (ch == '"' || ch == '\\') fprintf(out, "\\%c", ch);
+        else if (ch == '?') fprintf(out, "\\?");
+        else if (ch < 32 || ch >= 127) fprintf(out, "\\%03o", ch);
+        else fputc(ch, out);
+    }
+    fputc('"', out);
+}
+
+#define CHECK "if (err != ERR_NONE) goto fail;"
+
+static int emit_expr(FILE *out, const expr_t *e, const char *path);
+
+/* name(args): an array read when eval_call_array says it is one */
+static int emit_call(FILE *out, const expr_t *e, const char *path, int t) {
+    fprintf(out, "    { sb_array_t *ar = eval_call_array(");
+    emit_cstring(out, e->call.name, (int)strlen(e->call.name));
+    fprintf(out, ");\n      if (ar) { int ix[8];\n");
+    for (int i = 0; i < e->call.nargs; i++) {
+        char sub[1024];
+        snprintf(sub, sizeof sub, "%s->call.args[%d]", path, i);
+        int u = emit_expr(out, e->call.args[i], sub);
+        fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); val_clear(&T[%d]); " CHECK "\n", u, i, u);
+    }
+    fprintf(out, "    err = eval_array_read(ar, %d, ix, &T[%d]); " CHECK " }\n", e->call.nargs, t);
+    fprintf(out, "      else { err = eval_expr(env, %s, &T[%d]); " CHECK " } }\n", path, t);
+    return t;
+}
+
+static int emit_expr(FILE *out, const expr_t *e, const char *path) {
+    int t = new_temp();
+    char l[1024], r[1024];
+    switch (e->type) {
+        case EXPR_LITERAL: {
+            const value_t *v = &e->literal;
+            if (v->type == VAL_INTEGER || v->type == VAL_LONG)
+                fprintf(out, "    T[%d].type = %s; T[%d].ival = %d;\n", t,
+                        v->type == VAL_LONG ? "VAL_LONG" : "VAL_INTEGER", t, v->ival);
+            else if (v->type == VAL_SINGLE || v->type == VAL_DOUBLE)
+                fprintf(out, "    T[%d].type = %s; T[%d].dval = %a;\n", t,
+                        v->type == VAL_DOUBLE ? "VAL_DOUBLE" : "VAL_SINGLE", t, v->dval);
+            else if (v->type == VAL_STRING) {
+                fprintf(out, "    T[%d] = val_string(", t);
+                emit_cstring(out, v->sval->data, v->sval->len);
+                fprintf(out, ", %d);\n", v->sval->len);
+            } else
+                fprintf(out, "    err = eval_expr(env, %s, &T[%d]); " CHECK "\n", path, t);
+            return t;
+        }
+        case EXPR_VARIABLE:
+            fprintf(out, "    err = eval_variable(env, ");
+            emit_cstring(out, e->var.name, (int)strlen(e->var.name));
+            fprintf(out, ", &T[%d]); " CHECK "\n", t);
+            return t;
+        case EXPR_UNARY: {
+            snprintf(l, sizeof l, "%s->unary.operand", path);
+            int u = emit_expr(out, e->unary.operand, l);
+            fprintf(out, "    err = eval_unary(%d, &T[%d], &T[%d]); val_clear(&T[%d]); " CHECK "\n",
+                    (int)e->unary.op, u, t, u);
+            return t;
+        }
+        case EXPR_BINARY:
+        case EXPR_COMPARE: {
+            int bin = e->type == EXPR_BINARY;
+            snprintf(l, sizeof l, "%s->%s.left", path, bin ? "binary" : "compare");
+            snprintf(r, sizeof r, "%s->%s.right", path, bin ? "binary" : "compare");
+            int u = emit_expr(out, bin ? e->binary.left : e->compare.left, l);
+            int w = emit_expr(out, bin ? e->binary.right : e->compare.right, r);
+            fprintf(out, "    err = eval_%s(%d, &T[%d], &T[%d], &T[%d]); val_clear(&T[%d]); val_clear(&T[%d]); " CHECK "\n",
+                    bin ? "binary" : "compare", bin ? (int)e->binary.op : (int)e->compare.op,
+                    u, w, t, u, w);
+            return t;
+        }
+        case EXPR_CALL:
+            if (e->call.nargs >= 1 && e->call.nargs <= 8)
+                return emit_call(out, e, path, t);
+            /* fall through */
+        default:
+            fprintf(out, "    err = eval_expr(env, %s, &T[%d]); " CHECK "\n", path, t);
+            return t;
+    }
+}
+
+/* --- Statements --- */
+
+static void emit_preamble(FILE *out, const op_t *op, int k) {
+    fprintf(out, "    pc = %d; cur_basic_line = %d; if (trace_enabled) eval_trace(c->ops[%d].s);\n",
+            k, op->basic_line, k);
+}
+
+/* a statement compiled here: 1, or 0 for the executor's */
+static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
+    const stmt_t *s = op->s;
+    char path[1024];
+    switch (s->type) {
+        case STMT_ASSIGN: {
+            emit_preamble(out, op, k);
+            fprintf(out, "    err = eval_assign_check(env, ");
+            emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
+            fprintf(out, "); " CHECK "\n");
+            snprintf(path, sizeof path, "c->ops[%d].s->assign.value", k);
+            int t = emit_expr(out, s->assign.value, path);
+            fprintf(out, "    err = eval_assign_store(env, ");
+            emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
+            fprintf(out, ", &T[%d]); val_clear(&T[%d]); " CHECK "\n", t, t);
+            return 1;
+        }
+        case STMT_ARRAY_ASSIGN: {
+            int n = s->array_assign.nindices;
+            emit_preamble(out, op, k);
+            fprintf(out, "    { int ix[8];\n");
+            for (int i = 0; i < n; i++) {
+                snprintf(path, sizeof path, "c->ops[%d].s->array_assign.indices[%d]", k, i);
+                int u = emit_expr(out, s->array_assign.indices[i], path);
+                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); val_clear(&T[%d]); " CHECK "\n", u, i, u);
+            }
+            snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
+            int t = emit_expr(out, s->array_assign.value, path);
+            fprintf(out, "    err = eval_array_store(");
+            emit_cstring(out, s->array_assign.name, (int)strlen(s->array_assign.name));
+            fprintf(out, ", %d, ix, &T[%d]); val_clear(&T[%d]); " CHECK " }\n", n, t, t);
+            return 1;
+        }
+        case STMT_PRINT: {
+            if (s->print.using_fmt || s->print.using_expr) return 0;
+            int nl = 1;
+            emit_preamble(out, op, k);
+            for (int i = 0; i < s->print.nitems; i++) {
+                const print_item_t *it = &s->print.items[i];
+                if (it->expr) {
+                    snprintf(path, sizeof path, "c->ops[%d].s->print.items[%d].expr", k, i);
+                    int t = emit_expr(out, it->expr, path);
+                    int tabspc = it->expr->type == EXPR_CALL &&
+                        (strcmp(it->expr->call.name, "TAB") == 0 || strcmp(it->expr->call.name, "SPC") == 0);
+                    fprintf(out, "    err = print_value(&T[%d], %d, console_width); val_clear(&T[%d]); " CHECK "\n",
+                            t, tabspc, t);
+                }
+                if (it->sep == ';') nl = 0;
+                else if (it->sep == ',') { fprintf(out, "    print_comma(console_width);\n"); nl = 0; }
+                else nl = 1;
+            }
+            if (nl) fprintf(out, "    print_text(\"\\n\");\n");
+            return 1;
+        }
+        case STMT_GOTO:
+        case STMT_GOSUB: {
+            int t = code_find_label(c, s->goto_stmt.label);
+            if (t < 0) return 0;                /* the executor's error */
+            emit_preamble(out, op, k);
+            if (s->type == STMT_GOSUB)
+                fprintf(out, "    err = act_gosub(&a, %d); " CHECK "\n", k + 1);
+            fprintf(out, "    ");
+            emit_goto(out, c, t);
+            fprintf(out, "\n");
+            return 1;
+        }
+        default:
+            return 0;
+    }
+}
+
 static void emit_main(FILE *out, const code_t *c) {
-    fprintf(out,
-            "static error_t sbc_main(env_t *env, code_t *c) {\n"
-            "    act_t a;\n"
-            "    error_t err, result = act_begin(&a, env, c, 1);\n"
-            "    int pc = 0;\n"
-            "    if (result != ERR_NONE) return result;\n");
+    char *body = NULL;
+    size_t blen = 0;
+    FILE *b = open_memstream(&body, &blen);
+    ntemp = maxtemp = 0;
     for (int k = 0; k < c->nops; k++) {
         const op_t *op = &c->ops[k];
-        fprintf(out, "L%d:", k);
+        cur_op = k;
+        ntemp = 0;
+        fprintf(b, "L%d:\n", k);
         if (op->kind == OP_JUMP) {
-            fprintf(out, " ");
-            emit_goto(out, c, op->target);
-            fprintf(out, "\n");
+            fprintf(b, "    ");
+            emit_goto(b, c, op->target);
+            fprintf(b, "\n");
             continue;
         }
-        fprintf(out, " pc = %d; if ((err = act_step(&a, &pc)) != ERR_NONE) goto fail;", k);
+        if (op->kind == OP_JFALSE) {
+            char path[64];
+            snprintf(path, sizeof path, "c->ops[%d].cond", k);
+            fprintf(b, "    pc = %d;\n", k);
+            int t = emit_expr(b, op->cond, path);
+            fprintf(b, "    { int y = val_is_true(&T[%d]); val_clear(&T[%d]);\n      if (y %s 0) ",
+                    t, t, op->invert ? "==" : "!=");
+            emit_goto(b, c, k + 1);
+            fprintf(b, " else ");
+            emit_goto(b, c, op->target);
+            fprintf(b, " }\n");
+            continue;
+        }
+        if (op->kind == OP_STMT && emit_stmt(b, c, op, k))
+            continue;
+        fprintf(b, "    pc = %d; if ((err = act_step(&a, &pc)) != ERR_NONE) goto fail;", k);
         /* a simple statement goes on to the next op; anything else to
          * whichever op it chose */
         if (op->kind != OP_STMT)
-            fprintf(out, " if (pc != %d) goto dispatch;", k + 1);
-        fprintf(out, "\n");
+            fprintf(b, " if (pc != %d) goto dispatch;", k + 1);
+        fprintf(b, "\n");
     }
+    fclose(b);
+    if (maxtemp == 0) maxtemp = 1;
+    fprintf(out,
+            "static error_t sbc_main(env_t *env, code_t *c) {\n"
+            "    act_t a;\n"
+            "    value_t T[%d];\n"
+            "    error_t err, result = act_begin(&a, env, c, 1);\n"
+            "    int pc = 0;\n"
+            "    memset(T, 0, sizeof T);\n"
+            "    if (result != ERR_NONE) return result;\n", maxtemp);
+    fwrite(body, 1, blen, out);
+    free(body);
     fprintf(out,
             "    goto done;\n"
             "fail:\n"
+            "    for (int i = 0; i < %d; i++) val_clear(&T[i]);\n"
             "    if (!act_transfer(&a, err, &pc, &result)) goto done;\n"
             "dispatch:\n"
-            "    switch (pc) {\n");
+            "    switch (pc) {\n", maxtemp);
     for (int k = 0; k < c->nops; k++)
         fprintf(out, "    case %d: goto L%d;\n", k, k);
     fprintf(out,
@@ -126,7 +332,7 @@ int main(int argc, char **argv) {
 
     FILE *out = fopen(outpath, "w");
     if (!out) { fprintf(stderr, "s32-sbc: cannot write %s\n", outpath); return 1; }
-    fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n\n", in);
+    fprintf(out, "/* generated by s32-sbc from %s */\n#include \"sbcrt.h\"\n#include <string.h>\n\n", in);
     emit_source(out, text);
     emit_main(out, c);
     fprintf(out,
