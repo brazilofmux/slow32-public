@@ -46,9 +46,24 @@ static void emit_source(FILE *out, const char *text) {
 }
 
 /* the label of op t; the end of the unit is "done" */
+/* the jumps written while a unit's ops are (emit_unit splits the ops
+ * into chunks, and a jump out of a chunk needs a stub there) */
+static int gt_rec, *gt_from, *gt_to, ngt, capgt;
+static int cur_op;
+
 static void emit_goto(FILE *out, const code_t *c, int t) {
-    if (t >= c->nops || t < 0) fprintf(out, "goto done;");
-    else fprintf(out, "goto L%d;", t);
+    if (t >= c->nops || t < 0) { fprintf(out, "goto done;"); return; }
+    fprintf(out, "goto L%d;", t);
+    if (gt_rec) {
+        if (ngt == capgt) {
+            capgt = capgt ? capgt * 2 : 256;
+            gt_from = realloc(gt_from, capgt * sizeof *gt_from);
+            gt_to = realloc(gt_to, capgt * sizeof *gt_to);
+        }
+        gt_from[ngt] = cur_op;
+        gt_to[ngt] = t;
+        ngt++;
+    }
 }
 
 /* --- Expressions: C on temporaries T[], calling the interpreter's
@@ -56,7 +71,6 @@ static void emit_goto(FILE *out, const code_t *c, int t) {
  * the op's statement), for what is not compiled: eval_expr on it. --- */
 
 static int ntemp, maxtemp;
-static int cur_op;
 
 /* the variables named, each with a cached pointer to its value (V[i],
  * good while VG[i] == env_generation) */
@@ -1743,10 +1757,15 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
     nvars = 0;
     for (int i = 0; i < narrs; i++) free(arrs[i]);
     narrs = 0;
+    long *off = malloc((size_t)(c->nops + 1) * sizeof *off);
+    ngt = 0;
+    gt_rec = 1;
     for (int k = 0; k < c->nops; k++) {
         const op_t *op = &c->ops[k];
         cur_op = k;
         ntemp = 0;
+        fflush(b);
+        off[k] = (long)blen;
         fprintf(b, "L%d:\n", k);
         if (op->kind == OP_JUMP) {
             fprintf(b, "    ");
@@ -1823,43 +1842,90 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
         fprintf(b, "\n");
     }
     fclose(b);
+    gt_rec = 0;
+    off[c->nops] = (long)blen;
     if (maxtemp == 0) maxtemp = 1;
+    /* The ops, cut into chunks of about chunk_bytes of C, each its own
+     * function: one function of a whole program's ops is more than a
+     * compiler that keeps a table per instruction can hold (stage08 ran
+     * out on the larger games).  The unit's locals are a frame the
+     * chunks share (F, the names #defined over it, so the ops' C is as
+     * it was); a jump within a chunk is a goto, one out of it a stub
+     * that sets pc and returns to the unit's dispatch, which calls the
+     * chunk holding pc.  S32SBC_CHUNK sets the size; 0, one chunk. */
+    long chunk_bytes = 32768;
+    { const char *e = getenv("S32SBC_CHUNK"); if (e) chunk_bytes = atol(e); }
+    int *chunk = malloc((size_t)(c->nops ? c->nops : 1) * sizeof *chunk), nchunks = 0;
+    int *cstart = malloc((size_t)(c->nops + 1) * sizeof *cstart);
+    for (int k = 0; k < c->nops; k++) {
+        if (k == 0 || (chunk_bytes > 0 && off[k] - off[cstart[nchunks - 1]] >= chunk_bytes))
+            cstart[nchunks++] = k;
+        chunk[k] = nchunks - 1;
+    }
+    cstart[nchunks] = c->nops;
+    fprintf(out, "struct %s_f {\n    act_t a;\n    value_t T[%d];\n    value_t *V[%d];\n    unsigned VG[%d];\n"
+                 "    sb_array_t *AR[%d];\n    unsigned AG[%d];\n    env_t *env;\n    code_t *c;\n"
+                 "    int pc;\n    error_t err, result;\n};\n",
+            fname, maxtemp, nvars ? nvars : 1, nvars ? nvars : 1, narrs ? narrs : 1, narrs ? narrs : 1);
+    fprintf(out, "#define a (F->a)\n#define T (F->T)\n#define V (F->V)\n#define VG (F->VG)\n#define AR (F->AR)\n"
+                 "#define AG (F->AG)\n#define env (F->env)\n#define c (F->c)\n#define pc (F->pc)\n"
+                 "#define err (F->err)\n#define result (F->result)\n");
+    char *seen = calloc((size_t)(c->nops ? c->nops : 1), 1);
+    for (int j = 0; j < nchunks; j++) {
+        int k0 = cstart[j], k1 = cstart[j + 1];
+        /* returns 0 done, 1 dispatch (pc set), 2 failed (err set) */
+        fprintf(out, "static int %s_c%d(struct %s_f *F) {\n    switch (pc) {\n", fname, j, fname);
+        for (int k = k0; k < k1; k++) fprintf(out, "    case %d: goto L%d;\n", k, k);
+        fprintf(out, "    default: goto dispatch;\n    }\n");
+        fwrite(body + off[k0], 1, (size_t)(off[k1] - off[k0]), out);
+        if (k1 < c->nops) fprintf(out, "    pc = %d; goto dispatch;\n", k1);
+        else fprintf(out, "    goto done;\n");
+        memset(seen, 0, (size_t)c->nops);
+        for (int g = 0; g < ngt; g++)
+            if (gt_from[g] >= k0 && gt_from[g] < k1 && (gt_to[g] < k0 || gt_to[g] >= k1) && !seen[gt_to[g]]) {
+                seen[gt_to[g]] = 1;
+                fprintf(out, "L%d: pc = %d; goto dispatch;\n", gt_to[g], gt_to[g]);
+            }
+        fprintf(out, "fail: return 2;\ndispatch: return 1;\ndone: return 0;\n}\n");
+    }
+    fprintf(out, "#undef a\n#undef T\n#undef V\n#undef VG\n#undef AR\n#undef AG\n#undef env\n#undef c\n"
+                 "#undef pc\n#undef err\n#undef result\n");
+    fprintf(out, "static int (*const %s_cf[])(struct %s_f *) = {", fname, fname);
+    for (int j = 0; j < nchunks; j++) fprintf(out, "%s %s_c%d", j ? "," : "", fname, j);
+    fprintf(out, " };\nstatic const int %s_ck[] = {", fname);
+    for (int k = 0; k < c->nops; k++) fprintf(out, "%s%s%d", k ? "," : "", k % 20 ? " " : "\n    ", chunk[k]);
+    if (!c->nops) fprintf(out, " 0");
+    fprintf(out, " };\n");
     fprintf(out,
             "static error_t %s(env_t *env, code_t *c) {\n"
-            "    act_t a;\n"
-            "    value_t T[%d];\n"
-            "    value_t *V[%d];\n"
-            "    unsigned VG[%d];\n"
-            "    sb_array_t *AR[%d];\n"
-            "    unsigned AG[%d];\n"
-            "    error_t err, result = act_begin(&a, env, c, %d);\n"
-            "    int pc = 0;\n"
-            "    memset(T, 0, sizeof T);\n"
-            "    memset(V, 0, sizeof V);\n"
-            "    memset(VG, 0, sizeof VG);\n"
-            "    memset(AR, 0, sizeof AR);\n"
-            "    memset(AG, 0xff, sizeof AG);\n"
-            "    if (result != ERR_NONE) return result;\n",
-            fname, maxtemp, nvars ? nvars : 1, nvars ? nvars : 1,
-            narrs ? narrs : 1, narrs ? narrs : 1, is_main);
-    fwrite(body, 1, blen, out);
-    free(body);
-    fprintf(out,
-            "    goto done;\n"
-            "fail:\n"
-            "    for (int i = 0; i < %d; i++) VAL_CLEAR(&T[i]);\n"
-            "    if (!act_transfer(&a, err, &pc, &result)) goto done;\n"
-            "dispatch:\n"
-            "    switch (pc) {\n", maxtemp);
-    for (int k = 0; k < c->nops; k++)
-        fprintf(out, "    case %d: goto L%d;\n", k, k);
-    fprintf(out,
-            "    default: goto done;\n"
+            "    struct %s_f FR;\n"
+            "    FR.env = env;\n"
+            "    FR.c = c;\n"
+            "    FR.result = act_begin(&FR.a, env, c, %d);\n"
+            "    memset(FR.T, 0, sizeof FR.T);\n"
+            "    memset(FR.V, 0, sizeof FR.V);\n"
+            "    memset(FR.VG, 0, sizeof FR.VG);\n"
+            "    memset(FR.AR, 0, sizeof FR.AR);\n"
+            "    memset(FR.AG, 0xff, sizeof FR.AG);\n"
+            "    if (FR.result != ERR_NONE) return FR.result;\n"
+            "    FR.pc = 0;\n"
+            "    while (FR.pc >= 0 && FR.pc < %d) {\n"
+            "        int r = %s_cf[%s_ck[FR.pc]](&FR);\n"
+            "        if (r == 0) break;\n"
+            "        if (r == 2) {\n"
+            "            for (int i = 0; i < %d; i++) VAL_CLEAR(&FR.T[i]);\n"
+            "            if (!act_transfer(&FR.a, FR.err, &FR.pc, &FR.result)) break;\n"
+            "        }\n"
             "    }\n"
-            "done:\n"
-            "    act_end(&a);\n"
-            "    return result;\n"
-            "}\n\n");
+            "    act_end(&FR.a);\n"
+            "    return FR.result;\n"
+            "}\n\n",
+            fname, fname, is_main, c->nops, fname, fname, maxtemp);
+    free(body);
+    free(off);
+    free(chunk);
+    free(cstart);
+    free(seen);
 }
 
 int main(int argc, char **argv) {

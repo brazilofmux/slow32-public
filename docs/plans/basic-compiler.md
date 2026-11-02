@@ -123,6 +123,13 @@ the oracle.
   rounding.  7.5M values formatted identically before and after (host
   differential; infinities, which every caller range-checks first,
   aside).  The 97 games: interpreted 470M, compiled 146M (3.22x).
+- **Chunks, stage08 (2026-11-02):** a unit's ops are chunk functions of
+  ~32KB of C sharing a frame (locals #defined over it), jumps out of a
+  chunk through the unit's dispatch.  stage08 cc builds all 97 games
+  (it compiled 31 before 24d11fa4/f5855539 and this), each printing what
+  its clang build prints; the clang builds cost ~3% (150.7M against
+  146M; 64KB chunks are 148.8M, 128KB exceed stage08's instruction
+  table on two games).  The way to slow32:basic on the xbase pattern.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

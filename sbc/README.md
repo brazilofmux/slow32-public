@@ -59,8 +59,17 @@ string are shared, not allocated (`string_char`, interpreter too).  The 97 games
 964M instructions interpreted, 506M compiled; Mastermind 364M against
 68M.
 
+A unit's ops are written as chunk functions of about 32KB of C each
+(S32SBC_CHUNK sets the size; 0 is one function), sharing a frame of the
+unit's locals: a jump within a chunk is a goto, one out of it returns to
+the unit's dispatch.  One function of a whole program's ops was more than
+stage08 cc can compile (it keeps a table per HIR instruction), and the
+chunks are what lets the self-hosted kit build these programs: all 97
+games build with stage08 and print what the clang builds print.
+
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted
+S32SBC_CHUNK=1 python3 tests/fuzz.py -n 300   # every op its own chunk: every jump crosses one
 ```
 
 `tests/fuzz.py` generates programs of random arithmetic over edge values
