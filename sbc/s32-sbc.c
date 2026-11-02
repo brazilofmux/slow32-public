@@ -1155,6 +1155,14 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
     }
 }
 
+/* a PRINT item TAB(n) or SPC(n), the builtin (name(args) is a FUNCTION
+ * or an array before a builtin) */
+static int print_tab_item(const expr_t *e) {
+    return e->type == EXPR_CALL && e->call.nargs == 1 &&
+           (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0) &&
+           !is_array_name(e->call.name) && proc_index(e->call.name) < 0;
+}
+
 /* the guard: each variable cached and of its predicted type; each array
  * there (as eval_call_array finds it), of its predicted element type,
  * with as many dimensions as it is given subscripts */
@@ -1569,19 +1577,37 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             uses_t u;
             int native = s->print.nitems > 0;
             u.nv = u.na = u.nf = 0;
-            for (int i = 0; native && i < s->print.nitems; i++)
-                if (s->print.items[i].expr) {
-                    if (nat_type(s->print.items[i].expr) == N_NONE) native = 0;
-                    else nat_uses(s->print.items[i].expr, &u);
-                }
-            if (native && (u.nv || u.na) && u.nv <= 64 && u.na <= 16) {
+            for (int i = 0; native && i < s->print.nitems; i++) {
+                const expr_t *x = s->print.items[i].expr;
+                if (!x) continue;
+                if (print_tab_item(x)) {
+                    /* TAB(n), SPC(n): n native and numeric */
+                    int at = nat_type(x->call.args[0]);
+                    if (at == N_NONE || at == N_STRING) native = 0;
+                    else nat_uses(x->call.args[0], &u);
+                } else if (nat_type(x) == N_NONE) native = 0;
+                else nat_uses(x, &u);
+            }
+            native = native && u.nv <= 64 && u.na <= 16;
+            if (native) {
                 nat_guard(out, &u);
                 fprintf(out, ") {\n");
                 fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
                 cur_uses = &u;
                 for (int i = 0; i < s->print.nitems; i++) {
                     const print_item_t *it = &s->print.items[i];
-                    if (it->expr) {
+                    if (it->expr && print_tab_item(it->expr)) {
+                        /* the argument converted as val_to_integer
+                         * converts it, the spaces written */
+                        char x[32];
+                        int at = nat_emit(out, it->expr->call.args[0], x);
+                        fprintf(out, "    { int tn;\n");
+                        if (nat_is_float(at))
+                            fprintf(out, "      err = val_int_of(%s, &tn); " CHECK "\n", x);
+                        else
+                            fprintf(out, "      tn = (int)%s;\n", x);
+                        fprintf(out, "      print_tab_spc(%d, tn); }\n", it->expr->call.name[0] == 'S');
+                    } else if (it->expr) {
                         char x[32];
                         int t = nat_emit(out, it->expr, x);
                         int tabspc = it->expr->type == EXPR_CALL &&
@@ -1615,7 +1641,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                 else nl = 1;
             }
             if (nl) fprintf(out, "    print_text(\"\\n\");\n");
-            if (native && (u.nv || u.na) && u.nv <= 64 && u.na <= 16) fprintf(out, "L%d_done:;\n", k);
+            if (native) fprintf(out, "L%d_done:;\n", k);
             return 1;
         }
         case STMT_CALL: {

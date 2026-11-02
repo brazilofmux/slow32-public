@@ -105,6 +105,11 @@ the oracle.
 - **RND (2026-11-02):** RND(n) is native, through `sb_rnd_of` (the
   generator's one entry, fn_rnd's too); 66 of the 97 games use it.  The
   97 games compiled 196M.
+- **PRINT's TAB and SPC (2026-11-02):** a PRINT item TAB(n) or SPC(n)
+  is native, `print_tab_spc` writing the spaces without a string (the
+  column arithmetic `sb_tab_spaces`/`sb_spc_spaces`, fn_tab's and
+  fn_spc's too); a PRINT of literals alone is native, so its strings are
+  made once.  Checkers 11.5M -> 8.1M; the 97 games compiled 186M.
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

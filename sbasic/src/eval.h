@@ -105,6 +105,7 @@ error_t eval_arg_check(const char *name, void **cache, int i, const value_t *ref
 error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out);
 error_t print_value(const value_t *v, int tab_spc, int width);
 void print_comma(int width);
+void print_tab_spc(int is_spc, int n);
 void print_text(const char *s);
 extern int console_width;
 

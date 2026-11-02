@@ -18,6 +18,10 @@ error_t sb_left(sb_string_t *s, int n, value_t *out);
 error_t sb_right(sb_string_t *s, int n, value_t *out);
 error_t sb_mid(sb_string_t *s, int start, int count, int has_count, value_t *out);
 
+/* TAB(n)'s spaces from PRINT's column (*nl: a new line first), SPC(n)'s */
+int sb_tab_spaces(int n, int *nl);
+int sb_spc_spaces(int n);
+
 /* RND(n) (has_n 0: RND), a single's value */
 double sb_rnd_of(double n, int has_n);
 

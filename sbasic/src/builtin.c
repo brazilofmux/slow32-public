@@ -968,21 +968,34 @@ static error_t fn_time_str(value_t *args, int nargs, value_t *out) {
 }
 
 /* TAB(n): to column n (1-based); a column already passed is on the next
- * line, and n below 1 is 1 (QuickBASIC, GW-BASIC) */
-static error_t fn_tab(value_t *args, int nargs, value_t *out) {
-    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    int n, nl = 0;
-    EVAL_CHECK(val_to_integer(&args[0], &n));
-    {
-        extern int print_col;   /* on the screen, past the width wraps */
-        if (active_print_col == &print_col && console_width > 0 && n > console_width)
-            n = (n - 1) % console_width + 1;
-    }
+ * line, and n below 1 is 1 (QuickBASIC, GW-BASIC).  The spaces it
+ * writes from the column PRINT is at, *nl when a new line comes first
+ * (PRINT's own TAB writes them without a string: eval.c print_tab_spc) */
+int sb_tab_spaces(int n, int *nl) {
+    extern int print_col;   /* on the screen, past the width wraps */
+    if (active_print_col == &print_col && console_width > 0 && n > console_width)
+        n = (n - 1) % console_width + 1;
     if (n < 1) n = 1;
     n--;  /* convert 1-based column to 0-based */
     int spaces = n - *active_print_col;
-    if (spaces < 0) { nl = 1; spaces = n; }
+    *nl = 0;
+    if (spaces < 0) { *nl = 1; spaces = n; }
     if (spaces > MAX_STRING_LEN - 1) spaces = MAX_STRING_LEN - 1;
+    return spaces;
+}
+
+/* SPC(n)'s spaces */
+int sb_spc_spaces(int n) {
+    if (n < 0) n = 0;
+    if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
+    return n;
+}
+
+static error_t fn_tab(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int n, nl;
+    EVAL_CHECK(val_to_integer(&args[0], &n));
+    int spaces = sb_tab_spaces(n, &nl);
     char *buf = malloc(spaces + 2);
     if (!buf) return ERR_OUT_OF_MEMORY;
     if (nl) buf[0] = '\n';
@@ -1090,8 +1103,7 @@ static error_t fn_spc(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     int n;
     EVAL_CHECK(val_to_integer(&args[0], &n));
-    if (n < 0) n = 0;
-    if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
+    n = sb_spc_spaces(n);
     char *buf = malloc(n + 1);
     if (!buf) return ERR_OUT_OF_MEMORY;
     memset(buf, ' ', n);

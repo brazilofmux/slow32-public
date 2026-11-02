@@ -132,6 +132,11 @@ def program(seed):
             target = r.choice(VARS)
         lines.append('%s = %s' % (target, expr(r, 3)))
         lines.append('PRINT "%d"; %s' % (i, target))
+        if r.random() < 0.15:
+            # TAB and SPC as PRINT places them, commas' zones
+            lines.append('PRINT TAB(%s); %s; SPC(%s); "z", %s%s' % (
+                expr(r, 1), target, r.choice(['2', '-1', 'I%', '1.5', 'X']), r.choice(['"w"', target]),
+                r.choice(['', ';', ',', '; TAB(70); "t"'])))
         if r.random() < 0.04:
             lines.append(r.choice(['ERASE S#', 'REDIM S#(5)', 'ERASE T', 'REDIM P%(20)', 'ERASE Q&: DIM Q&(3)']))
         if r.random() < 0.08:

@@ -1510,6 +1510,17 @@ error_t print_value(const value_t *v, int tab_spc, int width) {
     return ERR_NONE;
 }
 
+/* A PRINT item TAB(n) or SPC(n), its argument converted: the spaces
+ * written as print_value writes the string fn_tab or fn_spc makes */
+void print_tab_spc(int is_spc, int n) {
+    char buf[MAX_STRING_LEN + 2];
+    int nl = 0, spaces = is_spc ? sb_spc_spaces(n) : sb_tab_spaces(n, &nl);
+    if (nl) buf[0] = '\n';
+    memset(buf + nl, ' ', spaces);
+    buf[spaces + nl] = '\0';
+    col_puts(buf);
+}
+
 void print_text(const char *s) {
     col_puts(s);
 }
