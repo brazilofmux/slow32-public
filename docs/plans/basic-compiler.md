@@ -110,6 +110,12 @@ the oracle.
   column arithmetic `sb_tab_spaces`/`sb_spc_spaces`, fn_tab's and
   fn_spc's too); a PRINT of literals alone is native, so its strings are
   made once.  Checkers 11.5M -> 8.1M; the 97 games compiled 186M.
+- **Output (2026-11-02):** the screen is written a run of printing
+  characters at a time (`screen_puts`, wrapping where `screen_putc`
+  would), and the runtime's stdio takes a line-buffered stream's
+  newline-free writes on its short path: output had been ~100
+  instructions a character.  The 97 games: interpreted 479M, compiled
+  155M (3.09x).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path);
   loading (a third of a short game: the source is parsed at start).

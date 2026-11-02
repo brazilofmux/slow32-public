@@ -1100,10 +1100,34 @@ static int on_screen(void) {
     return active_print_col == &print_col && (!col_output_fp || col_output_fp == stdout);
 }
 
+/* s on the screen, as screen_putc writes it a character at a time: a
+ * run of printing characters goes out in pieces that fit the line, each
+ * one fwrite, not a putchar a character */
+static void screen_puts(const char *s) {
+    extern int console_width;
+    while (*s) {
+        if ((unsigned char)*s < 32) { screen_putc(*s++); continue; }
+        const char *e = s;
+        while ((unsigned char)*e >= 32) e++;
+        while (s < e) {
+            if (console_width > 0 && print_col >= console_width) {
+                putchar('\n');
+                print_col = 0;
+                print_row++;
+            }
+            int n = (int)(e - s);
+            if (console_width > 0 && n > console_width - print_col) n = console_width - print_col;
+            fwrite(s, 1, (size_t)n, stdout);
+            print_col += n;
+            s += n;
+        }
+    }
+}
+
 static void col_puts(const char *s) {
     FILE *fp = col_output_fp ? col_output_fp : stdout;
     if (on_screen()) {
-        for (; *s; s++) screen_putc(*s);
+        screen_puts(s);
         return;
     }
     fputs(s, fp);
