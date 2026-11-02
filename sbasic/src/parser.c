@@ -29,7 +29,7 @@ static void parser_error_detail(parser_t *p, error_t err, const char *detail) {
 
 static int expect(parser_t *p, token_type_t type) {
     if (lexer_check(&p->lex, type)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         return 1;
     }
     const char *expected = token_type_name(type);
@@ -87,7 +87,7 @@ static expr_t *parse_primary(parser_t *p) {
     if (tok->type == TOK_IDENT) {
         token_t t = lexer_next(&p->lex);
         if (lexer_check(&p->lex, TOK_LPAREN)) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *call = expr_call(t.text, t.line);
             if (!lexer_check(&p->lex, TOK_RPAREN)) {
                 lexer_match(&p->lex, TOK_HASH); /* skip decorative # */
@@ -106,7 +106,7 @@ static expr_t *parse_primary(parser_t *p) {
         }
         /* Check for field access: ident.field */
         if (lexer_check(&p->lex, TOK_DOT)) {
-            lexer_next(&p->lex); /* consume . */
+            lexer_skip(&p->lex); /* consume . */
             if (!lexer_check(&p->lex, TOK_IDENT)) {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
@@ -131,7 +131,7 @@ static expr_t *parse_primary(parser_t *p) {
         return NULL;
     }
     if (tok->type == TOK_LPAREN) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *e = parse_expr(p);
         if (!e) return NULL;
         if (!expect(p, TOK_RPAREN)) { expr_free(e); return NULL; }
@@ -171,7 +171,7 @@ static expr_t *parse_power(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_CARET)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_pow_operand(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_POW, left, right, line);
@@ -200,7 +200,7 @@ static expr_t *parse_mul(parser_t *p) {
         else if (lexer_check(&p->lex, TOK_SLASH))     op = OP_DIV;
         else break;
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_unary(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(op, left, right, line);
@@ -213,7 +213,7 @@ static expr_t *parse_idiv(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_BACKSLASH)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_mul(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_IDIV, left, right, line);
@@ -226,7 +226,7 @@ static expr_t *parse_mod(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_MOD)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_idiv(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_MOD, left, right, line);
@@ -244,7 +244,7 @@ static expr_t *parse_add(parser_t *p) {
         else if (lexer_check(&p->lex, TOK_PLUS)) op = OP_ADD;
         else op = OP_SUB;
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_mod(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(op, left, right, line);
@@ -265,7 +265,7 @@ static expr_t *parse_comparison(parser_t *p) {
         else if (lexer_check(&p->lex, TOK_GE))  op = CMP_GE;
         else break;
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_add(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_compare(op, left, right, line);
@@ -288,7 +288,7 @@ static expr_t *parse_and(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_AND)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_not(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_AND, left, right, line);
@@ -301,7 +301,7 @@ static expr_t *parse_or(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_OR)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_and(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_OR, left, right, line);
@@ -314,7 +314,7 @@ static expr_t *parse_xor(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_XOR)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_or(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_XOR, left, right, line);
@@ -327,7 +327,7 @@ static expr_t *parse_eqv(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_EQV)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_xor(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_EQV, left, right, line);
@@ -340,7 +340,7 @@ static expr_t *parse_expr(parser_t *p) {
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_IMP)) {
         int line = lexer_peek(&p->lex)->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *right = parse_eqv(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_IMP, left, right, line);
@@ -352,7 +352,7 @@ static expr_t *parse_expr(parser_t *p) {
 
 static void skip_eol(parser_t *p) {
     while (lexer_check(&p->lex, TOK_EOL))
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
 }
 
 static int at_stmt_end(parser_t *p) {
@@ -369,7 +369,7 @@ static int check_end_keyword(parser_t *p, token_type_t kw) {
     int save_has = p->lex.has_cur;
     token_t save_cur = p->lex.cur;
 
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     int result = lexer_check(&p->lex, kw);
 
     /* Restore */
@@ -382,8 +382,8 @@ static int check_end_keyword(parser_t *p, token_type_t kw) {
 
 /* Consume END <keyword> */
 static void consume_end_keyword(parser_t *p, token_type_t kw) {
-    lexer_next(&p->lex); /* END */
-    lexer_next(&p->lex); /* keyword */
+    lexer_skip(&p->lex); /* END */
+    lexer_skip(&p->lex); /* keyword */
 }
 
 /* --- Block parsing --- */
@@ -442,7 +442,7 @@ static stmt_t *parse_block(parser_t *p, int flags) {
             break;
 
         if (lexer_check(&p->lex, TOK_COLON)) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             continue;
         }
 
@@ -492,7 +492,7 @@ static int parse_print_items(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t
 
 static stmt_t *parse_print(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     /* PRINT #n, ... → file output */
     if (lexer_check(&p->lex, TOK_HASH))
         return parse_print_file(p);
@@ -501,7 +501,7 @@ static stmt_t *parse_print(parser_t *p) {
     /* PRINT USING "format"; expr; expr; ...
        PRINT USING expr$; expr; expr; ... */
     if (lexer_check(&p->lex, TOK_USING)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         if (lexer_check(&p->lex, TOK_STRING_LIT)) {
             /* Literal format string */
             token_t fmt = lexer_next(&p->lex);
@@ -548,7 +548,7 @@ static int parse_target(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t *)) 
 
 static stmt_t *parse_input(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     /* INPUT #n, var → file input */
     if (lexer_check(&p->lex, TOK_HASH))
         return parse_input_file(p);
@@ -576,7 +576,7 @@ static stmt_t *parse_input(parser_t *p) {
 
 static stmt_t *parse_cls(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume CLS */
+    lexer_skip(&p->lex); /* consume CLS */
     if (!at_stmt_end(p)) {
         parser_error(p, ERR_SYNTAX);
         return NULL;
@@ -586,7 +586,7 @@ static stmt_t *parse_cls(parser_t *p) {
 
 static stmt_t *parse_locate(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume LOCATE */
+    lexer_skip(&p->lex); /* consume LOCATE */
     expr_t *row = parse_expr(p);
     if (!row) return NULL;
     if (!lexer_match(&p->lex, TOK_COMMA)) {
@@ -615,7 +615,7 @@ static stmt_t *parse_color(parser_t *p) {
     expr_t *fg = NULL;
     expr_t *bg = NULL;
 
-    lexer_next(&p->lex); /* consume COLOR */
+    lexer_skip(&p->lex); /* consume COLOR */
 
     if (at_stmt_end(p))
         return stmt_color(NULL, NULL, 0, 0, line);
@@ -662,7 +662,7 @@ static int parse_gfx_coord(parser_t *p, expr_t **x, expr_t **y, int *step) {
 /* PSET/PRESET [STEP](x, y)[, color] */
 static stmt_t *parse_pset(parser_t *p, int preset) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     stmt_t *s = stmt_alloc(STMT_PSET, line);
     if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
     s->gfx.preset = preset;
@@ -722,7 +722,7 @@ static stmt_t *parse_line_graphics(parser_t *p, int line) {
 /* CIRCLE [STEP](x, y), r[, color] */
 static stmt_t *parse_circle(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     stmt_t *s = stmt_alloc(STMT_CIRCLE, line);
     if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
     if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
@@ -746,7 +746,7 @@ static stmt_t *parse_circle(parser_t *p) {
 /* PAINT [STEP](x, y)[, paint[, border]] */
 static stmt_t *parse_paint(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     stmt_t *s = stmt_alloc(STMT_PAINT, line);
     if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
     if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) {
@@ -784,7 +784,7 @@ static stmt_t *parse_if_branch(parser_t *p) {
             char target[64];
             int line = tok->line;
             snprintf(target, sizeof(target), "%d", tok->ival);
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             s = stmt_goto(target, line);
         } else {
             s = parse_stmt(p);
@@ -795,7 +795,7 @@ static stmt_t *parse_if_branch(parser_t *p) {
             stmt_append(&head, &tail, s);
         }
         if (!lexer_check(&p->lex, TOK_COLON)) break;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         if (lexer_check(&p->lex, TOK_EOL) || lexer_check(&p->lex, TOK_EOF) ||
             lexer_check(&p->lex, TOK_ELSE))
             break;
@@ -805,7 +805,7 @@ static stmt_t *parse_if_branch(parser_t *p) {
 
 static stmt_t *parse_if(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     expr_t *cond = parse_expr(p);
     if (!cond) return NULL;
     /* IF c THEN ..., or IF c GOTO n (GW-BASIC, QuickBASIC) */
@@ -818,7 +818,7 @@ static stmt_t *parse_if(parser_t *p) {
         stmt_t *then_body = parse_if_branch(p);
         stmt_t *else_body = NULL;
         if (lexer_check(&p->lex, TOK_ELSE)) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             else_body = parse_if_branch(p);
         }
         return stmt_if(cond, then_body, else_body, line);
@@ -831,7 +831,7 @@ static stmt_t *parse_if(parser_t *p) {
         /* ELSEIF becomes a nested IF in the else branch */
         else_body = parse_if(p);  /* parse_if consumes ELSEIF like IF */
     } else if (lexer_check(&p->lex, TOK_ELSE)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         else_body = parse_block(p, BLK_END_IF);
     }
     return stmt_if(cond, then_body, else_body, line);
@@ -839,7 +839,7 @@ static stmt_t *parse_if(parser_t *p) {
 
 static stmt_t *parse_for(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable after FOR"); return NULL;
     }
@@ -864,7 +864,7 @@ static stmt_t *parse_for(parser_t *p) {
 /* NEXT [v [, v ...]] */
 static stmt_t *parse_next(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     stmt_t *s = stmt_next(line);
     if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
     if (lexer_check(&p->lex, TOK_IDENT)) {
@@ -883,7 +883,7 @@ static stmt_t *parse_next(parser_t *p) {
 
 static stmt_t *parse_while(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     expr_t *cond = parse_expr(p);
     if (!cond) return NULL;
     stmt_t *body = parse_block(p, BLK_WEND);
@@ -891,24 +891,24 @@ static stmt_t *parse_while(parser_t *p) {
         parser_error(p, ERR_WHILE_WITHOUT_WEND);
         expr_free(cond); stmt_free(body); return NULL;
     }
-    lexer_next(&p->lex);
+    lexer_skip(&p->lex);
     return stmt_while(cond, body, line);
 }
 
 static stmt_t *parse_do(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DO */
+    lexer_skip(&p->lex); /* consume DO */
 
     expr_t *pre_cond = NULL;
     int pre_until = 0;
 
     /* Check for DO WHILE/UNTIL expr */
     if (lexer_check(&p->lex, TOK_WHILE)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         pre_cond = parse_expr(p);
         if (!pre_cond) return NULL;
     } else if (lexer_check(&p->lex, TOK_UNTIL)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         pre_until = 1;
         pre_cond = parse_expr(p);
         if (!pre_cond) return NULL;
@@ -920,20 +920,20 @@ static stmt_t *parse_do(parser_t *p) {
         parser_error(p, ERR_DO_WITHOUT_LOOP);
         expr_free(pre_cond); stmt_free(body); return NULL;
     }
-    lexer_next(&p->lex); /* consume LOOP */
+    lexer_skip(&p->lex); /* consume LOOP */
 
     expr_t *post_cond = NULL;
     int post_until = 0;
 
     /* Check for LOOP WHILE/UNTIL expr */
     if (lexer_check(&p->lex, TOK_WHILE)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         post_cond = parse_expr(p);
         if (!post_cond) {
             expr_free(pre_cond); stmt_free(body); return NULL;
         }
     } else if (lexer_check(&p->lex, TOK_UNTIL)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         post_until = 1;
         post_cond = parse_expr(p);
         if (!post_cond) {
@@ -946,7 +946,7 @@ static stmt_t *parse_do(parser_t *p) {
 
 static stmt_t *parse_select(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume SELECT */
+    lexer_skip(&p->lex); /* consume SELECT */
     if (!expect(p, TOK_CASE)) return NULL;
 
     expr_t *test = parse_expr(p);
@@ -966,13 +966,13 @@ static stmt_t *parse_select(parser_t *p) {
             parser_error(p, ERR_END_SELECT_EXPECTED);
             expr_free(test); case_clause_free(clauses); return NULL;
         }
-        lexer_next(&p->lex); /* consume CASE */
+        lexer_skip(&p->lex); /* consume CASE */
 
         case_clause_t *cc = case_clause_alloc();
 
         /* CASE ELSE */
         if (lexer_check(&p->lex, TOK_ELSE)) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             cc->is_else = 1;
             cc->body = parse_block(p, BLK_CASE);
             *tail = cc;
@@ -984,14 +984,14 @@ static stmt_t *parse_select(parser_t *p) {
         while (1) {
             if (lexer_check(&p->lex, TOK_IS)) {
                 /* CASE IS <op> expr */
-                lexer_next(&p->lex);
+                lexer_skip(&p->lex);
                 cmpop_t op;
-                if (lexer_check(&p->lex, TOK_LT))      { op = CMP_LT; lexer_next(&p->lex); }
-                else if (lexer_check(&p->lex, TOK_GT))  { op = CMP_GT; lexer_next(&p->lex); }
-                else if (lexer_check(&p->lex, TOK_LE))  { op = CMP_LE; lexer_next(&p->lex); }
-                else if (lexer_check(&p->lex, TOK_GE))  { op = CMP_GE; lexer_next(&p->lex); }
-                else if (lexer_check(&p->lex, TOK_EQ))  { op = CMP_EQ; lexer_next(&p->lex); }
-                else if (lexer_check(&p->lex, TOK_NE))  { op = CMP_NE; lexer_next(&p->lex); }
+                if (lexer_check(&p->lex, TOK_LT))      { op = CMP_LT; lexer_skip(&p->lex); }
+                else if (lexer_check(&p->lex, TOK_GT))  { op = CMP_GT; lexer_skip(&p->lex); }
+                else if (lexer_check(&p->lex, TOK_LE))  { op = CMP_LE; lexer_skip(&p->lex); }
+                else if (lexer_check(&p->lex, TOK_GE))  { op = CMP_GE; lexer_skip(&p->lex); }
+                else if (lexer_check(&p->lex, TOK_EQ))  { op = CMP_EQ; lexer_skip(&p->lex); }
+                else if (lexer_check(&p->lex, TOK_NE))  { op = CMP_NE; lexer_skip(&p->lex); }
                 else {
                     parser_error(p, ERR_SYNTAX);
                     case_clause_free(cc); expr_free(test);
@@ -1047,14 +1047,14 @@ static stmt_t *parse_select(parser_t *p) {
 
 static stmt_t *parse_exit(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume EXIT */
+    lexer_skip(&p->lex); /* consume EXIT */
 
     exit_type_t what;
-    if (lexer_check(&p->lex, TOK_FOR))           { what = EXIT_FOR; lexer_next(&p->lex); }
-    else if (lexer_check(&p->lex, TOK_WHILE))    { what = EXIT_WHILE; lexer_next(&p->lex); }
-    else if (lexer_check(&p->lex, TOK_DO))       { what = EXIT_DO; lexer_next(&p->lex); }
-    else if (lexer_check(&p->lex, TOK_SUB))      { what = EXIT_SUB; lexer_next(&p->lex); }
-    else if (lexer_check(&p->lex, TOK_FUNCTION)) { what = EXIT_FUNCTION; lexer_next(&p->lex); }
+    if (lexer_check(&p->lex, TOK_FOR))           { what = EXIT_FOR; lexer_skip(&p->lex); }
+    else if (lexer_check(&p->lex, TOK_WHILE))    { what = EXIT_WHILE; lexer_skip(&p->lex); }
+    else if (lexer_check(&p->lex, TOK_DO))       { what = EXIT_DO; lexer_skip(&p->lex); }
+    else if (lexer_check(&p->lex, TOK_SUB))      { what = EXIT_SUB; lexer_skip(&p->lex); }
+    else if (lexer_check(&p->lex, TOK_FUNCTION)) { what = EXIT_FUNCTION; lexer_skip(&p->lex); }
     else {
         parser_error(p, ERR_SYNTAX);
         return NULL;
@@ -1064,7 +1064,7 @@ static stmt_t *parse_exit(parser_t *p) {
 
 static stmt_t *parse_const(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume CONST */
+    lexer_skip(&p->lex); /* consume CONST */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1077,7 +1077,7 @@ static stmt_t *parse_const(parser_t *p) {
 
 static stmt_t *parse_shared(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume SHARED */
+    lexer_skip(&p->lex); /* consume SHARED */
     stmt_t *s = stmt_shared(line);
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
@@ -1115,7 +1115,7 @@ static int parse_params(parser_t *p, stmt_t *s) {
             if (lexer_check(&p->lex, TOK_IDENT) &&
                 (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
                  strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
-                lexer_next(&p->lex);
+                lexer_skip(&p->lex);
             token_t param = lexer_next(&p->lex);
             /* Skip optional () for array params */
             if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
@@ -1133,7 +1133,7 @@ static int parse_params(parser_t *p, stmt_t *s) {
 /* Parse SUB name(params) ... END SUB */
 static stmt_t *parse_sub(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume SUB */
+    lexer_skip(&p->lex); /* consume SUB */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1150,7 +1150,7 @@ static stmt_t *parse_sub(parser_t *p) {
 /* Parse FUNCTION name(params) ... END FUNCTION */
 static stmt_t *parse_function(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume FUNCTION */
+    lexer_skip(&p->lex); /* consume FUNCTION */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1168,7 +1168,7 @@ static stmt_t *parse_function(parser_t *p) {
 /* Parse CALL sub(args) */
 static stmt_t *parse_call(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume CALL */
+    lexer_skip(&p->lex); /* consume CALL */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1193,19 +1193,19 @@ static stmt_t *parse_call(parser_t *p) {
 /* Parse DECLARE SUB/FUNCTION (forward declaration — parsed but ignored) */
 static stmt_t *parse_declare(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DECLARE */
+    lexer_skip(&p->lex); /* consume DECLARE */
     /* Skip SUB/FUNCTION name(params) */
     if (lexer_check(&p->lex, TOK_SUB) || lexer_check(&p->lex, TOK_FUNCTION))
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
     if (lexer_check(&p->lex, TOK_IDENT))
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         /* Skip parameter list */
         int depth = 1;
         while (depth > 0 && !lexer_check(&p->lex, TOK_EOF)) {
             if (lexer_check(&p->lex, TOK_LPAREN)) depth++;
             if (lexer_check(&p->lex, TOK_RPAREN)) depth--;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
         }
     }
     return stmt_alloc(STMT_DECLARE, line);
@@ -1234,13 +1234,13 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line);
 /* DIM a(...) [, b(...) ...]: one statement per name, chained */
 static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DIM or REDIM */
+    lexer_skip(&p->lex); /* consume DIM or REDIM */
 
     int preserve = 0;
     if (is_redim && lexer_check(&p->lex, TOK_IDENT)) {
         /* Check for PRESERVE (not a keyword, context-sensitive) */
         if (strcmp(lexer_peek(&p->lex)->text, "PRESERVE") == 0) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             preserve = 1;
         }
     }
@@ -1261,7 +1261,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
 
     /* DIM var AS TypeName (no parens — user-defined type) */
     if (lexer_check(&p->lex, TOK_AS)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
@@ -1335,7 +1335,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
 
 static stmt_t *parse_erase(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume ERASE */
+    lexer_skip(&p->lex); /* consume ERASE */
     stmt_t *s = stmt_erase(line);
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
@@ -1356,7 +1356,7 @@ static stmt_t *parse_erase(parser_t *p) {
  * mean, by its variable's type: GW-BASIC and QuickBASIC both) */
 static stmt_t *parse_data(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DATA; nothing is peeked after it */
+    lexer_skip(&p->lex); /* consume DATA; nothing is peeked after it */
     stmt_t *s = stmt_data(line);
     char item[256];
     int more, quoted;
@@ -1374,7 +1374,7 @@ static stmt_t *parse_data(parser_t *p) {
 
 static stmt_t *parse_read(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume READ */
+    lexer_skip(&p->lex); /* consume READ */
     stmt_t *s = stmt_read(line);
     do {
         if (!parse_target(p, s, stmt_read_add_target)) { stmt_free(s); return NULL; }
@@ -1384,7 +1384,7 @@ static stmt_t *parse_read(parser_t *p) {
 
 static stmt_t *parse_restore(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume RESTORE */
+    lexer_skip(&p->lex); /* consume RESTORE */
     char label[64] = "";
     if (lexer_check(&p->lex, TOK_IDENT)) {
         token_t t = lexer_next(&p->lex);
@@ -1409,7 +1409,7 @@ static expr_t *parse_file_handle(parser_t *p) {
 /* OPEN file$ FOR INPUT|OUTPUT|APPEND|BINARY|RANDOM AS #n [LEN = expr] */
 static stmt_t *parse_open(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume OPEN */
+    lexer_skip(&p->lex); /* consume OPEN */
     expr_t *filename = parse_expr(p);
     if (!filename) return NULL;
     if (!lexer_match(&p->lex, TOK_FOR)) {
@@ -1417,15 +1417,15 @@ static stmt_t *parse_open(parser_t *p) {
     }
     int mode;
     if (lexer_check(&p->lex, TOK_INPUT)) {
-        mode = FMODE_INPUT; lexer_next(&p->lex);
+        mode = FMODE_INPUT; lexer_skip(&p->lex);
     } else if (lexer_check(&p->lex, TOK_OUTPUT)) {
-        mode = FMODE_OUTPUT; lexer_next(&p->lex);
+        mode = FMODE_OUTPUT; lexer_skip(&p->lex);
     } else if (lexer_check(&p->lex, TOK_APPEND)) {
-        mode = FMODE_APPEND; lexer_next(&p->lex);
+        mode = FMODE_APPEND; lexer_skip(&p->lex);
     } else if (lexer_check(&p->lex, TOK_BINARY)) {
-        mode = FMODE_BINARY; lexer_next(&p->lex);
+        mode = FMODE_BINARY; lexer_skip(&p->lex);
     } else if (lexer_check(&p->lex, TOK_RANDOM)) {
-        mode = FMODE_RANDOM; lexer_next(&p->lex);
+        mode = FMODE_RANDOM; lexer_skip(&p->lex);
     } else {
         parser_error_detail(p, ERR_SYNTAX, "Expected INPUT, OUTPUT, APPEND, BINARY, or RANDOM"); expr_free(filename); return NULL;
     }
@@ -1439,7 +1439,7 @@ static stmt_t *parse_open(parser_t *p) {
     expr_t *reclen = NULL;
     if (lexer_check(&p->lex, TOK_IDENT) &&
         strcmp(lexer_peek(&p->lex)->text, "LEN") == 0) {
-        lexer_next(&p->lex); /* consume LEN */
+        lexer_skip(&p->lex); /* consume LEN */
         if (!expect(p, TOK_EQ)) {
             expr_free(filename); expr_free(handle); return NULL;
         }
@@ -1453,7 +1453,7 @@ static stmt_t *parse_open(parser_t *p) {
 /* CLOSE [#n [, #n ...]] */
 static stmt_t *parse_close(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume CLOSE */
+    lexer_skip(&p->lex); /* consume CLOSE */
     if (at_stmt_end(p))
         return stmt_close(NULL, line); /* close all */
     expr_t *handle = parse_file_handle(p);
@@ -1470,7 +1470,7 @@ static stmt_t *parse_print_file(parser_t *p) {
     stmt_t *s = stmt_print_file(handle, line);
     /* PRINT #n, USING "fmt"; expr; ... */
     if (lexer_check(&p->lex, TOK_USING)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         if (lexer_check(&p->lex, TOK_STRING_LIT)) {
             token_t fmt = lexer_next(&p->lex);
             s->print_file.using_fmt = strdup(fmt.text);
@@ -1492,7 +1492,7 @@ static stmt_t *parse_print_file(parser_t *p) {
 /* WRITE #n, items... */
 static stmt_t *parse_write_stmt(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume WRITE */
+    lexer_skip(&p->lex); /* consume WRITE */
     /* File variant: WRITE #n, expr, ... */
     if (lexer_check(&p->lex, TOK_HASH)) {
         expr_t *handle = parse_file_handle(p);
@@ -1505,7 +1505,7 @@ static stmt_t *parse_write_stmt(parser_t *p) {
                 expr_free(e); stmt_free(s); return NULL;
             }
             char sep = ',';
-            if (lexer_check(&p->lex, TOK_COMMA)) lexer_next(&p->lex);
+            if (lexer_check(&p->lex, TOK_COMMA)) lexer_skip(&p->lex);
             else sep = '\0';
             if (stmt_write_file_add(s, e, sep) < 0) {
                 parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
@@ -1527,7 +1527,7 @@ static stmt_t *parse_write_stmt(parser_t *p) {
             expr_free(e); stmt_free(s); return NULL;
         }
         char sep = ',';
-        if (lexer_check(&p->lex, TOK_COMMA)) lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_COMMA)) lexer_skip(&p->lex);
         else sep = '\0';
         if (stmt_print_add(s, e, sep) < 0) {
             parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
@@ -1567,7 +1567,7 @@ static stmt_t *parse_input_file(parser_t *p) {
 /* LINE INPUT [#n,] [prompt;] var$ */
 static stmt_t *parse_line_input(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume LINE */
+    lexer_skip(&p->lex); /* consume LINE */
     if (!lexer_match(&p->lex, TOK_INPUT)) {
         /* Graphics form: LINE [[STEP](x1,y1)]-[STEP](x2,y2)... */
         if (lexer_check(&p->lex, TOK_LPAREN) ||
@@ -1618,7 +1618,7 @@ static stmt_t *parse_line_input(parser_t *p) {
 /* KILL file$ */
 static stmt_t *parse_kill(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume KILL */
+    lexer_skip(&p->lex); /* consume KILL */
     expr_t *filename = parse_expr(p);
     if (!filename) return NULL;
     return stmt_kill(filename, line);
@@ -1627,7 +1627,7 @@ static stmt_t *parse_kill(parser_t *p) {
 /* NAME old$ AS new$ */
 static stmt_t *parse_name_stmt(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume NAME */
+    lexer_skip(&p->lex); /* consume NAME */
     expr_t *oldname = parse_expr(p);
     if (!oldname) return NULL;
     if (!lexer_match(&p->lex, TOK_AS)) {
@@ -1641,7 +1641,7 @@ static stmt_t *parse_name_stmt(parser_t *p) {
 /* GET #h, [pos], var / PUT #h, [pos], var */
 static stmt_t *parse_get_put(parser_t *p, int is_put) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume GET or PUT */
+    lexer_skip(&p->lex); /* consume GET or PUT */
     expr_t *handle = parse_file_handle(p);
     if (!handle) return NULL;
     if (!lexer_match(&p->lex, TOK_COMMA)) {
@@ -1673,7 +1673,7 @@ static stmt_t *parse_get_put(parser_t *p, int is_put) {
 /* SEEK #h, pos */
 static stmt_t *parse_seek(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume SEEK */
+    lexer_skip(&p->lex); /* consume SEEK */
     expr_t *handle = parse_file_handle(p);
     if (!handle) return NULL;
     if (!lexer_match(&p->lex, TOK_COMMA)) {
@@ -1695,7 +1695,7 @@ static stmt_t *parse_seek(parser_t *p) {
 /* TYPE name ... END TYPE */
 static stmt_t *parse_type_def(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume TYPE */
+    lexer_skip(&p->lex); /* consume TYPE */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1734,18 +1734,18 @@ static stmt_t *parse_type_def(parser_t *p) {
 /* ON ERROR GOTO label / ON ERROR GOTO 0 */
 static stmt_t *parse_on(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume ON */
+    lexer_skip(&p->lex); /* consume ON */
 
     /* ON ERROR GOTO label */
     if (lexer_check(&p->lex, TOK_ERROR)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         if (!lexer_match(&p->lex, TOK_GOTO)) {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
         /* ON ERROR GOTO 0 = disable error handling */
         if (lexer_check(&p->lex, TOK_INTEGER_LIT) &&
             lexer_peek(&p->lex)->ival == 0) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             return stmt_on_error("", line);
         }
         char err_label[64];
@@ -1765,31 +1765,31 @@ static stmt_t *parse_on(parser_t *p) {
     /* ON TIMER(n) GOSUB label — no-op stub */
     if (lexer_check(&p->lex, TOK_IDENT) &&
         strcmp(lexer_peek(&p->lex)->text, "TIMER") == 0) {
-        lexer_next(&p->lex); /* consume TIMER */
+        lexer_skip(&p->lex); /* consume TIMER */
         if (lexer_match(&p->lex, TOK_LPAREN)) {
             expr_t *e = parse_expr(p);
             if (e) expr_free(e);
             lexer_match(&p->lex, TOK_RPAREN);
         }
         /* Consume GOSUB label */
-        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_skip(&p->lex);
         if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
         return stmt_alloc(STMT_NOOP, line);
     }
 
     /* ON KEY(n) GOSUB label — no-op stub */
     if (lexer_check(&p->lex, TOK_KEY)) {
-        lexer_next(&p->lex); /* consume KEY */
+        lexer_skip(&p->lex); /* consume KEY */
         if (lexer_match(&p->lex, TOK_LPAREN)) {
             expr_t *e = parse_expr(p);
             if (e) expr_free(e);
             lexer_match(&p->lex, TOK_RPAREN);
         }
         /* Consume GOSUB label */
-        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_skip(&p->lex);
         if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
         return stmt_alloc(STMT_NOOP, line);
     }
 
@@ -1799,9 +1799,9 @@ static stmt_t *parse_on(parser_t *p) {
 
     int is_gosub = 0;
     if (lexer_check(&p->lex, TOK_GOTO)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
     } else if (lexer_check(&p->lex, TOK_GOSUB)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         is_gosub = 1;
     } else {
         parser_error(p, ERR_SYNTAX); expr_free(index); return NULL;
@@ -1841,9 +1841,9 @@ static stmt_t *parse_on(parser_t *p) {
 /* RESUME [NEXT | label | linenumber] */
 static stmt_t *parse_resume(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume RESUME */
+    lexer_skip(&p->lex); /* consume RESUME */
     if (lexer_check(&p->lex, TOK_NEXT)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         return stmt_resume(1, NULL, line);
     }
     /* RESUME linenumber */
@@ -1865,7 +1865,7 @@ static stmt_t *parse_resume(parser_t *p) {
 /* ERROR n */
 static stmt_t *parse_error_stmt(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume ERROR */
+    lexer_skip(&p->lex); /* consume ERROR */
     expr_t *errnum = parse_expr(p);
     if (!errnum) return NULL;
     return stmt_error_raise(errnum, line);
@@ -1874,7 +1874,7 @@ static stmt_t *parse_error_stmt(parser_t *p) {
 /* DEFINT/DEFDBL/DEFSTR A-Z */
 static stmt_t *parse_deftype(parser_t *p, val_type_t type) {
     int line = lexer_peek(&p->lex)->line;
-    lexer_next(&p->lex); /* consume DEFINT/DEFDBL/DEFSTR */
+    lexer_skip(&p->lex); /* consume DEFINT/DEFDBL/DEFSTR */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
@@ -1893,7 +1893,7 @@ static stmt_t *parse_deftype(parser_t *p, val_type_t type) {
 
 /* Handle ident(...) which could be array assignment or call */
 static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
-    lexer_next(&p->lex); /* consume ( */
+    lexer_skip(&p->lex); /* consume ( */
 
     expr_t *args[16];
     int nargs = 0;
@@ -1929,7 +1929,7 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
             for (int i = 0; i < nargs; i++) expr_free(args[i]);
             return NULL;
         }
-        lexer_next(&p->lex); /* consume = */
+        lexer_skip(&p->lex); /* consume = */
         char var_name[64];
         strncpy(var_name, args[0]->var.name, 63);
         var_name[63] = '\0';
@@ -1946,7 +1946,7 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
 
     /* Array assignment: ident(indices) = expr */
     if (lexer_check(&p->lex, TOK_EQ)) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         expr_t *value = parse_expr(p);
         if (!value) {
             for (int i = 0; i < nargs; i++) expr_free(args[i]);
@@ -1971,7 +1971,7 @@ static stmt_t *parse_assignment(parser_t *p, token_t *var) {
     if (lexer_check(&p->lex, TOK_EQ))
         return parse_assign(p, var->text);
     if (lexer_check(&p->lex, TOK_DOT)) {
-        lexer_next(&p->lex); /* consume . */
+        lexer_skip(&p->lex); /* consume . */
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
@@ -1992,7 +1992,7 @@ static stmt_t *parse_option(parser_t *p, int line) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
     if (strcmp(lexer_peek(&p->lex)->text, "BASE") == 0) {
-        lexer_next(&p->lex); /* consume BASE */
+        lexer_skip(&p->lex); /* consume BASE */
         if (!lexer_check(&p->lex, TOK_INTEGER_LIT)) {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
@@ -2003,7 +2003,7 @@ static stmt_t *parse_option(parser_t *p, int line) {
         return stmt_option_base(t.ival, line);
     }
     if (strcmp(lexer_peek(&p->lex)->text, "EXPLICIT") == 0) {
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         stmt_t *s = stmt_alloc(STMT_OPTION_EXPLICIT, line);
         return s;
     }
@@ -2022,7 +2022,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         char label_name[64];
         snprintf(label_name, sizeof(label_name), "%d", tok->ival);
         int line = tok->line;
-        lexer_next(&p->lex);
+        lexer_skip(&p->lex);
         return stmt_label(label_name, line);
     }
 
@@ -2049,7 +2049,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_SHARED:   return parse_shared(p);
         case TOK_STATIC: {
             int line = tok->line;
-            lexer_next(&p->lex); /* consume STATIC */
+            lexer_skip(&p->lex); /* consume STATIC */
             stmt_t *s = stmt_static_decl(line);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
                 parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
@@ -2078,7 +2078,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_SWAP: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *lhs = parse_primary(p);
             if (!lhs) return NULL;
             if (!lexer_match(&p->lex, TOK_COMMA)) {
@@ -2092,7 +2092,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_RANDOMIZE: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *seed = NULL;
             if (!at_stmt_end(p))
                 seed = parse_expr(p);
@@ -2101,7 +2101,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_SLEEP: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *dur = NULL;
             if (!at_stmt_end(p))
                 dur = parse_expr(p);
@@ -2129,17 +2129,17 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);
 
         case TOK_BEEP:
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             return stmt_alloc(STMT_BEEP, tok->line);
 
         case TOK_TRACE: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             stmt_t *s = stmt_alloc(STMT_TRACE, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             /* Expect ON (keyword) or OFF (identifier) */
             if (lexer_check(&p->lex, TOK_ON)) {
-                lexer_next(&p->lex);
+                lexer_skip(&p->lex);
                 s->trace.enabled = 1;
             } else if (lexer_check(&p->lex, TOK_IDENT)) {
                 token_t t = lexer_next(&p->lex);
@@ -2157,7 +2157,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_SPLIT: {
             /* SPLIT str_expr, delim_expr, arrayname$() */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             stmt_t *s = stmt_alloc(STMT_SPLIT, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             s->split.str_expr = parse_expr(p);
@@ -2188,14 +2188,14 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_DEF: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
                 parser_error_detail(p, ERR_SYNTAX, "Expected FN name or SEG after DEF");
                 return NULL;
             }
             /* DEF SEG [= expr] */
             if (strcmp(lexer_peek(&p->lex)->text, "SEG") == 0) {
-                lexer_next(&p->lex); /* consume SEG */
+                lexer_skip(&p->lex); /* consume SEG */
                 stmt_t *s = stmt_alloc(STMT_DEF_SEG, line);
                 if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
                 s->shell_stmt.command = NULL;
@@ -2238,7 +2238,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_SHELL: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *cmd = parse_expr(p);
             if (!cmd) return NULL;
             stmt_t *s = stmt_alloc(STMT_SHELL, line);
@@ -2251,7 +2251,7 @@ static stmt_t *parse_stmt(parser_t *p) {
             stmt_type_t stype = (tok->type == TOK_CHDIR) ? STMT_CHDIR :
                                 (tok->type == TOK_MKDIR) ? STMT_MKDIR : STMT_RMDIR;
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *path = parse_expr(p);
             if (!path) return NULL;
             stmt_t *s = stmt_alloc(stype, line);
@@ -2262,7 +2262,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_POKE: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *addr = parse_expr(p);
             if (!addr) return NULL;
             if (!lexer_match(&p->lex, TOK_COMMA)) {
@@ -2280,7 +2280,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_SCREEN: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *mode = parse_expr(p);
             if (!mode) return NULL;
             /* burst/apage/vpage arguments: parse and ignore */
@@ -2304,7 +2304,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_LSET: case TOK_RSET: {
             stmt_type_t stype = (tok->type == TOK_LSET) ? STMT_LSET : STMT_RSET;
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
@@ -2322,7 +2322,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_WIDTH: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *cols = parse_expr(p);
             if (!cols) return NULL;
             stmt_t *s = stmt_alloc(STMT_WIDTH, line);
@@ -2334,7 +2334,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_FIELD: {
             /* FIELD #n, w AS var$, w AS var$, ... — parse and discard (no-op) */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             lexer_match(&p->lex, TOK_HASH); /* optional # */
             expr_t *e = parse_expr(p); /* file number */
             if (e) expr_free(e);
@@ -2342,7 +2342,7 @@ static stmt_t *parse_stmt(parser_t *p) {
                 e = parse_expr(p); /* width */
                 if (e) expr_free(e);
                 if (!lexer_match(&p->lex, TOK_AS)) break;
-                if (lexer_check(&p->lex, TOK_IDENT)) lexer_next(&p->lex); /* var name */
+                if (lexer_check(&p->lex, TOK_IDENT)) lexer_skip(&p->lex); /* var name */
             }
             return stmt_alloc(STMT_NOOP, line);
         }
@@ -2350,7 +2350,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_CHAIN: case TOK_PLAY: {
             /* Single string-expr argument, no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             if (!at_stmt_end(p)) {
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
@@ -2361,7 +2361,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_PCOPY: case TOK_SOUND: {
             /* Two numeric arguments, no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *e = parse_expr(p);
             if (e) expr_free(e);
             if (lexer_match(&p->lex, TOK_COMMA)) {
@@ -2374,10 +2374,10 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_KEY: {
             /* KEY n, string$ / KEY ON / KEY OFF / KEY LIST — all no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             /* Consume everything until end of statement */
             while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
                 else break;
@@ -2388,7 +2388,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_PALETTE: {
             /* PALETTE attr, rgb24 — set one entry; PALETTE alone restores */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             stmt_t *s = stmt_alloc(STMT_PALETTE, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             if (at_stmt_end(p)) return s;   /* x1 == NULL: restore default */
@@ -2403,9 +2403,9 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_WAIT: {
             /* WAIT port, expr [, expr] — no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
                 else break;
@@ -2416,7 +2416,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_OUT: {
             /* OUT port, value — no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             expr_t *e = parse_expr(p);
             if (e) expr_free(e);
             if (lexer_match(&p->lex, TOK_COMMA)) {
@@ -2429,13 +2429,13 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_COMMON: {
             /* COMMON [SHARED] var [, var, ...] — no-op (all vars are already shared) */
             int line = tok->line;
-            lexer_next(&p->lex);
-            if (lexer_check(&p->lex, TOK_SHARED)) lexer_next(&p->lex);
+            lexer_skip(&p->lex);
+            if (lexer_check(&p->lex, TOK_SHARED)) lexer_skip(&p->lex);
             while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
                 /* Consume var name and optional type/array syntax */
                 if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
-                    lexer_next(&p->lex);
+                    lexer_skip(&p->lex);
                     /* Optional () for arrays */
                     if (lexer_match(&p->lex, TOK_LPAREN)) {
                         if (!lexer_match(&p->lex, TOK_RPAREN)) {
@@ -2446,9 +2446,9 @@ static stmt_t *parse_stmt(parser_t *p) {
                     }
                     /* Optional AS type */
                     if (lexer_check(&p->lex, TOK_AS)) {
-                        lexer_next(&p->lex);
+                        lexer_skip(&p->lex);
                         if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME))
-                            lexer_next(&p->lex);
+                            lexer_skip(&p->lex);
                     }
                 } else break;
             }
@@ -2458,10 +2458,10 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_CLEAR: {
             /* CLEAR [, himem [, stack]] — reset all variables */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             /* Skip optional arguments (not meaningful for us) */
             while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
                 else break;
@@ -2472,7 +2472,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_ENVIRON: {
             /* ENVIRON "NAME=VALUE" — no-op, just consume the string expression */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             if (!at_stmt_end(p)) {
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
@@ -2483,7 +2483,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_VIEW: {
             /* VIEW PRINT [top TO bottom] — no-op */
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             /* Consume PRINT keyword if present */
             lexer_match(&p->lex, TOK_PRINT);
             /* Consume optional arguments (top TO bottom) */
@@ -2500,7 +2500,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_GOTO: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             char label_name[64];
             if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
@@ -2517,7 +2517,7 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_GOSUB: {
             int line = tok->line;
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             char label_name[64];
             if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
@@ -2533,7 +2533,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_RETURN: {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             /* RETURN [label | linenumber] */
             char rlbuf[64] = "";
             if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
@@ -2548,7 +2548,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_LET: {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
@@ -2575,13 +2575,13 @@ static stmt_t *parse_stmt(parser_t *p) {
                 parser_error(p, ERR_SYNTAX);
                 return NULL;
             }
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             return stmt_end(tok->line);
         }
 
         case TOK_REM:
         case TOK_EOL:
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             return stmt_alloc(STMT_REM, tok->line);
 
         case TOK_IDENT: {
@@ -2592,7 +2592,7 @@ static stmt_t *parse_stmt(parser_t *p) {
                 return parse_assignment(p, &var);
             /* Label: ident: */
             if (lexer_check(&p->lex, TOK_COLON)) {
-                lexer_next(&p->lex);
+                lexer_skip(&p->lex);
                 return stmt_label(var.text, var.line);
             }
             /* STOP and SYSTEM: a program run from a file ends, as at END
@@ -2634,7 +2634,7 @@ stmt_t *parser_parse(parser_t *p) {
         skip_eol(p);
         if (lexer_check(&p->lex, TOK_EOF)) break;
         if (lexer_check(&p->lex, TOK_COLON)) {
-            lexer_next(&p->lex);
+            lexer_skip(&p->lex);
             continue;
         }
         stmt_t *s = parse_stmt(p);

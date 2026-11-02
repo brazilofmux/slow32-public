@@ -125,11 +125,28 @@ static const keyword_t keywords[] = {
     { NULL, 0 }
 };
 
+/* The keywords by a hash of their names, made on first use: an open
+ * table of indices into keywords[] (+1; 0 is empty) */
+#define KW_HASH 512
+static unsigned short kw_hash[KW_HASH];
+
+static unsigned kw_bucket(const char *s) {
+    unsigned h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h & (KW_HASH - 1);
+}
+
 static token_type_t lookup_keyword(const char *upper) {
-    for (int i = 0; keywords[i].name; i++) {
-        if (strcmp(upper, keywords[i].name) == 0)
-            return keywords[i].type;
+    if (!kw_hash[kw_bucket(keywords[0].name)]) {
+        for (int i = 0; keywords[i].name; i++) {
+            unsigned b = kw_bucket(keywords[i].name);
+            while (kw_hash[b]) b = (b + 1) & (KW_HASH - 1);
+            kw_hash[b] = (unsigned short)(i + 1);
+        }
     }
+    for (unsigned b = kw_bucket(upper); kw_hash[b]; b = (b + 1) & (KW_HASH - 1))
+        if (strcmp(upper, keywords[kw_hash[b] - 1].name) == 0)
+            return keywords[kw_hash[b] - 1].type;
     return TOK_IDENT;
 }
 
@@ -188,10 +205,13 @@ static void skip_spaces(lexer_t *lex) {
         lex->pos++;
 }
 
-static token_t scan_token(lexer_t *lex) {
-    token_t tok;
-    memset(&tok, 0, sizeof(tok));
-    tok.line = lex->line;
+/* the next token, into *tok (the lexer's own: no copies) */
+static void scan_token(lexer_t *lex, token_t *tok) {
+    tok->type = (token_type_t)0;
+    tok->dval = 0;
+    tok->text[0] = '\0';
+    tok->suffix = '\0';
+    tok->line = lex->line;
 
     skip_spaces(lex);
 
@@ -199,23 +219,23 @@ static token_t scan_token(lexer_t *lex) {
 
     /* End of string */
     if (c == '\0') {
-        tok.type = TOK_EOF;
-        return tok;
+        tok->type = TOK_EOF;
+        return;
     }
 
     /* Newline */
     if (c == '\n') {
         next_char(lex);
         lex->line++;
-        tok.type = TOK_EOL;
-        return tok;
+        tok->type = TOK_EOL;
+        return;
     }
     if (c == '\r') {
         next_char(lex);
         if (peek_char(lex) == '\n') next_char(lex);
         lex->line++;
-        tok.type = TOK_EOL;
-        return tok;
+        tok->type = TOK_EOL;
+        return;
     }
 
     /* Comment: ' */
@@ -223,10 +243,10 @@ static token_t scan_token(lexer_t *lex) {
         /* Skip to end of line */
         while (peek_char(lex) && peek_char(lex) != '\n' && peek_char(lex) != '\r')
             next_char(lex);
-        tok.type = TOK_EOL;
+        tok->type = TOK_EOL;
         /* Don't consume the newline — let the next scan get it.
            But we return EOL to end this logical line. */
-        return tok;
+        return;
     }
 
     /* String literal */
@@ -235,15 +255,15 @@ static token_t scan_token(lexer_t *lex) {
         int len = 0;
         while (peek_char(lex) && peek_char(lex) != '"' && peek_char(lex) != '\n') {
             if (len < 255)
-                tok.text[len++] = next_char(lex);
+                tok->text[len++] = next_char(lex);
             else
                 next_char(lex);
         }
-        tok.text[len] = '\0';
+        tok->text[len] = '\0';
         if (peek_char(lex) == '"')
             next_char(lex); /* consume closing quote */
-        tok.type = TOK_STRING_LIT;
-        return tok;
+        tok->type = TOK_STRING_LIT;
+        return;
     }
 
     /* Hex/Octal/Binary literal: &HFF, &O77, &B1010 */
@@ -264,31 +284,31 @@ static token_t scan_token(lexer_t *lex) {
                 else if (base == 8) valid = (d >= '0' && d <= '7');
                 else valid = (d == '0' || d == '1');
                 if (!valid) break;
-                if (len < 255) tok.text[len++] = next_char(lex);
+                if (len < 255) tok->text[len++] = next_char(lex);
                 else next_char(lex);
             }
-            tok.text[len] = '\0';
+            tok->text[len] = '\0';
             /* &H, &O, &B: up to &HFFFF an INTEGER, its 16 bits signed
              * (&HFFFF is -1), beyond that a LONG's 32 (QBasic) */
             {
-                unsigned long u = (len > 0) ? strtoul(tok.text, NULL, base) : 0;
+                unsigned long u = (len > 0) ? strtoul(tok->text, NULL, base) : 0;
                 char sfx = 0;
                 if (peek_char(lex) == '%' || peek_char(lex) == '&')
                     sfx = next_char(lex);
-                tok.type = TOK_INTEGER_LIT;
+                tok->type = TOK_INTEGER_LIT;
                 if (u <= 0xFFFF && sfx != '&') {
-                    tok.ival = (int)(short)(unsigned short)u;
-                    tok.suffix = '%';
+                    tok->ival = (int)(short)(unsigned short)u;
+                    tok->suffix = '%';
                 } else {
-                    tok.ival = (int)(unsigned int)u;
-                    tok.suffix = '&';
+                    tok->ival = (int)(unsigned int)u;
+                    tok->suffix = '&';
                 }
             }
-            return tok;
+            return;
         }
         /* Bare '&' → string concatenation operator */
-        tok.type = TOK_AMPERSAND;
-        return tok;
+        tok->type = TOK_AMPERSAND;
+        return;
     }
 
     /* Number */
@@ -296,16 +316,16 @@ static token_t scan_token(lexer_t *lex) {
         int len = 0;
         int is_double = 0, dexp = 0;
         while (isdigit(peek_char(lex))) {
-            if (len < 255) tok.text[len++] = next_char(lex);
+            if (len < 255) tok->text[len++] = next_char(lex);
             else next_char(lex);
         }
         /* a fraction, possibly empty: "3." is a number */
         if (peek_char(lex) == '.') {
             is_double = 1;
-            if (len < 255) tok.text[len++] = next_char(lex);
+            if (len < 255) tok->text[len++] = next_char(lex);
             else next_char(lex);
             while (isdigit(peek_char(lex))) {
-                if (len < 255) tok.text[len++] = next_char(lex);
+                if (len < 255) tok->text[len++] = next_char(lex);
                 else next_char(lex);
             }
         }
@@ -319,47 +339,47 @@ static token_t scan_token(lexer_t *lex) {
                 is_double = 1;
                 dexp = (peek_char(lex) == 'd' || peek_char(lex) == 'D');
                 next_char(lex);
-                if (len < 255) tok.text[len++] = 'E';
+                if (len < 255) tok->text[len++] = 'E';
                 if (peek_char(lex) == '+' || peek_char(lex) == '-') {
-                    if (len < 255) tok.text[len++] = next_char(lex);
+                    if (len < 255) tok->text[len++] = next_char(lex);
                     else next_char(lex);
                 }
                 while (isdigit(peek_char(lex))) {
-                    if (len < 255) tok.text[len++] = next_char(lex);
+                    if (len < 255) tok->text[len++] = next_char(lex);
                     else next_char(lex);
                 }
             }
         }
-        tok.text[len] = '\0';
+        tok->text[len] = '\0';
         /* A literal's type, as QuickBASIC gives it: % or & an integer,
          * # or a D exponent a double, ! a single; otherwise an integer
          * when it is one that fits, else a single unless its mantissa has
          * more than 7 digits, leading zeros counted (0.0000001 is a double
          * and 1234567. a single: QBasic's editor shows it, adding the #).
-         * tok.suffix says which float: '#' or '!'. */
+         * tok->suffix says which float: '#' or '!'. */
         {
             char sfx = 0;
             int sig = 0;
             if (peek_char(lex) == '%' || peek_char(lex) == '&' ||
                 peek_char(lex) == '#' || peek_char(lex) == '!')
                 sfx = next_char(lex);
-            for (int i = 0; i < len && tok.text[i] != 'E'; i++)
-                if (tok.text[i] != '.') sig++;
-            if (sfx == '%' || sfx == '&') { is_double = 0; tok.suffix = sfx; }
+            for (int i = 0; i < len && tok->text[i] != 'E'; i++)
+                if (tok->text[i] != '.') sig++;
+            if (sfx == '%' || sfx == '&') { is_double = 0; tok->suffix = sfx; }
             if (sfx == '#' || sfx == '!') is_double = 1;
-            if (!is_double && (len > 10 || atof(tok.text) > 2147483647.0))
+            if (!is_double && (len > 10 || atof(tok->text) > 2147483647.0))
                 is_double = 1;
             if (is_double)
-                tok.suffix = (sfx == '#' || (sfx != '!' && (dexp || sig > 7))) ? '#' : '!';
+                tok->suffix = (sfx == '#' || (sfx != '!' && (dexp || sig > 7))) ? '#' : '!';
         }
         if (is_double) {
-            tok.type = TOK_DOUBLE_LIT;
-            tok.dval = atof(tok.text);
+            tok->type = TOK_DOUBLE_LIT;
+            tok->dval = atof(tok->text);
         } else {
-            tok.type = TOK_INTEGER_LIT;
-            tok.ival = atoi(tok.text);
+            tok->type = TOK_INTEGER_LIT;
+            tok->ival = atoi(tok->text);
         }
-        return tok;
+        return;
     }
 
     /* Line continuation: _ followed by optional spaces and newline */
@@ -374,7 +394,7 @@ static token_t scan_token(lexer_t *lex) {
             if (peek_char(lex) == '\r') next_char(lex);
             if (peek_char(lex) == '\n') next_char(lex);
             lex->line++;
-            return scan_token(lex); /* recurse to get next real token */
+            scan_token(lex, tok); return; /* recurse to get next real token */
         }
         /* Not a continuation — restore and fall through to identifier */
         lex->pos = save_pos;
@@ -387,12 +407,12 @@ static token_t scan_token(lexer_t *lex) {
         while (isalnum(peek_char(lex)) || peek_char(lex) == '_') {
             char ch = next_char(lex);
             if (len < 255) {
-                tok.text[len] = ch;
+                tok->text[len] = ch;
                 upper[len] = toupper(ch);
                 len++;
             }
         }
-        tok.text[len] = '\0';
+        tok->text[len] = '\0';
         upper[len] = '\0';
 
         /* Check for type suffix */
@@ -400,18 +420,18 @@ static token_t scan_token(lexer_t *lex) {
             peek_char(lex) == '#' || peek_char(lex) == '!' ||
             (peek_char(lex) == '&' && toupper(lex->src[lex->pos + 1]) != 'H' &&
              toupper(lex->src[lex->pos + 1]) != 'O')) {
-            tok.suffix = next_char(lex);
+            tok->suffix = next_char(lex);
             /* A! is A: SINGLE is the default type, and the name is kept
              * without its ! (DEFDBL A makes A a double and A! a single in
              * QuickBASIC; here they stay one variable, a single) */
-            if (tok.suffix != '!') {
-                tok.text[len] = tok.suffix;
-                tok.text[len + 1] = '\0';
+            if (tok->suffix != '!') {
+                tok->text[len] = tok->suffix;
+                tok->text[len + 1] = '\0';
             }
         }
 
         /* GO TO and GO SUB, spaced (ECMA-55 allows it, GW-BASIC too) */
-        if (!tok.suffix && strcmp(upper, "GO") == 0) {
+        if (!tok->suffix && strcmp(upper, "GO") == 0) {
             int save_pos = lex->pos, n = 0;
             char w[4];
             while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
@@ -420,78 +440,78 @@ static token_t scan_token(lexer_t *lex) {
                 w[n++] = toupper(next_char(lex));
             w[n] = '\0';
             if (!isalnum(peek_char(lex)) && strcmp(w, "TO") == 0) {
-                tok.type = TOK_GOTO;
-                return tok;
+                tok->type = TOK_GOTO;
+                return;
             }
             if (!isalnum(peek_char(lex)) && strcmp(w, "SUB") == 0) {
-                tok.type = TOK_GOSUB;
-                return tok;
+                tok->type = TOK_GOSUB;
+                return;
             }
             lex->pos = save_pos;
         }
 
         /* Check for keyword (only if no suffix) */
-        if (!tok.suffix) {
+        if (!tok->suffix) {
             token_type_t kw = lookup_keyword(upper);
             if (kw != TOK_IDENT) {
-                tok.type = kw;
+                tok->type = kw;
                 /* REM: skip rest of line */
                 if (kw == TOK_REM) {
                     while (peek_char(lex) && peek_char(lex) != '\n' && peek_char(lex) != '\r')
                         next_char(lex);
-                    tok.type = TOK_EOL;
+                    tok->type = TOK_EOL;
                 }
-                return tok;
+                return;
             }
         }
 
         /* Store upper-cased name for case-insensitive lookup */
-        strcpy(tok.text, upper);
-        if (tok.suffix && tok.suffix != '!') {
-            int ulen = (int)strlen(tok.text);
-            tok.text[ulen] = tok.suffix;
-            tok.text[ulen + 1] = '\0';
+        strcpy(tok->text, upper);
+        if (tok->suffix && tok->suffix != '!') {
+            int ulen = (int)strlen(tok->text);
+            tok->text[ulen] = tok->suffix;
+            tok->text[ulen + 1] = '\0';
         }
 
-        tok.type = TOK_IDENT;
-        return tok;
+        tok->type = TOK_IDENT;
+        return;
     }
 
     /* Operators */
     next_char(lex);
     switch (c) {
-        case '+': tok.type = TOK_PLUS; break;
-        case '-': tok.type = TOK_MINUS; break;
-        case '*': tok.type = TOK_STAR; break;
-        case '/': tok.type = TOK_SLASH; break;
-        case '\\': tok.type = TOK_BACKSLASH; break;
-        case '^': tok.type = TOK_CARET; break;
-        case '(': tok.type = TOK_LPAREN; break;
-        case ')': tok.type = TOK_RPAREN; break;
-        case ',': tok.type = TOK_COMMA; break;
-        case ';': tok.type = TOK_SEMICOLON; break;
-        case ':': tok.type = TOK_COLON; break;
-        case '?': tok.type = TOK_PRINT; break;
-        case '=': tok.type = TOK_EQ; break;
-        case '#': tok.type = TOK_HASH; break;
+        case '+': tok->type = TOK_PLUS; break;
+        case '-': tok->type = TOK_MINUS; break;
+        case '*': tok->type = TOK_STAR; break;
+        case '/': tok->type = TOK_SLASH; break;
+        case '\\': tok->type = TOK_BACKSLASH; break;
+        case '^': tok->type = TOK_CARET; break;
+        case '(': tok->type = TOK_LPAREN; break;
+        case ')': tok->type = TOK_RPAREN; break;
+        case ',': tok->type = TOK_COMMA; break;
+        case ';': tok->type = TOK_SEMICOLON; break;
+        case ':': tok->type = TOK_COLON; break;
+        case '?': tok->type = TOK_PRINT; break;
+        case '=': tok->type = TOK_EQ; break;
+        case '#': tok->type = TOK_HASH; break;
         case '.':
             /* Dot must not be followed by a digit (that's a number) */
-            tok.type = TOK_DOT; break;
+            tok->type = TOK_DOT; break;
         case '<':
-            if (peek_char(lex) == '>') { next_char(lex); tok.type = TOK_NE; }
-            else if (peek_char(lex) == '=') { next_char(lex); tok.type = TOK_LE; }
-            else tok.type = TOK_LT;
+            if (peek_char(lex) == '>') { next_char(lex); tok->type = TOK_NE; }
+            else if (peek_char(lex) == '=') { next_char(lex); tok->type = TOK_LE; }
+            else tok->type = TOK_LT;
             break;
         case '>':
-            if (peek_char(lex) == '=') { next_char(lex); tok.type = TOK_GE; }
-            else tok.type = TOK_GT;
+            if (peek_char(lex) == '=') { next_char(lex); tok->type = TOK_GE; }
+            else tok->type = TOK_GT;
             break;
         default:
             /* Unknown character — treat as EOL to skip */
-            tok.type = TOK_EOL;
+            tok->type = TOK_EOL;
             break;
     }
-    return tok;
+    return;
 }
 
 int lexer_data_item(lexer_t *lex, char *buf, int size, int *quoted) {
@@ -527,7 +547,7 @@ int lexer_data_item(lexer_t *lex, char *buf, int size, int *quoted) {
 
 token_t *lexer_peek(lexer_t *lex) {
     if (!lex->has_cur) {
-        lex->cur = scan_token(lex);
+        scan_token(lex, &lex->cur);
         lex->has_cur = 1;
     }
     return &lex->cur;
@@ -535,9 +555,15 @@ token_t *lexer_peek(lexer_t *lex) {
 
 token_t lexer_next(lexer_t *lex) {
     if (!lex->has_cur)
-        lex->cur = scan_token(lex);
+        scan_token(lex, &lex->cur);
     lex->has_cur = 0;
     return lex->cur;
+}
+
+void lexer_skip(lexer_t *lex) {
+    if (!lex->has_cur)
+        scan_token(lex, &lex->cur);
+    lex->has_cur = 0;
 }
 
 int lexer_check(lexer_t *lex, token_type_t type) {
@@ -546,7 +572,7 @@ int lexer_check(lexer_t *lex, token_type_t type) {
 
 int lexer_match(lexer_t *lex, token_type_t type) {
     if (lexer_check(lex, type)) {
-        lexer_next(lex);
+        lexer_skip(lex);
         return 1;
     }
     return 0;

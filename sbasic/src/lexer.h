@@ -107,6 +107,9 @@ token_t *lexer_peek(lexer_t *lex);
 /* Consume and return current token */
 token_t lexer_next(lexer_t *lex);
 
+/* Consume the current token, its value not wanted */
+void lexer_skip(lexer_t *lex);
+
 /* Check if current token matches type (without consuming) */
 int lexer_check(lexer_t *lex, token_type_t type);
 
