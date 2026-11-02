@@ -1352,6 +1352,42 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             if (s->print.using_fmt || s->print.using_expr) return 0;
             int nl = 1;
             emit_preamble(out, op, k);
+            /* native: every item's value has a native version; each item
+             * evaluated and printed in turn, as exec_print */
+            uses_t u;
+            int native = s->print.nitems > 0;
+            u.nv = u.na = 0;
+            for (int i = 0; native && i < s->print.nitems; i++)
+                if (s->print.items[i].expr) {
+                    if (nat_type(s->print.items[i].expr) == N_NONE) native = 0;
+                    else nat_uses(s->print.items[i].expr, &u);
+                }
+            if (native && (u.nv || u.na) && u.nv <= 64 && u.na <= 16) {
+                nat_guard(out, &u);
+                fprintf(out, ") {\n");
+                fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
+                cur_uses = &u;
+                for (int i = 0; i < s->print.nitems; i++) {
+                    const print_item_t *it = &s->print.items[i];
+                    if (it->expr) {
+                        char x[32];
+                        int t = nat_emit(out, it->expr, x);
+                        int tabspc = it->expr->type == EXPR_CALL &&
+                            (strcmp(it->expr->call.name, "TAB") == 0 || strcmp(it->expr->call.name, "SPC") == 0);
+                        if (t == N_STRING)
+                            fprintf(out, "    err = print_value(&%s, %d, console_width); VAL_CLEAR(&%s); " CHECK "\n",
+                                    x, tabspc, x);
+                        else
+                            fprintf(out, "    { value_t pv; pv.type = %s; pv.%s = %s;\n"
+                                         "      err = print_value(&pv, 0, console_width); " CHECK " }\n",
+                                    nat_valtype(t), nat_is_float(t) ? "dval" : "ival", x);
+                    }
+                    if (it->sep == ',') fprintf(out, "    print_comma(console_width);\n");
+                }
+                if (s->print.items[s->print.nitems - 1].sep != ';' && s->print.items[s->print.nitems - 1].sep != ',')
+                    fprintf(out, "    print_text(\"\\n\");\n");
+                fprintf(out, "    goto L%d_done;\n    }\n", k);
+            }
             for (int i = 0; i < s->print.nitems; i++) {
                 const print_item_t *it = &s->print.items[i];
                 if (it->expr) {
@@ -1367,6 +1403,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                 else nl = 1;
             }
             if (nl) fprintf(out, "    print_text(\"\\n\");\n");
+            if (native && (u.nv || u.na) && u.nv <= 64 && u.na <= 16) fprintf(out, "L%d_done:;\n", k);
             return 1;
         }
         case STMT_CALL: {
