@@ -118,3 +118,38 @@ void __assert_fail(char *expr, char *file, int line) {
     af_puts(")\n");
     abort();
 }
+
+/* What the self-hosted <assert.h> and <math.h> call (C library clause 7,
+ * 2026-11): assert() reports through __s32_assert_func, fpclassify and
+ * the classification macros through __fpclassify/__fpclassifyf, so the
+ * cross DBTs -- tools/dbt built by this compiler -- need them here.
+ * Values as math.h numbers them: FP_NAN 0, FP_INFINITE 1, FP_ZERO 2,
+ * FP_SUBNORMAL 3, FP_NORMAL 4. */
+void __s32_assert_func(char *expr, char *file, int line, char *func) {
+    (void)func;
+    __assert_fail(expr, file, line);
+}
+
+int __fpclassify(double x) {
+    unsigned int w[2];
+    unsigned int hi;
+    unsigned int lo;
+    unsigned int e;
+    memcpy((char *)w, (char *)&x, 8);
+    lo = w[0];
+    hi = w[1];
+    e = (hi >> 20) & 0x7FFu;
+    if (e == 0) return ((hi & 0x7FFFFFFFu) | lo) ? 3 : 2;
+    if (e == 0x7FFu) return ((hi & 0x000FFFFFu) | lo) ? 0 : 1;
+    return 4;
+}
+
+int __fpclassifyf(float x) {
+    unsigned int u;
+    unsigned int e;
+    memcpy((char *)&u, (char *)&x, 4);
+    e = (u >> 23) & 0xFFu;
+    if (e == 0) return (u & 0x7FFFFFFFu) ? 3 : 2;
+    if (e == 0xFFu) return (u & 0x007FFFFFu) ? 0 : 1;
+    return 4;
+}
