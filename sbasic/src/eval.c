@@ -1971,7 +1971,7 @@ static error_t for_next(env_t *env, stmt_t *s, for_slot_t *f, int *again) {
     /* the variable as FOR made it: stepped where it lives */
     if (cv && VAL_IS_INT(cv->type)) {
         v = (double)cv->ival + f->step;
-        if (v != (double)(int)v || v > 2147483647.0 || v < -2147483648.0 ||
+        if (!(v <= 2147483647.0 && v >= -2147483648.0) || v != (double)(int)v ||
             (cv->type == VAL_INTEGER && !INT16_OK(v))) {
             EVAL_CHECK(for_set(env, s, v));       /* rounds, or overflows */
             cv = env_get(env, s->for_stmt.var_name);

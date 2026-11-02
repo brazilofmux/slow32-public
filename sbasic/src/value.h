@@ -2,6 +2,7 @@
 #define SBASIC_VALUE_H
 
 #include "error.h"
+#include <stdlib.h>
 
 /* x to an integer, a half to even, as rint in the default rounding:
  * adding 2^52 leaves no fraction, the add rounding it as the hardware
@@ -72,6 +73,14 @@ sb_string_t *string_alloc(const char *s, int len);
 sb_string_t *string_alloc_cstr(const char *s);
 void string_ref(sb_string_t *s);
 void string_unref(sb_string_t *s);
+/* The one-character strings and the empty string are shared, made once
+ * and never freed (a string is never changed in place); each returns a
+ * new reference */
+sb_string_t *string_char(int c);
+sb_string_t *string_empty(void);
+/* s's characters [start, start+n), in range: shared when it can be --
+ * s itself when that is all of it */
+sb_string_t *string_sub(sb_string_t *s, int start, int n);
 
 /* Record allocation / refcounting */
 sb_record_t *record_alloc(int type_idx, int nfields);
@@ -91,11 +100,19 @@ value_t val_default(val_type_t type);
 /* Value destruction (unrefs strings) */
 void val_clear(value_t *v);
 /* the same, the call made only for what holds a reference */
-#define VAL_CLEAR(v) do { if ((v)->type == VAL_STRING || (v)->type == VAL_RECORD) val_clear(v); \
+#define VAL_CLEAR(v) do { if ((v)->type == VAL_STRING) { sb_string_t *s_ = (v)->sval; \
+                              if (s_ && --s_->refcount <= 0) free(s_); (v)->type = VAL_INTEGER; } \
+                          else if ((v)->type == VAL_RECORD) val_clear(v); \
                           else (v)->type = VAL_INTEGER; } while (0)
 
-/* Copy a value (refs strings) */
-value_t val_copy(const value_t *v);
+/* Copy a value (refs strings); inline, being everywhere a variable is
+ * read */
+static inline value_t val_copy(const value_t *v) {
+    value_t r = *v;
+    if (r.type == VAL_STRING) { if (r.sval) r.sval->refcount++; }
+    else if (r.type == VAL_RECORD) record_ref(r.rval);
+    return r;
+}
 
 /* Assign src to dst, clearing old dst */
 void val_assign(value_t *dst, const value_t *src);
@@ -116,6 +133,13 @@ void val_format_number(const value_t *v, char *buf, int bufsize);
 
 /* Type coercion */
 error_t val_to_integer(const value_t *v, int *out);
+/* val_to_integer of a float */
+static inline error_t val_int_of(double d, int *out) {
+    if (!(d < 2147483647.5 && d >= -2147483648.5)) return ERR_OVERFLOW;
+    int i = (int)d;
+    *out = (double)i == d ? i : (int)val_rint(d);
+    return ERR_NONE;
+}
 error_t val_to_double(const value_t *v, double *out);
 error_t val_to_string(const value_t *v, char *buf, int bufsize);
 

@@ -306,14 +306,18 @@ static error_t fn_len(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+error_t sb_chr(int code, value_t *out) {
+    if (code < 0 || code > 255) return ERR_ILLEGAL_FUNCTION_CALL;
+    out->type = VAL_STRING;
+    out->sval = string_char(code);
+    return ERR_NONE;
+}
+
 static error_t fn_chr(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     int code;
     EVAL_CHECK(val_to_integer(&args[0], &code));
-    if (code < 0 || code > 255) return ERR_ILLEGAL_FUNCTION_CALL;
-    char buf[2] = { (char)code, '\0' };
-    *out = val_string(buf, 1);
-    return ERR_NONE;
+    return sb_chr(code, out);
 }
 
 static error_t fn_asc(value_t *args, int nargs, value_t *out) {
@@ -367,16 +371,46 @@ static error_t fn_val(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* LEFT$, RIGHT$ and MID$ of a string and its integer arguments, for
+ * the compiler too (count < 0 with has_count 0: MID$ with two) */
+error_t sb_left(sb_string_t *s, int n, value_t *out) {
+    if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (n > s->len) n = s->len;
+    out->type = VAL_STRING;
+    out->sval = string_sub(s, 0, n);
+    return ERR_NONE;
+}
+
+error_t sb_right(sb_string_t *s, int n, value_t *out) {
+    if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (n > s->len) n = s->len;
+    out->type = VAL_STRING;
+    out->sval = string_sub(s, s->len - n, n);
+    return ERR_NONE;
+}
+
+error_t sb_mid(sb_string_t *s, int start, int count, int has_count, value_t *out) {
+    start--;
+    if (start < 0) start = 0;
+    int len = s->len;
+    if (!has_count) count = len - start;
+    else if (count < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    out->type = VAL_STRING;
+    if (start >= len) {
+        out->sval = string_empty();
+        return ERR_NONE;
+    }
+    if (count > len - start) count = len - start;
+    out->sval = string_sub(s, start, count);
+    return ERR_NONE;
+}
+
 static error_t fn_left(value_t *args, int nargs, value_t *out) {
     if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
     if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
     int n;
     EVAL_CHECK(val_to_integer(&args[1], &n));
-    if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    int len = args[0].sval->len;
-    if (n > len) n = len;
-    *out = val_string(args[0].sval->data, n);
-    return ERR_NONE;
+    return sb_left(args[0].sval, n, out);
 }
 
 static error_t fn_right(value_t *args, int nargs, value_t *out) {
@@ -384,33 +418,16 @@ static error_t fn_right(value_t *args, int nargs, value_t *out) {
     if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
     int n;
     EVAL_CHECK(val_to_integer(&args[1], &n));
-    if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    int len = args[0].sval->len;
-    if (n > len) n = len;
-    *out = val_string(args[0].sval->data + len - n, n);
-    return ERR_NONE;
+    return sb_right(args[0].sval, n, out);
 }
 
 static error_t fn_mid(value_t *args, int nargs, value_t *out) {
     if (nargs < 2 || nargs > 3) return ERR_ILLEGAL_FUNCTION_CALL;
     if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
-    int start;
+    int start, count = 0;
     EVAL_CHECK(val_to_integer(&args[1], &start));
-    start--;
-    if (start < 0) start = 0;
-    int len = args[0].sval->len;
-    int count = len - start;
-    if (nargs == 3) {
-        EVAL_CHECK(val_to_integer(&args[2], &count));
-        if (count < 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    }
-    if (start >= len) {
-        *out = val_string_cstr("");
-        return ERR_NONE;
-    }
-    if (start + count > len) count = len - start;
-    *out = val_string(args[0].sval->data + start, count);
-    return ERR_NONE;
+    if (nargs == 3) EVAL_CHECK(val_to_integer(&args[2], &count));
+    return sb_mid(args[0].sval, start, count, nargs == 3, out);
 }
 
 /* INSTR([start,] str, search) - find substring */

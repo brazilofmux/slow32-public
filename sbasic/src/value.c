@@ -33,6 +33,31 @@ void string_unref(sb_string_t *s) {
     }
 }
 
+static sb_string_t *char_strings[256], *empty_string;
+
+sb_string_t *string_char(int c) {
+    sb_string_t **p = &char_strings[c & 255];
+    if (!*p) {
+        char ch = (char)c;
+        *p = string_alloc(&ch, 1);
+    }
+    (*p)->refcount++;
+    return *p;
+}
+
+sb_string_t *string_empty(void) {
+    if (!empty_string) empty_string = string_alloc("", 0);
+    empty_string->refcount++;
+    return empty_string;
+}
+
+sb_string_t *string_sub(sb_string_t *s, int start, int n) {
+    if (n == 0) return string_empty();
+    if (n == 1) return string_char((unsigned char)s->data[start]);
+    if (start == 0 && n == s->len) { s->refcount++; return s; }
+    return string_alloc(s->data + start, n);
+}
+
 /* --- Record refcounting --- */
 
 sb_record_t *record_alloc(int type_idx, int nfields) {
@@ -132,15 +157,6 @@ void val_clear(value_t *v) {
         record_unref(v->rval);
     v->type = VAL_INTEGER;
     v->ival = 0;
-}
-
-value_t val_copy(const value_t *v) {
-    value_t r = *v;
-    if (r.type == VAL_STRING)
-        string_ref(r.sval);
-    else if (r.type == VAL_RECORD)
-        record_ref(r.rval);
-    return r;
 }
 
 void val_assign(value_t *dst, const value_t *src) {

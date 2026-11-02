@@ -49,9 +49,12 @@ version with its variables in C and no env (NF<n>), which a call site
 runs when it may (no TRACE, none of its variables named as a builtin).
 Numeric builtins (ABS, INT, SQR, SIN, CINT, ...) are C in native code;
 strings are native too: a string variable or element is read as a copy,
-literals are made once, `+` and the comparisons are the interpreter's
-`val_add` and `val_compare`, and the string functions (MID$, LEFT$,
-CHR$, LEN, INSTR, ...) go straight to `builtin_call`.  The 97 games:
+literals are made once, `+` is the interpreter's `val_add`, a
+comparison is `strcmp` (one string equal to itself without it), a store
+moves its reference; LEN, ASC, CHR$, LEFT$, RIGHT$ and MID$ go to their
+typed entries in builtin.c (`sb_mid`, ...), the other string functions
+straight to `builtin_call`.  Strings of one character and the empty
+string are shared, not allocated (`string_char`, interpreter too).  The 97 games:
 964M instructions interpreted, 506M compiled; Mastermind 364M against
 68M.
 

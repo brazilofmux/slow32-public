@@ -80,9 +80,18 @@ the oracle.
   trusted is the reads'), and an interpreter NEXT stepped a CONST:
   both fixed, `tests/constset`.  The 97 games: interpreted 530M,
   compiled 236M (Mastermind 165M / 34M).
+- **String functions (2026-11-02):** LEN, ASC, CHR$, LEFT$, RIGHT$ and
+  MID$ are called through typed entries (`sb_mid`, ...; builtin.c's own
+  functions call them too) with the arguments converted in C
+  (`val_int_of`); one-character and empty strings are shared
+  (`string_char`, `string_empty`), so `MID$(A$, I, 1)` allocates
+  nothing; a string comparison is `strcmp` with a same-pointer
+  shortcut; a string store moves its reference; `val_copy` and
+  `VAL_CLEAR`'s string case are inline.  The 97 games: interpreted
+  523M, compiled 224M (Mastermind 161M / 20M).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
-  bodies' own constraints (GOTO in a procedure keeps it on the env path).
-  PRINT of values; `FOR` itself (only `NEXT` is native).
+  bodies' own constraints (GOTO in a procedure keeps it on the env path);
+  loading (a third of a short game: the source is parsed at start).
 
 ## Milestones
 

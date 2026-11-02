@@ -456,6 +456,26 @@ static int rt_builtin_type(const expr_t *e) {
     return N_NONE;
 }
 
+/* LEN, ASC, CHR$, LEFT$, RIGHT$, MID$ called through their typed
+ * entries: when the arguments are as many as they take, of the types
+ * they take (otherwise builtin_call, which reports what is wrong) */
+static int nat_type(const expr_t *e);
+static int nat_strfn(const expr_t *e) {
+    if (rt_builtin_type(e) == N_NONE) return 0;
+    const char *fn = e->call.name;
+    int n = e->call.nargs, str;
+    if (!strcmp(fn, "LEN") || !strcmp(fn, "ASC")) { if (n != 1) return 0; str = 1; }
+    else if (!strcmp(fn, "CHR$")) { if (n != 1) return 0; str = 0; }
+    else if (!strcmp(fn, "LEFT$") || !strcmp(fn, "RIGHT$")) { if (n != 2) return 0; str = 1; }
+    else if (!strcmp(fn, "MID$")) { if (n != 2 && n != 3) return 0; str = 1; }
+    else return 0;
+    for (int i = 0; i < n; i++) {
+        int t = nat_type(e->call.args[i]);
+        if (t == N_NONE || (t == N_STRING) != (str && i == 0)) return 0;
+    }
+    return 1;
+}
+
 /* a variable's native type: in a native procedure a parameter's is its
  * declaration's (AS, or its name's), anything else its name's */
 static int var_ntype(const char *name) {
@@ -743,6 +763,40 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             fprintf(out, "    %s %s = %s->%s;\n", ct, name, var_ptr(e->var.name), nat_is_float(t) ? "dval" : "ival");
             return t;
         case EXPR_CALL:
+            if (nat_strfn(e)) {
+                /* LEN, ASC, CHR$, LEFT$, RIGHT$, MID$ through their
+                 * typed entries: the arguments evaluated in order, then
+                 * converted in order as val_to_integer converts them */
+                const char *fn = e->call.name;
+                int n = e->call.nargs, at[3];
+                char as[3][32];
+                for (int i = 0; i < n; i++) at[i] = nat_emit(out, e->call.args[i], as[i]);
+                int si = at[0] == N_STRING ? 0 : -1;     /* the string argument */
+                fprintf(out, "    int i%d[3] = { 0, 0, 0 }; err = ERR_NONE;\n", id);
+                for (int i = 0; i < n; i++) {
+                    if (i == si) continue;
+                    if (nat_is_float(at[i]))
+                        fprintf(out, "    if (!err) err = val_int_of(%s, &i%d[%d]);\n", as[i], id, i);
+                    else
+                        fprintf(out, "    i%d[%d] = (int)%s;\n", id, i, as[i]);
+                }
+                if (!strcmp(fn, "LEN") || !strcmp(fn, "ASC")) {
+                    if (!strcmp(fn, "LEN"))
+                        fprintf(out, "    long long %s = %s.sval->len;\n", name, as[0]);
+                    else
+                        fprintf(out, "    if (%s.sval->len == 0) err = ERR_ILLEGAL_FUNCTION_CALL;\n"
+                                     "    long long %s = (unsigned char)%s.sval->data[0];\n", as[0], name, as[0]);
+                } else {
+                    fprintf(out, "    value_t %s; %s.type = VAL_INTEGER;\n    if (!err) err = ", name, name);
+                    if (!strcmp(fn, "CHR$")) fprintf(out, "sb_chr(i%d[0], &%s);\n", id, name);
+                    else if (!strcmp(fn, "LEFT$")) fprintf(out, "sb_left(%s.sval, i%d[1], &%s);\n", as[0], id, name);
+                    else if (!strcmp(fn, "RIGHT$")) fprintf(out, "sb_right(%s.sval, i%d[1], &%s);\n", as[0], id, name);
+                    else fprintf(out, "sb_mid(%s.sval, i%d[1], i%d[2], %d, &%s);\n", as[0], id, id, n == 3, name);
+                }
+                if (si == 0) fprintf(out, "    VAL_CLEAR(&%s);\n", as[0]);
+                fprintf(out, "    " CHECK "\n");
+                return t;
+            }
             if (rt_builtin_type(e) != N_NONE) {
                 /* builtin_call itself, the arguments as values of
                  * their types; its value checked to be of the type
@@ -909,9 +963,10 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             int lt = nat_emit(out, e->compare.left, a);
             nat_emit(out, e->compare.right, b);
             if (lt == N_STRING) {
-                /* as val_compare: strcmp's sign */
-                fprintf(out, "    int c%d; err = val_compare(&%s, &%s, &c%d); VAL_CLEAR(&%s); VAL_CLEAR(&%s); " CHECK "\n",
-                        id, a, b, id, a, b);
+                /* as val_compare: strcmp's sign (one string is equal to
+                 * itself -- often so, the short ones being shared) */
+                fprintf(out, "    int c%d = %s.sval == %s.sval ? 0 : strcmp(%s.sval->data, %s.sval->data); VAL_CLEAR(&%s); VAL_CLEAR(&%s);\n",
+                        id, a, b, a, b, a, b);
                 fprintf(out, "    long long %s = (c%d %s 0) ? -1 : 0;\n", name, id, ops[e->compare.op]);
                 return t;
             }
@@ -1022,7 +1077,9 @@ static void nat_store(FILE *out, const char *slot, int st, const char *x, int t)
     if (st == N_STRING || t == N_STRING) {
         /* (both strings: the callers see to it) store_into's copy, the
          * reference taken released */
-        fprintf(out, "    err = eval_store(%s, &%s); VAL_CLEAR(&%s); " CHECK "\n", slot, x, x);
+        fprintf(out, "    if (%s->type == VAL_STRING && %s.type == VAL_STRING) { sb_string_t *o_ = %s->sval; %s->sval = %s.sval; if (o_ && --o_->refcount <= 0) free(o_); }\n"
+                     "    else { err = eval_store(%s, &%s); VAL_CLEAR(&%s); " CHECK " }\n",
+                slot, x, slot, slot, x, slot, x, x);
         return;
     }
     if (st == N_INT || st == N_LONG) {

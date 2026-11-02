@@ -63,10 +63,10 @@ def sexpr(r, depth):
     pieces = f.split('%s')
     res = pieces[0]
     for i in range(1, len(pieces)):
-        res += (sexpr(r, depth - 1) if i == 1 else r.choice(['0', '1', '2', '3', '-1', '5', '10', 'I%', '2.5']))
+        res += (sexpr(r, depth - 1) if i == 1 else r.choice(['0', '1', '2', '3', '-1', '5', '10', 'I%', '2.5', '1.5', '-0.5', '1E10', 'X']))
         res += pieces[i]
     if r.random() < 0.2:
-        return r.choice(['CHR$(%s)', 'STR$(%s)', 'SPACE$(%s)', 'HEX$(%s)']) % r.choice(['65', '0', '255', '256', '-1', '3', 'I%', 'A%'])
+        return r.choice(['CHR$(%s)', 'STR$(%s)', 'SPACE$(%s)', 'HEX$(%s)']) % r.choice(['65', '0', '255', '256', '-1', '3', 'I%', 'A%', '65.5', '66.5', 'X'])
     return res
 
 
