@@ -68,9 +68,9 @@ the oracle.
   source at start, so loading is the interpreter's: a third of a short
   game's run.  The lexer scans in place and hashes keywords; labels,
   builtins and procedures are found by hash (labels were quadratic);
-  a statement is 216 bytes, not 1,184.  The 97 games: 964M
-  instructions interpreted, 298M compiled (loading 96M of it); the
-  interpreter itself 530M.
+  a statement is 216 bytes, not 1,184.  The 97 games, in
+  instructions: interpreted 964M -> 530M, compiled 506M -> 298M
+  (loading 96M of it).
 - **Open:** native procedures with arrays, strings, PRINT; the loop
   bodies' own constraints (GOTO in a procedure keeps it on the env path).
   PRINT of values; `FOR` itself (only `NEXT` is native).
