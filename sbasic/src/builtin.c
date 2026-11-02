@@ -1424,22 +1424,32 @@ static const builtin_entry_t builtins[] = {
     { NULL, NULL }
 };
 
-/* The builtin of a name, or -1: the table searched once per name's
- * address (the same AST string, again and again), each hit checked by
- * one comparison */
-#define BUILTIN_CACHE 64
-static struct { const char *name; int idx; } builtin_cache[BUILTIN_CACHE];
+/* The builtin of a name, or -1: an open hash of the table's indices
+ * (+1; 0 is empty), made on first use, so a name that is not a builtin
+ * -- every array and variable the evaluator asks about -- costs a hash
+ * and seldom a comparison */
+#define BUILTIN_HASH 1024
+static unsigned short builtin_hash[BUILTIN_HASH];
+static int builtin_hashed;
+
+static unsigned builtin_bucket(const char *s) {
+    unsigned h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h & (BUILTIN_HASH - 1);
+}
 
 static int builtin_index(const char *name) {
-    unsigned h = (unsigned)((unsigned long)name >> 2) % BUILTIN_CACHE;
-    if (builtin_cache[h].name == name && strcmp(builtins[builtin_cache[h].idx].name, name) == 0)
-        return builtin_cache[h].idx;
-    for (int i = 0; builtins[i].name; i++)
-        if (strcmp(builtins[i].name, name) == 0) {
-            builtin_cache[h].name = name;       /* hits only are kept */
-            builtin_cache[h].idx = i;
-            return i;
+    if (!builtin_hashed) {
+        for (int i = 0; builtins[i].name; i++) {
+            unsigned b = builtin_bucket(builtins[i].name);
+            while (builtin_hash[b]) b = (b + 1) & (BUILTIN_HASH - 1);
+            builtin_hash[b] = (unsigned short)(i + 1);
         }
+        builtin_hashed = 1;
+    }
+    for (unsigned b = builtin_bucket(name); builtin_hash[b]; b = (b + 1) & (BUILTIN_HASH - 1))
+        if (strcmp(builtins[builtin_hash[b] - 1].name, name) == 0)
+            return builtin_hash[b] - 1;
     return -1;
 }
 

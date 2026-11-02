@@ -873,9 +873,7 @@ static stmt_t *parse_next(parser_t *p) {
                 parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
             }
             token_t v = lexer_next(&p->lex);
-            strncpy(s->next_stmt.vars[s->next_stmt.nvars], v.text, 63);
-            s->next_stmt.vars[s->next_stmt.nvars][63] = '\0';
-            s->next_stmt.nvars++;
+            stmt_next_add_var(s, v.text);
         } while (lexer_match(&p->lex, TOK_COMMA));
     }
     return s;
@@ -2220,12 +2218,9 @@ static stmt_t *parse_stmt(parser_t *p) {
                             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
                         }
                         token_t param = lexer_next(&p->lex);
-                        int pi = s->def_fn.nparams;
-                        if (pi >= 8) { parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL; }
-                        strncpy(s->def_fn.params[pi], param.text, 63);
-                        s->def_fn.params[pi][63] = '\0';
-                        s->def_fn.param_types[pi] = var_type_from_name(param.text);
-                        s->def_fn.nparams++;
+                        if (!stmt_def_fn_add_param(s, param.text, var_type_from_name(param.text))) {
+                            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+                        }
                     } while (lexer_match(&p->lex, TOK_COMMA));
                 }
                 if (!expect(p, TOK_RPAREN)) { stmt_free(s); return NULL; }

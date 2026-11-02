@@ -300,7 +300,7 @@ typedef struct stmt {
         /* STMT_SUB_DEF / STMT_FUNC_DEF */
         struct {
             char name[64];
-            char params[16][64];
+            char (*params)[64];     /* 16, made at the first */
             val_type_t param_types[16];
             int nparams;
             val_type_t return_type; /* FUNC_DEF only */
@@ -322,7 +322,7 @@ typedef struct stmt {
         /* STMT_NEXT: NEXT [v [, v ...]] -- matched to its FOR when it
          * runs, as GW-BASIC and QBasic do */
         struct {
-            char vars[8][64];
+            char (*vars)[64];       /* 8, made at the first */
             int nvars;
         } next_stmt;
 
@@ -335,7 +335,7 @@ typedef struct stmt {
 
         /* STMT_SHARED */
         struct {
-            char varnames[16][64];
+            char (*varnames)[64];   /* 16, made at the first */
             int nvars;
         } shared;
 
@@ -366,7 +366,7 @@ typedef struct stmt {
 
         /* STMT_ERASE */
         struct {
-            char names[8][64];
+            char (*names)[64];      /* 8, made at the first */
             int nnames;
         } erase_stmt;
 
@@ -521,7 +521,7 @@ typedef struct stmt {
         /* STMT_ON_GOTO / STMT_ON_GOSUB */
         struct {
             struct expr *index;
-            char labels[16][64];
+            char (*labels)[64];     /* 16, made at the first */
             int nlabels;
         } on_branch;
 
@@ -546,7 +546,7 @@ typedef struct stmt {
         /* STMT_DEF_FN: DEF FNname(params) = expr */
         struct {
             char name[64];
-            char params[8][64];
+            char (*params)[64];     /* 8, made at the first */
             val_type_t param_types[8];
             int nparams;
             struct expr *body;
@@ -705,6 +705,11 @@ stmt_t *stmt_error_raise(expr_t *errnum, int line);
 stmt_t *stmt_deftype(val_type_t type, char from, char to, int line);
 stmt_t *stmt_on_goto(expr_t *index, int line);
 stmt_t *stmt_on_gosub(expr_t *index, int line);
+/* a NEXT's variable, a DEF FN's parameter: 0 past the most there may be */
+/* src into a 64-byte name field, cut at 63 */
+void ast_name_copy(char *dst, const char *src);
+int stmt_next_add_var(stmt_t *s, const char *name);
+int stmt_def_fn_add_param(stmt_t *s, const char *name, val_type_t type);
 void stmt_on_branch_add_label(stmt_t *s, const char *label);
 
 /* Append statement to end of chain */

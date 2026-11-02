@@ -191,12 +191,44 @@ static int find_field_index(type_def_t *td, const char *field) {
 
 /* --- Lookup helpers --- */
 
+/* The procedures by name: an open hash of proc_table's indices (+1;
+ * 0 is empty), since every call expression -- an array's element
+ * among them -- asks first whether its name is a procedure's */
+#define PROC_HASH (MAX_PROCS * 2)
+static unsigned char proc_hash[PROC_HASH];
+
+static unsigned proc_bucket(const char *s) {
+    unsigned h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h & (PROC_HASH - 1);
+}
+
 static proc_entry_t *find_proc(const char *name) {
-    for (int i = 0; i < proc_count; i++) {
-        if (strcmp(proc_table[i].name, name) == 0)
-            return &proc_table[i];
-    }
+    for (unsigned b = proc_bucket(name); proc_hash[b]; b = (b + 1) & (PROC_HASH - 1))
+        if (strcmp(proc_table[proc_hash[b] - 1].name, name) == 0)
+            return &proc_table[proc_hash[b] - 1];
     return NULL;
+}
+
+/* A SUB, FUNCTION or DEF FN into the table (the first of a name is the
+ * one found) */
+static error_t proc_register(const char *name, stmt_t *def) {
+    if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
+    proc_entry_t *p = &proc_table[proc_count];
+    strncpy(p->name, name, 63);
+    p->name[63] = '\0';
+    p->def = def;
+    p->static_env = NULL;
+    p->code = NULL;
+    p->prepared = 0;
+    p->shared_names = p->static_names = NULL;
+    p->nshared = p->nstatic = 0;
+    p->compiled = NULL;
+    unsigned b = proc_bucket(p->name);
+    while (proc_hash[b]) b = (b + 1) & (PROC_HASH - 1);
+    proc_hash[b] = (unsigned char)(proc_count + 1);
+    proc_count++;
+    return ERR_NONE;
 }
 
 static int find_label(const char *name) {
@@ -2939,19 +2971,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_DEF_FN: {
             /* Register DEF FN in proc table (whether name(args) is an
              * array depends on it: a cached array is stale) */
-            if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
             array_generation++;
-            strncpy(proc_table[proc_count].name, s->def_fn.name, 63);
-            proc_table[proc_count].name[63] = '\0';
-            proc_table[proc_count].def = s;
-            proc_table[proc_count].static_env = NULL;
-        proc_table[proc_count].code = NULL;
-        proc_table[proc_count].prepared = 0;
-        proc_table[proc_count].shared_names = proc_table[proc_count].static_names = NULL;
-        proc_table[proc_count].nshared = proc_table[proc_count].nstatic = 0;
-        proc_table[proc_count].compiled = NULL;
-            proc_count++;
-            return ERR_NONE;
+            return proc_register(s->def_fn.name, s);
         }
 
         case STMT_SHELL: {
@@ -3297,8 +3318,7 @@ static error_t scan_one_stmt(stmt_t *s) {
             label_table = t;
             label_cap = cap;
         }
-        strncpy(label_table[label_count].name, s->label.name, 63);
-        label_table[label_count].name[63] = '\0';
+        ast_name_copy(label_table[label_count].name, s->label.name);
         label_table[label_count].data_offset = data_pool_count;
         label_count++;
     }
@@ -3320,17 +3340,8 @@ static error_t scan_one_stmt(stmt_t *s) {
         }
     }
     if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) {
-        if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
-        strncpy(proc_table[proc_count].name, s->proc_def.name, 63);
-        proc_table[proc_count].name[63] = '\0';
-        proc_table[proc_count].def = s;
-        proc_table[proc_count].static_env = NULL;
-        proc_table[proc_count].code = NULL;
-        proc_table[proc_count].prepared = 0;
-        proc_table[proc_count].shared_names = proc_table[proc_count].static_names = NULL;
-        proc_table[proc_count].nshared = proc_table[proc_count].nstatic = 0;
-        proc_table[proc_count].compiled = NULL;
-        proc_count++;
+        error_t perr = proc_register(s->proc_def.name, s);
+        if (perr != ERR_NONE) return perr;
     }
     /* Recurse into block bodies */
     error_t err;
@@ -3669,6 +3680,7 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
 
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
+    memset(proc_hash, 0, sizeof proc_hash);
     label_count = 0;
 
     result = scan_stmt_list(program);

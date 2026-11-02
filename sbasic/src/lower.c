@@ -38,9 +38,31 @@ static int emit(lower_t *L, op_kind_t kind, stmt_t *s, int line) {
     return c->nops++;
 }
 
+static unsigned label_hash(const char *s) {
+    unsigned h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h;
+}
+
+/* label i in the hash, which has room */
+static void label_index(code_t *c, int i) {
+    unsigned b = label_hash(c->labels[i].name) & (unsigned)(c->lhcap - 1);
+    while (c->lhash[b]) b = (b + 1) & (unsigned)(c->lhcap - 1);
+    c->lhash[b] = i + 1;
+}
+
 static void add_label(lower_t *L, const char *name) {
     code_t *c = L->c;
     if (code_find_label(c, name) >= 0) return;   /* the first one counts */
+    if ((c->nlabels + 1) * 2 > c->lhcap) {
+        int cap = c->lhcap ? c->lhcap * 2 : 64;
+        int *h = calloc((size_t)cap, sizeof(int));
+        if (!h) { L->err = ERR_OUT_OF_MEMORY; return; }
+        free(c->lhash);
+        c->lhash = h;
+        c->lhcap = cap;
+        for (int i = 0; i < c->nlabels; i++) label_index(c, i);
+    }
     if (c->nlabels == c->lcap) {
         int cap = c->lcap ? c->lcap * 2 : 16;
         code_label_t *l = realloc(c->labels, cap * sizeof(code_label_t));
@@ -48,9 +70,9 @@ static void add_label(lower_t *L, const char *name) {
         c->labels = l;
         c->lcap = cap;
     }
-    strncpy(c->labels[c->nlabels].name, name, 63);
-    c->labels[c->nlabels].name[63] = '\0';
+    ast_name_copy(c->labels[c->nlabels].name, name);
     c->labels[c->nlabels].index = c->nops;
+    label_index(c, c->nlabels);
     c->nlabels++;
 }
 
@@ -281,12 +303,16 @@ void code_free(code_t *c) {
         if (c->ops[i].kind == OP_SELECT) free(c->ops[i].targets);
     free(c->ops);
     free(c->labels);
+    free(c->lhash);
     free(c);
 }
 
 int code_find_label(const code_t *c, const char *name) {
-    for (int i = 0; i < c->nlabels; i++)
-        if (strcmp(c->labels[i].name, name) == 0)
-            return c->labels[i].index;
+    if (!c->lhcap) return -1;
+    for (unsigned b = label_hash(name) & (unsigned)(c->lhcap - 1); c->lhash[b];
+         b = (b + 1) & (unsigned)(c->lhcap - 1)) {
+        const code_label_t *l = &c->labels[c->lhash[b] - 1];
+        if (strcmp(l->name, name) == 0) return l->index;
+    }
     return -1;
 }

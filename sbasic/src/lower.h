@@ -48,6 +48,8 @@ typedef struct code {
     int nops, cap;
     code_label_t *labels;
     int nlabels, lcap;
+    int *lhash;         /* labels by name: open, of label index + 1 */
+    int lhcap;          /* a power of two, at least twice nlabels */
     int nfor;           /* FOR slots an activation needs */
 } code_t;
 

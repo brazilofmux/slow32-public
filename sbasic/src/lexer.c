@@ -553,11 +553,19 @@ token_t *lexer_peek(lexer_t *lex) {
     return &lex->cur;
 }
 
+/* (the token's fields and only as much of its text as it has: the
+ * text is most of a token, and seldom more than a few characters) */
 token_t lexer_next(lexer_t *lex) {
+    token_t t;
     if (!lex->has_cur)
         scan_token(lex, &lex->cur);
     lex->has_cur = 0;
-    return lex->cur;
+    t.type = lex->cur.type;
+    t.line = lex->cur.line;
+    memcpy(&t.dval, &lex->cur.dval, sizeof t.dval);   /* ival or dval, bits */
+    t.suffix = lex->cur.suffix;
+    memcpy(t.text, lex->cur.text, strlen(lex->cur.text) + 1);
+    return t;
 }
 
 void lexer_skip(lexer_t *lex) {
