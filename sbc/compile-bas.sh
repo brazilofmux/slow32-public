@@ -24,7 +24,7 @@ SB="$ROOT/sbasic/src"
 WORK="${SBC_WORK:-$SBC_DIR/out}"
 TARGET=slow32-unknown-none
 CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -fno-builtin -I$RT/include -I$SB -I$SBC_DIR/runtime"
-OPT="${OPT:--O1}"
+OPT="${OPT:--O2}"
 
 if [ $# -lt 1 ]; then
     echo "Usage: $0 input.bas [output.s32x]"
