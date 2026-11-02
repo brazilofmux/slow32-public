@@ -4,7 +4,9 @@ set -e
 
 BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
-SBASIC="$BASDIR/sbasic.s32x"
+# SBASIC: another build of the interpreter (the slow32:basic image's,
+# /opt/slow32/basic/sbasic.s32x), run against these tests
+SBASIC="${SBASIC:-$BASDIR/sbasic.s32x}"
 FILTER_FAULTS="${FILTER_FAULTS:-1}"
 # --update: write each test's output over its .expected (after a change
 # whose new output has been checked, e.g. against QBasic with
