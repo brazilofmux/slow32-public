@@ -640,7 +640,9 @@ error_t eval_call_proc(const char *name, void **cache, value_t *args, value_t **
 static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out);
 
 error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
-    if (++eval_depth > MAX_EVAL_DEPTH || stack_exhausted()) {
+    /* (the stack is checked where calls begin, act_begin: expressions
+     * alone nest within the count's frames) */
+    if (++eval_depth > MAX_EVAL_DEPTH) {
         eval_depth--;
         return ERR_STACK_OVERFLOW;
     }
