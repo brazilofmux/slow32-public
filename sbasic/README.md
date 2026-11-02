@@ -1,18 +1,21 @@
 # SLOW BASIC
 
-A structured BASIC in the QuickBASIC/GW-BASIC line: no line numbers
-needed, labels, real SUB/FUNCTION, optional LET, DATA/READ, typed
-variables (`%` integer, `#` double, `$` string; bare names are double),
-TYPE records, ON ERROR, file I/O, and the GW-BASIC graphics statements
-drawn on the tube.  It is a tree-walk interpreter of about 10,300 lines
-of C in `src/`, built with clang for SLOW-32 and linked against the
-MMIO libc, so it runs on any of the emulators.  The design and the
-stage-by-stage record are in [PLAN.md](PLAN.md).
+The BASIC of QBasic 1.1, with GW-BASIC's line-numbered habits: line
+numbers optional, labels, real SUB/FUNCTION, optional LET, DATA/READ,
+typed variables (`%` 16-bit INTEGER, `&` LONG, `!` or none SINGLE, `#`
+DOUBLE, `$` STRING), TYPE records, ON ERROR, file I/O, and the GW-BASIC
+graphics statements drawn on the tube.  **[LANGUAGE.md](LANGUAGE.md)
+is the dialect, rule by rule**, with QBasic 1.1 as its authority.  It is
+an interpreter of about 11,000 lines of C in `src/`: each program unit
+is lowered to flat code (`src/lower.c`) and run; built with clang for
+SLOW-32 and linked against the MMIO libc, so it runs on any of the
+emulators.  The design and the stage-by-stage record are in
+[PLAN.md](PLAN.md).
 
 ## Build
 
 ```bash
-./build.sh            # clang -O1 per file, then s32-ld --mmio 64K --stack-size 128K
+./build.sh            # clang -O1 per file, then s32-ld --mmio 64K --stack-size 1M --heap-size 16M
 OPT=-O2 ./build.sh    # another optimization level
 ```
 
@@ -76,9 +79,18 @@ EMU=$PWD/../tools/dbt/slow32-dbt ./tests/run-tests.sh  # another engine
 ```
 
 Each `tests/*.bas` is piped in followed by `RUN` and its output
-compared with `tests/<name>.expected`.  Result on 2026-10-29: 45/45
-passed under slow32-fast, slow32 and slow32-dbt, with the tracked
-binary and with a fresh `build.sh` build.  `graphics.bas` checks its
+compared with `tests/<name>.expected` (`--update` rewrites them from the
+current output, for a change that has been checked).  45/45 on
+2026-11-01.
+
+```bash
+python3 tests/nbs.py -j 8                    # the NBS suite vs QBasic 1.1
+python3 tests/nbs.py -j 8 --dir DIR          # any directory of programs
+```
+
+`tests/nbs.py` runs each program on SLOW BASIC and on QBasic 1.1 under
+dos-monster and compares the output byte for byte; the corpora and the
+current numbers are in [LANGUAGE.md](LANGUAGE.md#how-it-is-checked).  `graphics.bas` checks its
 own drawing through `POINT` and needs no viewer.  `bench/` holds four
 timing programs (fib, nested loops, sieve, string concatenation) with
 no expected output.
@@ -90,12 +102,14 @@ no expected output.
   `ON TIMER` and `ON KEY`.  `DECLARE` is parsed and ignored.
 - `SHELL` prints `SHELL not supported:` and the command.
 - `PEEK`/`POKE` address a private 64 KB array, not machine memory.
-  `STICK`, `STRIG`, `INP` and `LPOS` return 0.
+  `STICK`, `STRIG` and `INP` return 0.
 - `CIRCLE` has no arcs or aspect ratio; `LINE`'s style argument is
   ignored.  `DRAW` is not implemented.
 - Fixed limits: 2,048 program lines of 255 characters, 64 arrays of up
-  to 8 dimensions, 128 SUB/FUNCTIONs, 256 labels, 1,024 DATA values,
-  32 TYPEs, 16 open files, 4,096-character strings.
+  to 8 dimensions, 128 SUB/FUNCTIONs, 32 TYPEs, 16 open files,
+  4,096-character strings; recursion about 330 FUNCTION calls deep.
+- The differences from QBasic that are known are listed in
+  [LANGUAGE.md](LANGUAGE.md#differences-from-qbasic).
 
 ## Pointers
 
