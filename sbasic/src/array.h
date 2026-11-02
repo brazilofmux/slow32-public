@@ -18,6 +18,11 @@ typedef struct {
     int active;                  /* 1 if allocated */
 } sb_array_t;
 
+/* Bumped whenever an array is made, erased or re-dimensioned: a pointer
+ * to an array (and to its data) stays good while it is unchanged
+ * (compiled programs cache them) */
+extern unsigned array_generation;
+
 /* Clear all arrays (call at program start) */
 void array_clear_all(void);
 

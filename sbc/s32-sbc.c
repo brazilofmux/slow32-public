@@ -63,6 +63,61 @@ static int cur_op;
 static char **vars;
 static int nvars, capvars;
 
+/* the names the program DIMs or assigns elements of: name(args) of one
+ * of them may be read natively (another name -- ABS(X) -- never is) */
+static char **anames;
+static int nanames;
+
+static void note_array_name(const char *name) {
+    for (int i = 0; i < nanames; i++)
+        if (strcmp(anames[i], name) == 0) return;
+    anames = realloc(anames, (nanames + 1) * sizeof(char *));
+    anames[nanames++] = strdup(name);
+}
+
+static int is_array_name(const char *name) {
+    for (int i = 0; i < nanames; i++)
+        if (strcmp(anames[i], name) == 0) return 1;
+    return 0;
+}
+
+static void scan_array_names(const stmt_t *s) {
+    for (; s; s = s->next) {
+        switch (s->type) {
+            case STMT_DIM: note_array_name(s->dim_stmt.name); break;
+            case STMT_ARRAY_ASSIGN: note_array_name(s->array_assign.name); break;
+            case STMT_IF:
+                scan_array_names(s->if_stmt.then_body);
+                scan_array_names(s->if_stmt.else_body);
+                break;
+            case STMT_WHILE: scan_array_names(s->while_stmt.body); break;
+            case STMT_DO_LOOP: scan_array_names(s->do_loop.body); break;
+            case STMT_SELECT:
+                for (const case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next)
+                    scan_array_names(cl->body);
+                break;
+            case STMT_SUB_DEF: case STMT_FUNC_DEF: scan_array_names(s->proc_def.body); break;
+            default: break;
+        }
+    }
+}
+
+/* the arrays a unit reads natively, each with a cached pointer (AR[j],
+ * good while AG[j] == array_generation) */
+static char **arrs;
+static int narrs, caparrs;
+
+static int arr_index(const char *name) {
+    for (int i = 0; i < narrs; i++)
+        if (strcmp(arrs[i], name) == 0) return i;
+    if (narrs == caparrs) {
+        caparrs = caparrs ? caparrs * 2 : 16;
+        arrs = realloc(arrs, caparrs * sizeof(char *));
+    }
+    arrs[narrs] = strdup(name);
+    return narrs++;
+}
+
 static int var_index(const char *name) {
     for (int i = 0; i < nvars; i++)
         if (strcmp(vars[i], name) == 0) return i;
@@ -205,6 +260,12 @@ static int nat_type(const expr_t *e) {
             }
         case EXPR_VARIABLE:
             return predict_name(e->var.name);
+        case EXPR_CALL:
+            if (!is_array_name(e->call.name) || e->call.nargs < 1 || e->call.nargs > 8)
+                return N_NONE;
+            for (int i = 0; i < e->call.nargs; i++)
+                if (nat_type(e->call.args[i]) == N_NONE) return N_NONE;
+            return predict_name(e->call.name);
         case EXPR_UNARY:
             l = nat_type(e->unary.operand);
             if (l == N_NONE) return N_NONE;
@@ -235,6 +296,33 @@ static int nat_type(const expr_t *e) {
             }
         default:
             return N_NONE;
+    }
+}
+
+/* the variables and arrays a native statement uses, for its guard */
+typedef struct {
+    int v[64], nv;              /* variables (nv past 64: go generic) */
+    int a[16], an[16], na;      /* arrays, with the subscripts they take */
+} uses_t;
+
+static void nat_uses(const expr_t *e, uses_t *u);
+
+static void nat_vars(const expr_t *e, int *list, int *n);
+
+static void nat_uses(const expr_t *e, uses_t *u) {
+    if (e->type == EXPR_CALL) {
+        int j = arr_index(e->call.name);
+        if (u->na < 16) { u->a[u->na] = j; u->an[u->na] = e->call.nargs; }
+        u->na++;
+        for (int i = 0; i < e->call.nargs; i++) nat_uses(e->call.args[i], u);
+        return;
+    }
+    switch (e->type) {
+        case EXPR_VARIABLE: nat_vars(e, u->v, &u->nv); return;
+        case EXPR_UNARY: nat_uses(e->unary.operand, u); return;
+        case EXPR_BINARY: nat_uses(e->binary.left, u); nat_uses(e->binary.right, u); return;
+        case EXPR_COMPARE: nat_uses(e->compare.left, u); nat_uses(e->compare.right, u); return;
+        default: return;
     }
 }
 
@@ -270,6 +358,8 @@ static void nat_range(FILE *out, const char *r, int t) {
         fprintf(out, "    if (%s < -2147483648LL || %s > 2147483647LL) { err = ERR_OVERFLOW; goto fail; }\n", r, r);
 }
 
+static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, const char *flat);
+
 /* code computing e into a fresh C local; its name in *name */
 static int nat_emit(FILE *out, const expr_t *e, char *name) {
     int t = nat_type(e), id = nnat++;
@@ -284,6 +374,19 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
         case EXPR_VARIABLE: {
             int v = var_index(e->var.name);
             fprintf(out, "    %s %s = V[%d]->%s;\n", ct, name, v, nat_is_float(t) ? "dval" : "ival");
+            return t;
+        }
+        case EXPR_CALL: {
+            int j = arr_index(e->call.name), n = e->call.nargs, ixt[8];
+            char ixs[8][32], flat[32];
+            const char *ix[8];
+            for (int i = 0; i < n; i++) {
+                ixt[i] = nat_emit(out, e->call.args[i], ixs[i]);
+                ix[i] = ixs[i];
+            }
+            sprintf(flat, "f%d", id);
+            nat_index(out, j, ix, ixt, n, flat);
+            fprintf(out, "    %s %s = AR[%d]->data[%s].%s;\n", ct, name, j, flat, nat_is_float(t) ? "dval" : "ival");
             return t;
         }
         case EXPR_UNARY: {
@@ -354,33 +457,64 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
     }
 }
 
-/* the guard: each variable cached and of its predicted type */
-static void nat_guard(FILE *out, const int *list, int n) {
+/* the guard: each variable cached and of its predicted type; each array
+ * there (as eval_call_array finds it), of its predicted element type,
+ * with as many dimensions as it is given subscripts */
+static void nat_guard(FILE *out, const uses_t *u) {
+    for (int i = 0; i < u->na; i++) {
+        int j = u->a[i];
+        fprintf(out, "    if (AG[%d] != array_generation) { AR[%d] = eval_call_array(", j, j);
+        emit_cstring(out, arrs[j], (int)strlen(arrs[j]));
+        fprintf(out, "); AG[%d] = array_generation; }\n", j);
+    }
     fprintf(out, "    if (1");
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < u->nv; i++)
         fprintf(out, " && VG[%d] == env_generation && V[%d] && V[%d]->type == %s",
-                list[i], list[i], list[i], nat_valtype(predict_name(vars[list[i]])));
+                u->v[i], u->v[i], u->v[i], nat_valtype(predict_name(vars[u->v[i]])));
+    for (int i = 0; i < u->na; i++)
+        fprintf(out, " && AR[%d] && AR[%d]->elem_type == %s && AR[%d]->ndims == %d",
+                u->a[i], u->a[i], nat_valtype(predict_name(arrs[u->a[i]])), u->a[i], u->an[i]);
+}
+
+/* the element index of arr(subscripts) into C local flat, the
+ * subscripts' natives converted as val_to_integer converts, the bounds
+ * checked as calc_flat_index checks them */
+static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, const char *flat) {
+    for (int i = 0; i < n; i++) {
+        if (nat_is_float(ixt[i])) {
+            fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", ix[i], ix[i]);
+            fprintf(out, "    int %s_i%d = (int)rint(%s);\n", flat, i, ix[i]);
+        } else {
+            fprintf(out, "    int %s_i%d = (int)%s;\n", flat, i, ix[i]);
+        }
+    }
+    fprintf(out, "    int %s = 0;\n    { int mul = 1;\n", flat);
+    for (int d = n - 1; d >= 0; d--)
+        fprintf(out, "      { int x = %s_i%d - AR[%d]->base; if (x < 0 || x >= AR[%d]->dims[%d]) { err = ERR_SUBSCRIPT_OUT_OF_RANGE; goto fail; }\n"
+                     "        %s += x * mul; mul *= AR[%d]->dims[%d]; }\n",
+                flat, d, j, j, d, flat, j, d);
+    fprintf(out, "    }\n");
 }
 
 /* storing native value x of type t into slot V[v], of type st, as
  * val_coerce and store_into do */
-static void nat_store(FILE *out, int v, int st, const char *x, int t) {
+static void nat_store(FILE *out, const char *slot, int st, const char *x, int t) {
     if (st == N_INT || st == N_LONG) {
         if (nat_is_float(t)) {
             fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
             fprintf(out, "    { long long q = (long long)rint(%s);\n", x);
             if (st == N_INT) nat_range(out, "q", N_INT);
-            fprintf(out, "    V[%d]->ival = (int)q; }\n", v);
+            fprintf(out, "    %s->ival = (int)q; }\n", slot);
         } else {
             if (st == N_INT && t != N_INT) nat_range(out, x, N_INT);
-            fprintf(out, "    V[%d]->ival = (int)%s;\n", v, x);
+            fprintf(out, "    %s->ival = (int)%s;\n", slot, x);
         }
     } else if (st == N_SINGLE) {
         fprintf(out, "    { double q = (double)%s; if (!(fabs(q) <= 3.4028234663852886e38)) { err = ERR_OVERFLOW; goto fail; }\n"
-                     "      V[%d]->dval = (double)(float)q; }\n", x, v);
+                     "      %s->dval = (double)(float)q; }\n", x, slot);
     } else {
         fprintf(out, "    { double q = (double)%s; if (!(fabs(q) <= 1.7976931348623157e308)) { err = ERR_OVERFLOW; goto fail; }\n"
-                     "      V[%d]->dval = q; }\n", x, v);
+                     "      %s->dval = q; }\n", x, slot);
     }
 }
 
@@ -412,6 +546,24 @@ static void emit_generic_assign(FILE *out, const stmt_t *s, int k) {
     }
 }
 
+static void emit_generic_array_assign(FILE *out, const stmt_t *s, int k) {
+    char path[1024];
+    {
+            int n = s->array_assign.nindices;
+            fprintf(out, "    { int ix[8];\n");
+            for (int i = 0; i < n; i++) {
+                snprintf(path, sizeof path, "c->ops[%d].s->array_assign.indices[%d]", k, i);
+                int u = emit_expr(out, s->array_assign.indices[i], path);
+                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n", u, i, u);
+            }
+            snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
+            int t = emit_expr(out, s->array_assign.value, path);
+            fprintf(out, "    err = eval_array_store(");
+            emit_cstring(out, s->array_assign.name, (int)strlen(s->array_assign.name));
+            fprintf(out, ", %d, ix, &T[%d]); VAL_CLEAR(&T[%d]); " CHECK " }\n", n, t, t);
+    }
+}
+
 /* a statement compiled here: 1, or 0 for the executor's */
 static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
     const stmt_t *s = op->s;
@@ -420,16 +572,18 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
         case STMT_ASSIGN: {
             int st = predict_name(s->assign.name);
             if (st != N_NONE && nat_type(s->assign.value) != N_NONE) {
-                int list[64], n = 0;
-                list[n++] = var_index(s->assign.name);
-                nat_vars(s->assign.value, list, &n);
-                if (n <= 64) {
-                    char x[32];
+                uses_t u;
+                u.nv = u.na = 0;
+                u.v[u.nv++] = var_index(s->assign.name);
+                nat_uses(s->assign.value, &u);
+                if (u.nv <= 64 && u.na <= 16) {
+                    char x[32], slot[32];
                     emit_preamble(out, op, k);
-                    nat_guard(out, list, n);
+                    nat_guard(out, &u);
                     fprintf(out, ") {\n");
                     int t = nat_emit(out, s->assign.value, x);
-                    nat_store(out, list[0], st, x, t);
+                    sprintf(slot, "V[%d]", u.v[0]);
+                    nat_store(out, slot, st, x, t);
                     fprintf(out, "    goto L%d_done;\n    }\n", k);
                     emit_generic_assign(out, s, k);
                     fprintf(out, "L%d_done:;\n", k);
@@ -443,20 +597,60 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
 
         case STMT_ARRAY_ASSIGN: {
             int n = s->array_assign.nindices;
+            int st = predict_name(s->array_assign.name), native = st != N_NONE && n >= 1 && n <= 8 &&
+                     nat_type(s->array_assign.value) != N_NONE;
+            for (int i = 0; native && i < n; i++)
+                if (nat_type(s->array_assign.indices[i]) == N_NONE) native = 0;
             emit_preamble(out, op, k);
-            fprintf(out, "    { int ix[8];\n");
-            for (int i = 0; i < n; i++) {
-                snprintf(path, sizeof path, "c->ops[%d].s->array_assign.indices[%d]", k, i);
-                int u = emit_expr(out, s->array_assign.indices[i], path);
-                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n", u, i, u);
+            if (native) {
+                /* the subscripts, then the value, then the bounds, as
+                 * exec_array_assign and eval_array_store */
+                uses_t u;
+                u.nv = u.na = 0;
+                int j = arr_index(s->array_assign.name);
+                u.a[u.na] = j; u.an[u.na] = n; u.na++;
+                for (int i = 0; i < n; i++) nat_uses(s->array_assign.indices[i], &u);
+                nat_uses(s->array_assign.value, &u);
+                if (u.nv <= 64 && u.na <= 16) {
+                    char ixs[8][32], x[32], flat[32], slot[64];
+                    const char *ix[8];
+                    int ixt[8];
+                    nat_guard(out, &u);
+                    fprintf(out, ") {\n");
+                    for (int i = 0; i < n; i++) {
+                        ixt[i] = nat_emit(out, s->array_assign.indices[i], ixs[i]);
+                        ix[i] = ixs[i];
+                    }
+                    /* the subscripts' conversions come before the value */
+                    char cv[8][32];
+                    const char *cix[8];
+                    int cixt[8];
+                    for (int i = 0; i < n; i++) {
+                        if (nat_is_float(ixt[i])) {
+                            fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", ix[i], ix[i]);
+                            sprintf(cv[i], "%s_c", ix[i]);
+                            fprintf(out, "    long long %s = (long long)rint(%s);\n", cv[i], ix[i]);
+                        } else {
+                            strcpy(cv[i], ix[i]);
+                        }
+                        cix[i] = cv[i];
+                        cixt[i] = N_LONG;
+                    }
+                    int t = nat_emit(out, s->array_assign.value, x);
+                    sprintf(flat, "fa%d", k);
+                    nat_index(out, j, cix, cixt, n, flat);
+                    sprintf(slot, "(&AR[%d]->data[%s])", j, flat);
+                    nat_store(out, slot, st, x, t);
+                    fprintf(out, "    goto L%d_done;\n    }\n", k);
+                    emit_generic_array_assign(out, s, k);
+                    fprintf(out, "L%d_done:;\n", k);
+                    return 1;
+                }
             }
-            snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
-            int t = emit_expr(out, s->array_assign.value, path);
-            fprintf(out, "    err = eval_array_store(");
-            emit_cstring(out, s->array_assign.name, (int)strlen(s->array_assign.name));
-            fprintf(out, ", %d, ix, &T[%d]); VAL_CLEAR(&T[%d]); " CHECK " }\n", n, t, t);
+            emit_generic_array_assign(out, s, k);
             return 1;
         }
+
         case STMT_PRINT: {
             if (s->print.using_fmt || s->print.using_expr) return 0;
             int nl = 1;
@@ -505,6 +699,8 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
     ntemp = maxtemp = 0;
     for (int i = 0; i < nvars; i++) free(vars[i]);
     nvars = 0;
+    for (int i = 0; i < narrs; i++) free(arrs[i]);
+    narrs = 0;
     for (int k = 0; k < c->nops; k++) {
         const op_t *op = &c->ops[k];
         cur_op = k;
@@ -520,12 +716,13 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             char path[64];
             snprintf(path, sizeof path, "c->ops[%d].cond", k);
             fprintf(b, "    pc = %d;\n", k);
-            int list[64], n = 0;
+            uses_t u;
+            u.nv = u.na = 0;
             if (nat_type(op->cond) != N_NONE)
-                nat_vars(op->cond, list, &n);
-            if (nat_type(op->cond) != N_NONE && n <= 64) {
+                nat_uses(op->cond, &u);
+            if (nat_type(op->cond) != N_NONE && u.nv <= 64 && u.na <= 16) {
                 char x[32];
-                nat_guard(b, list, n);
+                nat_guard(b, &u);
                 fprintf(b, ") {\n");
                 nat_emit(b, op->cond, x);
                 fprintf(b, "    if ((%s != 0) %s 0) ", x, op->invert ? "==" : "!=");
@@ -583,13 +780,18 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
             "    value_t T[%d];\n"
             "    value_t *V[%d];\n"
             "    unsigned VG[%d];\n"
+            "    sb_array_t *AR[%d];\n"
+            "    unsigned AG[%d];\n"
             "    error_t err, result = act_begin(&a, env, c, %d);\n"
             "    int pc = 0;\n"
             "    memset(T, 0, sizeof T);\n"
             "    memset(V, 0, sizeof V);\n"
             "    memset(VG, 0, sizeof VG);\n"
+            "    memset(AR, 0, sizeof AR);\n"
+            "    memset(AG, 0xff, sizeof AG);\n"
             "    if (result != ERR_NONE) return result;\n",
-            fname, maxtemp, nvars ? nvars : 1, nvars ? nvars : 1, is_main);
+            fname, maxtemp, nvars ? nvars : 1, nvars ? nvars : 1,
+            narrs ? narrs : 1, narrs ? narrs : 1, is_main);
     fwrite(body, 1, blen, out);
     free(body);
     fprintf(out,
@@ -639,6 +841,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     error_t err;
+    scan_array_names(program);
     code_t *c = lower_stmts(program, &err);
     if (!c) {
         fprintf(stderr, "%s: %s\n", in, error_message(err));

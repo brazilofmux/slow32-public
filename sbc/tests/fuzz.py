@@ -33,9 +33,26 @@ BINOPS = ['+', '-', '*', '/', '\\', 'MOD', '^', 'AND', 'OR', 'XOR',
           '=', '<>', '<', '>', '<=', '>=']
 
 
+ARRS = ['P%', 'Q&', 'R!', 'S#', 'T']
+SUBS = ['0', '1', '2', '3', '5', '10', '11', '-1', '.5', '1.5', '2.5', 'A%', 'X', 'Y']
+
+
+def subscript(r):
+    return r.choice(SUBS) if r.random() < 0.8 else expr(r, 1)
+
+
+def element(r, name):
+    if name in ('R!', 'T'):
+        return '%s(%s, %s)' % (name, subscript(r), subscript(r))
+    return '%s(%s)' % (name, subscript(r))
+
+
 def expr(r, depth):
     if depth == 0 or r.random() < 0.3:
-        return r.choice(VARS) if r.random() < 0.7 else r.choice(EDGE)
+        k = r.random()
+        if k < 0.15:
+            return element(r, r.choice(ARRS))
+        return r.choice(VARS) if k < 0.75 else r.choice(EDGE)
     k = r.random()
     if k < 0.1:
         return '-' + expr(r, depth - 1)
@@ -46,13 +63,18 @@ def expr(r, depth):
 
 def program(seed):
     r = random.Random(seed)
-    lines = ['ON ERROR GOTO 900']
+    lines = ['ON ERROR GOTO 900', 'DIM P%(10), Q&(10), R!(3, 4), S#(10)']
     for v in VARS:
         lines.append('%s = %s' % (v, r.choice(EDGE)))
     for i in range(40):
-        target = r.choice(VARS)
+        if r.random() < 0.35:
+            target = element(r, r.choice(ARRS))
+        else:
+            target = r.choice(VARS)
         lines.append('%s = %s' % (target, expr(r, 3)))
         lines.append('PRINT "%d"; %s' % (i, target))
+        if r.random() < 0.04:
+            lines.append(r.choice(['ERASE S#', 'REDIM S#(5)', 'ERASE T', 'REDIM P%(20)', 'ERASE Q&: DIM Q&(3)']))
         if r.random() < 0.3:
             lines.append('IF %s THEN PRINT "t%d" ELSE PRINT "f%d"' % (expr(r, 2), i, i))
         if r.random() < 0.25:

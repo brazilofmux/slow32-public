@@ -4,8 +4,10 @@
 
 static sb_array_t arrays[MAX_ARRAYS];
 static int array_count = 0;
+unsigned array_generation = 0;
 
 void array_clear_all(void) {
+    array_generation++;
     for (int i = 0; i < array_count; i++) {
         if (arrays[i].active) {
             for (int j = 0; j < arrays[i].total; j++)
@@ -29,6 +31,7 @@ error_t array_dim(const char *name, val_type_t type,
                   int *sizes, int ndims, int base) {
     if (array_find(name))
         return ERR_DUPLICATE_DIM;
+    array_generation++;
 
     /* Reuse an inactive slot before growing the table (#6 fix) */
     int slot = -1;
@@ -100,6 +103,7 @@ error_t array_set(const char *name, int *indices, int nindices,
 }
 
 void array_erase(const char *name) {
+    array_generation++;
     for (int i = 0; i < array_count; i++) {
         if (arrays[i].active && strcmp(arrays[i].name, name) == 0) {
             for (int j = 0; j < arrays[i].total; j++)
@@ -116,6 +120,7 @@ error_t array_redim(const char *name, val_type_t type,
     sb_array_t *arr = array_find(name);
     if (!arr)
         return array_dim(name, type, sizes, ndims, base);
+    array_generation++;
 
     int new_total = 1;
     for (int i = 0; i < ndims; i++) {

@@ -32,16 +32,20 @@ version -- C `long long` and `double`, the interpreter's rules for each
 type written out -- run when its guard holds (every variable it names
 cached and of the type its name predicts), its generic version
 otherwise.  NEXT steps its own loop natively when that loop is on top
-and its variable cached.  Nested loops: 35M instructions against the
-interpreter's 443M.
+and its variable cached; elements of the arrays the program DIMs are
+read and stored natively too (pointers cached while `array_generation`
+holds).  Nested loops: 35M instructions against the interpreter's 443M;
+the sieve 1.24M against 4.50M.
 
 ```bash
 python3 tests/fuzz.py -n 1000      # random typed arithmetic, compiled vs interpreted
 ```
 
 `tests/fuzz.py` generates programs of random arithmetic over edge values
-in every numeric type, conditions and FOR loops (edge bounds and steps,
-nested, EXIT FOR), errors trapped and printed, and requires the compiled
+in every numeric type, conditions, FOR loops (edge bounds and steps,
+nested, EXIT FOR) and arrays (every type, one and two dimensions, edge
+and fractional subscripts, ERASE and REDIM), errors trapped and printed, and requires the compiled
 program to print what the interpreter prints (2000 of 2000 on
 2026-11-01; moving the INTEGER overflow bound by one in the native code
-is caught, and it found the native comparison of a NaN).
+is caught, and so is a bounds check one off -- in half the programs --
+and it found the native comparison of a NaN).

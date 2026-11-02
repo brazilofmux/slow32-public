@@ -2718,8 +2718,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LINE_INPUT_CONSOLE: return exec_line_input_console(env, s);
         case STMT_WRITE_CONSOLE: return exec_write_console(env, s);
         case STMT_DEF_FN: {
-            /* Register DEF FN in proc table */
+            /* Register DEF FN in proc table (whether name(args) is an
+             * array depends on it: a cached array is stale) */
             if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
+            array_generation++;
             strncpy(proc_table[proc_count].name, s->def_fn.name, 63);
             proc_table[proc_count].name[63] = '\0';
             proc_table[proc_count].def = s;
