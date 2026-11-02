@@ -267,6 +267,11 @@ int mmio_size_arg;
 
 /* Heap reserved below the MMIO window (--heap-size); HEAP_GAP when absent */
 int heap_size_arg;
+/* The stack below STACK_BASE (--stack-size; STACK_SIZE when absent).
+ * Nothing stops a program's stack at its end: with --heap-size max the
+ * MMIO window and the heap begin right under it, so a program that
+ * recurses deep needs it said (cc.s32x does). */
+int stack_size_arg;
 
 /* Pack sections flag: 1=packed (default), 0=fixed 1MB floor */
 int pack_sections;
@@ -1109,12 +1114,12 @@ void layout_sections() {
         if (heap_size_arg == -1) {
             /* --heap-size max: the MMIO window just below the stack, the
              * heap everything between the end of BSS and it */
-            mmio_va = (STACK_BASE - STACK_SIZE - mmio_size_arg) & ~4095;
+            mmio_va = (STACK_BASE - stack_size_arg - mmio_size_arg) & ~4095;
             if (mmio_va < heap_va) mmio_va = heap_va;    /* reported below */
         } else {
             mmio_va = page_align(heap_va + heap_size_arg);
         }
-        if (mmio_va + mmio_size_arg > STACK_BASE - STACK_SIZE || mmio_va < heap_va) {
+        if (mmio_va + mmio_size_arg > STACK_BASE - stack_size_arg || mmio_va < heap_va) {
             fputs("error: --heap-size: heap and MMIO window reach the stack\n",
                   stderr);
             link_error = 1;
@@ -1346,14 +1351,14 @@ void inject_linker_symbols() {
     if (mmio_size_arg > 0) {
         heap_end = mmio_va;
     } else {
-        heap_end = STACK_BASE - STACK_SIZE;
+        heap_end = STACK_BASE - stack_size_arg;
     }
     inject_sym("__heap_end", heap_end);
 
     inject_sym("__stack_base", STACK_BASE);
     inject_sym("__stack_top", STACK_BASE);
-    inject_sym("__stack_end", STACK_BASE - STACK_SIZE);
-    inject_sym("__stack_bottom", STACK_BASE - STACK_SIZE);
+    inject_sym("__stack_end", STACK_BASE - stack_size_arg);
+    inject_sym("__stack_bottom", STACK_BASE - stack_size_arg);
     inject_sym("_stack", STACK_BASE);
 
     inject_sym("__code_start", 0);
@@ -2105,7 +2110,7 @@ void link_emit(char *out_path) {
     wb_wr32(44, STACK_BASE);                                    /* stack_base */
     wb_wr32(48, MEM_SIZE);                                      /* mem_size */
     wb_wr32(52, heap_va);                                       /* heap_base */
-    wb_wr32(56, STACK_BASE - STACK_SIZE);                       /* stack_end */
+    wb_wr32(56, STACK_BASE - stack_size_arg);                   /* stack_end */
     wb_wr32(60, mmio_va);                                       /* mmio_base */
     fwrite(wb_buf, 1, 64, f);
 
@@ -2288,6 +2293,7 @@ int main(int argc, char **argv) {
     out_path = NULL;
     mmio_size_arg = 0;
     heap_size_arg = HEAP_GAP;
+    stack_size_arg = STACK_SIZE;
     code_size_arg = 0;
     pack_sections = 1;
     input_file_idx = 0;
@@ -2319,7 +2325,7 @@ int main(int argc, char **argv) {
     ostrtab_init();
 
     if (argc < 3) {
-        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--heap-size SIZE|max] [--code-size SIZE] file1 file2 ...\n", stderr);
+        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--heap-size SIZE|max] [--stack-size SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
         return 1;
     }
 
@@ -2350,6 +2356,17 @@ int main(int argc, char **argv) {
             else heap_size_arg = parse_mmio_size(argv[i]);
             if (heap_size_arg <= 0 && heap_size_arg != -1) {
                 fputs("error: bad --heap-size\n", stderr);
+                return 1;
+            }
+        } else if (streq(argv[i], "--stack-size")) {
+            i = i + 1;
+            if (i >= argc) {
+                fputs("error: --stack-size requires an argument\n", stderr);
+                return 1;
+            }
+            stack_size_arg = parse_mmio_size(argv[i]);
+            if (stack_size_arg <= 0) {
+                fputs("error: bad --stack-size\n", stderr);
                 return 1;
             }
         } else if (streq(argv[i], "--code-size")) {

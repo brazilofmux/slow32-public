@@ -181,7 +181,7 @@ assemble_gen1 "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
 
 # --- Link cc.s32x ---
 echo "[4/6] Link cc.s32x (gen1, tree-walk ABI)"
-LINK_LD="$STAGE8_LD" link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K --heap-size max \
+LINK_LD="$STAGE8_LD" link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K --heap-size max --stack-size 16M \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS

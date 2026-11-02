@@ -420,7 +420,7 @@ else
         FAIL=$((FAIL + 1))
     else
         run_exe "$BIG_LD" "$WORKDIR/gen1_cc-link.log" \
-            -o "$WORKDIR/gen1_cc.s32x" --mmio 64K --heap-size max \
+            -o "$WORKDIR/gen1_cc.s32x" --mmio 64K --heap-size max --stack-size 16M \
             "$RUNTIME_CRT0" "$WORKDIR/gen1_cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
             $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/gen1_cc.s32x" ]]; then
@@ -1193,7 +1193,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
             FAIL=$((FAIL + 1))
         else
             run_exe "$BIG_LD" "$WORKDIR/fp-gen2-link.log" \
-                -o "$WORKDIR/fp-gen2.s32x" --mmio 64K --heap-size max \
+                -o "$WORKDIR/fp-gen2.s32x" --mmio 64K --heap-size max --stack-size 16M \
                 "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                 $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
             if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
@@ -1215,7 +1215,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                         FAIL=$((FAIL + 1))
                     else
                         run_exe "$BIG_LD" "$WORKDIR/fp-gen3-link.log" \
-                            -o "$WORKDIR/fp-gen3.s32x" --mmio 64K --heap-size max \
+                            -o "$WORKDIR/fp-gen3.s32x" --mmio 64K --heap-size max --stack-size 16M \
                             "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                             $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
                         if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
