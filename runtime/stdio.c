@@ -248,12 +248,15 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
 
 /* fwrite, fread and fputc are short entries in front of the general
  * routines, as fgetc is.  A byte to or from a fully buffered stream whose
- * buffer has the room, or the byte, is a store and a count: the entry
+ * buffer has the room, or the byte, is a store and a count (written to a
+ * line-buffered one -- stdout -- too, when it is not a newline, which
+ * the general routine would not flush for either): the entry
  * does that and nothing else, so it needs no registers saved (a function
  * pays for its whole frame on every path, and the general fwrite was 91
  * instructions for one byte).  A few bytes are a memcpy and a count, one
- * call further on (fwrite_more, fread_more).  Everything else -- an
- * unbuffered or line-buffered stream, a memory stream, a buffer about to
+ * call further on (fwrite_more, fread_more; a line-buffered stream's
+ * when they hold no newline).  Everything else -- an unbuffered stream,
+ * a line-buffered one given a newline, a memory stream, a buffer about to
  * fill, a stream with read-ahead in its buffer, an element count whose
  * product could overflow -- is the general routine's, unchanged.  The
  * short paths leave the buffer short of full, so the flush stays in one
@@ -261,10 +264,11 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
 static size_t fwrite_general(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 
 static __attribute__((noinline)) size_t fwrite_more(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
-    if (stream && ptr && stream->mode == _IOFBF && stream->buffer && stream->buf_len == 0 &&
-        !(stream->flags & FLAG_MEMSTREAM) && (size == 1 || nmemb == 1)) {
+    if (stream && ptr && (stream->mode == _IOFBF || stream->mode == _IOLBF) && stream->buffer &&
+        stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM) && (size == 1 || nmemb == 1)) {
         size_t total = size == 1 ? nmemb : size, pos = stream->buf_pos;
-        if (total != 0 && pos < stream->buf_size && total < stream->buf_size - pos) {
+        if (total != 0 && pos < stream->buf_size && total < stream->buf_size - pos &&
+            (stream->mode == _IOFBF || !memchr(ptr, '\n', total))) {
             memcpy(stream->buffer + pos, ptr, total);
             stream->buf_pos = pos + total;
             return nmemb;
@@ -275,7 +279,8 @@ static __attribute__((noinline)) size_t fwrite_more(const void *ptr, size_t size
 
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (stream) stream->wide.bytes = 1;     /* byte oriented, unless already wide (wstdio.c) */
-    if (size == 1 && nmemb == 1 && stream && ptr && stream->mode == _IOFBF && stream->buffer &&
+    if (size == 1 && nmemb == 1 && stream && ptr && stream->buffer &&
+        (stream->mode == _IOFBF || (stream->mode == _IOLBF && *(const char *)ptr != '\n')) &&
         stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
         size_t pos = stream->buf_pos;
         if (pos + 1 < stream->buf_size) {
@@ -597,7 +602,8 @@ static __attribute__((noinline)) int fputc_general(int c, FILE *stream) {
 int fputc(int c, FILE *stream) {
     /* a byte into a buffer with room for more than one (see fwrite) */
     stream->wide.bytes = 1;
-    if (stream->mode == _IOFBF && stream->buffer && stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
+    if ((stream->mode == _IOFBF || (stream->mode == _IOLBF && (unsigned char)c != '\n')) &&
+        stream->buffer && stream->buf_len == 0 && !(stream->flags & FLAG_MEMSTREAM)) {
         size_t pos = stream->buf_pos;
         if (pos + 1 < stream->buf_size) {
             stream->buffer[pos] = (char)c;
