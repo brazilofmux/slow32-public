@@ -93,7 +93,7 @@ static error_t fn_cint(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     /* to the nearest integer, a half to even (QuickBASIC: CINT(2.5) = 2) */
-    double rounded = rint(v);
+    double rounded = val_rint(v);
     if (!INT16_OK(rounded))
         return ERR_OVERFLOW;
     *out = val_integer((int)rounded);
@@ -103,7 +103,7 @@ static error_t fn_cint(value_t *args, int nargs, value_t *out) {
 static error_t fn_clng(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    double rounded = rint(v);
+    double rounded = val_rint(v);
     if (rounded > 2147483647.0 || rounded < -2147483648.0)
         return ERR_OVERFLOW;
     *out = val_long((int)rounded);

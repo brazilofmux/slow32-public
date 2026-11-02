@@ -651,7 +651,7 @@ static void nat_subscript(FILE *out, const char *x, int t, char *conv) {
     if (nat_is_float(t)) {
         fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
         sprintf(conv, "%s_c", x);
-        fprintf(out, "    long long %s = (long long)rint(%s);\n", conv, x);
+        fprintf(out, "    long long %s = (long long)val_rint(%s);\n", conv, x);
     } else {
         strcpy(conv, x);
     }
@@ -774,11 +774,11 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                 } else if (!strcmp(fn, "SGN")) {
                     fprintf(out, "    long long %s = (double)%s > 0 ? 1 : (double)%s < 0 ? -1 : 0;\n", name, a, a);
                 } else if (!strcmp(fn, "CINT")) {
-                    fprintf(out, "    double %s_r = rint((double)%s);\n", name, a);
+                    fprintf(out, "    double %s_r = val_rint((double)%s);\n", name, a);
                     fprintf(out, "    if (!(%s_r >= -32768 && %s_r <= 32767)) { err = ERR_OVERFLOW; goto fail; }\n", name, name);
                     fprintf(out, "    long long %s = (int)%s_r;\n", name, name);
                 } else if (!strcmp(fn, "CLNG")) {
-                    fprintf(out, "    double %s_r = rint((double)%s);\n", name, a);
+                    fprintf(out, "    double %s_r = val_rint((double)%s);\n", name, a);
                     fprintf(out, "    if (%s_r > 2147483647.0 || %s_r < -2147483648.0) { err = ERR_OVERFLOW; goto fail; }\n", name, name);
                     fprintf(out, "    long long %s = (int)%s_r;\n", name, name);
                 } else if (!strcmp(fn, "CSNG")) {
@@ -992,7 +992,7 @@ static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, 
     for (int i = 0; i < n; i++) {
         if (nat_is_float(ixt[i])) {
             fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", ix[i], ix[i]);
-            fprintf(out, "    int %s_i%d = (int)rint(%s);\n", flat, i, ix[i]);
+            fprintf(out, "    int %s_i%d = (int)val_rint(%s);\n", flat, i, ix[i]);
         } else {
             fprintf(out, "    int %s_i%d = (int)%s;\n", flat, i, ix[i]);
         }
@@ -1017,7 +1017,7 @@ static void nat_store(FILE *out, const char *slot, int st, const char *x, int t)
     if (st == N_INT || st == N_LONG) {
         if (nat_is_float(t)) {
             fprintf(out, "    if (!(%s < 2147483647.5 && %s >= -2147483648.5)) { err = ERR_OVERFLOW; goto fail; }\n", x, x);
-            fprintf(out, "    { long long q = (long long)rint(%s);\n", x);
+            fprintf(out, "    { long long q = (long long)val_rint(%s);\n", x);
             if (st == N_INT) nat_range(out, "q", N_INT);
             fprintf(out, "    %s->ival = (int)q; }\n", slot);
         } else {

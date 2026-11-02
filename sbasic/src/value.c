@@ -173,7 +173,7 @@ static double val_as_double(const value_t *v) {
 static int round_even(double d) {
     int i = (int)d;             /* in range: val_to_integer checked */
     if ((double)i == d) return i;       /* whole already: no rint */
-    return (int)rint(d);
+    return (int)val_rint(d);
 }
 
 static int val_as_int(const value_t *v) {

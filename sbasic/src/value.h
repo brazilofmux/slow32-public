@@ -3,6 +3,21 @@
 
 #include "error.h"
 
+/* x to an integer, a half to even, as rint in the default rounding:
+ * adding 2^52 leaves no fraction, the add rounding it as the hardware
+ * rounds, half to even; past 2^52 every double is whole already, and a
+ * NaN comes back as it went in.  Several times cheaper than libm's
+ * rint (a call, its classification, ...) in the conversion every
+ * subscript and integer store of a float makes.  The sign of a zero
+ * result is not rint's: callers make an integer of it. */
+static inline double val_rint(double x) {
+    if (x >= 0 && x < 4503599627370496.0)
+        return (x + 4503599627370496.0) - 4503599627370496.0;
+    if (x < 0 && x > -4503599627370496.0)
+        return (x - 4503599627370496.0) + 4503599627370496.0;
+    return x;
+}
+
 /* Maximum string length */
 #define MAX_STRING_LEN 4096
 
