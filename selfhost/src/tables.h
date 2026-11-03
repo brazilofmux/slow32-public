@@ -59,6 +59,15 @@
 
 #define TAB_TABLES 512
 #define TAB_KIND_MAX 128   /* kinds are numbered below this */
+#define TAB_HL_LOOP  40    /* hir_lower.h, loop nesting */
+#define TAB_HL_SWNEST 41    /* hir_lower.h, switch nesting */
+#define TAB_PS_KR    42    /* parser.h, K&R parameter */
+#define TAB_PS_VGOTO 43    /* parser.h, goto by a VLA */
+#define TAB_PS_VD    44    /* parser.h, VLA object */
+#define TAB_PS_VC    45    /* parser.h, VLA count */
+#define TAB_AST_SUBS 46    /* ast.h, array shape */
+#define TAB_PS_VPEND 47    /* parser.h, VLA count assignments pending */
+#define TAB_PS_VPP   48    /* parser.h, a parameter's VLA counts */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -111,6 +120,15 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_PP_FILES) return "source file";
     if (kind == TAB_PP_DIS) return "nested macro expansion";
     if (kind == TAB_PP_ONCE) return "#pragma once file";
+    if (kind == TAB_HL_LOOP) return "loop nesting";
+    if (kind == TAB_HL_SWNEST) return "switch nesting";
+    if (kind == TAB_PS_KR) return "K&R parameter";
+    if (kind == TAB_PS_VGOTO) return "goto by a VLA";
+    if (kind == TAB_PS_VD) return "VLA object";
+    if (kind == TAB_PS_VC) return "VLA count";
+    if (kind == TAB_AST_SUBS) return "array shape";
+    if (kind == TAB_PS_VPEND) return "VLA count assignment";
+    if (kind == TAB_PS_VPP) return "VLA parameter count";
     return "?";
 }
 

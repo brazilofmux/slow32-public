@@ -170,10 +170,21 @@ static int ps_fn_align;           /* the strongest _Alignas on a local of this f
  * the hidden local that holds sp from before it was allocated --
  * setting sp back to that frees it and everything since.  ps_vd_top is
  * the innermost in scope, -1 none. */
-#define PS_MAX_VD 1024
-static int   ps_vd_parent[PS_MAX_VD];
-static Node *ps_vd_save[PS_MAX_VD];
+static int *ps_vd_parent;
+static Node **ps_vd_save;
 static int   ps_nvd;
+static int ps_nvd_cap;
+
+/* room for need entries (tables.h, TAB_PS_VD) */
+static void ps_vd_room(int need) {
+    if (need <= ps_nvd_cap) return;
+    if (ps_nvd_cap == 0) {
+        tab_add((char **)&ps_vd_parent, (int)sizeof(int), TAB_PS_VD, 0);
+        tab_add((char **)&ps_vd_save, (int)sizeof(Node *), TAB_PS_VD, 0);
+    }
+    tab_grow(TAB_PS_VD, &ps_nvd_cap, 64, need);
+}
+
 static int   ps_vd_top;
 static int   ps_fn_vm;           /* the function declares a variably modified type */
 static void sema_expr(Node *n);  /* sema.h */
@@ -281,10 +292,7 @@ static int ps_sub(int cols, int nxt) {
         if (ast_sub_cols[i] == cols && ast_sub_next[i] == nxt) return i;
         i = i + 1;
     }
-    if (ast_nsubs >= AST_MAX_SUBS) {
-        p_error("too many array shapes");
-        return 0;
-    }
+    ast_subs_room(ast_nsubs + 1);
     ast_sub_cols[ast_nsubs] = cols;
     ast_sub_next[ast_nsubs] = nxt;
     ast_nsubs = ast_nsubs + 1;
@@ -3482,18 +3490,39 @@ static int add_defined_global(char *name, int ty, int size_bytes) {
  * leaving its scope -- a block's end, a break, continue or goto out of
  * it -- sets sp back (ps_vla_restore), and a return pops the frame.
  * SLOW-32 only: the cross targets keep __STDC_NO_VLA__. */
-#define PS_MAX_VC 8192
-static Node *ps_vc_var[PS_MAX_VC];     /* NULL for [*], or a prototype's count */
+static Node **ps_vc_var;     /* NULL for [*], or a prototype's count */
 static int   ps_nvc;
-#define PS_MAX_VPEND 64
-static Node *ps_vpend[PS_MAX_VPEND];   /* count assignments read, not yet placed */
+static int ps_nvc_cap;
+
+/* room for need entries (tables.h, TAB_PS_VC) */
+static void ps_vc_room(int need) {
+    if (need <= ps_nvc_cap) return;
+    if (ps_nvc_cap == 0) {
+        tab_add((char **)&ps_vc_var, (int)sizeof(Node *), TAB_PS_VC, 0);
+    }
+    tab_grow(TAB_PS_VC, &ps_nvc_cap, 64, need);
+}
+
+static Node **ps_vpend;                /* count assignments read, not yet placed */
+static int    ps_vpend_cap;
 static int   ps_nvpend;
-static Node *ps_vpp_expr[PS_MAX_VPEND]; /* a parameter's counts, for the body's entry */
-static int   ps_vpp_id[PS_MAX_VPEND];
+static Node **ps_vpp_expr;             /* a parameter's counts, for the body's entry */
+static int   *ps_vpp_id;
+static int   ps_vpp_cap;
 static int   ps_nvpp;
-#define PS_MAX_VGOTO 1024
-static Node *ps_vgoto[PS_MAX_VGOTO];
+static Node **ps_vgoto;
 static int   ps_nvgoto;
+static int ps_nvgoto_cap;
+
+/* room for need entries (tables.h, TAB_PS_VGOTO) */
+static void ps_vgoto_room(int need) {
+    if (need <= ps_nvgoto_cap) return;
+    if (ps_nvgoto_cap == 0) {
+        tab_add((char **)&ps_vgoto, (int)sizeof(Node *), TAB_PS_VGOTO, 0);
+    }
+    tab_grow(TAB_PS_VGOTO, &ps_nvgoto_cap, 64, need);
+}
+
 static int   ps_vla_names;
 
 static void ps_vla_target_check(void) {
@@ -3645,8 +3674,15 @@ static int ps_vla_ahead(void) {
 static int ps_vla_count(Node *e, int param) {
     int id;
     Node *v;
-    if (ps_nvc >= PS_MAX_VC || ps_nvpend >= PS_MAX_VPEND || ps_nvpp >= PS_MAX_VPEND)
-        p_error("too many variable length array dimensions");
+    ps_vc_room(ps_nvc + 1);
+    tab_room1((char **)&ps_vpend, (int)sizeof(Node *), TAB_PS_VPEND, &ps_vpend_cap, 64, ps_nvpend + 1);
+    if (ps_nvpp >= ps_vpp_cap) {
+        if (ps_vpp_cap == 0) {
+            tab_add((char **)&ps_vpp_expr, (int)sizeof(Node *), TAB_PS_VPP, 0);
+            tab_add((char **)&ps_vpp_id, (int)sizeof(int), TAB_PS_VPP, 0);
+        }
+        tab_grow(TAB_PS_VPP, &ps_vpp_cap, 64, ps_nvpp + 1);
+    }
     id = ps_nvc;
     ps_nvc = ps_nvc + 1;
     ps_vc_var[id] = NULL;
@@ -3801,7 +3837,7 @@ static Node *ps_local_vla(char *nm, int elem) {
     a->ty = pty;
     a->cty = ct_ptr(inner);
     s->next = nd_expr_stmt(nd_assign(v, a));
-    if (ps_nvd >= PS_MAX_VD) p_error("too many variable length arrays");
+    ps_vd_room(ps_nvd + 1);
     ps_vd_parent[ps_nvd] = ps_vd_top;
     ps_vd_save[ps_nvd] = save;
     ps_vd_top = ps_nvd;
@@ -3952,7 +3988,8 @@ static Node *ps_vla_param_pre(Node *pre) {
  * for the check at the function's end. */
 static Node *ps_vla_jump(Node *n) {
     n->offset = ps_vd_top + 1;
-    if (n->kind == ND_GOTO && ps_nvgoto < PS_MAX_VGOTO) {
+    if (n->kind == ND_GOTO) {     /* past a fixed 1024, untracked: its sp went unrestored */
+        ps_vgoto_room(ps_nvgoto + 1);
         ps_vgoto[ps_nvgoto] = n;
         ps_nvgoto = ps_nvgoto + 1;
     }
@@ -9684,18 +9721,30 @@ static void parse_type_and_stars(int *out_ty) {
 
 /* --- Old-style (K&R) definitions: int f(a, b) int a; char b; { ... } --- */
 
-#define PS_KR_MAX 64
-static char *ps_kr_names[PS_KR_MAX];   /* the identifier list, in order */
-static int   ps_kr_ty[PS_KR_MAX];      /* each one's declared machine type; -1 = not declared */
-static int   ps_kr_cty[PS_KR_MAX];
+static char **ps_kr_names;   /* the identifier list, in order */
+static int *ps_kr_ty;      /* each one's declared machine type; -1 = not declared */
+static int *ps_kr_cty;
 static int   ps_kr_n;
+static int ps_kr_n_cap;
+
+/* room for need entries (tables.h, TAB_PS_KR) */
+static void ps_kr_room(int need) {
+    if (need <= ps_kr_n_cap) return;
+    if (ps_kr_n_cap == 0) {
+        tab_add((char **)&ps_kr_names, (int)sizeof(char *), TAB_PS_KR, 0);
+        tab_add((char **)&ps_kr_ty, (int)sizeof(int), TAB_PS_KR, 0);
+        tab_add((char **)&ps_kr_cty, (int)sizeof(int), TAB_PS_KR, 0);
+    }
+    tab_grow(TAB_PS_KR, &ps_kr_n_cap, 64, need);
+}
+
 
 /* The identifier list (6.9.1p6), the cursor on its first name; left on
  * the ')'. */
 static void ps_kr_read_ids(void) {
     ps_kr_n = 0;
     while (lex_tok == TK_IDENT) {
-        if (ps_kr_n >= PS_KR_MAX) p_error("too many parameters");
+        ps_kr_room(ps_kr_n + 1);   /* 64 once; C11 5.2.4.1 asks for 127 */
         ps_kr_names[ps_kr_n] = strdup(lex_str);
         ps_kr_ty[ps_kr_n] = -1;
         ps_kr_n = ps_kr_n + 1;
@@ -10805,6 +10854,7 @@ static Node *parse_program(void) {
     int usize_ty;
     int isize_ty;
 
+    ast_subs_room(1);      /* entry 0, "none", there before any is read */
     tab_nix_sync(&ps_gix, ps_gname, 0);
     ps_nglobals = 0;
     ps_ginit_pool_len = 0;

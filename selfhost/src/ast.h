@@ -61,10 +61,20 @@ static int *stm_arr_sub;  /* more than 2 dimensions: ast_sub_cols entry */
  * elements it steps over, and ast_sub_next, the entry for the one after
  * (0: that subscript reaches the element).  int a[2][3][4] has arr_cols
  * 12 and arr_sub -> {4, 0}; a 2-D array has arr_sub 0. */
-#define AST_MAX_SUBS 512
-static int   ast_sub_cols[AST_MAX_SUBS];
-static int   ast_sub_next[AST_MAX_SUBS];
+static int *ast_sub_cols;
+static int *ast_sub_next;
 static int   ast_nsubs = 1;               /* entry 0 is "none" */
+static int   ast_nsubs_cap;
+
+/* room for need shapes (tables.h, TAB_AST_SUBS; 512 once) */
+static void ast_subs_room(int need) {
+    if (need <= ast_nsubs_cap) return;
+    if (ast_nsubs_cap == 0) {
+        tab_add((char **)&ast_sub_cols, (int)sizeof(int), TAB_AST_SUBS, 0);
+        tab_add((char **)&ast_sub_next, (int)sizeof(int), TAB_AST_SUBS, 0);
+    }
+    tab_grow(TAB_AST_SUBS, &ast_nsubs_cap, 64, need);
+}
 static int *stm_owner; /* owning struct index for this member */
 static int *stm_synth; /* 1 = lookup alias from anonymous aggregate */
 /* Bit-field metadata.  stm_bit_width[mi]==0 means "not a bit-field" — the

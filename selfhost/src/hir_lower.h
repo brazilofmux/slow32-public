@@ -42,10 +42,30 @@ static void hl_alloca_room(int n) {
 static int hl_temp_stack;
 
 /* --- Loop break/continue targets --- */
-#define HL_MAX_LOOP 64   /* was 16 */
-static int hl_break_blk[HL_MAX_LOOP];
-static int hl_cont_blk[HL_MAX_LOOP];
+static int *hl_break_blk;
+static int *hl_cont_blk;
 static int hl_loop_depth;
+static int hl_loop_depth_cap;
+
+/* room for need entries (tables.h, TAB_HL_LOOP) */
+static void hl_loop_room(int need) {
+    if (need <= hl_loop_depth_cap) return;
+    if (hl_loop_depth_cap == 0) {
+        tab_add((char **)&hl_break_blk, (int)sizeof(int), TAB_HL_LOOP, 0);
+        tab_add((char **)&hl_cont_blk, (int)sizeof(int), TAB_HL_LOOP, 0);
+    }
+    tab_grow(TAB_HL_LOOP, &hl_loop_depth_cap, 64, need);
+}
+
+/* a loop's (or a switch's) break and continue targets, pushed: 64 of
+ * them were written without a bound */
+static void hl_loop_push(int brk, int cont) {
+    hl_loop_room(hl_loop_depth + 1);
+    hl_break_blk[hl_loop_depth] = brk;
+    hl_cont_blk[hl_loop_depth] = cont;
+    hl_loop_depth = hl_loop_depth + 1;
+}
+
 /* Depth the current inlined body started at (GitHub issue 73): its
  * loops and switches push ABOVE the caller's, so a callee `break`
  * can only see the callee's own targets.  Resetting the depth to 0
@@ -56,18 +76,31 @@ static int hl_inl_loop_base;
 static int hl_inl_sw_base;
 
 /* --- Switch state --- */
-#define HL_MAX_SW_DEPTH 32   /* was 8 */
 /* the case labels of the switches open, outermost first, grown
  * (TAB_HL_CASE; SQLite came within a quarter of the fixed 1024) */
 static int *hl_sw_val;
 static int *hl_sw_valhi;   /* a case value's HI word, for long long switches */
 static int *hl_sw_blk;
 static int hl_case_cap;
-static int hl_sw_base[HL_MAX_SW_DEPTH];
-static int hl_sw_count[HL_MAX_SW_DEPTH];
-static int hl_sw_def[HL_MAX_SW_DEPTH];
-static int hl_sw_cur[HL_MAX_SW_DEPTH];
+static int *hl_sw_base;
+static int *hl_sw_count;
+static int *hl_sw_def;
+static int *hl_sw_cur;
 static int hl_sw_depth;
+static int hl_sw_depth_cap;
+
+/* room for need entries (tables.h, TAB_HL_SWNEST) */
+static void hl_sw_room(int need) {
+    if (need <= hl_sw_depth_cap) return;
+    if (hl_sw_depth_cap == 0) {
+        tab_add((char **)&hl_sw_base, (int)sizeof(int), TAB_HL_SWNEST, 0);
+        tab_add((char **)&hl_sw_count, (int)sizeof(int), TAB_HL_SWNEST, 0);
+        tab_add((char **)&hl_sw_def, (int)sizeof(int), TAB_HL_SWNEST, 0);
+        tab_add((char **)&hl_sw_cur, (int)sizeof(int), TAB_HL_SWNEST, 0);
+    }
+    tab_grow(TAB_HL_SWNEST, &hl_sw_depth_cap, 32, need);
+}
+
 static int *hl_sw_ord;
 static char *hl_sw_ft;     /* 1 if this case slot is a fall-through target */
 static int  *hl_jt_tr_blk; /* trampoline block per unique fall-through dest */
@@ -2104,9 +2137,7 @@ static void hl_for_peeled(Node *n, Node *nc) {
     hi_emit(HI_BRC, 0, cv, pre_blk, exit_blk, NULL);
     hl_switch_block(pre_blk);
     hi_emit(HI_BR, 0, -1, -1, body_blk, NULL);
-    hl_break_blk[hl_loop_depth] = exit_blk;
-    hl_cont_blk[hl_loop_depth] = latch_blk;
-    hl_loop_depth = hl_loop_depth + 1;
+    hl_loop_push(exit_blk, latch_blk);
     hl_switch_block(body_blk);
     hl_stmt(n->body);
     if (!hl_terminated()) hi_emit(HI_BR, 0, -1, -1, latch_blk, NULL);
@@ -4689,9 +4720,7 @@ static void hl_stmt(Node *n) {
         hl_switch_block(pre_blk);
         hi_emit(HI_BR, 0, -1, -1, body_blk, NULL);
 
-        hl_break_blk[hl_loop_depth] = exit_blk;
-        hl_cont_blk[hl_loop_depth] = latch_blk;
-        hl_loop_depth = hl_loop_depth + 1;
+        hl_loop_push(exit_blk, latch_blk);
 
         hl_switch_block(body_blk);
         hl_stmt(n->body);
@@ -4719,9 +4748,7 @@ static void hl_stmt(Node *n) {
         cv = hl_cond_val(n->cond);
         hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
 
-        hl_break_blk[hl_loop_depth] = exit_blk;
-        hl_cont_blk[hl_loop_depth] = head_blk;
-        hl_loop_depth = hl_loop_depth + 1;
+        hl_loop_push(exit_blk, head_blk);
 
         hl_switch_block(body_blk);
         hl_stmt(n->body);
@@ -4740,9 +4767,7 @@ static void hl_stmt(Node *n) {
 
         hi_emit(HI_BR, 0, -1, -1, body_blk, NULL);
 
-        hl_break_blk[hl_loop_depth] = exit_blk;
-        hl_cont_blk[hl_loop_depth] = step_blk;
-        hl_loop_depth = hl_loop_depth + 1;
+        hl_loop_push(exit_blk, step_blk);
 
         hl_switch_block(body_blk);
         hl_stmt(n->body);
@@ -4771,9 +4796,7 @@ static void hl_stmt(Node *n) {
         cv = hl_cond_val(n->cond);
         hi_emit(HI_BRC, 0, cv, body_blk, exit_blk, NULL);
 
-        hl_break_blk[hl_loop_depth] = exit_blk;
-        hl_cont_blk[hl_loop_depth] = step_blk;
-        hl_loop_depth = hl_loop_depth + 1;
+        hl_loop_push(exit_blk, step_blk);
 
         hl_switch_block(body_blk);
         hl_stmt(n->body);
@@ -4791,10 +4814,7 @@ static void hl_stmt(Node *n) {
     /* Switch */
     if (n->kind == ND_SWITCH) {
         sw_d = hl_sw_depth;
-        if (sw_d >= HL_MAX_SW_DEPTH) {
-            fdputs("s12cc: switch nesting too deep\n", 2);
-            exit(1);
-        }
+        hl_sw_room(sw_d + 1);
         sw_b = 0;
         if (sw_d > 0) {
             sw_b = hl_sw_base[sw_d - 1] + hl_sw_count[sw_d - 1];
@@ -4825,13 +4845,7 @@ static void hl_stmt(Node *n) {
          * (or -1 if there is no enclosing loop) so that `continue`
          * inside a `case` body doesn't read stale hl_cont_blk[] data.
          */
-        hl_break_blk[hl_loop_depth] = brk_blk;
-        if (hl_loop_depth > 0) {
-            hl_cont_blk[hl_loop_depth] = hl_cont_blk[hl_loop_depth - 1];
-        } else {
-            hl_cont_blk[hl_loop_depth] = -1;
-        }
-        hl_loop_depth = hl_loop_depth + 1;
+        hl_loop_push(brk_blk, hl_loop_depth > 0 ? hl_cont_blk[hl_loop_depth - 1] : -1);
 
         /* Evaluate switch expression */
         lv = hl_expr(n->cond);
