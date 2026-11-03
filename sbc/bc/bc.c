@@ -123,9 +123,16 @@ static int alloca_of(int ty, int size) {
 
 /* --- values: a double (lo, hi) and its run-time type --------------- */
 
+/* A value: three HIR words, lo, hi and its run-time val_type_t (bc_rt.c).
+ * A number's lo and hi are its double's words; a string's lo is its
+ * sb_string_t, a reference this value owns -- whatever takes the value
+ * (a bcrt_ function, a variable) takes the reference. */
 typedef struct { int lo, hi, t; } bv_t;
 
-static bv_t bv_dcall(const char *name, int cb, int nwords) {
+static void carg_bv(bv_t x) { carg(x.lo, 0); carg(x.hi, 0); carg(x.t, 0); }
+
+/* a call returning a value: its words in r1:r2, its type bcrt_type()'s */
+static bv_t bv_call(const char *name, int cb, int nwords) {
     bv_t r;
     r.lo = call_end(cb, nwords, name, &r.hi);
     r.t = call_end(h_ncarg, 0, "bcrt_type", NULL);
@@ -136,7 +143,7 @@ static bv_t bv_dcall(const char *name, int cb, int nwords) {
 
 typedef struct {
     char name[64];
-    int type;                   /* VAL_INTEGER, VAL_LONG, VAL_SINGLE, VAL_DOUBLE */
+    int type;                   /* VAL_INTEGER, VAL_LONG, VAL_SINGLE, VAL_DOUBLE, VAL_STRING */
     int a, ahi;                 /* its slots: one, or a double's two words */
 } var_t;
 
@@ -179,12 +186,13 @@ static var_t *var_find(const char *name) {
     return NULL;
 }
 
-/* made in the entry block, 0 there, as every BASIC variable starts */
+/* made in the entry block, 0 (a string, empty) there, as every BASIC
+ * variable starts */
 static var_t *var_get(const char *name, int type, int line) {
     var_t *v = var_find(name);
     if (v) return v;
-    if (type == VAL_STRING) { bc_not_yet(line, "string variables"); type = VAL_SINGLE; }
-    if (type != VAL_INTEGER && type != VAL_LONG && type != VAL_SINGLE && type != VAL_DOUBLE) {
+    if (type != VAL_INTEGER && type != VAL_LONG && type != VAL_SINGLE &&
+        type != VAL_DOUBLE && type != VAL_STRING) {
         bc_not_yet(line, "a variable of this type");
         type = VAL_SINGLE;
     }
@@ -215,6 +223,14 @@ static bv_t var_load(var_t *v) {
         r.hi = hi_emit(HI_LOAD, TY_INT, v->ahi, -1, 0, NULL);
         return r;
     }
+    if (v->type == VAL_STRING) {        /* a reference of the value's own */
+        x = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
+        cb = h_ncarg;
+        carg(x, 0);
+        r.lo = call_end(cb, 1, "bcrt_ref", NULL);
+        r.hi = iconst(0);
+        return r;
+    }
     x = hi_emit(HI_LOAD, v->type == VAL_SINGLE ? TY_FLOAT : TY_INT, v->a, -1, 0, NULL);
     cb = h_ncarg;
     carg(x, 0);
@@ -222,15 +238,25 @@ static bv_t var_load(var_t *v) {
     return r;
 }
 
-/* x, of any type, stored as v holds it */
+/* x, of any type, stored as v holds it (bcrt_conv: rounding, Overflow,
+ * Type mismatch); a string variable lets its old string go */
 static void var_store(var_t *v, bv_t x) {
     int cb, lo, hi, w;
     cb = h_ncarg;
-    carg(x.lo, 1); carg(x.hi, 2); carg(x.t, 0); carg(iconst(v->type), 0);
+    carg_bv(x);
+    carg(iconst(v->type), 0);
     lo = call_end(cb, 4, "bcrt_conv", &hi);
     if (v->type == VAL_DOUBLE) {
         hi_emit(HI_STORE, TY_INT, v->a, lo, 0, NULL);
         hi_emit(HI_STORE, TY_INT, v->ahi, hi, 0, NULL);
+        return;
+    }
+    if (v->type == VAL_STRING) {
+        int old = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, v->a, lo, 0, NULL);
+        cb = h_ncarg;
+        carg(old, 0);
+        call_end(cb, 1, "bcrt_unref", NULL);
         return;
     }
     cb = h_ncarg;
@@ -247,6 +273,9 @@ static void var_zero(var_t *v) {
     } else if (v->type == VAL_SINGLE) {
         int z = hi_emit(HI_ICONST, TY_FLOAT, -1, -1, 0, NULL);
         hi_emit(HI_STORE, TY_FLOAT, v->a, z, 0, NULL);
+    } else if (v->type == VAL_STRING) {
+        int e = call_end(h_ncarg, 0, "bcrt_str_empty", NULL);
+        hi_emit(HI_STORE, TY_INT, v->a, e, 0, NULL);
     } else
         hi_emit(HI_STORE, TY_INT, v->a, iconst(0), 0, NULL);
 }
@@ -255,63 +284,60 @@ static void var_zero(var_t *v) {
 
 static bv_t expr(expr_t *e);
 
-/* is e a string, by its form (a literal, a $ name, a $ function, or an
- * operation on one) */
-static int is_str(expr_t *e) {
-    switch (e->type) {
-    case EXPR_LITERAL: return e->literal.type == VAL_STRING;
-    case EXPR_VARIABLE: return e->var.var_type == VAL_STRING;
-    case EXPR_CALL: { size_t n = strlen(e->call.name); return n > 0 && e->call.name[n - 1] == '$'; }
-    case EXPR_BINARY: return is_str(e->binary.left) || is_str(e->binary.right);
-    default: return 0;
-    }
+static int saddr(const char *s, int len) {
+    return hi_emit(HI_SADDR, TY_INT, -1, -1, bc_intern_str((char *)s, len), NULL);
+}
+
+/* the numeric zero, standing for an argument not given */
+static bv_t zero(void) {
+    bv_t r;
+    r.lo = dconst(0, &r.hi);
+    r.t = iconst(VAL_INTEGER);
+    return r;
 }
 
 static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
-    bv_t a[3], r;
+    bv_t a[3];
     int cb;
-    if (n > 3 || name[strlen(name) - 1] == '$' ||
-        strcmp(name, "TAB") == 0 || strcmp(name, "SPC") == 0) {    /* (in a PRINT list: bc_print) */
-        bc_not_yet(e->line, "string functions");
+    if (n > 3 || strcmp(name, "TAB") == 0 || strcmp(name, "SPC") == 0) {   /* (TAB, SPC in a PRINT list: bc_print) */
+        bc_not_yet(e->line, n > 3 ? "a builtin of more than three arguments" : "TAB and SPC outside PRINT");
         n = 0;
     }
-    for (int i = 0; i < n; i++)
-        if (is_str(args[i])) { bc_not_yet(e->line, "string functions"); n = 0; break; }
-    for (int i = 0; i < 3; i++) {
-        if (i < n) a[i] = expr(args[i]);
-        else { a[i].lo = dconst(0, &a[i].hi); a[i].t = iconst(VAL_INTEGER); }
-    }
+    for (int i = 0; i < 3; i++) a[i] = i < n ? expr(args[i]) : zero();
     cb = h_ncarg;
-    carg(hi_emit(HI_SADDR, TY_INT, -1, -1, bc_intern_str((char *)name, (int)strlen(name)), NULL), 0);
+    carg(saddr(name, (int)strlen(name)), 0);
     carg(iconst(n), 0);
-    for (int i = 0; i < 3; i++) { carg(a[i].lo, 1); carg(a[i].hi, 2); carg(a[i].t, 0); }
-    r = bv_dcall("bcrt_fn", cb, 11);
-    return r;
+    for (int i = 0; i < 3; i++) carg_bv(a[i]);
+    return bv_call("bcrt_fn", cb, 11);
 }
 
 static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
     int cb = h_ncarg;
     carg(iconst(op), 0);
-    carg(a.lo, 1); carg(a.hi, 2); carg(a.t, 0);
-    carg(b.lo, 1); carg(b.hi, 2); carg(b.t, 0);
-    return bv_dcall(name, cb, 7);
+    carg_bv(a);
+    carg_bv(b);
+    return bv_call(name, cb, 7);
 }
 
 static bv_t expr(expr_t *e) {
     bv_t r;
-    r.lo = r.hi = r.t = -1;
     switch (e->type) {
-    case EXPR_LITERAL: {
-        double d = 0;
+    case EXPR_LITERAL:
         if (e->literal.type == VAL_STRING) {
-            bc_not_yet(e->line, "a string in an expression");
-            d = 0;
-        } else
+            int cb = h_ncarg;
+            carg(saddr(e->literal.sval->data, e->literal.sval->len), 0);
+            carg(iconst(e->literal.sval->len), 0);
+            r.lo = call_end(cb, 2, "bcrt_str_lit", NULL);
+            r.hi = iconst(0);
+            r.t = iconst(VAL_STRING);
+            return r;
+        } else {
+            double d = 0;
             val_to_double(&e->literal, &d);
-        r.lo = dconst(d, &r.hi);
-        r.t = iconst(e->literal.type == VAL_STRING ? VAL_SINGLE : e->literal.type);
-        return r;
-    }
+            r.lo = dconst(d, &r.hi);
+            r.t = iconst(e->literal.type);
+            return r;
+        }
     case EXPR_VARIABLE:
         if (is_builtin_call(e->var.name))       /* RND, TIMER... with no ( ) */
             return builtin_fn(e, e->var.name, 0, NULL);
@@ -324,8 +350,8 @@ static bv_t expr(expr_t *e) {
         bv_t a = expr(e->unary.operand);
         int cb = h_ncarg;
         carg(iconst(e->unary.op), 0);
-        carg(a.lo, 1); carg(a.hi, 2); carg(a.t, 0);
-        return bv_dcall("bcrt_un", cb, 4);
+        carg_bv(a);
+        return bv_call("bcrt_un", cb, 4);
     }
     case EXPR_CALL:
         if (is_builtin_call(e->call.name))
@@ -336,16 +362,14 @@ static bv_t expr(expr_t *e) {
         bc_not_yet(e->line, "this expression");
         break;
     }
-    r.lo = dconst(0, &r.hi);
-    r.t = iconst(VAL_SINGLE);
-    return r;
+    return zero();
 }
 
 /* the condition's truth, an int */
 static int cond(expr_t *e) {
     bv_t c = expr(e);
     int cb = h_ncarg;
-    carg(c.lo, 1); carg(c.hi, 2); carg(c.t, 0);
+    carg_bv(c);
     return call_end(cb, 3, "bcrt_true", NULL);
 }
 
@@ -480,25 +504,19 @@ static void bc_print(stmt_t *s) {
         print_item_t *it = &s->print.items[i];
         if (it->expr) {
             expr_t *e = it->expr;
+            int cb;
             if (e->type == EXPR_CALL && e->call.nargs == 1 && is_builtin_call(e->call.name) &&
-                (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0) &&
-                !is_str(e->call.args[0])) {
+                (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0)) {
                 bv_t a = expr(e->call.args[0]);
-                int cb = h_ncarg;
-                carg(hi_emit(HI_SADDR, TY_INT, -1, -1, bc_intern_str(e->call.name, 3), NULL), 0);
-                carg(a.lo, 1); carg(a.hi, 2); carg(a.t, 0);
-                call_end(cb, 4, "bcrt_print_tab", NULL);
-            } else if (e->type == EXPR_LITERAL && e->literal.type == VAL_STRING) {
-                int idx = bc_intern_str(e->literal.sval->data, e->literal.sval->len);
-                int cb, p = hi_emit(HI_SADDR, TY_INT, -1, -1, idx, NULL);
                 cb = h_ncarg;
-                carg(p, 0); carg(iconst(e->literal.sval->len), 0);
-                call_end(cb, 2, "bcrt_print_lit", NULL);
+                carg(saddr(e->call.name, 3), 0);
+                carg_bv(a);
+                call_end(cb, 4, "bcrt_print_tab", NULL);
             } else {
                 bv_t v = expr(e);
-                int cb = h_ncarg;
-                carg(v.lo, 1); carg(v.hi, 2); carg(v.t, 0);
-                call_end(cb, 3, "bcrt_print_num", NULL);
+                cb = h_ncarg;
+                carg_bv(v);
+                call_end(cb, 3, "bcrt_print_val", NULL);
             }
         }
         if (it->sep == ';') nl = 0;
