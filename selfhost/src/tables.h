@@ -74,6 +74,9 @@
 #define TAB_CG_FN    52    /* hir_codegen.h, function emitted (dead-static DCE) */
 #define TAB_CG_REF   53    /* hir_codegen.h, name referenced from data */
 #define TAB_CG_EDGE  54    /* hir_codegen.h, name referenced from a function */
+#define TAB_PP_INC   55    /* pp.h, #include nesting level */
+#define TAB_PP_IDIR  56    /* pp.h, -I directory */
+#define TAB_HL_CTEMP 57    /* hir_lower.h, complex temporary */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -141,6 +144,9 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_CG_FN) return "function emitted";
     if (kind == TAB_CG_REF) return "data reference";
     if (kind == TAB_CG_EDGE) return "function reference";
+    if (kind == TAB_PP_INC) return "#include nesting";
+    if (kind == TAB_PP_IDIR) return "-I directory";
+    if (kind == TAB_HL_CTEMP) return "complex temporary";
     return "?";
 }
 

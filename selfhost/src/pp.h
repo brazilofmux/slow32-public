@@ -190,27 +190,63 @@ static void pp_if_room(void) {
     tab_grow(TAB_PP_IF, &pp_if_cap, 64, pp_dep + 1);
 }
 
-static char pp_sdir[256];         /* source directory prefix for includes */
+static char pp_sdir[PP_FILE_LEN]; /* source directory prefix for includes */
 /* Directory stack of the files currently being spliced.  A quoted #include
    resolves against the directory of the file that contains it (C's rule),
    not the top-level source's.  The splice is textual, so that context would
    otherwise be lost: pp_splice_file brackets each spliced file with
    #s12cc_pushdir / #s12cc_popdir marker lines that maintain this stack as
    the lexer reaches them -- the same idea as cpp's "# N file" lines. */
-#define PP_MAX_INCDEPTH 16
-static char pp_incdir[PP_MAX_INCDEPTH * 256];
+/* One entry a level, PP_FILE_LEN bytes for the two names, grown
+   (tables.h).  It held 16: past them a quoted #include looked beside
+   the top-level source instead of its own file, and names and lines
+   were the outer file's. */
+static char *pp_incdir;
 static int pp_incdepth;
-static char pp_incfile[PP_MAX_INCDEPTH * PP_FILE_LEN];   /* the includer's name ... */
-static int pp_incif[PP_MAX_INCDEPTH];    /* pp_dep when the file began */
-static int pp_incline[PP_MAX_INCDEPTH];                 /* ... and its #include's line */
-#define PP_MAX_IDIRS 16
-#define PP_IDIR_LEN  256
-/* Flat layout (stage06's parser accepts only literal-int array dimensions
-   and rejects 2-D global arrays): entry i occupies
-   pp_idir[i*PP_IDIR_LEN .. i*PP_IDIR_LEN+PP_IDIR_LEN-1].
-   Size is PP_MAX_IDIRS * PP_IDIR_LEN = 16 * 256 = 4096. */
-static char pp_idir[4096];
+static int pp_incdepth_cap;
+static char *pp_incfile;     /* the includer's name ... */
+static int *pp_incif;        /* pp_dep when the file began */
+static int *pp_incline;      /* ... and its #include's line */
+/* The -I directories, each a string of its own with its '/' (16 of
+   them, 254 bytes each, the rest dropped without a word). */
+static char **pp_idir;
 static int pp_nidirs;
+static int pp_idir_cap;
+
+static void pp_inc_room(int need) {
+    if (need <= pp_incdepth_cap) return;
+    if (pp_incdepth_cap == 0) {
+        tab_add(&pp_incdir, PP_FILE_LEN, TAB_PP_INC, 0);
+        tab_add(&pp_incfile, PP_FILE_LEN, TAB_PP_INC, 0);
+        tab_add((char **)&pp_incif, (int)sizeof(int), TAB_PP_INC, 0);
+        tab_add((char **)&pp_incline, (int)sizeof(int), TAB_PP_INC, 0);
+    }
+    tab_grow(TAB_PP_INC, &pp_incdepth_cap, 16, need);
+}
+
+/* The directory of the source file, for quoted #includes. */
+static void pp_set_sdir(char *infile) {
+    int i;
+    int last_slash;
+    last_slash = -1;
+    i = 0;
+    while (infile[i] != 0) {
+        if (infile[i] == 47) last_slash = i;   /* '/' */
+        i = i + 1;
+    }
+    if (last_slash >= PP_FILE_LEN - 1) {
+        fdputs("s12cc: source directory name too long: ", 2);
+        fdputs(infile, 2);
+        fdputc(10, 2);
+        exit(1);
+    }
+    i = 0;
+    while (i <= last_slash) {
+        pp_sdir[i] = infile[i];
+        i = i + 1;
+    }
+    pp_sdir[i] = 0;
+}
 
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
 
@@ -384,21 +420,23 @@ static void pp_fast_skip_to_directive(void) {
 }
 
 static void pp_add_idir(char *path) {
-    int base;
-    int j;
+    int n;
+    char *d;
 
-    if (pp_nidirs >= PP_MAX_IDIRS) return;
-    base = pp_nidirs * PP_IDIR_LEN;
-    j = 0;
-    while (path[j] != 0 && j < PP_IDIR_LEN - 2) {
-        pp_idir[base + j] = path[j];
-        j = j + 1;
+    tab_room1((char **)&pp_idir, (int)sizeof(char *), TAB_PP_IDIR, &pp_idir_cap, 16, pp_nidirs + 1);
+    n = strlen(path);
+    d = (char *)malloc((unsigned long)(n + 2));
+    if (!d) {
+        fdputs("s12cc: out of memory (-I)\n", 2);
+        exit(1);
     }
-    if (j > 0 && pp_idir[base + j - 1] != 47) {
-        pp_idir[base + j] = 47;
-        j = j + 1;
+    memcpy(d, path, n);
+    if (n > 0 && d[n - 1] != 47) {
+        d[n] = 47;
+        n = n + 1;
     }
-    pp_idir[base + j] = 0;
+    d[n] = 0;
+    pp_idir[pp_nidirs] = d;
     pp_nidirs = pp_nidirs + 1;
 }
 
@@ -933,6 +971,19 @@ static int pp_glues(int a, int b) {
     return strchr("+-*/%&|^<>=!#:.", a) != 0 && strchr("+-*/%&|^<>=!#:.", b) != 0;
 }
 
+/* lex_src holds the translation unit as the preprocessor rewrites it,
+ * includes spliced in and macros expanded in place: room for delta
+ * more bytes, or stop.  (Fixed, 12MB: the lexer and the parser's marks
+ * hold pointers into it.  Past it an #include was cut short without a
+ * word and an in-place expansion wrote past the end.) */
+static void pp_src_room(int delta) {
+    if (delta > 0 && lex_len + delta >= LEX_SRC_SZ - 1) {
+        pp_where();
+        fdputs("error: the source with its includes and expansions is past the buffer (12MB)\n", 2);
+        exit(1);
+    }
+}
+
 /* lex_src[at..at+dellen) becomes ins[0..inslen), the tail moving. */
 static void pp_splice(int at, int dellen, char *ins, int inslen) {
     int delta;
@@ -940,10 +991,7 @@ static void pp_splice(int at, int dellen, char *ins, int inslen) {
     int i;
     delta = inslen - dellen;
     tail = lex_len - (at + dellen);
-    if (lex_len + delta >= LEX_SRC_SZ - 1) {
-        fdputs("s12cc: macro expansion overflows the source buffer\n", 2);
-        exit(1);
-    }
+    pp_src_room(delta);
     if (delta > 0) {
         i = tail - 1;
         while (i >= 0) {
@@ -1568,6 +1616,7 @@ static int pp_expand_func(int di) {
     pp_dis_shift(pos - 1, delta);
     pp_dis_push(di, pos + delta);
     pp_xend = ins_pos + exp_len;
+    pp_src_room(delta);
     if (delta > 0) {
         i = tail_len - 1;
         while (i >= 0) {
@@ -1641,6 +1690,7 @@ static void pp_expand_obj(int di) {
     pp_dis_shift(ins_pos - 1, delta);
     pp_dis_push(di, ins_pos + delta);
     pp_xend = start_pos + body_len;
+    pp_src_room(delta);
     if (delta > 0) {
         /* Shift tail right when the expansion is longer than the name. */
         i = tail_len - 1;
@@ -2291,9 +2341,10 @@ static void pp_splice_file(char *path) {
 
     room = LEX_SRC_SZ - lex_len - 1 - plen - slen;
     if (room < 0) room = 0;
-    n = read(fd, tmp, room);
+    n = read(fd, tmp, room + 1);     /* a byte more: whether it fits */
     close(fd);
     if (n < 0) n = 0;
+    pp_src_room(plen + n + slen);    /* the markers too, though the file is empty */
     total = plen + n + slen;
 
     /* Splice: shift tail right by total, insert marker + content + marker */
@@ -2334,6 +2385,14 @@ static int pp_try_path(char *path, char *dir, char *fname) {
     int pi;
     int fi;
     int fd;
+    if (strlen(dir) + strlen(fname) >= PP_FILE_LEN) {   /* path is PP_FILE_LEN */
+        pp_where();
+        fdputs("error: #include path too long: ", 2);
+        fdputs(dir, 2);
+        fdputs(fname, 2);
+        fdputc(10, 2);
+        exit(1);
+    }
     pi = 0;
     fi = 0;
     while (dir[fi] != 0) {
@@ -2362,14 +2421,14 @@ static int pp_find_include(char *fname, int angle, char *path) {
          * sibling), then the top-level source directory, then the -I
          * directories like a real C preprocessor (vecscope's quoted
          * "tube.h" lives in -Iruntime/include). */
-        if (pp_incdepth > 0 && pp_incdepth <= PP_MAX_INCDEPTH &&
-            pp_try_path(path, pp_incdir + (pp_incdepth - 1) * 256, fname))
+        if (pp_incdepth > 0 &&
+            pp_try_path(path, pp_incdir + (pp_incdepth - 1) * PP_FILE_LEN, fname))
             return 1;
         if (pp_try_path(path, pp_sdir, fname)) return 1;
     }
     idir = 0;
     while (idir < pp_nidirs) {
-        if (pp_try_path(path, pp_idir + idir * PP_IDIR_LEN, fname)) return 1;
+        if (pp_try_path(path, pp_idir[idir], fname)) return 1;
         idir = idir + 1;
     }
     return 0;
@@ -2557,7 +2616,7 @@ static long long pp_ev_from_text(char *body) {
     if (blen < 1) return 0;
     if (pp_ev_park == 0) pp_ev_park = LEX_SRC_SZ;
     place = pp_ev_park - blen - 2;
-    if (place <= lex_len) return 0;
+    if (place <= lex_len) pp_src_room(LEX_SRC_SZ);   /* no room to park: stop */
     i = 0;
     while (i < blen) {
         lex_src[place + i] = body[i];
@@ -3087,7 +3146,8 @@ static void pp_pushdir(void) {
     int last_slash;
     pp_skip_ws();
     d = pp_incdepth;
-    if (d < PP_MAX_INCDEPTH) {
+    pp_inc_room(d + 1);
+    {
         memcpy(pp_incfile + d * PP_FILE_LEN, pp_curfile, PP_FILE_LEN);
         pp_incline[d] = lex_line;
         pp_incif[d] = pp_dep;
@@ -3095,18 +3155,17 @@ static void pp_pushdir(void) {
         last_slash = -1;
         while (lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && i < PP_FILE_LEN - 1) {
             pp_curfile[i] = lex_src[lex_pos];
-            if (i < 255) pp_incdir[d * 256 + i] = lex_src[lex_pos];
+            pp_incdir[d * PP_FILE_LEN + i] = lex_src[lex_pos];
             if (lex_src[lex_pos] == 47) last_slash = i;   /* '/' */
             i = i + 1;
             lex_pos = lex_pos + 1;
         }
         pp_curfile[i] = 0;
         pp_file_note();
-        if (last_slash > 254) last_slash = -1;
-        pp_incdir[d * 256 + last_slash + 1] = 0;   /* the directory: up to its last '/' */
+        pp_incdir[d * PP_FILE_LEN + last_slash + 1] = 0;   /* the directory: up to its last '/' */
         lex_line = 0;
     }
-    pp_incdepth = d + 1;  /* counted past the cap too, so pops balance */
+    pp_incdepth = d + 1;
     pp_skip_line();
     pp_sync();
 }
@@ -3116,11 +3175,16 @@ static void pp_pushdir(void) {
  * the #include line's own, before the line after the #include. */
 static void pp_popdir(void) {
     int d;
-    if (pp_incdepth > 0) pp_incdepth = pp_incdepth - 1;
+    if (pp_incdepth == 0) {     /* no file to return to */
+        pp_skip_line();
+        pp_sync();
+        return;
+    }
+    pp_incdepth = pp_incdepth - 1;
     d = pp_incdepth;
     /* An if-section ends in the file it began in (6.10p1, 6.10.2p3). */
-    if (d < PP_MAX_INCDEPTH && pp_dep > pp_incif[d]) pp_error("unterminated conditional directive");
-    if (d < PP_MAX_INCDEPTH) {
+    if (pp_dep > pp_incif[d]) pp_error("unterminated conditional directive");
+    {
         memcpy(pp_curfile, pp_incfile + d * PP_FILE_LEN, PP_FILE_LEN);
         pp_file_note();
         lex_line = pp_incline[d] - 1;

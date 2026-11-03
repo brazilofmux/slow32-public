@@ -476,22 +476,7 @@ int main(int argc, char **argv) {
     }
 
     /* Extract source directory for #include resolution */
-    last_slash = -1;
-    i = 0;
-    while (infile[i] != 0) {
-        if (infile[i] == 47) last_slash = i;
-        i = i + 1;
-    }
-    if (last_slash >= 0) {
-        i = 0;
-        while (i <= last_slash) {
-            pp_sdir[i] = infile[i];
-            i = i + 1;
-        }
-        pp_sdir[i] = 0;
-    } else {
-        pp_sdir[0] = 0;
-    }
+    pp_set_sdir(infile);
 
     /* Init preprocessor */
     pp_ndefs = 0;

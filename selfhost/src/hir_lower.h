@@ -1154,10 +1154,10 @@ static int hl_bf_unit_ty(int member_ty) {
  * the first time the function's lowering meets it -- the way a structure
  * return gets its slot.  A complex one's value is its address, as any
  * structure's is; the one other kind, a pointer, is loaded. */
-#define HL_MAX_CTEMP 1024
-static int hl_ctemp_num[HL_MAX_CTEMP];
-static int hl_ctemp_inst[HL_MAX_CTEMP];
+static int *hl_ctemp_num;
+static int *hl_ctemp_inst;
 static int hl_nctemp;
+static int hl_ctemp_cap;
 
 static int hl_ctemp_addr(Node *n) {
     int i;
@@ -1167,9 +1167,12 @@ static int hl_ctemp_addr(Node *n) {
         if (hl_ctemp_num[i] == n->val) return hl_ctemp_inst[i];
         i = i + 1;
     }
-    if (hl_nctemp >= HL_MAX_CTEMP) {
-        p_error("too many complex temporaries in one function");
-        return -1;
+    if (hl_nctemp + 1 > hl_ctemp_cap) {
+        if (hl_ctemp_cap == 0) {
+            tab_add((char **)&hl_ctemp_num, (int)sizeof(int), TAB_HL_CTEMP, 0);
+            tab_add((char **)&hl_ctemp_inst, (int)sizeof(int), TAB_HL_CTEMP, 0);
+        }
+        tab_grow(TAB_HL_CTEMP, &hl_ctemp_cap, 64, hl_nctemp + 1);
     }
     sz = ty_size(n->ty);
     sz = ((sz + 7) / 8) * 8;
