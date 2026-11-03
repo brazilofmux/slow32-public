@@ -145,8 +145,10 @@ executable that puts the stack above 2 GB as the test.
 
 - **Steps 1-3 landed** in 2f7db381: both linkers, `--mem-size`, the
   2GB ceiling in every engine (QEMU via ~/qemu 8cec4b22e8), the FPGA
-  testbench refusing, and SPEC §5.1/§5.3/§6.2.  Still to do from
-  step 3: the clean-room rerun against the amended spec.
+  testbench refusing, and SPEC §5.1/§5.3/§6.2.  The clean-room
+  rerun (3936fd0c): 138/138 plus five memory-size cases; it found the
+  DBT binary had never been rebuilt with the ceiling (fixed with the
+  Makefile dependency) and qemu's refusal blaming -m.
 - **Step 4 started:** cc.s32x is linked with `--mem-size 1G` (and so are
   the suite's gen1/gen2/gen3).  With it, boxing at 128KB chunks
   compiles (187 s, ~300MB resident) and prints what its clang build
