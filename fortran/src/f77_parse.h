@@ -29,6 +29,16 @@
 /* SLOW-32 is 32-bit, so addresses are plain ints. */
 #define HL_ADDR_TY TY_INT
 
+/* Append a call argument (tag: hir.h h_carg_tag; 0 a plain word).  The
+ * pool grows (tables.h, TAB_HIR_CARG), so every writer comes through
+ * here -- as hir_lower.h's hl_carg_push for C. */
+static void f77_carg(int v, int tag) {
+    hir_carg_room(1);
+    h_carg[h_ncarg] = v;
+    h_carg_tag[h_ncarg] = tag;
+    h_ncarg = h_ncarg + 1;
+}
+
 /* --- symbols -------------------------------------------------------- */
 
 #define F77_MAX_SYM 1024
@@ -519,9 +529,7 @@ static int f77_sym(char *nm) {
         f77_frame = f77_frame + f77_tysize(f77_sty[f77_nsym]);
     f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym] == TY_CPLX ? TY_FLOAT : f77_sty[f77_nsym], -1, -1,
                                  0 - f77_frame, NULL);
-    hl_ainst[hl_nalloca] = f77_sval[f77_nsym];
-    hl_aoff[hl_nalloca] = 0 - f77_frame;
-    hl_nalloca = hl_nalloca + 1;
+    f77_alloca_add(f77_sval[f77_nsym], 0 - f77_frame);
     f77_nsym = f77_nsym + 1;
     return f77_nsym - 1;
 }
@@ -555,9 +563,7 @@ static int f77_sym_temp(int ty) {
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + f77_tysize(ty);
     f77_sval[s] = hi_emit(HI_ALLOCA, ty == TY_CPLX ? TY_FLOAT : ty, -1, -1, 0 - f77_frame, NULL);
-    hl_ainst[hl_nalloca] = f77_sval[s];
-    hl_aoff[hl_nalloca] = 0 - f77_frame;
-    hl_nalloca = hl_nalloca + 1;
+    f77_alloca_add(f77_sval[s], 0 - f77_frame);
     f77_nsym = f77_nsym + 1;
     f77_realloc_sym(s);
     return s;
@@ -694,11 +700,7 @@ static void f77_realloc_sym(int s) {
         h_ty[f77_sval[s]] = wty;                    /* lo word only */
         f77_shi[s] = hi_emit(HI_ALLOCA, wty, -1, -1,
                              0 - f77_frame + 4, NULL);
-        if (hl_nalloca < HL_MAX_ALLOCA) {
-            hl_ainst[hl_nalloca] = f77_shi[s];
-            hl_aoff[hl_nalloca] = 0 - f77_frame + 4;
-            hl_nalloca = hl_nalloca + 1;
-        }
+        f77_alloca_add(f77_shi[s], 0 - f77_frame + 4);
         f77_split_count = f77_split_count + 1;
     }
     {
@@ -859,10 +861,10 @@ static int f77_fp64_call2(char *name, int alo, int ahi, int blo, int bhi, int *r
         }
     }
     cb = h_ncarg;
-    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = ahi; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = blo; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = bhi; h_ncarg = h_ncarg + 1;
+    f77_carg(alo, 0);
+    f77_carg(ahi, 0);
+    f77_carg(blo, 0);
+    f77_carg(bhi, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
     h_cbase[r] = cb;
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
@@ -874,8 +876,8 @@ static int f77_fp64_pair1(char *name, int alo, int ahi, int *rhi) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = ahi; h_ncarg = h_ncarg + 1;
+    f77_carg(alo, 0);
+    f77_carg(ahi, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
     h_cbase[r] = cb;
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
@@ -886,7 +888,7 @@ static int f77_fp64_call1(char *name, int alo, int *rhi) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = alo; h_ncarg = h_ncarg + 1;
+    f77_carg(alo, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, name);
     h_cbase[r] = cb;
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
@@ -908,8 +910,8 @@ static int f77_libm_d1(char *name, int a, int ahi, int *rhi) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+    f77_carg(a, 1);
+    f77_carg(ahi, 2);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
     h_cbase[r] = cb;
     *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
@@ -920,10 +922,10 @@ static int f77_libm_d2(char *name, int a, int ahi, int b, int bhi, int *rhi) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = b;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = bhi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+    f77_carg(a, 1);
+    f77_carg(ahi, 2);
+    f77_carg(b, 1);
+    f77_carg(bhi, 2);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
     h_cbase[r] = cb;
     *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
@@ -934,7 +936,7 @@ static int f77_libm_f1(char *name, int a) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(a, 0);
     r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 1, name);
     h_cbase[r] = cb;
     return r;
@@ -944,8 +946,8 @@ static int f77_libm_f2(char *name, int a, int b) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = b; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(a, 0);
+    f77_carg(b, 0);
     r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 2, name);
     h_cbase[r] = cb;
     return r;
@@ -987,8 +989,8 @@ static int f77_cvt(int v, int *hi, int from, int to) {
         int cb;
         int r;
         cb = h_ncarg;
-        h_carg[h_ncarg] = v;   h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = *hi; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 0);
+        f77_carg(*hi, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2,
                     to == TY_INT ? "__fp64_cvt_DtoI" : "__fp64_cvt_DtoF");
         h_cbase[r] = cb;
@@ -1611,7 +1613,7 @@ static int f77_call_i(char *name, int n, int *args) {
     int i;
     cb = h_ncarg;
     for (i = 0; i < n; i++) {
-        h_carg[h_ncarg] = args[i]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(args[i], 0);
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, n, name);
     h_cbase[r] = cb;
@@ -1623,11 +1625,7 @@ static int f77_char_temp(int len) {
     int tmp;
     f77_frame = f77_frame + ((len + 3) & ~3);
     tmp = hi_emit(HI_ALLOCA, TY_CHAR, -1, -1, 0 - f77_frame, NULL);
-    if (hl_nalloca < HL_MAX_ALLOCA) {
-        hl_ainst[hl_nalloca] = tmp;
-        hl_aoff[hl_nalloca] = 0 - f77_frame;
-        hl_nalloca = hl_nalloca + 1;
-    }
+    f77_alloca_add(tmp, 0 - f77_frame);
     return tmp;
 }
 
@@ -1739,16 +1737,16 @@ static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs
     }
     tmp = f77_char_temp(rlen);
     cb = h_ncarg;
-    h_carg[h_ncarg] = tmp; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst(rlen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(tmp, 0);
+    f77_carg(f77_iconst(rlen), 0);
     nc = 2;
     for (ai = 0; ai < nargs; ai++) {
-        h_carg[h_ncarg] = addrs[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(addrs[ai], 0);
         nc = nc + 1;
     }
     for (ai = 0; ai < nargs; ai++) {
         if (lens[ai] < 0) continue;
-        h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(lens[ai], 0);
         nc = nc + 1;
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
@@ -2237,15 +2235,13 @@ static int f77_primary(void) {
             nc = 0;
             ai = 0;
             while (ai < nargs) {
-                h_carg[h_ncarg] = addrs[ai];
-                h_carg_tag[h_ncarg] = 0;
-                h_ncarg = h_ncarg + 1;
+                f77_carg(addrs[ai], 0);
                 nc = nc + 1;
                 ai = ai + 1;
             }
             for (ai = 0; ai < nargs; ai++) {
                 if (lens[ai] < 0) continue;
-                h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+                f77_carg(lens[ai], 0);
                 nc = nc + 1;
             }
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1,
@@ -2317,15 +2313,13 @@ static int f77_primary(void) {
             nc = 0;
             ai = 0;
             while (ai < nargs) {
-                h_carg[h_ncarg] = addrs[ai];
-                h_carg_tag[h_ncarg] = 0;
-                h_ncarg = h_ncarg + 1;
+                f77_carg(addrs[ai], 0);
                 nc = nc + 1;
                 ai = ai + 1;
             }
             for (ai = 0; ai < nargs; ai++) {
                 if (lens[ai] < 0) continue;
-                h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+                f77_carg(lens[ai], 0);
                 nc = nc + 1;
             }
             /* nm is this frame's buffer and hi_emit keeps the pointer:
@@ -2408,17 +2402,17 @@ static int f77_power(void) {
         }
         cb = h_ncarg;
         if (aty == TY_DOUBLE) {
-            h_carg[h_ncarg] = a;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = ahi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = b;   h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+            f77_carg(a, 1);
+            f77_carg(ahi, 2);
+            f77_carg(b, 0);
             r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_dpow_i");
             h_cbase[r] = cb;
             ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             ex_ty = TY_DOUBLE;
             return r;
         }
-        h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = b; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(a, 0);
+        f77_carg(b, 0);
         r = hi_emit(HI_CALL, aty == TY_FLOAT ? TY_FLOAT : TY_INT, -1, -1, 2,
                     aty == TY_FLOAT ? "f77_rpow_i" : "f77_ipow");
         h_cbase[r] = cb;
@@ -4741,9 +4735,7 @@ static void f77_open_do(void) {
 
     f77_frame = f77_frame + 4;
     trip_alloca = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-    hl_ainst[hl_nalloca] = trip_alloca;
-    hl_aoff[hl_nalloca] = 0 - f77_frame;
-    hl_nalloca = hl_nalloca + 1;
+    f77_alloca_add(trip_alloca, 0 - f77_frame);
     hi_emit(HI_STORE, TY_INT, trip_alloca, t3, 0, NULL);
 
     b_test = hir_new_block();
@@ -5328,9 +5320,7 @@ static int f77_actual_addr(void) {
     f77_act_len = -1;
     f77_frame = f77_frame + f77_tysize(vty);
     tmp = hi_emit(HI_ALLOCA, vty == TY_CPLX ? TY_FLOAT : vty, -1, -1, 0 - f77_frame, NULL);
-    hl_ainst[hl_nalloca] = tmp;
-    hl_aoff[hl_nalloca] = 0 - f77_frame;
-    hl_nalloca = hl_nalloca + 1;
+    f77_alloca_add(tmp, 0 - f77_frame);
     f77_store_at(tmp, vty, v, vty, vhi);
     return tmp;
 }
@@ -5731,15 +5721,13 @@ static void f77_stmt_call(int skip) {
         int ai;
         ai = 0;
         while (ai < nargs) {
-            h_carg[h_ncarg] = addrs[ai];
-            h_carg_tag[h_ncarg] = 0;
-            h_ncarg = h_ncarg + 1;
+            f77_carg(addrs[ai], 0);
             nc = nc + 1;
             ai = ai + 1;
         }
         for (ai = 0; ai < nargs; ai++) {
             if (lens[ai] < 0) continue;
-            h_carg[h_ncarg] = lens[ai]; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+            f77_carg(lens[ai], 0);
             nc = nc + 1;
         }
     }
@@ -5843,9 +5831,7 @@ static void f77_emit_copyin(void) {
             f77_frame = f77_frame + 4;
             f77_sval[s] = hi_emit(HI_ALLOCA, TY_INT, -1, -1,
                                   0 - f77_frame, NULL);
-            hl_ainst[hl_nalloca] = f77_sval[s];
-            hl_aoff[hl_nalloca] = 0 - f77_frame;
-            hl_nalloca = hl_nalloca + 1;
+            f77_alloca_add(f77_sval[s], 0 - f77_frame);
             f77_realloc_sym(s);
             f77_store_sym_val(s, v, f77_sty[s], hi);
             i = i + 1;
@@ -5924,8 +5910,7 @@ static void f77_unit_name(int u) {
 static void f77_assign_params(int n) {
     int i;
     int ord;
-    i = 0;
-    while (i < 64) { hl_param_tags[i] = 0; i = i + 1; }
+    hl_param_room(n);    /* the tables grow (hir.h); their tags all 0 */
     hl_param_nflat = n;
     hl_nparams = n;
     hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
@@ -6128,27 +6113,27 @@ static void f77_wr_item(int v, int vty, int vhi) {
     int r;
     cb = h_ncarg;
     if (vty == TY_CPLX) {
-        h_carg[h_ncarg] = v;   h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = vhi; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 0);
+        f77_carg(vhi, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_c");
         h_cbase[r] = cb;
         return;
     }
     if (vty == TY_DOUBLE) {
-        h_carg[h_ncarg] = v;   h_carg_tag[h_ncarg] = 1; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = vhi; h_carg_tag[h_ncarg] = 2; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 1);
+        f77_carg(vhi, 2);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_d");
     } else if (vty == TY_FLOAT) {
-        h_carg[h_ncarg] = v; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_r");
     } else if (v == f77_nar_ld && vty == TY_INT) {
         /* fort370: an INTEGER*2 or LOGICAL*1 item, its width with it --
          * A editing writes its bytes */
-        h_carg[h_ncarg] = v; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = f77_iconst(f77_tysize(f77_nar_ty)); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 0);
+        f77_carg(f77_iconst(f77_tysize(f77_nar_ty)), 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_in");
     } else {
-        h_carg[h_ncarg] = v; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(v, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_i");
     }
     h_cbase[r] = cb;
@@ -6183,7 +6168,7 @@ static void f77_rd_item(int addr, int ty) {
         return;
     }
     cb = h_ncarg;
-    h_carg[h_ncarg] = addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(addr, 0);
     if (ty == TY_CPLX)
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_c");
     else if (ty == TY_DOUBLE)
@@ -6323,9 +6308,7 @@ static void f77_wr_whole_array(int s) {
             n = hi_emit(HI_MUL, TY_INT, n, f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]), 0, NULL);
         f77_frame = f77_frame + 4;
         iv[0] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-        hl_ainst[hl_nalloca] = iv[0];
-        hl_aoff[hl_nalloca] = 0 - f77_frame;
-        hl_nalloca = hl_nalloca + 1;
+        f77_alloca_add(iv[0], 0 - f77_frame);
         hi_emit(HI_STORE, TY_INT, iv[0], f77_iconst(0), 0, NULL);
         b_test[0] = hir_new_block();
         b_body[0] = hir_new_block();
@@ -6350,14 +6333,10 @@ static void f77_wr_whole_array(int s) {
     for (k = rank - 1; k >= 0; k--) {
         f77_frame = f77_frame + 4;
         iv[k] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-        hl_ainst[hl_nalloca] = iv[k];
-        hl_aoff[hl_nalloca] = 0 - f77_frame;
-        hl_nalloca = hl_nalloca + 1;
+        f77_alloca_add(iv[k], 0 - f77_frame);
         f77_frame = f77_frame + 4;
         trip[k] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-        hl_ainst[hl_nalloca] = trip[k];
-        hl_aoff[hl_nalloca] = 0 - f77_frame;
-        hl_nalloca = hl_nalloca + 1;
+        f77_alloca_add(trip[k], 0 - f77_frame);
         hi_emit(HI_STORE, TY_INT, iv[k], f77_iconst(f77_slo[s][k]), 0, NULL);
         hi_emit(HI_STORE, TY_INT, trip[k], f77_iconst(f77_sext[s][k]), 0, NULL);
         b_test[k] = hir_new_block();
@@ -6470,9 +6449,7 @@ static void f77_wr_one(void) {
             t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
             f77_frame = f77_frame + 4;
             trip = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-            hl_ainst[hl_nalloca] = trip;
-            hl_aoff[hl_nalloca] = 0 - f77_frame;
-            hl_nalloca = hl_nalloca + 1;
+            f77_alloca_add(trip, 0 - f77_frame);
             hi_emit(HI_STORE, TY_INT, trip, t3, 0, NULL);
 
             b_test = hir_new_block();
@@ -6594,10 +6571,10 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
     int fs;
     int fa;
     cb = h_ncarg;
-    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(unit_val, 0);
     if (f77_io_int) {
-        h_carg[h_ncarg] = f77_io_int_len; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = f77_io_int_nrec; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(f77_io_int_len, 0);
+        f77_carg(f77_io_int_nrec, 0);
     }
     if (fmt_label == -3) {
         fa = f77_fmt_dyn;
@@ -6610,8 +6587,8 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
     } else {
         fa = f77_iconst(0);
     }
-    h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_fmt_len_arg(fmt_label); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(fa, 0);
+    f77_carg(f77_fmt_len_arg(fmt_label), 0);
     if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_wr_begin_int");
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_wr_begin");
     h_cbase[r] = cb;
@@ -7159,10 +7136,10 @@ static void f77_stmt_read(int skip) {
     }
 
     cb = h_ncarg;
-    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(unit_val, 0);
     if (f77_io_int) {
-        h_carg[h_ncarg] = f77_io_int_len; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = f77_io_int_nrec; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+        f77_carg(f77_io_int_len, 0);
+        f77_carg(f77_io_int_nrec, 0);
     }
     if (fmt_label == -3) {
         fa = f77_fmt_dyn;
@@ -7175,11 +7152,10 @@ static void f77_stmt_read(int skip) {
     } else {
         fa = f77_iconst(0);
     }
-    h_carg[h_ncarg] = fa; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_fmt_len_arg(fmt_label); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst((f77_io_end_label >= 0 ? 1 : 0) |
-                                 ((f77_io_err_label >= 0 || f77_io_iostat >= 0) ? 2 : 0));
-    h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(fa, 0);
+    f77_carg(f77_fmt_len_arg(fmt_label), 0);
+    f77_carg(f77_iconst((f77_io_end_label >= 0 ? 1 : 0) |
+                                 ((f77_io_err_label >= 0 || f77_io_iostat >= 0) ? 2 : 0)), 0);
     if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 6, "f77_rd_begin_int");
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "f77_rd_begin");
     h_cbase[r] = cb;
@@ -7317,26 +7293,25 @@ static void f77_stmt_open(int skip) {
     /* f77_open(unit, file, flen, status, slen, access, alen, form, fmlen,
      *          blank, blen, recl, recoverable) -> 0 ok, 2 error */
     cb = h_ncarg;
-    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(unit_val, 0);
     if (file_addr < 0) { file_addr = f77_iconst(0); file_lenv = f77_iconst(0); }
-    h_carg[h_ncarg] = file_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = file_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(file_addr, 0);
+    f77_carg(file_lenv, 0);
     if (stat_addr < 0) { stat_addr = f77_iconst(0); stat_lenv = f77_iconst(0); }
-    h_carg[h_ncarg] = stat_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = stat_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(stat_addr, 0);
+    f77_carg(stat_lenv, 0);
     if (acc_addr < 0) { acc_addr = f77_iconst(0); acc_lenv = f77_iconst(0); }
-    h_carg[h_ncarg] = acc_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = acc_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(acc_addr, 0);
+    f77_carg(acc_lenv, 0);
     if (form_addr < 0) { form_addr = f77_iconst(0); form_lenv = f77_iconst(0); }
-    h_carg[h_ncarg] = form_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = form_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(form_addr, 0);
+    f77_carg(form_lenv, 0);
     if (blank_addr < 0) { blank_addr = f77_iconst(0); blank_lenv = f77_iconst(0); }
-    h_carg[h_ncarg] = blank_addr; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = blank_lenv; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(blank_addr, 0);
+    f77_carg(blank_lenv, 0);
     if (recl_val < 0) recl_val = f77_iconst(0);
-    h_carg[h_ncarg] = recl_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst((err_label >= 0 || iostat_addr >= 0) ? 1 : 0);
-    h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(recl_val, 0);
+    f77_carg(f77_iconst((err_label >= 0 || iostat_addr >= 0) ? 1 : 0), 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 13, "f77_open");
     h_cbase[r] = cb;
     if (iostat_addr >= 0) hi_emit(HI_STORE, TY_INT, iostat_addr, r, 0, NULL);
@@ -7529,11 +7504,11 @@ static void f77_stmt_close(int skip) {
     if (!have_unit) { f77_error("CLOSE needs a unit"); return; }
 
     cb = h_ncarg;
-    h_carg[h_ncarg] = unit_val; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(unit_val, 0);
     if (stat_sidx >= 0) a = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, stat_sidx, NULL);
     else a = f77_iconst(0);
-    h_carg[h_ncarg] = a; h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = f77_iconst(stat_slen); h_carg_tag[h_ncarg] = 0; h_ncarg = h_ncarg + 1;
+    f77_carg(a, 0);
+    f77_carg(f77_iconst(stat_slen), 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_close");
     h_cbase[r] = cb;
 }
@@ -8082,9 +8057,7 @@ static void f77_statement(void) {
             /* Process exit, not a function return -- STOP in a
              * SUBROUTINE must terminate the program (GitHub #20). */
             cb = h_ncarg;
-            h_carg[h_ncarg] = v;
-            h_carg_tag[h_ncarg] = 0;
-            h_ncarg = h_ncarg + 1;
+            f77_carg(v, 0);
             r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "exit");
             h_cbase[r] = cb;
             hi_emit(HI_RET, TY_INT, v, -1, 0, NULL);

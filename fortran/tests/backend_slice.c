@@ -38,9 +38,7 @@ static void hl_func(Node *fn) {
      * actually arrives -- otherwise no entry move is emitted and the
      * code only works when the allocator happens to pick r3. */
     {
-        int k;
-        k = 0;
-        while (k < 64) { hl_param_tags[k] = 0; k = k + 1; }
+        hl_param_room(1);    /* the tables grow (hir.h); tag 0 */
         hl_param_nflat = 1;
         hl_nparams = 1;
         hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
@@ -48,9 +46,9 @@ static void hl_func(Node *fn) {
     }
     p_n  = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
     a_s  = hi_emit(HI_ALLOCA, TY_INT, -1, -1, -4, NULL);
-    hl_ainst[hl_nalloca] = a_s; hl_aoff[hl_nalloca] = -4; hl_nalloca++;
+    f77_alloca_add(a_s, -4);
     a_i  = hi_emit(HI_ALLOCA, TY_INT, -1, -1, -8, NULL);
-    hl_ainst[hl_nalloca] = a_i; hl_aoff[hl_nalloca] = -8; hl_nalloca++;
+    f77_alloca_add(a_i, -8);
     c0   = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
     c1   = hi_emit(HI_ICONST, TY_INT, -1, -1, 1, NULL);
     hi_emit(HI_STORE, TY_INT, a_s, c0, 0, NULL);

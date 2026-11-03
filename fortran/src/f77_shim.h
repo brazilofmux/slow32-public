@@ -15,6 +15,8 @@ typedef struct Node {
     int          nparams;      /* dummy-argument count */
     int          is_varargs;   /* always 0: F77 has no varargs */
     int          is_static;    /* always 0: every unit is a global symbol */
+    int          bit_width;    /* on a function, C's strongest _Alignas over 4
+                                * among its locals: always 0 here */
     struct Node *next;         /* next unit */
     struct Node *body;         /* on the program node: first unit */
     int          unit;         /* index into the f77 unit table */

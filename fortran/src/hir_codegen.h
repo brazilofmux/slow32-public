@@ -1,5 +1,4 @@
-/* COPIED from selfhost/stage08/hir_codegen.h at 370629f9.  See note in hir.h.
- * Plus cc359989's two wrong-code fixes (return pinning beside an ADDI chain; phi args of a folded branch), ported 2026-10-27. */
+/* COPIED from selfhost/stage08/hir_codegen.h at 701c4c3d.  See note in hir.h. */
 /* hir_codegen.h -- HIR to SLOW-32 assembly for s12cc
  *
  * Phase 8: Linear scan register allocation (r11-r28, callee-saved).
@@ -9,72 +8,78 @@
  */
 
 /* --- Output buffer --- */
-#define CG_MAX_OUT 4194304
+#define CG_MAX_OUT 262144    /* a window on the output file, flushed when full */
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
 static int  cg_fd = -1;
+static int  hcg_pgo_labels;   /* HIR_PGO_LABELS: per-block profile labels (step 5b.6) */
 static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
 
 /* Dead-static DCE (GitHub issue 73): record .text file offsets per
- * function, then rewrite the file dropping unreferenced statics. */
-#define CG_MAX_FN  8192
-#define CG_MAX_REF 16384
+ * function, then rewrite the file dropping unreferenced statics.  The
+ * tables grow (tables.h); past 8,192 functions or 16,384 references
+ * they used to fill, and a full table kept every function.  The names
+ * are hashed: the root set was a scan per reference and the closure a
+ * pass over every edge and every function per round. */
 static int   cg_file_pos;          /* bytes already written to cg_fd */
 static char *cg_outpath;
 static int   cg_nfn;
-static int   cg_fn_start[CG_MAX_FN];
-static int   cg_fn_end[CG_MAX_FN];
-static char *cg_fn_name[CG_MAX_FN];
-static int   cg_fn_local[CG_MAX_FN];
-static int   cg_fn_jt0[CG_MAX_FN];
-static int   cg_fn_jt1[CG_MAX_FN];
-static int   cg_fn_live[CG_MAX_FN];
+static int   cg_fn_cap;
+static int   *cg_fn_start;
+static int   *cg_fn_end;
+static char **cg_fn_name;          /* "" for none: the index wants a string */
+static int   *cg_fn_local;
+static int   *cg_fn_jt0;
+static int   *cg_fn_jt1;
+static int   *cg_fn_e0;            /* the function's references, edges e0..e1-1 */
+static int   *cg_fn_e1;
+static int   *cg_fn_live;
+static struct tab_nix cg_fix;      /* function names */
 static int   cg_nref;
-static char *cg_ref[CG_MAX_REF];
-static int   cg_ref_full;
+static int   cg_ref_cap;
+static char **cg_ref;              /* the root set: referenced from data */
+static struct tab_nix cg_rix;
 static int   cg_stat_dce_drop;
 static int   cg_stat_dce_keep;
 static int   cg_cur_fn;
 static int   cg_nedge;
-static int   cg_edge_from[CG_MAX_REF];
-static char *cg_edge_to[CG_MAX_REF];
+static int   cg_edge_cap;
+static char **cg_edge_to;          /* referenced by function cg_cur_fn */
+
+static void cg_fn_room(int need) {
+    if (need <= cg_fn_cap) return;
+    if (cg_fn_cap == 0) {
+        tab_add((char **)&cg_fn_start, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_end, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_name, (int)sizeof(char *), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_local, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_jt0, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_jt1, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_e0, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_e1, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_live, (int)sizeof(int), TAB_CG_FN, 0);
+    }
+    tab_grow(TAB_CG_FN, &cg_fn_cap, 1024, need);
+}
 
 static void cg_mark_ref(char *name) {
-    int i;
     if (!name || name[0] == 0) return;
     if (cg_cur_fn >= 0) {
-        if (cg_nedge < CG_MAX_REF) {
-            cg_edge_from[cg_nedge] = cg_cur_fn;
-            cg_edge_to[cg_nedge] = name;
-            cg_nedge = cg_nedge + 1;
-        } else {
-            cg_ref_full = 1;
-        }
+        tab_room1((char **)&cg_edge_to, (int)sizeof(char *), TAB_CG_EDGE, &cg_edge_cap, 4096, cg_nedge + 1);
+        cg_edge_to[cg_nedge] = name;
+        cg_nedge = cg_nedge + 1;
         return;
     }
-    i = 0;
-    while (i < cg_nref) {
-        if (strcmp(cg_ref[i], name) == 0) return;
-        i = i + 1;
-    }
-    if (cg_nref >= CG_MAX_REF) {
-        cg_ref_full = 1;
-        return;
-    }
+    if (tab_nix_find(&cg_rix, cg_ref, cg_nref, name) >= 0) return;
+    tab_room1((char **)&cg_ref, (int)sizeof(char *), TAB_CG_REF, &cg_ref_cap, 1024, cg_nref + 1);
     cg_ref[cg_nref] = name;
     cg_nref = cg_nref + 1;
 }
 
 static int cg_name_refd(char *name) {
-    int i;
     if (!name) return 1;
-    i = 0;
-    while (i < cg_nref) {
-        if (strcmp(cg_ref[i], name) == 0) return 1;
-        i = i + 1;
-    }
-    return 0;
+    return tab_nix_find(&cg_rix, cg_ref, cg_nref, name) >= 0;
 }
 
 /* Emission only appends -- nothing is patched after the fact -- so the
@@ -246,23 +251,56 @@ static int hcg_stat_frameless;
 static int hcg_stat_leaf_nolr;
 static int hcg_stat_omit_fp;
 static int hcg_va_save_size; /* varargs register save area size */
+/* A frame realigned for a local's _Alignas beyond 4 (fn->bit_width):
+ * the prologue keeps the entry sp in r2, rounds sp down to hcg_align
+ * and builds the frame under it -- sp + fs, the frame's top, is then
+ * aligned, and so is every local the parser placed at a multiple of
+ * the alignment below it.  The entry sp is kept in a frame slot
+ * (hcg_entry_off, fp-relative): the epilogue restores sp from it, and
+ * stack-passed parameters are read through it. */
+static int hcg_align;
+static int hcg_entry_off;
+/* A function that moves sp (HI_SETSP: a variable length array) keeps
+ * fp, and addresses its frame from it: sp is not where the frame's
+ * bottom is.  The epilogue takes sp back from fp. */
+static int hcg_dyn_sp;
 
 /* Frame slot addressing.  Offsets in the rest of codegen are fp-relative
  * (negative locals, non-negative incoming stack args).  When the frame
  * pointer is elided they become SP-relative: sp + (fs + fp_off + delta).
  * delta tracks mid-function SP adjusts (stack args, PHI shuffles). */
+/* A frame over 2KB that keeps fp is reached from both ends: a slot out
+ * of fp's 12-bit reach but in sp's is addressed from sp (hcg_dual_base;
+ * not with a moving sp or a realigned one).  hcg_slot_off picks the base
+ * and hcg_slot_base names it, so a caller asks for the offset first and
+ * lets nothing that addresses another slot (hcg_src, hcg_into) run in
+ * between -- an xBase cmd_join store went to sp + its fp offset.
+ * Single-based, the first-declared locals of a big frame -- the ones
+ * nearest fp -- each cost lui/addi/add before the load or store. */
+static int hcg_dual_base;
+static int hcg_slot_reg;
+
 static int hcg_slot_base(void) {
     if (hcg_omit_fp) return 29;
-    return 30;
+    return hcg_slot_reg;
 }
 
 static int hcg_slot_off(int fp_off) {
-    if (!hcg_omit_fp) return fp_off;
-    return hcg_frame + fp_off + hcg_sp_delta;
+    int sp_off;
+    if (hcg_omit_fp) return hcg_frame + fp_off + hcg_sp_delta;
+    hcg_slot_reg = 30;
+    if (hcg_dual_base && (fp_off < -2048 || fp_off > 2047)) {
+        sp_off = hcg_frame + fp_off + hcg_sp_delta;
+        if (sp_off >= -2048 && sp_off <= 2047) {
+            hcg_slot_reg = 29;
+            return sp_off;
+        }
+    }
+    return fp_off;
 }
 
 /* Block labels */
-static int hcg_blk_lbl[HIR_MAX_BLOCK];
+static int *hcg_blk_lbl;
 
 /* --- Branch-target forwarding through empty trampoline blocks ---
  * SSA critical-edge splitting leaves blocks whose entire content is
@@ -274,13 +312,13 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * it and skips the bodies of forwarded blocks.  hcg_next_emit[b] is
  * the next non-forwarded block after b — the real fallthrough
  * neighbor once trampolines stop being emitted. */
-static int hcg_fwd[HIR_MAX_BLOCK];
-static int hcg_next_emit[HIR_MAX_BLOCK];
-static int hcg_emit_ord[HIR_MAX_BLOCK];   /* layout order (see compute_fwd) */
+static int *hcg_fwd;
+static int *hcg_next_emit;
+static int *hcg_emit_ord;   /* layout order (see compute_fwd) */
 static int hcg_nord;
-static char hcg_placed[HIR_MAX_BLOCK];
-static int hcg_skip[HIR_MAX_BLOCK]; /* (always 0 now; see hcg_compute_fwd) */
-static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated */
+static char *hcg_placed;
+static int *hcg_skip; /* (always 0 now; see hcg_compute_fwd) */
+static int *hcg_blk_pos; /* estimated byte offset, over-estimated */
 
 /* Deferred jump-table emission (issue #32).  HI_JMPTAB dispatch is emitted
  * inline in .text, but the table of target addresses must live in a
@@ -289,14 +327,29 @@ static int hcg_blk_pos[HIR_MAX_BLOCK]; /* estimated byte offset, over-estimated 
  * unique block-label numbers (hcg_blk_lbl values), which stay valid after
  * the per-function hcg_blk_lbl[] array is overwritten because cg_lbl is
  * monotonic. */
-#define CG_MAX_JT      4096   /* was 512 */
-#define CG_MAX_JT_ENT  262144   /* was 32768 */
-static int cg_jt_id[CG_MAX_JT];      /* .LJT label number */
-static int cg_jt_base[CG_MAX_JT];    /* base into cg_jt_ent */
-static int cg_jt_span[CG_MAX_JT];    /* entry count */
-static int cg_jt_ent[CG_MAX_JT_ENT]; /* target block-label numbers */
+/* Grown (tables.h, TAB_CG_JT and TAB_CG_JTENT); 4096 tables and 262,144
+ * entries a translation unit stopped the compile. */
+static int *cg_jt_id;      /* .LJT label number */
+static int *cg_jt_base;    /* base into cg_jt_ent */
+static int *cg_jt_span;    /* entry count */
+static int *cg_jt_ent;     /* target block-label numbers */
 static int cg_njt;
 static int cg_njt_ent;
+static int cg_jt_cap;
+static int cg_jt_ent_cap;
+
+/* room for one more table of span entries */
+static void cg_jt_room(int span) {
+    if (cg_njt + 1 > cg_jt_cap) {
+        if (cg_jt_cap == 0) {
+            tab_add((char **)&cg_jt_id, (int)sizeof(int), TAB_CG_JT, 0);
+            tab_add((char **)&cg_jt_base, (int)sizeof(int), TAB_CG_JT, 0);
+            tab_add((char **)&cg_jt_span, (int)sizeof(int), TAB_CG_JT, 0);
+        }
+        tab_grow(TAB_CG_JT, &cg_jt_cap, 512, cg_njt + 1);
+    }
+    tab_room1((char **)&cg_jt_ent, (int)sizeof(int), TAB_CG_JTENT, &cg_jt_ent_cap, 32768, cg_njt_ent + span);
+}
 
 /* Immediate-selection telemetry */
 static int hcg_stat_imm_opp_add;
@@ -325,6 +378,17 @@ static int hcg_stat_tailcall;
 static int hcg_stat_brc_fuse;
 static int hcg_stat_br_fallthru;
 static int hcg_cur_blk;                  /* current block being emitted */
+
+/* Where control goes falling off the current block: the next block
+ * laid out, or where that one forwards to -- a trampoline is only its
+ * branch, so falling into it reaches its target (with its own jal
+ * elided when it too falls through).  bb_nblk after the last block. */
+static int hcg_falls_to(void) {
+    int ne;
+    ne = hcg_next_emit[hcg_cur_blk];
+    if (ne < bb_nblk) ne = hcg_fwd[ne];
+    return ne;
+}
 
 /* Spill slots must start below any lowered HI_ALLOCA temp, not just
  * fn->locals_size, because lowering can introduce extra stack temps. */
@@ -391,7 +455,7 @@ static void hcg_la(int reg, char *sym) {
 }
 
 /* GitHub issue 72: return-only values computed straight into r1. */
-static char hcg_ret_direct[HIR_MAX_INST];
+static char *hcg_ret_direct;
 
 /* --- Materialize a HIR value into a specific register --- */
 
@@ -406,7 +470,7 @@ static void hcg_into(int reg, int inst) {
         return;
     }
 
-    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) {
+    if (inst < hir_inst_cap && hcg_ret_direct[inst]) {
         if (reg != 1) cg_rri("addi", reg, 1, 0);
         return;
     }
@@ -450,6 +514,7 @@ static void hcg_into(int reg, int inst) {
         return;
     }
     if (k == HI_SADDR) {
+        lex_str_used[h_val[inst]] = 1;
         cg_s("    lui r");
         cg_n(reg);
         cg_s(", %hi(.LS");
@@ -513,7 +578,7 @@ static void hcg_into(int reg, int inst) {
  * If inst is rematerializable or spilled, loads into scratch and returns scratch. */
 static int hcg_src(int inst, int scratch) {
     if (inst < 0) return 0;
-    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) return 1;
+    if (inst < hir_inst_cap && hcg_ret_direct[inst]) return 1;
     if (ra_reg[inst] >= 0) return ra_reg[inst];
     hcg_into(scratch, inst);
     return scratch;
@@ -614,16 +679,16 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
  * be an allocator preference the way issue 67's argument targeting was;
  * it is decided here, after allocation, and only where r1 is provably
  * untouched while the return-only web is live. */
-static char hcg_usecnt[HIR_MAX_INST];   /* saturates at 2; we only need "exactly 1" */
+static char *hcg_usecnt;   /* saturates at 2; we only need "exactly 1" */
 static int  hcg_stat_retpin;
 #define HCG_RP_MAX 512
 static int  hcg_rp_tick;
-static int  hcg_rp_stamp[HIR_MAX_INST];
-static int  hcg_rp_reach[HIR_MAX_BLOCK];
-static int  hcg_rp_path[HIR_MAX_BLOCK];
+static int  *hcg_rp_stamp;
+static int  *hcg_rp_reach;
+static int  *hcg_rp_path;
 static int  hcg_rp_s[HCG_RP_MAX];
 static int  hcg_rp_ns;
-static int  hcg_rp_wl[HIR_MAX_BLOCK];
+static int  *hcg_rp_wl;
 
 static void hcg_use_bump(int v) {
     if (v < 0 || v >= h_ninst) return;
@@ -633,8 +698,8 @@ static void hcg_use_bump(int v) {
 /* An ADDI another ADDI folds through at emission (the outer reads the
  * chain's base, ra_codegen_fold_base): the inner one is still emitted,
  * into its own register, while the base must survive it -- so it never
- * joins a web pinned to r1 beside that base (stage08 cc359989). */
-static char hcg_rp_inner[HIR_MAX_INST];
+ * joins a web pinned to r1 beside that base. */
+static char *hcg_rp_inner;
 
 /* Every reader of a value, in the same shape as ra_csplit_on_inst:
  * src1, src2 (when it is a value reference), call arguments, phi args,
@@ -713,7 +778,7 @@ static int hcg_retpin_clobbers_r1(int e) {
     /* JMPTAB forms the target in r1.  Calls return in r1. */
     if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI || k == HI_JMPTAB) return 1;
     /* An earlier RET in this function already pinned this def to r1. */
-    if (e < HIR_MAX_INST && hcg_ret_direct[e]) return 1;
+    if (e < hir_inst_cap && hcg_ret_direct[e]) return 1;
     /* Fused BRC: the compare is NOPed (ra_reg < 0) and re-emitted as a
      * bcond.  src1 of the BRC is that NOP -- treating it as a scratch
      * operand refused afterloop/diamond.  The bcond stages one compare
@@ -850,11 +915,41 @@ static void hcg_rp_prune(int ret_inst) {
  * and not the RET), is still live when that reader writes: r1 cannot
  * hold both.  A loop's strength-reduced induction variable read by the
  * returned value and by its own increment kept r1 while the returned
- * value was computed into r1 every pass (stage08, cfuzz seed 31379:
+ * value was computed into r1 every pass (cfuzz seed 31379:
  * `v = (i << 13) >> 11` in a loop returned 8196 for 8).  Such a member
  * leaves the web; returns 1 if any did. */
-static int hcg_rp_rd[HIR_MAX_INST];
-static int hcg_rp_rdw[HIR_MAX_INST];
+static int *hcg_rp_rd;
+static int *hcg_rp_rdw;
+
+/* per-call ABI register map, by the call's flat argument slot: as many
+ * as the call-argument pool holds (tables.h, TAB_HIR_CARG) */
+static int *hcg_argmap;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hcg_tables_done;
+static void hcg_tables(void) {
+    if (hcg_tables_done) return;
+    hcg_tables_done = 1;
+    tab_add((char **)&hcg_argmap, (int)sizeof(int), TAB_HIR_CARG, hir_carg_cap);
+    hir_blk_table((char **)&hcg_blk_lbl, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_fwd, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_next_emit, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_emit_ord, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_placed, (int)sizeof(char));
+    hir_blk_table((char **)&hcg_skip, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_blk_pos, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_reach, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_path, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_wl, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_ret_direct, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_usecnt, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_rp_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_rp_inner, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_rp_rd, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_rp_rdw, (int)sizeof(int));
+}
 static void hcg_rp_rd_one(int a, int writes) {
     if (a < 0 || a >= h_ninst || hcg_rp_stamp[a] != hcg_rp_tick) return;
     hcg_rp_rd[a] = hcg_rp_rd[a] + 1;
@@ -905,7 +1000,7 @@ static int hcg_rp_multi_read(int ret_src, int ret_inst) {
  * were live at once, and r1 cannot hold both.  The rules above (one
  * operand, one phi per join, one reader that writes) each named a shape;
  * a loop that recomputes v0 = v1 - 16 and then v1 itself, returning v0,
- * fit none of them, and v1's new value overwrote v0 in r1 (stage08, cfuzz seed
+ * fit none of them, and v1's new value overwrote v0 in r1 (cfuzz seed
  * 42467: 0 for 0xfffffff0).  A member without a node has no verdict and
  * leaves the web.  Returns 1 if any member left. */
 static int hcg_rp_interferes(int a, int b) {
@@ -1012,10 +1107,14 @@ static void hcg_rp_shrink(int ret_src, int ret_inst) {
                     }
                 }
                 if (k == HI_PHI) {
+                    /* A block's phis are on its ssa_phi_head list, not
+                     * between bb_start and bb_end: walking that range
+                     * found none, and two phis of one join both kept r1
+                     * -- their edge copies wrote each other's register
+                     * (cfuzz seed 8646: `return p ? v1 : v2;` after a
+                     * switch returned the other variable). */
                     bblk = h_blk[v];
                     if (bblk >= 0 && bblk < bb_nblk) {
-                        /* the block's phis are on ssa_phi_head, not between
-                         * bb_start and bb_end (stage08, cfuzz seed 8646) */
                         p = ssa_phi_head[bblk];
                         while (p >= 0) {
                             if (h_kind[p] == HI_PHI && p != v &&
@@ -1084,7 +1183,7 @@ static int hcg_rp_block_clobbers(int b) {
     i = ssa_phi_head[b];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI && hcg_rp_stamp[i] != hcg_rp_tick &&
-            i < HIR_MAX_INST && hcg_ret_direct[i]) return 1;
+            i < hir_inst_cap && hcg_ret_direct[i]) return 1;
         i = ssa_phi_next[i];
     }
     i = licm_head[b];
@@ -1115,7 +1214,7 @@ static int hcg_rp_phi_roommates_ok(void) {
         if (h_kind[v] == HI_PHI) {
             b = h_blk[v];
             if (b >= 0 && b < bb_nblk) {
-                p = ssa_phi_head[b];    /* the block's phis */
+                p = ssa_phi_head[b];    /* the block's phis (see hcg_rp_shrink) */
                 while (p >= 0) {
                     if (h_kind[p] == HI_PHI && p != v && ra_reg[p] < 0) return 0;
                     p = ssa_phi_next[p];
@@ -1147,7 +1246,7 @@ static int hcg_rp_paths_clean(int ret_blk) {
             p = ssa_pred[ssa_pbase[b] + j];
             if (p >= 0 && p < bb_nblk && hcg_rp_reach[p] != hcg_rp_tick) {
                 hcg_rp_reach[p] = hcg_rp_tick;
-                if (nwl < HIR_MAX_BLOCK) {
+                if (nwl < hir_blk_cap) {
                     hcg_rp_wl[nwl] = p;
                     nwl = nwl + 1;
                 }
@@ -1179,7 +1278,7 @@ static int hcg_rp_paths_clean(int ret_blk) {
             if (s >= 0 && s < bb_nblk && hcg_rp_path[s] != hcg_rp_tick &&
                 hcg_rp_reach[s] == hcg_rp_tick) {
                 hcg_rp_path[s] = hcg_rp_tick;
-                if (nwl < HIR_MAX_BLOCK) {
+                if (nwl < hir_blk_cap) {
                     hcg_rp_wl[nwl] = s;
                     nwl = nwl + 1;
                 }
@@ -1206,9 +1305,9 @@ static void hcg_mark_ret_direct(void) {
                 hcg_rp_tick = hcg_rp_tick + 1;
                 if (hcg_rp_tick == 0) {
                     i = 0;
-                    while (i < HIR_MAX_INST) { hcg_rp_stamp[i] = 0; i = i + 1; }
+                    while (i < hir_inst_cap) { hcg_rp_stamp[i] = 0; i = i + 1; }
                     i = 0;
-                    while (i < HIR_MAX_BLOCK) {
+                    while (i < hir_blk_cap) {
                         hcg_rp_reach[i] = 0;
                         hcg_rp_path[i] = 0;
                         i = i + 1;
@@ -1362,7 +1461,6 @@ static int hcg_params_emitted;
 static int hcg_pe_dst[8];
 static int hcg_pe_src[8];
 static int hcg_pe_active[8];
-static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 
 /* --- Parallel-copy sequencer for outgoing register arguments (issue 67) ---
  *
@@ -1414,6 +1512,51 @@ static int hcg_src_slot(int v) {
 }
 static int hcg_shuf_done[HCG_ARGSHUF_MAX];
 static int hcg_stat_argshuf;                /* cycles broken via the scratch */
+
+/* The entry sp's frame slot, for a realigned frame (hcg_align): stored
+ * by the prologue from r2, read into r1 for stack-passed parameters, and
+ * loaded into sp by the epilogue -- from sp + sp_off, where sp_off is
+ * fs while sp is still the frame's bottom, 0 once it is the top. */
+static void hcg_entry_sp_store(void) {
+    int off;
+    off = hcg_slot_off(hcg_entry_off);
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    stw r");
+        cg_n(hcg_slot_base());
+        cg_s(", r2, ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, hcg_slot_base(), 1);
+        cg_s("    stw r1, r2, 0\n");
+    }
+}
+
+static void hcg_entry_sp_to_r1(void) {
+    int off;
+    off = hcg_slot_off(hcg_entry_off);
+    if (off >= -2048 && off <= 2047) {
+        cg_rri("ldw", 1, hcg_slot_base(), off);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, hcg_slot_base(), 1);
+        cg_rri("ldw", 1, 1, 0);
+    }
+}
+
+static void hcg_entry_sp_load(int sp_off) {
+    int off;
+    off = sp_off + hcg_entry_off;
+    if (off >= -2048 && off <= 2047) {
+        cg_rri("ldw", 29, 29, off);
+    } else {
+        /* r3 is dead at a return (see the large-frame epilogue) */
+        hcg_li(3, off);
+        cg_rrr("add", 3, 29, 3);
+        cg_rri("ldw", 29, 3, 0);
+    }
+}
 
 /* Run the sequencer over hcg_shuf_[dst,src,val,done][0..n). */
 static void hcg_parallel_copy(int n) {
@@ -1486,7 +1629,7 @@ static void hcg_move_vals(int *dst, int *vals, int n) {
         hcg_shuf_dst[i] = dst[i];
         hcg_shuf_val[i] = v;
         hcg_shuf_imm[i] = 0;
-        if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
+        if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
         else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
         else hcg_shuf_src[i] = hcg_remat_reg_src(v, &hcg_shuf_imm[i]);
         hcg_shuf_done[i] = 0;
@@ -1512,7 +1655,7 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             hcg_shuf_dst[n] = hcg_argmap[i];
             hcg_shuf_val[n] = v;
             hcg_shuf_imm[n] = 0;
-            if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
+            if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
             else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
             else hcg_shuf_src[n] = hcg_remat_reg_src(v, &hcg_shuf_imm[n]);
             hcg_shuf_done[n] = 0;
@@ -1620,7 +1763,16 @@ static void hcg_emit_param_entry(void) {
             hl_param_map[h_val[i]] < 0) {
             pidx = h_val[i];
             off = hcg_slot_off(hl_param_stkord[pidx]);
-            if (off > 2047 || off < -2048) {
+            if (hcg_align) {
+                /* above the entry sp, which the realigned frame is not */
+                hcg_entry_sp_to_r1();
+                if (ra_reg[i] >= 0) {
+                    cg_rri("ldw", ra_reg[i], 1, hl_param_stkord[pidx]);
+                } else {
+                    cg_rri("ldw", 1, 1, hl_param_stkord[pidx]);
+                    hcg_maybe_spill(i);
+                }
+            } else if (off > 2047 || off < -2048) {
                 /* Earlier byval slots pushed this offset past LDW's imm
                  * range: form the address in the r1 scratch. */
                 hcg_li(1, off);
@@ -1654,6 +1806,7 @@ static void hcg_emit_sym(int inst) {
     off = bg_soff[inst];
     if (base < 0) base = inst;
     if (h_kind[base] == HI_SADDR) {
+        lex_str_used[h_val[base]] = 1;
         cg_s(".LS");
         cg_n(h_val[base]);
     } else {
@@ -1839,15 +1992,37 @@ static void hcg_store_off(int base, int vreg, int off, int ty) {
 
 /* --- Emit phi copies for a branch from_blk -> to_blk --- */
 
-static int hcg_phi_tmp[SSA_MAX_PROMO];
-static int hcg_phi_push_ix[SSA_MAX_PROMO];
-static int hcg_phi_is_const[SSA_MAX_PROMO];   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
-static int hcg_phi_imm[SSA_MAX_PROMO];        /* class 4: added to the source register */
-static int hcg_phi_const_val[SSA_MAX_PROMO];
-static int hcg_phi_src_reg[SSA_MAX_PROMO];
-static int hcg_phi_dst_reg[SSA_MAX_PROMO];
-static int hcg_phi_active[SSA_MAX_PROMO];
-static int hcg_phi_src_inst[SSA_MAX_PROMO];
+/* One edge's phi copies, grown (tables.h, TAB_HCG_PHI).  They were
+ * sized by the promoted variables, and the loop collecting a block's
+ * phis -- both SSA constructions' and the allocator's splits -- had no
+ * bound at all. */
+static int *hcg_phi_tmp;
+static int *hcg_phi_push_ix;
+static int *hcg_phi_is_const;   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
+static int *hcg_phi_imm;        /* class 4: added to the source register */
+static int *hcg_phi_const_val;
+static int *hcg_phi_src_reg;
+static int *hcg_phi_dst_reg;
+static int *hcg_phi_active;
+static int *hcg_phi_src_inst;
+static int hcg_phi_cap;
+
+/* room for phi copy n */
+static void hcg_phi_room(int n) {
+    if (n < hcg_phi_cap) return;
+    if (hcg_phi_cap == 0) {
+        tab_add((char **)&hcg_phi_tmp, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_push_ix, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_is_const, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_imm, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_const_val, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_src_reg, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_dst_reg, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_active, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_src_inst, (int)sizeof(int), TAB_HCG_PHI, 0);
+    }
+    tab_grow(TAB_HCG_PHI, &hcg_phi_cap, 256, n + 1);
+}
 
 /* DIVERGENCE (f77, port upstream candidate): is the (from -> to) edge
  * free of REAL phi copies?  The direct conditional-branch shapes used
@@ -1863,7 +2038,7 @@ static int hcg_phi_src_inst[SSA_MAX_PROMO];
  * PARAM edge copy-free -- r1 arrived holding remat scratch, and the
  * stage08-built disassembler printed every immediate as 1. */
 static int hcg_eff_reg(int v) {
-    if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) return 1;
+    if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) return 1;
     return ra_reg[v];
 }
 
@@ -1907,6 +2082,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI) {
+            hcg_phi_room(n);
             hcg_phi_tmp[n] = i;
             n = n + 1;
         }
@@ -2017,22 +2193,26 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                 if (off == 0) {
                     /* no slot: the value is never read; drop the copy */
                 } else if (hcg_phi_is_const[j] == 0) {
+                    int so;
+                    so = hcg_slot_off(off);     /* before the base */
                     cg_s("    stw r");
                     cg_n(hcg_slot_base());
                     cg_s(", r");
                     cg_n(hcg_phi_src_reg[j]);
                     cg_s(", ");
-                    cg_n(hcg_slot_off(off));
+                    cg_n(so);
                     cg_c(10);
                 } else if (hcg_phi_is_const[j] == 2 && v >= 0 &&
                            ra_spill_off[v] == off) {
                     /* same slot: no-op */
                 } else {
+                    int so;
                     hcg_into(2, v);
+                    so = hcg_slot_off(off);     /* after hcg_into, before the base */
                     cg_s("    stw r");
                     cg_n(hcg_slot_base());
                     cg_s(", r2, ");
-                    cg_n(hcg_slot_off(off));
+                    cg_n(so);
                     cg_c(10);
                 }
                 hcg_phi_active[j] = 0;
@@ -2288,6 +2468,8 @@ static int hcg_is_tailcall(int idx) {
 
     /* Conservative guards */
     if (hcg_va_save_size > 0) return 0;       /* varargs fn */
+    if (hcg_align) return 0;                  /* sp is restored from a slot */
+    if (hcg_dyn_sp) return 0;                 /* sp is restored from fp */
     if (h_val[idx] > 8) return 0;              /* stack args */
     if (hcg_frame_escapes) return 0;          /* callee may see our frame */
 
@@ -2393,7 +2575,7 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
     f = h_val[idx];
     ft = hcg_fwd[t];
     ff = hcg_fwd[f];
-    ne = hcg_next_emit[hcg_cur_blk];
+    ne = hcg_falls_to();
 
     if (hcg_edge_nocopy(hcg_cur_blk, t) && hcg_edge_nocopy(hcg_cur_blk, f)) {
         if (ft == ne && hcg_bnear(hcg_cur_blk, ff)) {
@@ -2828,7 +3010,12 @@ static int hcg_addi_folds_away_d(int idx, int depth) {
     hcg_dbg_addi[0]++;
     if (depth > 4) return 0;
     if (h_kind[idx] != HI_ADDI) return 0;
-    if (ra_reg[idx] < 0) { hcg_dbg_addi[1]++; return 0; }
+    /* A spilled ADDI folds away as well: its folding consumers read the
+     * base, and a reload of it would be a use as a value (refused
+     * below).  Refusing it here stored the address to its slot at the
+     * definition for nothing -- round16's in[k] addresses, eight dead
+     * stores, once correct SSA left the allocator no copies to split
+     * at (test_respill). */
     if (bg_uses[idx] <= 0) { hcg_dbg_addi[2]++; return 0; }
 
     users = 0;
@@ -2946,6 +3133,17 @@ static void hcg_inst(int idx) {
             hcg_params_emitted = 1;
             hcg_emit_param_entry();
         }
+        return;
+    }
+
+    if (k == HI_GETSP) {
+        rd = hcg_dst(idx);
+        cg_rri("addi", rd, 29, 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+    if (k == HI_SETSP) {
+        cg_rri("addi", 29, hcg_src(s1, 1), 0);
         return;
     }
 
@@ -3526,10 +3724,12 @@ static void hcg_inst(int idx) {
     /* Store — dispatched by BURG left-child NT */
     if (k == HI_STORE) {
         if (lnt == BG_FADDR) {
-            /* STORE(faddr, reg): direct store to fp/sp + offset */
-            off = hcg_slot_off(bg_foff[s1]);
+            /* STORE(faddr, reg): direct store to fp/sp + offset.  The
+             * value first: hcg_src may address a slot of its own, and
+             * the base belongs to the last hcg_slot_off. */
             if (hcg_const_is_zero(s2)) vreg = 0;
             else vreg = hcg_src(s2, 2);
+            off = hcg_slot_off(bg_foff[s1]);
             if (off >= -2048 && off <= 2047) {
                 hcg_store_off(hcg_slot_base(), vreg, off, ty);
             } else {
@@ -3609,7 +3809,7 @@ static void hcg_inst(int idx) {
         tb = hcg_fwd[h_val[idx]];
         /* Fallthrough elimination: skip jal if target is the next
          * emitted (non-forwarded) block */
-        if (tb >= bb_nblk || tb != hcg_next_emit[hcg_cur_blk]) {
+        if (tb >= bb_nblk || tb != hcg_falls_to()) {
             cg_s("    jal r0, ");
             cg_lref(hcg_blk_lbl[tb]);
             cg_c(10);
@@ -3636,7 +3836,7 @@ static void hcg_inst(int idx) {
                 int tb2;
                 hcg_phi_copies(h_blk[idx], s2);
                 tb2 = hcg_fwd[s2];
-                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
+                if (tb2 >= bb_nblk || tb2 != hcg_falls_to()) {
                     cg_s("    jal r0, ");
                     cg_lref(hcg_blk_lbl[tb2]);
                     cg_c(10);
@@ -3645,7 +3845,7 @@ static void hcg_inst(int idx) {
                 int tb2;
                 hcg_phi_copies(h_blk[idx], h_val[idx]);
                 tb2 = hcg_fwd[h_val[idx]];
-                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
+                if (tb2 >= bb_nblk || tb2 != hcg_falls_to()) {
                     cg_s("    jal r0, ");
                     cg_lref(hcg_blk_lbl[tb2]);
                     cg_c(10);
@@ -3754,10 +3954,7 @@ static void hcg_inst(int idx) {
         int t;
         base = hjt_base[idx];
         span = hjt_span[idx];
-        if (cg_njt >= CG_MAX_JT || cg_njt_ent + span > CG_MAX_JT_ENT) {
-            fdputs("s12cc: too many jump-table entries\n", 2);
-            exit(1);
-        }
+        cg_jt_room(span);
         jtid = cg_label();
         cg_jt_id[cg_njt] = jtid;
         cg_jt_base[cg_njt] = cg_njt_ent;
@@ -3957,7 +4154,7 @@ static void hcg_inst(int idx) {
          * materialized straight into the destination: one ldw or addi,
          * not a reload into r1 and a move.  The step 5b.2 reload values
          * are exactly this COPY. */
-        if (ra_reg[s1] < 0 && !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+        if (ra_reg[s1] < 0 && !(s1 < hir_inst_cap && hcg_ret_direct[s1])) {
             hcg_into(rd, s1);
             hcg_maybe_spill(idx);
             return;
@@ -3965,8 +4162,8 @@ static void hcg_inst(int idx) {
         /* A memory destination from a register source is one store
          * (the step 5b.3 region copy at an arm's entry is this). */
         if (ra_reg[idx] < 0 && !hi_inst_remat(idx) && ra_spill_off[idx] != 0 &&
-            !(idx < HIR_MAX_INST && hcg_ret_direct[idx]) &&
-            !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            !(idx < hir_inst_cap && hcg_ret_direct[idx]) &&
+            !(s1 < hir_inst_cap && hcg_ret_direct[s1])) {
             off = hcg_slot_off(ra_spill_off[idx]);
             if (off >= -2048 && off <= 2047) {
                 hcg_stat_spillst = hcg_stat_spillst + 1;
@@ -4034,9 +4231,10 @@ static void hcg_add_to_addi(void) {
  * entry block, but one the optimizer made inside a block -- a ?: arm
  * folded to its constant -- does not: pinned, it was loaded inside an
  * inner loop while an expression LICM had hoisted to the outer loop read
- * the register first (stage08, cfuzz seeds 16026, 39992: LICM's
- * strength reduction is another user).  Only the entry block is before
- * every use. */
+ * the register first (cfuzz seed 16026 of the wide generator).  Nor is
+ * the user's own block enough: a constant has other users, and LICM's
+ * strength reduction put one in the preheader (seed 39992).  Only the
+ * entry block is before every use. */
 static int hcg_pin_before(int a, int use_blk) {
     return h_blk[a] == 0;
 }
@@ -4117,6 +4315,20 @@ static void hcg_mark_loop_consts(void) {
  * qualifies, and a phi-ful target keeps its preds intact).  Block 0
  * never forwards: it is entered by fallthrough from the prologue,
  * not by a branch that could be redirected. */
+/* The block to lay out after one that branches to t, or -1.  A
+ * forwarding trampoline (an empty block, hcg_fwd[t] != t) still
+ * unplaced goes next, where it falls into its target and costs no
+ * instruction; branches elsewhere skip it.  Laid out anywhere else it
+ * is an unreached jal -- pruned SSA (no dead phis left to stop the
+ * forwarding) turned 546 of s12cc.c's edge blocks into those. */
+static int hcg_pref_next(int t) {
+    if (t < 0 || t >= bb_nblk) return -1;
+    if (!hcg_placed[t]) return t;
+    t = hcg_fwd[t];
+    if (t < bb_nblk && !hcg_placed[t]) return t;
+    return -1;
+}
+
 static void hcg_compute_fwd(void) {
     int b;
     int i;
@@ -4215,15 +4427,10 @@ static void hcg_compute_fwd(void) {
                 i = i - 1;
             }
             if (term >= 0 && h_kind[term] == HI_BR) {
-                scan = hcg_fwd[h_val[term]];
-                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                pick = hcg_pref_next(h_val[term]);
             } else if (term >= 0 && h_kind[term] == HI_BRC) {
-                scan = hcg_fwd[h_src2[term]];        /* then-arm */
-                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
-                if (pick < 0) {
-                    scan = hcg_fwd[h_val[term]];     /* else-arm */
-                    if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
-                }
+                pick = hcg_pref_next(h_src2[term]);  /* then-arm */
+                if (pick < 0) pick = hcg_pref_next(h_val[term]);   /* else-arm */
             }
             if (pick < 0) {
                 scan = 0;
@@ -4302,6 +4509,18 @@ static void hcg_block(int b) {
     /* Skipped trampoline: every reference was redirected to its
      * final target and nothing falls into it — emit only the label. */
     if (hcg_skip[b]) return;
+
+    /* HIR_PGO_LABELS=1: a named label at every emitted block, which a
+     * relink with the labels made global puts in the link map, so a
+     * `slow32 -p` histogram turns into per-block counts (step 5b.6,
+     * HIR_PGO).  A label is no code: the program is the same. */
+    if (hcg_pgo_labels && ra_cur_fname) {
+        cg_s("__pgo_");
+        cg_s(ra_cur_fname);
+        cg_c('_');
+        cg_n(b);
+        cg_s(":\n");
+    }
 
     /* Split-pass reloads: top of block, before every use. */
     i = split_head[b];
@@ -4469,6 +4688,8 @@ static void hcg_func(Node *fn) {
     int b;
 
     /* Lower AST to HIR */
+    /* every block table this compiler has, before the first block */
+    al_tables(); ssa_tables(); ho_tables(); licm_tables(); bg_tables(); ra_tables(); hcg_tables();
     hl_func(fn);
 
     /* Run SSA construction */
@@ -4517,8 +4738,18 @@ static void hcg_func(Node *fn) {
     /* GitHub issue 73: r30 is an extra callee-saved color when we will
      * not need it as a frame pointer.  Varargs keeps r30 as FP.
      * Large frames that actually take the color omit FP too (li+sub). */
+    hcg_dyn_sp = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_SETSP) hcg_dyn_sp = 1;
+        i = i + 1;
+    }
     ra_r30_alloc = 0;
-    if (!fn->is_varargs) ra_r30_alloc = 1;
+    if (!fn->is_varargs && !hcg_dyn_sp) ra_r30_alloc = 1;
+    /* Locals alone past 2KB: keep r30 the frame pointer, so the frame is
+     * reached from both ends (hcg_dual_base). */
+    if (hl_temp_stack > 2047 && !fn->is_varargs && !hcg_dyn_sp && fn->bit_width <= 4)
+        ra_r30_alloc = 0;
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {
@@ -4527,6 +4758,13 @@ static void hcg_func(Node *fn) {
         fdputc(10, 2);
     }
     ra_cur_fname = fn->name;
+    hcg_pgo_labels = getenv("HIR_PGO_LABELS") != 0;
+    hcg_align = fn->bit_width > 4 ? fn->bit_width : 0;
+    hcg_entry_off = 0;
+    if (hcg_align) {
+        hl_temp_stack = hl_temp_stack + 4;
+        hcg_entry_off = 0 - hl_temp_stack;
+    }
     hir_regalloc();
 
     /* Optional per-function regalloc dump (Issue #31 diagnostic) */
@@ -4550,7 +4788,9 @@ static void hcg_func(Node *fn) {
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
     hcg_classify_frame(fn);
+    if (hcg_align || hcg_dyn_sp) hcg_frameless = 0;
     if (hcg_frameless) fs = 0;
+    if (hcg_align) fs = ((fs + hcg_align - 1) / hcg_align) * hcg_align;
     hcg_locals = fn->locals_size;
     hcg_frame = fs;
     hcg_sp_delta = 0;
@@ -4572,6 +4812,10 @@ static void hcg_func(Node *fn) {
      * where the caller left them.  The ninth argument was read from the
      * caller's frame (fort370's ANCORR test cmpscr, a 15-argument leaf). */
     if (hcg_frameless) hcg_omit_fp = 1;
+    if (hcg_dyn_sp) hcg_omit_fp = 0;
+    hcg_slot_reg = 30;
+    hcg_dual_base = !hcg_omit_fp && !hcg_dyn_sp && !hcg_align &&
+                    !fn->is_varargs && fs > 2047;
 
     /* Frame-escape scan for the tail-call guard.  A tail call pops this
      * frame BEFORE entering the callee; if any local's address escaped
@@ -4659,7 +4903,7 @@ static void hcg_func(Node *fn) {
         int nfixed;
         int nsave;
         int j;
-        nfixed = fn->nparams;
+        nfixed = hl_nparams;    /* words: long long and double count two */
         nsave = 8 - nfixed;
         if (nsave < 0) nsave = 0;
         if (nsave > 0) {
@@ -4675,6 +4919,12 @@ static void hcg_func(Node *fn) {
                 j = j + 1;
             }
         }
+    }
+
+    if (hcg_align) {
+        cg_rri("addi", 2, 29, 0);
+        cg_rri("addi", 1, 0, 0 - hcg_align);
+        cg_rrr("and", 29, 29, 1);
     }
 
     /* Prologue — handle large frames (>2047 bytes).  Frameless leaves
@@ -4711,6 +4961,7 @@ static void hcg_func(Node *fn) {
         hcg_save_reg(ra_csave_reg[i], ra_csave_off[i]);
         i = i + 1;
     }
+    if (hcg_align) hcg_entry_sp_store();
 
     /* Emit all basic blocks, in layout order */
     b = 0;
@@ -4723,6 +4974,7 @@ static void hcg_func(Node *fn) {
      * emitted jalr r0, r31, 0, so there is nothing to restore. */
     if (!hcg_frameless) {
         cg_ldef(hcg_epilog);
+        if (hcg_dyn_sp && fs <= 2047) cg_rri("addi", 29, 30, 0 - fs);
         i = 0;
         while (i < ra_ncsave) {
             hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);
@@ -4740,7 +4992,8 @@ static void hcg_func(Node *fn) {
                 cg_n(fs - 8);
                 cg_c(10);
             }
-            cg_rri("addi", 29, 29, fs);
+            if (hcg_align) hcg_entry_sp_load(fs);
+            else cg_rri("addi", 29, 29, fs);
         } else {
             if (hcg_omit_fp) {
                 /* r1/r2 carry the return value here; r3 is dead at a
@@ -4756,6 +5009,7 @@ static void hcg_func(Node *fn) {
                 cg_s("    ldw r31, r29, -4\n");
             if (!hcg_omit_fp)
                 cg_s("    ldw r30, r29, -8\n");
+            if (hcg_align) hcg_entry_sp_load(0);
         }
         if (hcg_va_save_size > 0) {
             cg_rri("addi", 29, 29, hcg_va_save_size);
@@ -4787,48 +5041,91 @@ static void cg_mark_data_refs(void) {
     }
 }
 
+static char cg_dce_buf[32768];
+static char cg_dce_tmp[1024];
+static int  cg_dce_in;              /* bytes of the original read so far */
+
+/* Copy bytes [a, b) of the original (open on fd, read up to cg_dce_in)
+ * to cg_fd, reading and discarding what lies before a. */
+static void cg_dce_copy(int fd, int a, int b) {
+    int want;
+    int n;
+    while (cg_dce_in < b) {
+        want = (int)sizeof(cg_dce_buf);
+        if (cg_dce_in < a && cg_dce_in + want > a) want = a - cg_dce_in;
+        if (cg_dce_in + want > b) want = b - cg_dce_in;
+        n = read(fd, cg_dce_buf, want);
+        if (n <= 0) {
+            fdputs("s12cc: dce: read failed\n", 2);
+            exit(1);
+        }
+        if (cg_dce_in >= a) {
+            if (write(cg_fd, cg_dce_buf, n) != n) {
+                fdputs("s12cc: dce: write failed\n", 2);
+                exit(1);
+            }
+            cg_file_pos = cg_file_pos + n;
+        }
+        cg_dce_in = cg_dce_in + n;
+    }
+}
+
+/* Every function named `name` becomes live; the newly live are pushed
+ * on wl.  (Names can repeat: the scan this replaced marked them all.) */
+static int cg_dce_mark(char *name, int *wl, int nwl) {
+    int k;
+    k = cg_fix.head[(int)(tab_nix_hash(name) & (unsigned)(cg_fix.cap - 1))];
+    while (k >= 0) {
+        if (!cg_fn_live[k] && strcmp(cg_fn_name[k], name) == 0) {
+            cg_fn_live[k] = 1;
+            wl[nwl] = k;
+            nwl = nwl + 1;
+        }
+        k = cg_fix.next[k];
+    }
+    return nwl;
+}
+
 static void cg_dce_rewrite_text(void) {
     int i;
     int n;
-    int off;
     int total;
     int hdr;
-    char *buf;
     int fd;
+    int *wl;
+    int nwl;
+    int e;
     cg_stat_dce_drop = 0;
     cg_stat_dce_keep = 0;
+    if (cg_nfn == 0) return;
+    wl = (int *)malloc((unsigned long)cg_nfn * sizeof(int));
+    if (!wl) {
+        fdputs("s12cc: out of memory (dce)\n", 2);
+        exit(1);
+    }
+    nwl = 0;
     i = 0;
     while (i < cg_nfn) {
-        if (cg_ref_full || !cg_fn_local[i] || cg_name_refd(cg_fn_name[i]))
+        if (!cg_fn_local[i] || cg_name_refd(cg_fn_name[i])) {
             cg_fn_live[i] = 1;
-        else
+            wl[nwl] = i;
+            nwl = nwl + 1;
+        } else {
             cg_fn_live[i] = 0;
+        }
         i = i + 1;
     }
-    {
-        int changed;
-        int e;
-        int t;
-        changed = 1;
-        while (changed) {
-            changed = 0;
-            e = 0;
-            while (e < cg_nedge) {
-                if (cg_fn_live[cg_edge_from[e]]) {
-                    t = 0;
-                    while (t < cg_nfn) {
-                        if (!cg_fn_live[t] && cg_fn_name[t] &&
-                            strcmp(cg_fn_name[t], cg_edge_to[e]) == 0) {
-                            cg_fn_live[t] = 1;
-                            changed = 1;
-                        }
-                        t = t + 1;
-                    }
-                }
-                e = e + 1;
-            }
+    tab_nix_sync(&cg_fix, cg_fn_name, cg_nfn);
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        i = wl[nwl];
+        e = cg_fn_e0[i];
+        while (e < cg_fn_e1[i]) {
+            nwl = cg_dce_mark(cg_edge_to[e], wl, nwl);
+            e = e + 1;
         }
     }
+    free(wl);
     i = 0;
     while (i < cg_nfn) {
         if (cg_fn_live[i])
@@ -4841,77 +5138,206 @@ static void cg_dce_rewrite_text(void) {
     cg_flush();
     total = cg_file_pos;
     if (total <= 0) return;
-    buf = malloc(total);
-    if (!buf) return;
+    /* Stream the kept ranges, in file order, into <output>.dce and rename
+     * it over the output: memory does not grow with the output.  It read
+     * the whole file into one malloc and, when that failed, silently kept
+     * every dead function -- SQLite's 5.5 MB of assembly needed it with
+     * the heap nearly full, so any growth of the AST changed the output
+     * (2026-10-28). */
     close(cg_fd);
     fd = open(cg_outpath, 1); /* O_RDONLY */
     if (fd < 0) {
-        free(buf);
         fdputs("s12cc: dce: cannot reopen output\n", 2);
         exit(1);
     }
-    off = 0;
-    while (off < total) {
-        n = read(fd, buf + off, total - off);
-        if (n <= 0) {
-            close(fd);
-            free(buf);
-            fdputs("s12cc: dce: read failed\n", 2);
-            exit(1);
-        }
-        off = off + n;
-    }
-    close(fd);
-    fd = open(cg_outpath, 26); /* O_WRONLY|O_CREAT|O_TRUNC */
-    if (fd < 0) {
-        free(buf);
-        fdputs("s12cc: dce: cannot rewrite output\n", 2);
+    n = strlen(cg_outpath);
+    if (n + 5 > (int)sizeof(cg_dce_tmp)) {
+        fdputs("s12cc: dce: output path too long\n", 2);
         exit(1);
     }
-    cg_fd = fd;
+    memcpy(cg_dce_tmp, cg_outpath, n);
+    memcpy(cg_dce_tmp + n, ".dce", 5);
+    cg_fd = open(cg_dce_tmp, 26); /* O_WRONLY|O_CREAT|O_TRUNC */
+    if (cg_fd < 0) {
+        fdputs("s12cc: dce: cannot write output\n", 2);
+        exit(1);
+    }
     cg_file_pos = 0;
+    cg_dce_in = 0;
     hdr = 0;
     if (cg_nfn > 0) hdr = cg_fn_start[0];
-    if (hdr > 0) {
-        n = write(cg_fd, buf, hdr);
-        if (n != hdr) {
-            fdputs("s12cc: dce: write failed\n", 2);
-            exit(1);
-        }
-        cg_file_pos = cg_file_pos + n;
-    }
+    if (hdr > 0) cg_dce_copy(fd, 0, hdr);
     i = 0;
     while (i < cg_nfn) {
-        if (cg_fn_live[i]) {
-            off = cg_fn_start[i];
-            n = cg_fn_end[i] - off;
-            if (n > 0) {
-                if (write(cg_fd, buf + off, n) != n) {
-                    fdputs("s12cc: dce: write failed\n", 2);
-                    exit(1);
-                }
-                cg_file_pos = cg_file_pos + n;
-            }
-        }
+        if (cg_fn_live[i] && cg_fn_end[i] > cg_fn_start[i])
+            cg_dce_copy(fd, cg_fn_start[i], cg_fn_end[i]);
         i = i + 1;
     }
-    free(buf);
+    close(fd);
+    if (rename(cg_dce_tmp, cg_outpath) != 0) {
+        fdputs("s12cc: dce: cannot replace output\n", 2);
+        exit(1);
+    }
 }
 
+/* whether jump table ji belongs to a live function: the functions'
+ * ranges of tables run upward, so the last one starting at or before
+ * ji is the only one that can hold it */
 static int cg_jt_keep(int ji) {
-    int i;
-    if (cg_nfn == 0 || cg_ref_full) return 1;
-    i = 0;
-    while (i < cg_nfn) {
-        if (cg_fn_live[i] && ji >= cg_fn_jt0[i] && ji < cg_fn_jt1[i])
-            return 1;
-        i = i + 1;
+    int lo;
+    int hi;
+    int mid;
+    if (cg_nfn == 0) return 1;
+    lo = 0;
+    hi = cg_nfn - 1;
+    if (cg_fn_jt0[0] > ji) return 0;
+    while (lo < hi) {
+        mid = lo + (hi - lo + 1) / 2;
+        if (cg_fn_jt0[mid] <= ji) lo = mid; else hi = mid - 1;
+    }
+    while (lo >= 0 && cg_fn_jt0[lo] <= ji) {   /* empty ranges share a start */
+        if (cg_fn_live[lo] && ji < cg_fn_jt1[lo]) return 1;
+        if (cg_fn_jt1[lo] > cg_fn_jt0[lo]) return 0;
+        lo = lo - 1;
     }
     return 0;
 }
 
-/* --- Emit .data and .bss sections --- */
+/* One initialized global's label and bytes, wherever the caller has put
+ * the section; 0 when it has no initializer to emit (it belongs in .bss,
+ * or, const, is zero-filled in .rodata). */
+/* A global _Alignas made stronger than a word (6.7.5): the .align
+ * before its label.  The assembler keeps each section's strongest and
+ * the linker places the section at it. */
+static void hcg_overalign(int i) {
+    int a;
+    int k;
+    a = ps_galign[i];
+    if (a <= 4) return;
+    k = 0;
+    while ((1 << k) < a) k = k + 1;
+    cg_s(".align ");
+    cg_n(k);
+    cg_c(10);
+}
 
+static int gen_global_init(int i) {
+    int j;
+    int len;
+    if (ps_ginit_start[i] >= 0) {
+        /* Array/struct initializer list.
+         * ps_ginit_count is the byte count; the pool stores one byte
+         * per slot.  Emit .byte per slot — relocations (handled inside
+         * the loop) emit a 4-byte .word that advances by reloc_size. */
+        int reli;
+        int relend;
+        int off;
+        /* DIVERGENCE (f77): word-align every emitted global.  The
+         * string literals just above are byte streams of arbitrary
+         * length, so a global emitted after an odd-length FORMAT
+         * text would land misaligned -- f77's DATA images carry
+         * word and doubleword values.  Candidate to port upstream:
+         * stage08's gen_data has the same latent hazard. */
+        cg_s(".align 2\n");
+        hcg_overalign(i);
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n");
+        reli = ps_girel_start[i];
+        relend = reli + ps_girel_count[i];
+        off = 0;
+        while (off < ps_ginit_count[i]) {
+            if (reli < relend && ps_girel_off[reli] == off) {
+                if (ps_girel_kind[reli] == GIRELOC_STRING) {
+                    lex_str_used[ps_girel_idx[reli]] = 1;
+                    cg_s("    .word .LS");
+                    cg_n(ps_girel_idx[reli]);
+                    if (ps_girel_add[reli] != 0) {      /* "hello" + 1 */
+                        cg_c(43);
+                        cg_n(ps_girel_add[reli]);
+                    }
+                } else {
+                    cg_s("    .word ");
+                    /* Named symbol relocs carry the target in
+                     * ps_girel_name; ps_girel_idx is 0 for them
+                     * (every named reloc used to emit gname[0] —
+                     * doom's doom_defaults pointed at stdin). */
+                    if (ps_girel_name[reli] != 0)
+                        cg_s(ps_girel_name[reli]);
+                    else
+                        cg_s(ps_gname[ps_girel_idx[reli]]);
+                    if (ps_girel_add[reli] != 0) {
+                        cg_c(43); /* '+' */
+                        cg_n(ps_girel_add[reli]);
+                    }
+                }
+                cg_c(10);
+                off = off + ps_girel_size[reli];
+                reli = reli + 1;
+            } else {
+                cg_s("    .byte ");
+                cg_n(ps_ginit_pool[ps_ginit_start[i] + off]);
+                cg_c(10);
+                off = off + 1;
+            }
+        }
+        /* Remaining bytes zero-filled */
+        len = ps_gsize[i] - ps_ginit_count[i];
+        if (len > 0) {
+            cg_s("    .space ");
+            cg_n(len);
+            cg_c(10);
+        }
+    } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
+        hcg_overalign(i);
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        lex_str_used[ps_gstr[i]] = 1;
+        cg_s(":\n    .word .LS");
+        cg_n(ps_gstr[i]);
+        cg_c(10);
+    } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
+        /* 64-bit initialized global */
+        hcg_overalign(i);
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n    .word ");
+        cg_n(ps_ginit[i]);
+        cg_s("\n    .word ");
+        cg_n(ps_ginit_hi[i]);
+        cg_c(10);
+    } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
+        hcg_overalign(i);
+        if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+        cg_s(ps_gname[i]);
+        cg_s(":\n    .word ");
+        cg_n(ps_ginit[i]);
+        cg_c(10);
+    }
+    else return 0;
+    return 1;
+}
+
+/* A const global with no initializer: zero-filled, in .rodata.  The
+ * sizes are the .bss walk's below. */
+static void gen_global_zero(int i) {
+    hcg_overalign(i);
+    if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+    cg_s(ps_gname[i]);
+    cg_s(":\n    .space ");
+    if (ps_gsize[i] > 0) cg_n(ps_gsize[i]);
+    else if (ty_is_llong(ps_gtype[i]) || ty_is_double(ps_gtype[i])) cg_n(8);
+    else cg_n(4);
+    cg_c(10);
+}
+
+/* --- Emit .rodata, .data and .bss sections --- */
+
+/* What the program must not write -- jump tables, string literals, and
+ * globals whose object is const -- goes in .rodata, which the linker
+ * places below rodata_limit and every engine maps unwritable, as clang's
+ * output has it.  It was all .data: a write through a cast-away const
+ * or into a literal landed silently (selfhost ISSUES-99). */
 static void gen_data(void) {
     int i;
     int j;
@@ -4919,7 +5345,7 @@ static void gen_data(void) {
     int elem_sz;
     char *sp;
 
-    cg_s(".data\n");
+    cg_s(".rodata\n");
 
     /* Jump tables (issue #32).  Emitted first, 4-byte aligned, so the
      * `ldw` in the dispatch reads aligned words.  Entries are absolute
@@ -4946,9 +5372,27 @@ static void gen_data(void) {
         }
     }
 
-    /* String literals */
+    /* String literals: those referred to.  The code has marked its own
+     * (functions are emitted first); the globals' come after the
+     * strings, so theirs are marked here: relocations to a string, and
+     * a pointer initialized to one. */
+    i = 0;
+    while (i < ps_nglobals) {
+        int ri;
+        if (ps_gstr[i] >= 0) lex_str_used[ps_gstr[i]] = 1;
+        if (ps_ginit_start[i] >= 0) {
+            ri = ps_girel_start[i];
+            while (ri < ps_girel_start[i] + ps_girel_count[i]) {
+                if (ps_girel_kind[ri] == GIRELOC_STRING) lex_str_used[ps_girel_idx[ri]] = 1;
+                ri = ri + 1;
+            }
+        }
+        i = i + 1;
+    }
     i = 0;
     while (i < lex_str_count) {
+        if (!lex_str_used[i]) { i = i + 1; continue; }
+        if (lex_str_width[i] > 1) cg_s(".align 2\n");    /* a wide string's units are words or halfwords */
         cg_s(".LS");
         cg_n(i);
         cg_s(":\n    .byte ");
@@ -4974,89 +5418,21 @@ static void gen_data(void) {
         i = i + 1;
     }
 
-    /* Global variables (initialized -> .data) */
+    /* Const globals (ps_gconst: the object itself, not a pointee) */
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_ginit_start[i] >= 0) {
-            /* Array/struct initializer list.
-             * ps_ginit_count is the byte count; the pool stores one byte
-             * per slot.  Emit .byte per slot — relocations (handled inside
-             * the loop) emit a 4-byte .word that advances by reloc_size. */
-            int reli;
-            int relend;
-            int off;
-            /* DIVERGENCE (f77): word-align every emitted global.  The
-             * string literals just above are byte streams of arbitrary
-             * length, so a global emitted after an odd-length FORMAT
-             * text would land misaligned -- f77's DATA images carry
-             * word and doubleword values.  Candidate to port upstream:
-             * stage08's gen_data has the same latent hazard. */
+        if (ps_gconst[i] && !ps_gextern[i]) {
             cg_s(".align 2\n");
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n");
-            reli = ps_girel_start[i];
-            relend = reli + ps_girel_count[i];
-            off = 0;
-            while (off < ps_ginit_count[i]) {
-                if (reli < relend && ps_girel_off[reli] == off) {
-                    if (ps_girel_kind[reli] == GIRELOC_STRING) {
-                        cg_s("    .word .LS");
-                        cg_n(ps_girel_idx[reli]);
-                    } else {
-                        cg_s("    .word ");
-                        /* Named symbol relocs carry the target in
-                         * ps_girel_name; ps_girel_idx is 0 for them
-                         * (every named reloc used to emit gname[0] —
-                         * doom's doom_defaults pointed at stdin). */
-                        if (ps_girel_name[reli] != 0)
-                            cg_s(ps_girel_name[reli]);
-                        else
-                            cg_s(ps_gname[ps_girel_idx[reli]]);
-                        if (ps_girel_add[reli] != 0) {
-                            cg_c(43); /* '+' */
-                            cg_n(ps_girel_add[reli]);
-                        }
-                    }
-                    cg_c(10);
-                    off = off + ps_girel_size[reli];
-                    reli = reli + 1;
-                } else {
-                    cg_s("    .byte ");
-                    cg_n(ps_ginit_pool[ps_ginit_start[i] + off]);
-                    cg_c(10);
-                    off = off + 1;
-                }
-            }
-            /* Remaining bytes zero-filled */
-            len = ps_gsize[i] - ps_ginit_count[i];
-            if (len > 0) {
-                cg_s("    .space ");
-                cg_n(len);
-                cg_c(10);
-            }
-        } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word .LS");
-            cg_n(ps_gstr[i]);
-            cg_c(10);
-        } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
-            /* 64-bit initialized global */
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word ");
-            cg_n(ps_ginit[i]);
-            cg_s("\n    .word ");
-            cg_n(ps_ginit_hi[i]);
-            cg_c(10);
-        } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
-            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
-            cg_s(ps_gname[i]);
-            cg_s(":\n    .word ");
-            cg_n(ps_ginit[i]);
-            cg_c(10);
+            if (!gen_global_init(i)) gen_global_zero(i);
         }
+        i = i + 1;
+    }
+
+    /* Global variables (initialized -> .data) */
+    cg_s(".data\n");
+    i = 0;
+    while (i < ps_nglobals) {
+        if (!(ps_gconst[i] && !ps_gextern[i])) gen_global_init(i);
         i = i + 1;
     }
 
@@ -5069,11 +5445,14 @@ static void gen_data(void) {
              * .space here made every stdio.h includer DEFINE stdout et
              * al. — the stage08 linker merged them common-style, the
              * host linker correctly refused the multiple definition. */
+        } else if (ps_gconst[i]) {
+            /* Already emitted in .rodata */
         } else if (ps_ginit_start[i] >= 0) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {
             /* DIVERGENCE (f77): word-align, as in the .data walk. */
             cg_s(".align 2\n");
+            hcg_overalign(i);
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space ");
@@ -5084,11 +5463,13 @@ static void gen_data(void) {
              * lo==0, hi!=0 from 1LL<<32) was already emitted in .data;
              * the 4-byte fallback below used to duplicate the label. */
             if (ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+                hcg_overalign(i);
                 if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
                 cg_s(ps_gname[i]);
                 cg_s(":\n    .space 8\n");
             }
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
+            hcg_overalign(i);
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space 4\n");
@@ -5145,6 +5526,13 @@ static void gen_program(Node *prog) {
          * 2.96G -> 1.41G executed; SQLite +0.4% static, -0.25%. */
         e = getenv("S12CC_UNROLL");
         hl_unroll_budget = e ? atoi(e) : 512;
+        /* The last pass of a counted loop peeled when the body tests
+         * the variable one way on that pass alone, into S12CC_PEEL nodes
+         * of body (default 512; 0 = off), hl_peel_plan.  AES KDF:
+         * 680.0M -> 645.4M executed with the leaf phi coalescing
+         * (hir_regalloc.h); SQLite has no such loop. */
+        e = getenv("S12CC_PEEL");
+        hl_peel_budget = e ? atoi(e) : 512;
         e = getenv("S12CC_INLINE_TINY");
         hl_inl_tiny = e ? atoi(e) : 16;
         hl_inl_prepare(prog);
@@ -5156,27 +5544,23 @@ static void gen_program(Node *prog) {
     cg_nref = 0;
     cg_nedge = 0;
     cg_cur_fn = -1;
-    cg_ref_full = 0;
     cg_file_pos = 0;
     cg_s(".text\n\n");
     fn = prog->body;
     while (fn) {
-        if (cg_nfn < CG_MAX_FN) {
-            cg_fn_start[cg_nfn] = cg_pos();
-            cg_fn_name[cg_nfn] = fn->name;
-            cg_fn_local[cg_nfn] = fn->is_static;
-            cg_fn_jt0[cg_nfn] = cg_njt;
-        } else {
-            cg_ref_full = 1;
-        }
-        cg_cur_fn = (cg_nfn < CG_MAX_FN) ? cg_nfn : -1;
+        cg_fn_room(cg_nfn + 1);
+        cg_fn_start[cg_nfn] = cg_pos();
+        cg_fn_name[cg_nfn] = fn->name ? fn->name : "";
+        cg_fn_local[cg_nfn] = fn->is_static;
+        cg_fn_jt0[cg_nfn] = cg_njt;
+        cg_fn_e0[cg_nfn] = cg_nedge;
+        cg_cur_fn = cg_nfn;
         hcg_func(fn);
         cg_cur_fn = -1;
-        if (cg_nfn < CG_MAX_FN) {
-            cg_fn_jt1[cg_nfn] = cg_njt;
-            cg_fn_end[cg_nfn] = cg_pos();
-            cg_nfn = cg_nfn + 1;
-        }
+        cg_fn_jt1[cg_nfn] = cg_njt;
+        cg_fn_e1[cg_nfn] = cg_nedge;
+        cg_fn_end[cg_nfn] = cg_pos();
+        cg_nfn = cg_nfn + 1;
         fn = fn->next;
     }
     cg_mark_data_refs();

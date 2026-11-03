@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_alias.h at 370629f9.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_alias.h at 701c4c3d.  See note in hir.h. */
 /* hir_alias.h -- what an address names, and whether two accesses may
  * touch the same bytes.
  *
@@ -114,8 +114,8 @@ static int al_same_loc(int a, int b) {
  * offset; -1 for a value that is not such an address.  Computed to a
  * fixed point over the function as it stands; al_n is h_ninst then, and
  * entries past it belong to no one. */
-static int al_root[HIR_MAX_INST];
-static int al_roff[HIR_MAX_INST];
+static int *al_root;
+static int *al_roff;
 static int al_n;
 
 /* Is i an address step off some value?  Returns that value, -1 if not;
@@ -175,7 +175,19 @@ static void al_roots(void) {
  * reach the slot.  A slot that never escapes is invisible to calls and
  * to loads through pointers, and dead at the function's return
  * (docs/plans/memory-model.md, step 4).  Computed with al_roots. */
-static char al_escaped[HIR_MAX_INST];
+static char *al_escaped;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int al_tables_done;
+static void al_tables(void) {
+    if (al_tables_done) return;
+    al_tables_done = 1;
+    hir_inst_table((char **)&al_root, (int)sizeof(int));
+    hir_inst_table((char **)&al_roff, (int)sizeof(int));
+    hir_inst_table((char **)&al_escaped, (int)sizeof(char));
+}
 
 static void al_escapes(void) {
     int i;

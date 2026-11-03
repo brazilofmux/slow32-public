@@ -42,6 +42,9 @@ static void fdputuint(int fd, unsigned int v) {
     while (n > 0) { n = n - 1; fdputc(b[n], fd); }
 }
 
+/* The backend's tables grow through the copied registry (tables.h). */
+#include "tables.h"
+
 /* --- 2. type encoding (bit-identical to selfhost/src/ast.h) --------- */
 
 #define TY_INT    0
@@ -90,14 +93,36 @@ static int ty_size(int ty) {
 
 /* --- 3. alloca registry scanned by the SSA promoter ----------------- */
 
-#define HL_MAX_ALLOCA 4096
-static int hl_ainst[HL_MAX_ALLOCA];  /* HIR index of each ALLOCA */
-static int hl_aoff[HL_MAX_ALLOCA];   /* frame offset of each ALLOCA */
-static int hl_aslot[HL_MAX_ALLOCA];  /* the C parser's slot id; always 0 here
-                                      * (keyed by offset) -- it only matters
-                                      * to the SSA pass in a function that
-                                      * calls setjmp, which no Fortran does */
+/* As selfhost/src/hir_lower.h has them, grown (tables.h, TAB_HL_ALLOCA):
+ * the SSA pass registers its own per-alloca table under the same kind.
+ * They were a fixed 4096, and five of the writers did not check. */
+static int *hl_aoff;    /* frame offset of each ALLOCA */
+static int *hl_aslot;   /* the C parser's slot id; always 0 here (keyed by
+                         * offset) -- it only matters to the SSA pass in a
+                         * function that calls setjmp, which no Fortran does */
+static int *hl_ainst;   /* HIR index of each ALLOCA */
 static int hl_nalloca;
+static int hl_alloca_cap;
+
+/* room for n more allocas (hir_lower.h's, verbatim) */
+static void hl_alloca_room(int n) {
+    if (hl_nalloca + n <= hl_alloca_cap) return;
+    if (hl_alloca_cap == 0) {
+        tab_add((char **)&hl_aoff, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_aslot, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_ainst, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+    }
+    tab_grow(TAB_HL_ALLOCA, &hl_alloca_cap, 1024, hl_nalloca + n);
+}
+
+/* register ALLOCA inst at frame offset off */
+static void f77_alloca_add(int inst, int off) {
+    hl_alloca_room(1);
+    hl_ainst[hl_nalloca] = inst;
+    hl_aoff[hl_nalloca] = off;
+    hl_aslot[hl_nalloca] = 0;
+    hl_nalloca = hl_nalloca + 1;
+}
 static int hl_temp_stack;            /* bytes of compiler temporaries */
 static int hl_nparams;               /* flat incoming-parameter count */
 
@@ -116,6 +141,7 @@ static int   hl_stat_inl_sel;
 static int   hl_stat_inl_direct;
 static int   hl_inl_tiny;            /* S12CC_INLINE_TINY, the tiny-body budget */
 static int   hl_unroll_budget;       /* S12CC_UNROLL, the C unroller's budget */
+static int   hl_peel_budget;         /* S12CC_PEEL, set by gen_program */
 static void  hl_inl_prepare(Node *prog) { (void)prog; }
 
 /* --- 4. global data tables walked by gen_data() --------------------- */
@@ -132,6 +158,10 @@ static int   ps_ginit_hi[P_MAX_GLOBALS];
 static int   ps_gstr[P_MAX_GLOBALS];
 static int   ps_glocal[P_MAX_GLOBALS];
 static int   ps_gextern[P_MAX_GLOBALS];
+static int   ps_galign[P_MAX_GLOBALS];   /* C's _Alignas on a global: 0, none */
+static int   ps_gconst[P_MAX_GLOBALS];   /* a const object, for .rodata: 0, none
+                                          * yet (Fortran could mark PARAMETER
+                                          * arrays and the like) */
 static int   ps_nglobals;
 
 static unsigned char ps_ginit_pool[PS_MAX_INIT_POOL];
@@ -160,6 +190,8 @@ static int  lex_str_off[LEX_MAX_STRINGS];
 static int  lex_str_len[LEX_MAX_STRINGS];
 static int  lex_str_count;
 static int  lex_strpool_len;
+static char lex_str_used[LEX_MAX_STRINGS];   /* set by the backend as it refers to one; only those are emitted */
+static int  lex_str_width[LEX_MAX_STRINGS];  /* C's wide literals: 0, all narrow */
 
 /* Intern a string constant; returns its pool index. */
 static int f77_intern_str(char *s, int len) {

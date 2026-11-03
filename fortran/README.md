@@ -55,9 +55,10 @@ plan, the rulings behind it, and the milestone list.
 
 ## The copied backend
 
-`src/hir.h`, `hir_ssa.h`, `hir_opt.h`, `hir_licm.h`, `hir_burg.h`,
-`hir_regalloc.h` and `hir_codegen.h` are **copies** of the stage08
-backend. The first copy was taken at `849dd791` (2026-08-31); the
+`src/hir.h`, `hir_ssa.h`, `hir_opt.h`, `hir_licm.h`, `hir_alias.h`,
+`hir_burg.h`, `hir_regalloc.h` and `hir_codegen.h` are **copies** of the
+stage08 backend, and `tables.h` (the growable-table registry they use,
+from `selfhost/src`) with them. The first copy was taken at `849dd791` (2026-08-31); the
 copies were re-synced on 2026-10-11 at `30e16a57`, and since then
 each file is byte-identical to its stage08 original past the one-line
 provenance banner (`hir.h` carries the ruling as well). They are copies
@@ -83,11 +84,10 @@ integer constants within a block, `ho_cse_key`, from fort370) closed
 when stage08 took the same rule; the 2026-10-27 re-sync (at `370629f9`)
 left the copied headers equal to stage08's past their banners, and
 `hir_alias.h` (the memory model's alias analysis) is copied with them.
-stage08 has moved on since -- its opt-in profile-guided allocation, the
-peeled last pass and leaf phi coalescing of `cc359989` -- and only
-wrong-code fixes have come across since (`cc359989`'s two, and those
-the C fuzzer `regression/run-stage08-fuzz.sh` found); the rest waits for
-the next re-sync.
+The 2026-11-03 re-sync (at `701c4c3d`) left them equal again: every
+Fortran-side change since was a stage08 wrong-code fix ported, and the
+three-way merge's eleven conflicts were all its wording or a table
+stage08 has since made to grow.
 
 The 2026-10-11 re-sync is what a re-sync is for. The six weeks of
 stage08 work it brought in (call-site live-range splitting, frameless
@@ -113,6 +113,23 @@ recomputed after a later spill round put `LDA` in memory, a load and an
 add at every use. Fixed in stage08 -- such an ADDI now goes to memory
 with its operand -- and LINPACK ended 0.01% faster than before the
 re-sync, mandel 0.08% faster, SQLite unchanged.
+
+The 2026-11-03 re-sync brought in five weeks of stage08: profile-guided
+allocation (opt-in), the peeled last pass, leaf phi coalescing, the
+fuzzers' fixes, dead-string elimination, `.rodata` placement, dual-base
+frames, demotion in huge functions -- and the tables that grow
+(`tables.h`), which is what the front end had to answer to. The alloca
+registry, the call-argument pool and the incoming-parameter tables are
+the backend's growable ones now, so every writer goes through
+`f77_alloca_add`, `f77_carg` and `hl_param_room`: 11 alloca writers
+(five had no bound on the old 4096), 71 call-argument writers, and a
+parameter clear that assumed 64. New stand-ins in `f77_contract.h`:
+`lex_str_used`/`lex_str_width` (only strings the backend refers to are
+emitted; none is wide), `ps_galign`/`ps_gconst` (no over-aligned or
+`.rodata` globals yet -- PARAMETER arrays could be the first), the
+function's `bit_width` (no `_Alignas`), `hl_peel_budget`. 125/0, FCVS
+192/192; LINPACK 26,000 instructions fewer (509,616,291 -> 509,590,291),
+mandel identical.
 
 ## fort370 is a cousin, not a twin
 
