@@ -20,6 +20,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Slow32MachineState, SLOW32_MACHINE)
 typedef struct Slow32MachineState {
     MachineState parent_obj;
     MemoryRegion ram;
+    uint64_t ram_bytes;     /* -m, or the executable's mem_size when larger */
 } Slow32MachineState;
 
 typedef struct QEMU_PACKED Slow32XHeader {
@@ -299,15 +300,16 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
         return false;
     }
 
-    if (hdr.mem_size == 0 || hdr.mem_size > machine->ram_size) {
+    if (hdr.mem_size == 0 || hdr.mem_size > sms->ram_bytes) {
         error_setg(errp,
                    "Executable requests %u bytes but machine has %zu bytes",
-                   hdr.mem_size, (size_t)machine->ram_size);
+                   hdr.mem_size, (size_t)sms->ram_bytes);
         return false;
     }
 
+    /* fresh anonymous RAM is zero already; clearing 2GB of it would only
+     * make the host commit it */
     uint8_t *ram = memory_region_get_ram_ptr(&sms->ram);
-    memset(ram, 0, machine->ram_size);
 
     g_autofree char *strtab = NULL;
     if (hdr.str_size) {
@@ -373,7 +375,7 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
     env->rodata_limit = hdr.rodata_limit;
     env->data_limit = hdr.data_limit;
     env->heap_base = hdr.heap_base ? hdr.heap_base : hdr.data_limit;
-    env->mem_size = hdr.mem_size ? hdr.mem_size : machine->ram_size;
+    env->mem_size = hdr.mem_size ? hdr.mem_size : (uint32_t)sms->ram_bytes;
     env->layout_defined = true;
     env->mmio_base = (hdr.flags & S32X_FLAG_MMIO) ? hdr.mmio_base : 0;
     slow32_mmio_reconfigure(cpu);
@@ -484,8 +486,25 @@ static void slow32_machine_init(MachineState *machine)
     MemoryRegion *system_memory = get_system_memory();
     Error *err = NULL;
 
+    /* The executable says how much address space it needs (the linker
+     * adds the parts up, at least 256MB; at most 2GB): RAM is that, or
+     * -m when -m asks for more. */
+    sms->ram_bytes = machine->ram_size;
+    if (machine->kernel_filename) {
+        FILE *kf = fopen(machine->kernel_filename, "rb");
+        Slow32XHeader kh;
+        if (kf) {
+            if (fread(&kh, sizeof(kh), 1, kf) == 1 &&
+                le32_to_cpu(kh.magic) == S32X_MAGIC &&
+                le32_to_cpu(kh.mem_size) <= 0x80000000u &&
+                le32_to_cpu(kh.mem_size) > sms->ram_bytes) {
+                sms->ram_bytes = le32_to_cpu(kh.mem_size);
+            }
+            fclose(kf);
+        }
+    }
     memory_region_init_ram(&sms->ram, NULL,
-                           "slow32.ram", machine->ram_size, &error_fatal);
+                           "slow32.ram", sms->ram_bytes, &error_fatal);
     memory_region_add_subregion(system_memory, 0, &sms->ram);
 
     /* Wire guest DEBUG / MMIO console to the first serial chardev if any. */

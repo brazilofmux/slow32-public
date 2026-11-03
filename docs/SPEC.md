@@ -346,7 +346,7 @@ little-endian.
 | 0x24 | 4 | rodata_limit | end of the read-only region (exclusive) |
 | 0x28 | 4 | data_limit | end of initialized data and BSS (exclusive) |
 | 0x2C | 4 | stack_base | initial stack pointer |
-| 0x30 | 4 | mem_size | size of the address space; 0x10000000 |
+| 0x30 | 4 | mem_size | size of the address space; 0x10000000 to 0x80000000 |
 | 0x34 | 4 | heap_base | start of the heap, for the runtime |
 | 0x38 | 4 | stack_end | lowest address of the stack region |
 | 0x3C | 4 | mmio_base | base of the host-interface window, if flag MMIO |
@@ -363,9 +363,13 @@ Other flag bits (0x0002 EVT, 0x0004 TSR, 0x0008 DEBUG, 0x0010 STRIPPED,
 be zero; a machine may refuse an executable that sets one.
 
 A machine must refuse a file whose magic, version or machine field is
-wrong, and one whose `mem_size` exceeds 0x10000000. Every executable has
-`mem_size` exactly 0x10000000; what a smaller value would mean is
-**Unspecified** (the stack is at the top of the 256 MB space regardless).
+wrong. `mem_size` is a multiple of 4 KB from 0x10000000 (256 MB) to
+0x80000000 (2 GB): the linker adds up what the executable needs, and
+asks for 256 MB when that is less (until 2026-11-02 every executable had
+exactly 0x10000000).  A machine runs any `mem_size` up to what it
+supports, and refuses a larger one with a message saying so; it
+refuses one over 0x80000000.  What a value below 0x10000000 would mean
+is **Unspecified**.
 
 ### 5.2 Section table (28 bytes per entry)
 
@@ -399,7 +403,8 @@ Every existing executable has this shape (values from a typical one):
 - Data and BSS from `rodata_limit` to `data_limit` (0x18E24, not
   rounded).
 - `heap_base` = `data_limit` rounded up to 4 KB (0x19000).
-- `stack_base` 0x0FFFFFF0; `stack_end` 0x0FFEFFF0 (a 64 KB stack by
+- `stack_base` = `mem_size` − 16, 0x0FFFFFF0 at 256 MB; `stack_end`
+  0x0FFEFFF0 (a 64 KB stack by
   default; the linker can make it larger).
 - With MMIO, `mmio_base` = the end of the heap, a 64 KB window, and the
   heap ends at `mmio_base`. Without MMIO, `mmio_base` is 0.
@@ -429,7 +434,7 @@ the host interface (section 8).
 
 ### 6.2 Regions
 
-The address space is 0 to 0x0FFFFFFF (`mem_size`). These regions are
+The address space is 0 to `mem_size` − 1. These regions are
 mapped:
 
 | Region | From | To (exclusive) | Access |

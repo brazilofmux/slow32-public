@@ -78,9 +78,9 @@ void exit(int status);
 #define S_MASK 0x01FFF07F
 #define B_MASK 0x01FFF07F
 
-#define STACK_BASE    0x0FFFFFF0
 #define STACK_SIZE    1048576
-#define MEM_SIZE      0x10000000
+#define MEM_PAGES_MIN 65536        /* 256MB in 4KB pages: the floor of the address space */
+#define MEM_PAGES_MAX 524288       /* 2GB: past it an address is negative as an int */
 #define HEAP_GAP      0x4000000
 #define CODE_LIMIT_MIN 0x100000
 #define PAGE_MASK     0xFFFFF000
@@ -267,11 +267,19 @@ int mmio_size_arg;
 
 /* Heap reserved below the MMIO window (--heap-size); HEAP_GAP when absent */
 int heap_size_arg;
-/* The stack below STACK_BASE (--stack-size; STACK_SIZE when absent).
+/* The stack below stack_base_va (--stack-size; STACK_SIZE when absent).
  * Nothing stops a program's stack at its end: with --heap-size max the
  * MMIO window and the heap begin right under it, so a program that
  * recurses deep needs it said (cc.s32x does). */
 int stack_size_arg;
+
+/* The address space (docs/plans/memory-size.md): the parts added up,
+ * at least 256MB and at least --mem-size (mem_kb_arg, in KB; 0 when
+ * absent), at most 2GB; the stack at its top, stack_base_va. */
+int mem_kb_arg;
+int heap_size_given;
+unsigned mem_size_va;
+int stack_base_va;
 
 /* Pack sections flag: 1=packed (default), 0=fixed 1MB floor */
 int pack_sections;
@@ -1110,16 +1118,37 @@ void layout_sections() {
     bss_end_va = t;
     heap_va = page_align(t);
 
+    /* the address space, in 4KB pages: through BSS, the heap (its size
+     * when the MMIO window follows it or --heap-size said; none for
+     * max, which takes what is left), the window and the stack */
+    {
+        int pages;
+        int hp;
+        hp = 0;
+        if (heap_size_arg != -1 && (mmio_size_arg > 0 || heap_size_given)) hp = heap_size_arg;
+        pages = heap_va / 4096 + (hp + 4095) / 4096 +
+                (mmio_size_arg + stack_size_arg + 16 + 4095) / 4096;
+        if (pages < MEM_PAGES_MIN) pages = MEM_PAGES_MIN;
+        if (pages < (mem_kb_arg + 3) / 4) pages = (mem_kb_arg + 3) / 4;
+        if (pages > MEM_PAGES_MAX) {
+            fputs("error: the program needs more than 2GB of address space\n", stderr);
+            link_error = 1;
+            pages = MEM_PAGES_MAX;
+        }
+        mem_size_va = (unsigned)pages * 4096;
+        stack_base_va = (int)(mem_size_va - 16);
+    }
+
     if (mmio_size_arg > 0) {
         if (heap_size_arg == -1) {
             /* --heap-size max: the MMIO window just below the stack, the
              * heap everything between the end of BSS and it */
-            mmio_va = (STACK_BASE - stack_size_arg - mmio_size_arg) & ~4095;
+            mmio_va = (stack_base_va - stack_size_arg - mmio_size_arg) & ~4095;
             if (mmio_va < heap_va) mmio_va = heap_va;    /* reported below */
         } else {
             mmio_va = page_align(heap_va + heap_size_arg);
         }
-        if (mmio_va + mmio_size_arg > STACK_BASE - stack_size_arg || mmio_va < heap_va) {
+        if (mmio_va + mmio_size_arg > stack_base_va - stack_size_arg || mmio_va < heap_va) {
             fputs("error: --heap-size: heap and MMIO window reach the stack\n",
                   stderr);
             link_error = 1;
@@ -1351,15 +1380,15 @@ void inject_linker_symbols() {
     if (mmio_size_arg > 0) {
         heap_end = mmio_va;
     } else {
-        heap_end = STACK_BASE - stack_size_arg;
+        heap_end = stack_base_va - stack_size_arg;
     }
     inject_sym("__heap_end", heap_end);
 
-    inject_sym("__stack_base", STACK_BASE);
-    inject_sym("__stack_top", STACK_BASE);
-    inject_sym("__stack_end", STACK_BASE - stack_size_arg);
-    inject_sym("__stack_bottom", STACK_BASE - stack_size_arg);
-    inject_sym("_stack", STACK_BASE);
+    inject_sym("__stack_base", stack_base_va);
+    inject_sym("__stack_top", stack_base_va);
+    inject_sym("__stack_end", stack_base_va - stack_size_arg);
+    inject_sym("__stack_bottom", stack_base_va - stack_size_arg);
+    inject_sym("_stack", stack_base_va);
 
     inject_sym("__code_start", 0);
     inject_sym("__code_end", page_align(text_sz));
@@ -2107,10 +2136,10 @@ void link_emit(char *out_path) {
     wb_wr32(32, code_limit);                                    /* code_limit */
     wb_wr32(36, page_align(rodata_va + rodata_sz));            /* rodata_limit */
     wb_wr32(40, bss_end_va);                                    /* data_limit */
-    wb_wr32(44, STACK_BASE);                                    /* stack_base */
-    wb_wr32(48, MEM_SIZE);                                      /* mem_size */
+    wb_wr32(44, stack_base_va);                                 /* stack_base */
+    wb_wr32(48, (int)mem_size_va);                              /* mem_size */
     wb_wr32(52, heap_va);                                       /* heap_base */
-    wb_wr32(56, STACK_BASE - stack_size_arg);                   /* stack_end */
+    wb_wr32(56, stack_base_va - stack_size_arg);                /* stack_end */
     wb_wr32(60, mmio_va);                                       /* mmio_base */
     fwrite(wb_buf, 1, 64, f);
 
@@ -2235,6 +2264,37 @@ void link_emit(char *out_path) {
 
 /* === Parse --mmio argument === */
 
+/* a size in KB: N bytes (rounded up), NK, NM or NG; 0 when it is not
+ * one, or past 2GB */
+int parse_kb(char *arg) {
+    int val;
+    int len;
+    int mult;
+    char last;
+    len = strlen(arg);
+    if (len == 0) return 0;
+    last = arg[len - 1];
+    mult = 0;
+    if (last == 'K' || last == 'k') mult = 1;
+    else if (last == 'M' || last == 'm') mult = 1024;
+    else if (last == 'G' || last == 'g') mult = 1048576;
+    if (mult) len = len - 1;
+    val = 0;
+    while (len > 0) {
+        if (*arg < '0' || *arg > '9') return 0;
+        if (val > 214748363) return 0;
+        val = val * 10 + (*arg - '0');
+        if (mult && val > 2097152) return 0;
+        arg = arg + 1;
+        len = len - 1;
+    }
+    if (mult) {
+        if (val > 2097152 / mult) return 0;
+        return val * mult;
+    }
+    return (val + 1023) / 1024;
+}
+
 int parse_mmio_size(char *arg) {
     int val;
     int len;
@@ -2294,6 +2354,8 @@ int main(int argc, char **argv) {
     mmio_size_arg = 0;
     heap_size_arg = HEAP_GAP;
     stack_size_arg = STACK_SIZE;
+    mem_kb_arg = 0;
+    heap_size_given = 0;
     code_size_arg = 0;
     pack_sections = 1;
     input_file_idx = 0;
@@ -2325,7 +2387,7 @@ int main(int argc, char **argv) {
     ostrtab_init();
 
     if (argc < 3) {
-        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--heap-size SIZE|max] [--stack-size SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
+        fputs("Usage: s32-ld-port -o output.s32x [--mmio SIZE] [--heap-size SIZE|max] [--stack-size SIZE] [--mem-size SIZE] [--code-size SIZE] file1 file2 ...\n", stderr);
         return 1;
     }
 
@@ -2352,10 +2414,22 @@ int main(int argc, char **argv) {
                 fputs("error: --heap-size requires an argument\n", stderr);
                 return 1;
             }
+            heap_size_given = 1;
             if (streq(argv[i], "max")) heap_size_arg = -1;      /* up to the stack */
             else heap_size_arg = parse_mmio_size(argv[i]);
             if (heap_size_arg <= 0 && heap_size_arg != -1) {
                 fputs("error: bad --heap-size\n", stderr);
+                return 1;
+            }
+        } else if (streq(argv[i], "--mem-size")) {
+            i = i + 1;
+            if (i >= argc) {
+                fputs("error: --mem-size requires an argument\n", stderr);
+                return 1;
+            }
+            mem_kb_arg = parse_kb(argv[i]);
+            if (mem_kb_arg <= 0) {
+                fputs("error: bad --mem-size\n", stderr);
                 return 1;
             }
         } else if (streq(argv[i], "--stack-size")) {

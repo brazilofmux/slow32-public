@@ -51,7 +51,14 @@ static bool load_s32x(const char *path) {
 
     uint64_t total64 = raw_mem;
     if ((uint64_t)stack_base > total64) total64 = stack_base;
-    if (total64 == 0 || total64 > 0x10000000ULL) total64 = 0x10000000ULL;
+    if (total64 == 0) total64 = 0x10000000ULL;
+    if (total64 > 0x10000000ULL) {
+        /* the linker may ask for more than 256MB now
+         * (docs/plans/memory-size.md); the simulated memory is 256MB */
+        fprintf(stderr, "%s: needs 0x%llX bytes of memory; the testbench has 256MB\n",
+                path, (unsigned long long)total64);
+        fclose(f); return false;
+    }
     mem_size = (uint32_t)total64;
 
     mem = (uint8_t *)calloc(1, mem_size);

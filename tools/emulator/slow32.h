@@ -8,7 +8,7 @@
 
 #define NUM_REGS 32
 #define DEFAULT_MEM_SIZE (256 * 1024 * 1024)  // Default 256MB to match architecture spec
-#define MAX_MEM_SIZE (256 * 1024 * 1024)      // Maximum 256MB
+#define MAX_MEM_SIZE 0x80000000u              // Maximum 2GB (S32X_MAX_MEM_SIZE)
 // No fixed code/data split here: the segment limits come from the .s32x
 // header at load time and are passed to mm_protect_regions().  The linker
 // picks them (s32-ld --code-size / --rodata-size / --data-size, each 1MB

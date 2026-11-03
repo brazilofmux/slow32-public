@@ -237,7 +237,7 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
     s32x_loader_config_t config = {
         .write_cb = mm_write_callback,
         .user_data = cpu,
-        .mem_size = DEFAULT_MEM_SIZE,
+        .mem_size = hdr.mem_size ? hdr.mem_size : DEFAULT_MEM_SIZE,
         .verbose = cpu->debug.trace_instructions
     };
 

@@ -1543,15 +1543,17 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
     done
 
     # Test: s32-ld --heap-size moves the MMIO window up.  The same
-    # object must fail to get its block at the default gap (exit 3),
-    # succeed at 96M, and a heap that would reach the stack is refused.
+    # object must fail to get its block at the default gap (exit 3) and
+    # succeed at 96M; at 300M the address space grows past 256MB (the
+    # stack at its top, docs/plans/memory-size.md) and it succeeds there
+    # too; a heap that takes the space past 2GB is refused.
     TST_SRC="$TESTS_DIR/test_heap_size.c"
     if [[ -f "$TST_SRC" ]]; then
         TOTAL=$((TOTAL + 1))
         HS_OK=1
         run_exe "$GEN1_CC_EXE" "$WORKDIR/e2e-heap-cc.log" "$TST_SRC" "$WORKDIR/e2e-heap.s"
         run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-heap-as.log" "$WORKDIR/e2e-heap.s" "$WORKDIR/e2e-heap.s32o"
-        for hs in default 96M 300M; do
+        for hs in default 96M 300M 2047M; do
             HS_ARG=()
             [[ "$hs" == default ]] || HS_ARG=(--heap-size "$hs")
             set +e
@@ -1559,9 +1561,9 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
                 "$RUNTIME_CRT0" "$WORKDIR/e2e-heap.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                 $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS >"$WORKDIR/e2e-heap-$hs-ld.log" 2>&1
             set -e
-            if [[ "$hs" == 300M ]]; then
+            if [[ "$hs" == 2047M ]]; then
                 [[ -s "$WORKDIR/e2e-heap-$hs.s32x" ]] && HS_OK=0
-                grep -q "reach the stack" "$WORKDIR/e2e-heap-$hs-ld.log" || HS_OK=0
+                grep -q "more than 2GB" "$WORKDIR/e2e-heap-$hs-ld.log" || HS_OK=0
                 continue
             fi
             if [[ ! -s "$WORKDIR/e2e-heap-$hs.s32x" ]]; then HS_OK=0; continue; fi
@@ -1570,7 +1572,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
             RUN_RC=$?
             set -e
             if [[ "$hs" == default && "$RUN_RC" -ne 3 ]]; then HS_OK=0; fi
-            if [[ "$hs" == 96M && "$RUN_RC" -ne 0 ]]; then HS_OK=0; fi
+            if [[ "$hs" != default && "$RUN_RC" -ne 0 ]]; then HS_OK=0; fi
         done
         if [[ "$HS_OK" -eq 1 ]]; then
             printf "  %-30s PASS\n" "e2e-heap-size:"

@@ -42,6 +42,20 @@ typedef struct {
 
 // Load .s32x header only (no section loading)
 // Use this to get metadata before setting up memory, then call load_s32x_file() to load sections.
+/* The address space an executable asks for: the linker adds the parts
+ * up, at least 256MB (docs/plans/memory-size.md).  These engines take
+ * up to 2GB; past it an address is negative as an int somewhere, and
+ * nothing has been audited for that. */
+#define S32X_MAX_MEM_SIZE 0x80000000u
+
+static int s32x_mem_size_ok(uint32_t mem_size, s32x_load_result_t *result) {
+    if (mem_size <= S32X_MAX_MEM_SIZE) return 1;
+    snprintf(result->error_msg, sizeof(result->error_msg),
+             "Executable needs 0x%08X bytes of address space; at most 0x%08X (2GB) here",
+             mem_size, S32X_MAX_MEM_SIZE);
+    return 0;
+}
+
 static s32x_load_result_t load_s32x_header(const char *filename) {
     s32x_load_result_t result = {0};
 
@@ -92,6 +106,8 @@ static s32x_load_result_t load_s32x_header(const char *filename) {
                  "Code limit exceeds 64MB boundary: 0x%08X", header.code_limit);
         return result;
     }
+
+    if (!s32x_mem_size_ok(header.mem_size, &result)) return result;
 
     result.success = 1;
     result.entry_point = header.entry;
@@ -156,6 +172,10 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
     }
     
     // Check memory requirements
+    if (!s32x_mem_size_ok(header.mem_size, &result)) {
+        fclose(f);
+        return result;
+    }
     if (header.mem_size > config->mem_size) {
         snprintf(result.error_msg, sizeof(result.error_msg), 
                  "Executable requires %u bytes, emulator has %u", 

@@ -48,7 +48,8 @@ static char *ld_local_name(const char *name, int f) {
 #define DEFAULT_DATA_SIZE    0x00100000  // 1MB for data
 #define DEFAULT_STACK_SIZE   0x00010000  // 64KB stack
 #define DEFAULT_STACK_BASE   0x0FFFFFF0
-#define DEFAULT_MEM_SIZE     0x10000000  // 256MB total
+#define DEFAULT_MEM_SIZE     0x10000000  // 256MB: the floor of the address space
+#define MAX_MEM_SIZE         0x80000000u // 2GB: past it an address is negative as an int
 
 // Compact memory layout (4KB pages)
 #define COMPACT_PAGE_SIZE    0x00001000  // 4KB
@@ -184,6 +185,8 @@ typedef struct {
     uint32_t bss_limit;
     uint32_t stack_base;
     uint32_t stack_size;    // Configurable stack size
+    uint32_t mem_size;      // the address space: the parts added up, at least 256MB
+    uint32_t mem_size_req;  // --mem-size, 0 when absent
     uint32_t heap_base;
     uint32_t heap_size;     // Optional heap size before MMIO
     uint32_t mmio_base;
@@ -1225,6 +1228,30 @@ static void layout_sections(linker_state_t *ld) {
     
     // Set heap base after BSS
     ld->heap_base = (ld->bss_limit + 0xFFF) & ~0xFFF;  // Page align
+
+    // The address space: the parts added up (code through BSS, the heap,
+    // the MMIO window, the stack), at least 256MB and at least
+    // --mem-size, and the stack at its top.  An executable that fits in
+    // 256MB is laid out as it always was (docs/plans/memory-size.md).
+    // The compact layouts place the stack themselves.
+    if (!auto_compact) {
+        uint64_t heap = ld->heap_size == UINT32_MAX ? 0 :
+                        ld->heap_size ? ld->heap_size : (ld->mmio_size ? 0x100000 : 0);
+        uint64_t need = (uint64_t)ld->heap_base + heap;
+        uint64_t ms;
+        need = (need + 0xFFF) & ~(uint64_t)0xFFF;
+        need += (uint64_t)ld->mmio_size + ld->stack_size + 16;
+        ms = (need + 0xFFF) & ~(uint64_t)0xFFF;
+        if (ms < DEFAULT_MEM_SIZE) ms = DEFAULT_MEM_SIZE;
+        if (ms < ld->mem_size_req) ms = ((uint64_t)ld->mem_size_req + 0xFFF) & ~(uint64_t)0xFFF;
+        if (ms > MAX_MEM_SIZE) {
+            fprintf(stderr, "Error: the program needs 0x%llX bytes of address space; at most 0x%X (2GB)\n",
+                    (unsigned long long)ms, MAX_MEM_SIZE);
+            exit(1);
+        }
+        ld->mem_size = (uint32_t)ms;
+        ld->stack_base = ld->mem_size - 16;
+    }
     
     // Set MMIO region after heap (if configured)
     if (ld->mmio_size > 0) {
@@ -2599,7 +2626,7 @@ static void write_executable(linker_state_t *ld) {
         .rodata_limit = ld->rodata_limit,
         .data_limit = ld->bss_limit,
         .stack_base = ld->stack_base,
-        .mem_size = DEFAULT_MEM_SIZE,
+        .mem_size = ld->mem_size,
         .heap_base = ld->heap_base,
         .stack_end = ld->stack_base - ld->stack_size,
         .mmio_base = ld->mmio_base
@@ -3080,7 +3107,10 @@ static uint32_t parse_size(const char *str) {
         val *= 1024;
     } else if (*end == 'M' || *end == 'm') {
         val *= 1024 * 1024;
+    } else if (*end == 'G' || *end == 'g') {
+        val *= 1024UL * 1024 * 1024;
     }
+    if (val > 0xFFFFFFFFUL) val = 0xFFFFFFFFUL;   // --mem-size refuses it
     
     return (uint32_t)val;
 }
@@ -3103,6 +3133,8 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --data-size SIZE  Max data+bss size (default: 1MB)\n");
     fprintf(stderr, "  --stack-size SIZE Stack size (default: 64KB)\n");
     fprintf(stderr, "  --heap-size SIZE  Heap space before MMIO (default: 1MB; max: up to the stack)\n");
+    fprintf(stderr, "  --mem-size SIZE   Address space, at least (default and floor: 256MB; the parts\n"
+                    "                    added up when more; at most 2GB); the stack is at its top\n");
     fprintf(stderr, "  --mmio SIZE       Reserve SIZE bytes for MMIO region\n");
     fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps (default)\n");
     fprintf(stderr, "  --no-pack-sections Disable tight packing; use fixed region sizes\n");
@@ -3137,6 +3169,7 @@ int main(int argc, char *argv[]) {
     ld.data_size = DEFAULT_DATA_SIZE;
     ld.stack_size = DEFAULT_STACK_SIZE;
     ld.stack_base = DEFAULT_STACK_BASE;
+    ld.mem_size = DEFAULT_MEM_SIZE;
     ld.pack_sections = true;  // Default to tight section packing
     ld.enable_wxorx = true;  // Default to secure
 
@@ -3203,6 +3236,8 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--heap-size") == 0 && i + 1 < argc) {
             i++;
             ld.heap_size = strcmp(argv[i], "max") == 0 ? UINT32_MAX : parse_size(argv[i]);
+        } else if (strcmp(argv[i], "--mem-size") == 0 && i + 1 < argc) {
+            ld.mem_size_req = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--mmio") == 0 && i + 1 < argc) {
             ld.mmio_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--pack-sections") == 0) {

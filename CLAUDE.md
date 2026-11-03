@@ -41,8 +41,10 @@ make
   code (loads from code are allowed; docs/SPEC.md 6.3), based at 0x0.  Its size is a
   linker default (1MB), not an architectural limit: `s32-ld --code-size` raises
   it, `--rodata-size`/`--data-size` likewise (1MB each), and the emulator takes
-  the limits from the .s32x header.  256MB total address space.
-- Stack at 0x0FFFFFF0 growing down
+  the limits from the .s32x header.  The address space is the header's
+  `mem_size`: the linker adds the parts up, 256MB at least, 2GB at most
+  (`s32-ld --mem-size` asks for more; docs/plans/memory-size.md).
+- Stack at the top of it (0x0FFFFFF0 at 256MB), growing down
 - DEBUG instruction outputs character; MMIO ring buffers for full I/O (files, args, env)
 - Five emulators from ~24 MIPS (stage00) to ~8.3 BIPS (DBT) on the M5 Max — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
