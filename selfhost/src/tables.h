@@ -68,6 +68,12 @@
 #define TAB_AST_SUBS 46    /* ast.h, array shape */
 #define TAB_PS_VPEND 47    /* parser.h, VLA count assignments pending */
 #define TAB_PS_VPP   48    /* parser.h, a parameter's VLA counts */
+#define TAB_GC_NODE  49    /* hir_regalloc.h, interference-graph node */
+#define TAB_GC_MOVE  50    /* hir_regalloc.h, move */
+#define TAB_GC_NML   51    /* hir_regalloc.h, node-move list entry */
+#define TAB_CG_FN    52    /* hir_codegen.h, function emitted (dead-static DCE) */
+#define TAB_CG_REF   53    /* hir_codegen.h, name referenced from data */
+#define TAB_CG_EDGE  54    /* hir_codegen.h, name referenced from a function */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -129,6 +135,12 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_AST_SUBS) return "array shape";
     if (kind == TAB_PS_VPEND) return "VLA count assignment";
     if (kind == TAB_PS_VPP) return "VLA parameter count";
+    if (kind == TAB_GC_NODE) return "interference node";
+    if (kind == TAB_GC_MOVE) return "move";
+    if (kind == TAB_GC_NML) return "node-move list";
+    if (kind == TAB_CG_FN) return "function emitted";
+    if (kind == TAB_CG_REF) return "data reference";
+    if (kind == TAB_CG_EDGE) return "function reference";
     return "?";
 }
 

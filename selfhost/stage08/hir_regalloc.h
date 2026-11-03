@@ -330,25 +330,23 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * IRC data structures (Chunk 3 — dead code until wiring step)
  * ================================================================= */
 
-#define GC_MAX_NODE  65536   /* was 4096 */
 #define GC_ACT_MAX   128     /* values live at once, interval builder (gc_build) */
 #define GC_ROUNDS_INTERVALS 4  /* colouring rounds without exact liveness (gc_alloc_rounds) */
-#define GC_MAX_MOVE  65536   /* was 8192 */
 
 static int gc_nnode;
-static int gc_inst[GC_MAX_NODE];
+static int *gc_inst;
 static int *gc_node;
 
-static int gc_adj_head[GC_MAX_NODE];
+static int *gc_adj_head;
 static int *gc_adj_peer;     /* gc_edge_cap entries, grown by gc_add_edge */
 static int *gc_adj_next;
 static int gc_nedge;
 static int gc_edge_cap;
 
-static int gc_degree[GC_MAX_NODE];
+static int *gc_degree;
 
-static int gc_mv_a[GC_MAX_MOVE];
-static int gc_mv_b[GC_MAX_MOVE];
+static int *gc_mv_a;
+static int *gc_mv_b;
 static int gc_nmove;
 
 #define GC_MV_WORKLIST    0
@@ -356,13 +354,13 @@ static int gc_nmove;
 #define GC_MV_COALESCED   2
 #define GC_MV_FROZEN      3
 #define GC_MV_CONSTRAINED 4
-static int gc_mv_status[GC_MAX_MOVE];
+static int *gc_mv_status;
 
-#define GC_MAX_NMLIST 262144   /* was 16384 */   /* lowered for selfhost */
-static int gc_nmlist_mv[GC_MAX_NMLIST];
-static int gc_nmlist_next[GC_MAX_NMLIST];
-static int gc_nmlist_head[GC_MAX_NODE];
+static int *gc_nmlist_mv;
+static int *gc_nmlist_next;
+static int *gc_nmlist_head;
 static int gc_nnmlist;
+static int gc_nml_cap;
 
 #define GC_WL_SIMPLIFY  0
 #define GC_WL_FREEZE    1
@@ -370,14 +368,67 @@ static int gc_nnmlist;
 #define GC_WL_COALESCED 3
 #define GC_WL_SELECT    4
 #define GC_WL_COLORED   5
-static int gc_wl[GC_MAX_NODE];
+static int *gc_wl;
 
-static int gc_sel_stk[GC_MAX_NODE];
+static int *gc_sel_stk;
 static int gc_nsel;
 
-static int gc_alias[GC_MAX_NODE];
-static int gc_color[GC_MAX_NODE];
-static int gc_force_spill[GC_MAX_NODE];
+static int *gc_alias;
+static int *gc_color;
+static int *gc_force_spill;
+
+/* The tables indexed by node, by move, and the node-move lists grow
+ * (tables.h).  They were fixed: past 65,536 nodes a value got no node
+ * at all, and past the move tables a copy was not offered to the
+ * coalescer -- quietly worse code, never wrong. */
+static char *gc_mv_phi;    /* (gc_add_move_tag) */
+static int *gc_mv_blk;
+static int *gc_mv_pblk;
+static int *gc_pair_inst;
+static int *gc_nbr_mark;
+static int *gc_pin;
+static int *gc_rs_nfail;
+static char *gc_rs_taken;
+static int gc_node_cap;
+static int gc_move_cap;
+
+/* room for need nodes; a new node's pin is -1, none */
+static void gc_node_room(int need) {
+    int z;
+    if (need <= gc_node_cap) return;
+    z = gc_node_cap;
+    if (gc_node_cap == 0) {
+        tab_add((char **)&gc_inst, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_adj_head, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_degree, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_nmlist_head, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_wl, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_sel_stk, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_alias, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_color, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_force_spill, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_pair_inst, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_nbr_mark, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_pin, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_rs_nfail, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_rs_taken, (int)sizeof(char), TAB_GC_NODE, 0);
+    }
+    tab_grow(TAB_GC_NODE, &gc_node_cap, 4096, need);
+    while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; }
+}
+
+static void gc_move_room(int need) {
+    if (need <= gc_move_cap) return;
+    if (gc_move_cap == 0) {
+        tab_add((char **)&gc_mv_a, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_b, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_status, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_phi, (int)sizeof(char), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_blk, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_pblk, (int)sizeof(int), TAB_GC_MOVE, 0);
+    }
+    tab_grow(TAB_GC_MOVE, &gc_move_cap, 8192, need);
+}
 
 /* ra_crosses_call is the only live cross tracking for SLOW-32 (caller-saved classification).
  * The x64 clobber-position lists and ra_mark_clobbers were dead after the IRC port and have
@@ -1161,7 +1212,13 @@ static void gc_add_edge(int u, int v) {
 
 static void gc_add_node_move(int node, int mv) {
     int idx;
-    if (gc_nnmlist >= GC_MAX_NMLIST) return;
+    if (gc_nnmlist + 1 > gc_nml_cap) {
+        if (gc_nml_cap == 0)
+            tab_add((char **)&gc_nmlist_mv, (int)sizeof(int), TAB_GC_NML, 0);
+        if (gc_nml_cap == 0)
+            tab_add((char **)&gc_nmlist_next, (int)sizeof(int), TAB_GC_NML, 0);
+        tab_grow(TAB_GC_NML, &gc_nml_cap, 16384, gc_nnmlist + 1);
+    }
     idx = gc_nnmlist;
     gc_nnmlist = gc_nnmlist + 1;
     gc_nmlist_mv[idx] = mv;
@@ -1184,7 +1241,7 @@ static int gc_move_related(int n) {
 static int gc_get_alias(int n) {
     int lim;
     lim = 0;
-    while (gc_alias[n] != n && lim < GC_MAX_NODE) {
+    while (gc_alias[n] != n && lim < gc_nnode) {
         n = gc_alias[n];
         lim = lim + 1;
     }
@@ -1226,13 +1283,12 @@ static int gc_k(int n) {
  * each iteration; a phi move may coalesce across the mismatch because
  * the merged node keeps the CROSSING side's palette (the swap in
  * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
-static char gc_mv_phi[GC_MAX_MOVE];
-static int gc_mv_blk[GC_MAX_MOVE];   /* a phi copy's predecessor block, where it runs */
-static int gc_mv_pblk[GC_MAX_MOVE];  /* and the phi's own block */
+/* gc_mv_phi; gc_mv_blk, a phi copy's predecessor block, where it runs;
+ * gc_mv_pblk, the phi's own block (with the move tables, above) */
 
 static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
-    if (gc_nmove >= GC_MAX_MOVE) return;
+    gc_move_room(gc_nmove + 1);
     mv = gc_nmove;
     gc_mv_a[mv] = a;
     gc_mv_b[mv] = b;
@@ -1252,7 +1308,6 @@ static void gc_add_move(int a, int b) {
  * needed by gc_build/gc_combine above it. */
 static int *ra_pair_of;
 static int *ra_pair_lo;
-static int gc_pair_inst[GC_MAX_NODE];
 
 /* =================================================================
  * Per-block liveness (DIVERGENCE f77, port upstream candidate)
@@ -1274,17 +1329,8 @@ static int gc_pair_inst[GC_MAX_NODE];
  * stays for its other consumers (fusion extends, dumps) and as the
  * HIR_LINEAR_LIVE=1 fallback.
  *
- * Bitsets are indexed by a dense id assigned in ra_order; the arrays
- * are statically sized for the worst case (8MB bss) but only
- * bb_nblk x lv_nw words are ever touched.
+ * Bitsets are indexed by a dense id assigned in ra_order.
  * ================================================================= */
-/* GC_MAX_NODE / 32: ids beyond the node cap could never be coloured
- * anyway, so functions that large stay on intervals. */
-#define LV_W 128
-/* Flattened [hir_blk_cap][LV_W]: the selfhost dialect has no 2D
- * static arrays, and the bound must be a literal (2048 * 128).  Kept
- * to 1MB apiece -- the selfhost assembler has a cumulative BSS
- * budget, and 4MB versions of these were what first blew it. */
 /* The live-in/out sets are bb_nblk rows of lv_w words, sized per
  * function and grown as needed (SQLite's sqlite3VdbeExec has tens of
  * thousands of values; 128 words per row was 4,096 and the row stride
@@ -1533,7 +1579,6 @@ static void lv_prepare(void) {
         }
         i = i + 1;
     }
-    if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
     lv_nw = (lv_nid + 31) / 32;
     if (lv_nw == 0) lv_nw = 1;
     lv_w = lv_nw;
@@ -1722,7 +1767,7 @@ static void lv_build_edges(void) {
 
 static void gc_build(void) {
     int i, j, inst, k, n, ni, aj, nact, p;
-    int act[GC_MAX_NODE];
+    int act[GC_ACT_MAX + 1];
 
     gc_nnode = 0;
     gc_nedge = 0;
@@ -1733,7 +1778,8 @@ static void gc_build(void) {
     i = 0;
     while (i < h_ninst) { gc_node[i] = -1; i = i + 1; }
     i = 0;
-    while (i < GC_MAX_NODE) { gc_force_spill[i] = 0; i = i + 1; }
+    gc_node_room(ra_norder);
+    while (i < gc_node_cap) { gc_force_spill[i] = 0; i = i + 1; }
 
     i = 0;
     while (i < ra_norder) {
@@ -1741,7 +1787,7 @@ static void gc_build(void) {
         k = h_kind[inst];
         if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP &&
             !ra_mem_forced[inst]) {
-            if (gc_nnode < GC_MAX_NODE) {
+            {
                 n = gc_nnode;
                 gc_inst[n] = inst;
                 gc_node[inst] = n;
@@ -1949,7 +1995,6 @@ static int gc_simplify(void) {
  * with u" is then one load, not a walk of t's list (gc_has_edge) --
  * edges are added both ways, so u on t's list is t on u's.  The walk
  * per neighbour of v was nearly all of salvoend's 25 minutes. */
-static int gc_nbr_mark[GC_MAX_NODE];
 static int gc_nbr_stamp;
 static void gc_mark_nbrs(int u) {
     int e;
@@ -2702,7 +2747,6 @@ static int ra_first_free_pairfriendly(int lo, int hi, int *used) {
  * -1 = unpinned.  A pin is honoured only if it is still conflict-free
  * for the pinned node's own neighbours, so it can never colour two
  * interfering values the same. */
-static int gc_pin[GC_MAX_NODE];
 
 /* DIVERGENCE (f77, port upstream): pair identity at NODE level.
  * ra_pair_of marks INSTRUCTIONS, but coalescing merges nodes -- a phi
@@ -2711,7 +2755,6 @@ static int gc_pin[GC_MAX_NODE];
  * lands on a node that is never selected and the pair misaligns into
  * scratch shuffles.  gc_pair_inst[n] is a pair-marked member
  * instruction of node n (or -1), propagated in gc_combine. */
-static int gc_pair_inst[GC_MAX_NODE];
 
 /* Claim an aligned register pair for `inst` and pin its partner to the
  * other half.  Returns this node's colour, or -1.
@@ -3389,8 +3432,6 @@ static void gc_writeback(void) {
  * BlaMka's hot pointers instead (+39%): a long range is not a cheap
  * one.  A failure next to a victim already chosen this round waits for
  * the next colouring. */
-static int gc_rs_nfail[GC_MAX_NODE];
-static char gc_rs_taken[GC_MAX_NODE];
 static int gc_rs_nremat;        /* remat victims made this round */
 static int ra_stat_remat;       /* ... and per function */
 static int ra_stat_unremat;     /* remat victims sent to memory with their operand */
@@ -4743,7 +4784,7 @@ static void gc_alloc_rounds(void) {
     for (;;) {
         /* Node ids are reassigned every build; a pair pin left by the
          * previous round would point at an unrelated node. */
-        { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+        { int z; z = 0; while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; } }
         gc_build();
         gc_find_moves();
         gc_irc();
@@ -5153,7 +5194,7 @@ static void ra_split_at_calls(void) {
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
-    { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+    { int z; z = 0; while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; } }
     /* Before anything asks ra_codegen_fold_base: the weighted uses,
      * intervals and liveness below all read rl_fold_sub, and a stale
      * entry (the previous function's, or 0 for the first) named an

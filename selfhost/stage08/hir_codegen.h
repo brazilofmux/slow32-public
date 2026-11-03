@@ -16,64 +16,69 @@ static int  hcg_pgo_labels;   /* HIR_PGO_LABELS: per-block profile labels (step 
 static int  cg_long_calls;  /* -mlong-calls: direct calls form the address; a jal reaches +/-1MB, SQLite's library is 1.2MB */     /* the output file, once the driver has opened it: a full buffer is flushed to it */
 
 /* Dead-static DCE (GitHub issue 73): record .text file offsets per
- * function, then rewrite the file dropping unreferenced statics. */
-#define CG_MAX_FN  8192
-#define CG_MAX_REF 16384
+ * function, then rewrite the file dropping unreferenced statics.  The
+ * tables grow (tables.h); past 8,192 functions or 16,384 references
+ * they used to fill, and a full table kept every function.  The names
+ * are hashed: the root set was a scan per reference and the closure a
+ * pass over every edge and every function per round. */
 static int   cg_file_pos;          /* bytes already written to cg_fd */
 static char *cg_outpath;
 static int   cg_nfn;
-static int   cg_fn_start[CG_MAX_FN];
-static int   cg_fn_end[CG_MAX_FN];
-static char *cg_fn_name[CG_MAX_FN];
-static int   cg_fn_local[CG_MAX_FN];
-static int   cg_fn_jt0[CG_MAX_FN];
-static int   cg_fn_jt1[CG_MAX_FN];
-static int   cg_fn_live[CG_MAX_FN];
+static int   cg_fn_cap;
+static int   *cg_fn_start;
+static int   *cg_fn_end;
+static char **cg_fn_name;          /* "" for none: the index wants a string */
+static int   *cg_fn_local;
+static int   *cg_fn_jt0;
+static int   *cg_fn_jt1;
+static int   *cg_fn_e0;            /* the function's references, edges e0..e1-1 */
+static int   *cg_fn_e1;
+static int   *cg_fn_live;
+static struct tab_nix cg_fix;      /* function names */
 static int   cg_nref;
-static char *cg_ref[CG_MAX_REF];
-static int   cg_ref_full;
+static int   cg_ref_cap;
+static char **cg_ref;              /* the root set: referenced from data */
+static struct tab_nix cg_rix;
 static int   cg_stat_dce_drop;
 static int   cg_stat_dce_keep;
 static int   cg_cur_fn;
 static int   cg_nedge;
-static int   cg_edge_from[CG_MAX_REF];
-static char *cg_edge_to[CG_MAX_REF];
+static int   cg_edge_cap;
+static char **cg_edge_to;          /* referenced by function cg_cur_fn */
+
+static void cg_fn_room(int need) {
+    if (need <= cg_fn_cap) return;
+    if (cg_fn_cap == 0) {
+        tab_add((char **)&cg_fn_start, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_end, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_name, (int)sizeof(char *), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_local, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_jt0, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_jt1, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_e0, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_e1, (int)sizeof(int), TAB_CG_FN, 0);
+        tab_add((char **)&cg_fn_live, (int)sizeof(int), TAB_CG_FN, 0);
+    }
+    tab_grow(TAB_CG_FN, &cg_fn_cap, 1024, need);
+}
 
 static void cg_mark_ref(char *name) {
-    int i;
     if (!name || name[0] == 0) return;
     if (cg_cur_fn >= 0) {
-        if (cg_nedge < CG_MAX_REF) {
-            cg_edge_from[cg_nedge] = cg_cur_fn;
-            cg_edge_to[cg_nedge] = name;
-            cg_nedge = cg_nedge + 1;
-        } else {
-            cg_ref_full = 1;
-        }
+        tab_room1((char **)&cg_edge_to, (int)sizeof(char *), TAB_CG_EDGE, &cg_edge_cap, 4096, cg_nedge + 1);
+        cg_edge_to[cg_nedge] = name;
+        cg_nedge = cg_nedge + 1;
         return;
     }
-    i = 0;
-    while (i < cg_nref) {
-        if (strcmp(cg_ref[i], name) == 0) return;
-        i = i + 1;
-    }
-    if (cg_nref >= CG_MAX_REF) {
-        cg_ref_full = 1;
-        return;
-    }
+    if (tab_nix_find(&cg_rix, cg_ref, cg_nref, name) >= 0) return;
+    tab_room1((char **)&cg_ref, (int)sizeof(char *), TAB_CG_REF, &cg_ref_cap, 1024, cg_nref + 1);
     cg_ref[cg_nref] = name;
     cg_nref = cg_nref + 1;
 }
 
 static int cg_name_refd(char *name) {
-    int i;
     if (!name) return 1;
-    i = 0;
-    while (i < cg_nref) {
-        if (strcmp(cg_ref[i], name) == 0) return 1;
-        i = i + 1;
-    }
-    return 0;
+    return tab_nix_find(&cg_rix, cg_ref, cg_nref, name) >= 0;
 }
 
 /* Emission only appends -- nothing is patched after the fact -- so the
@@ -5052,46 +5057,62 @@ static void cg_dce_copy(int fd, int a, int b) {
     }
 }
 
+/* Every function named `name` becomes live; the newly live are pushed
+ * on wl.  (Names can repeat: the scan this replaced marked them all.) */
+static int cg_dce_mark(char *name, int *wl, int nwl) {
+    int k;
+    k = cg_fix.head[(int)(tab_nix_hash(name) & (unsigned)(cg_fix.cap - 1))];
+    while (k >= 0) {
+        if (!cg_fn_live[k] && strcmp(cg_fn_name[k], name) == 0) {
+            cg_fn_live[k] = 1;
+            wl[nwl] = k;
+            nwl = nwl + 1;
+        }
+        k = cg_fix.next[k];
+    }
+    return nwl;
+}
+
 static void cg_dce_rewrite_text(void) {
     int i;
     int n;
     int total;
     int hdr;
     int fd;
+    int *wl;
+    int nwl;
+    int e;
     cg_stat_dce_drop = 0;
     cg_stat_dce_keep = 0;
+    if (cg_nfn == 0) return;
+    wl = (int *)malloc((unsigned long)cg_nfn * sizeof(int));
+    if (!wl) {
+        fdputs("s12cc: out of memory (dce)\n", 2);
+        exit(1);
+    }
+    nwl = 0;
     i = 0;
     while (i < cg_nfn) {
-        if (cg_ref_full || !cg_fn_local[i] || cg_name_refd(cg_fn_name[i]))
+        if (!cg_fn_local[i] || cg_name_refd(cg_fn_name[i])) {
             cg_fn_live[i] = 1;
-        else
+            wl[nwl] = i;
+            nwl = nwl + 1;
+        } else {
             cg_fn_live[i] = 0;
+        }
         i = i + 1;
     }
-    {
-        int changed;
-        int e;
-        int t;
-        changed = 1;
-        while (changed) {
-            changed = 0;
-            e = 0;
-            while (e < cg_nedge) {
-                if (cg_fn_live[cg_edge_from[e]]) {
-                    t = 0;
-                    while (t < cg_nfn) {
-                        if (!cg_fn_live[t] && cg_fn_name[t] &&
-                            strcmp(cg_fn_name[t], cg_edge_to[e]) == 0) {
-                            cg_fn_live[t] = 1;
-                            changed = 1;
-                        }
-                        t = t + 1;
-                    }
-                }
-                e = e + 1;
-            }
+    tab_nix_sync(&cg_fix, cg_fn_name, cg_nfn);
+    while (nwl > 0) {
+        nwl = nwl - 1;
+        i = wl[nwl];
+        e = cg_fn_e0[i];
+        while (e < cg_fn_e1[i]) {
+            nwl = cg_dce_mark(cg_edge_to[e], wl, nwl);
+            e = e + 1;
         }
     }
+    free(wl);
     i = 0;
     while (i < cg_nfn) {
         if (cg_fn_live[i])
@@ -5146,14 +5167,25 @@ static void cg_dce_rewrite_text(void) {
     }
 }
 
+/* whether jump table ji belongs to a live function: the functions'
+ * ranges of tables run upward, so the last one starting at or before
+ * ji is the only one that can hold it */
 static int cg_jt_keep(int ji) {
-    int i;
-    if (cg_nfn == 0 || cg_ref_full) return 1;
-    i = 0;
-    while (i < cg_nfn) {
-        if (cg_fn_live[i] && ji >= cg_fn_jt0[i] && ji < cg_fn_jt1[i])
-            return 1;
-        i = i + 1;
+    int lo;
+    int hi;
+    int mid;
+    if (cg_nfn == 0) return 1;
+    lo = 0;
+    hi = cg_nfn - 1;
+    if (cg_fn_jt0[0] > ji) return 0;
+    while (lo < hi) {
+        mid = lo + (hi - lo + 1) / 2;
+        if (cg_fn_jt0[mid] <= ji) lo = mid; else hi = mid - 1;
+    }
+    while (lo >= 0 && cg_fn_jt0[lo] <= ji) {   /* empty ranges share a start */
+        if (cg_fn_live[lo] && ji < cg_fn_jt1[lo]) return 1;
+        if (cg_fn_jt1[lo] > cg_fn_jt0[lo]) return 0;
+        lo = lo - 1;
     }
     return 0;
 }
@@ -5499,27 +5531,23 @@ static void gen_program(Node *prog) {
     cg_nref = 0;
     cg_nedge = 0;
     cg_cur_fn = -1;
-    cg_ref_full = 0;
     cg_file_pos = 0;
     cg_s(".text\n\n");
     fn = prog->body;
     while (fn) {
-        if (cg_nfn < CG_MAX_FN) {
-            cg_fn_start[cg_nfn] = cg_pos();
-            cg_fn_name[cg_nfn] = fn->name;
-            cg_fn_local[cg_nfn] = fn->is_static;
-            cg_fn_jt0[cg_nfn] = cg_njt;
-        } else {
-            cg_ref_full = 1;
-        }
-        cg_cur_fn = (cg_nfn < CG_MAX_FN) ? cg_nfn : -1;
+        cg_fn_room(cg_nfn + 1);
+        cg_fn_start[cg_nfn] = cg_pos();
+        cg_fn_name[cg_nfn] = fn->name ? fn->name : "";
+        cg_fn_local[cg_nfn] = fn->is_static;
+        cg_fn_jt0[cg_nfn] = cg_njt;
+        cg_fn_e0[cg_nfn] = cg_nedge;
+        cg_cur_fn = cg_nfn;
         hcg_func(fn);
         cg_cur_fn = -1;
-        if (cg_nfn < CG_MAX_FN) {
-            cg_fn_jt1[cg_nfn] = cg_njt;
-            cg_fn_end[cg_nfn] = cg_pos();
-            cg_nfn = cg_nfn + 1;
-        }
+        cg_fn_jt1[cg_nfn] = cg_njt;
+        cg_fn_e1[cg_nfn] = cg_nedge;
+        cg_fn_end[cg_nfn] = cg_pos();
+        cg_nfn = cg_nfn + 1;
         fn = fn->next;
     }
     cg_mark_data_refs();
