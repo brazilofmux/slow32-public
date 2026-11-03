@@ -882,7 +882,30 @@ static void fio_position(FILE *f, int unit) {
     fseek(f, (long)(rec - 1) * fio_urecl[unit], SEEK_SET);
 }
 
+/* One I/O statement at a time.  F77 has no I/O inside I/O, and the
+ * statement state below is one set: a function referenced in a PRINT
+ * list that did an internal WRITE took it over, and the outer record was
+ * lost without a word (fort370 issue 39, from MV410).  Every statement's
+ * begin marks it busy and its end clears it; a READ's begin that
+ * branches away (END=, ERR=, IOSTAT) has no list and no end to come, so
+ * it clears the mark itself.  (F2003 allows recursive I/O to an internal
+ * unit, and gfortran does it; this follows F77.) */
+static int fio_busy;
+static void fio_enter(void) {
+    if (fio_busy) {
+        fflush(stdout);
+        fprintf(stderr, "f77: an I/O statement in a function referenced in another's I/O list\n");
+        exit(2);
+    }
+    fio_busy = 1;
+}
+static int fio_rd_done(int r) {
+    if (r) fio_busy = 0;
+    return r;
+}
+
 void f77_wr_begin(int unit, const char *fmt, int fmtlen) {
+    fio_enter();
     fio_init_units();
     fio_ibuf = 0;
     fio_out = fio_resolve(unit, 1);
@@ -898,6 +921,7 @@ void f77_wr_begin(int unit, const char *fmt, int fmtlen) {
  * (gfortran's layout, so files are interchangeable with the oracle);
  * direct-access records are RECL bytes.  Items are raw bytes. */
 void f77_wu_begin(int unit) {
+    fio_enter();
     fio_init_units();
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
@@ -915,6 +939,7 @@ void f77_wu(const void *p, int n) {
     fio_ulen += n;
 }
 void f77_wu_end(void) {
+    fio_busy = 0;
     FILE *f = fio_out ? fio_out : stdout;
     if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_udirect[fio_unit]) {
         int recl = fio_urecl[fio_unit];
@@ -938,7 +963,12 @@ void f77_wu_end(void) {
     }
 }
 /* flags: 1 END= present, 2 ERR=/IOSTAT= present.  0 ok, 1 eof, 2 error */
+static int fio_ru_begin(int unit, int flags);
 int f77_ru_begin(int unit, int flags) {
+    fio_enter();
+    return fio_rd_done(fio_ru_begin(unit, flags));
+}
+static int fio_ru_begin(int unit, int flags) {
     FILE *f;
     fio_init_units();
     f = fio_resolve(unit, 0);
@@ -993,7 +1023,7 @@ void f77_ru(void *p, int n) {
     memcpy(p, fio_urec + fio_upos, (size_t)n);
     fio_upos += n;
 }
-void f77_ru_end(void) { }
+void f77_ru_end(void) { fio_busy = 0; }
 
 /* BACKSPACE: back over the previous record.  Formatted: scan back to
  * the newline before it; unformatted: the trailing length word says
@@ -1031,6 +1061,7 @@ void f77_backspace(int unit) {
 /* WRITE into an internal file: the CHARACTER entity at buf, nrec
  * records of len bytes. */
 void f77_wr_begin_int(char *buf, int len, int nrec, const char *fmt, int fmtlen) {
+    fio_enter();
     fio_init_units();
     fio_out = stdout;
     fio_unit = -1;
@@ -1489,6 +1520,7 @@ void f77_wr_l(int v) {
 /* Finish the record: emit any trailing literal text, but stop at the
  * first data descriptor that has no item to feed it. */
 void f77_wr_end(void) {
+    fio_busy = 0;
     /* A data descriptor with repeats left (3A1 with fewer than 3 items)
      * wants the next item itself: the record ends there, and the
      * literal after the group is not written.  Draining from a fresh
@@ -1762,6 +1794,7 @@ static double fio_list_real(void) {
  * of a statement is always fatal (see fio_next_record). */
 static int fio_rd_setup(const char *fmt, int fmtlen, int has_end);
 int f77_rd_begin(int unit, const char *fmt, int fmtlen, int has_end) {
+    fio_enter();
     fio_init_units();
     fio_ibuf = 0;
     fio_in = fio_resolve(unit, 0);
@@ -1769,10 +1802,11 @@ int f77_rd_begin(int unit, const char *fmt, int fmtlen, int has_end) {
     if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 0;
     fio_position(fio_in, unit);
     fio_bz = (unit > 0 && unit < FIO_MAXUNIT) ? fio_ubz[unit] : 0;
-    return fio_rd_setup(fmt, fmtlen, has_end);
+    return fio_rd_done(fio_rd_setup(fmt, fmtlen, has_end));
 }
 
 int f77_rd_begin_int(char *buf, int len, int nrec, const char *fmt, int fmtlen, int has_end) {
+    fio_enter();
     fio_init_units();
     fio_in = stdin;
     fio_unit = -1;
@@ -1780,7 +1814,7 @@ int f77_rd_begin_int(char *buf, int len, int nrec, const char *fmt, int fmtlen, 
     fio_ilen = len;
     fio_inrec = nrec;
     fio_irec = 0;
-    return fio_rd_setup(fmt, fmtlen, has_end);
+    return fio_rd_done(fio_rd_setup(fmt, fmtlen, has_end));
 }
 
 static int fio_rd_setup(const char *fmt, int fmtlen, int has_end) {
@@ -2036,6 +2070,7 @@ void f77_rd_z(double *p) {
 }
 
 void f77_rd_end(void) {
+    fio_busy = 0;
     fio_reading = 0;
     fio_ibuf = 0;
 }

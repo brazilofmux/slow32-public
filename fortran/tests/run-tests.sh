@@ -298,6 +298,41 @@ if [ -x "$F77" ]; then
     done
 fi
 
+# --- Gate: programs the runtime must stop ----------------------------
+# tests/stop/<name>.f must print exactly <name>.expected, then stop with
+# exit status 2 and <name>.msg on stderr (stdin: <name>.in, if any).  Not
+# in f77/: gfortran is no oracle for these -- iorecur.f, I/O inside I/O,
+# is allowed by F2003 for an internal unit and gfortran does it; F77
+# forbids it (fort370 issue 39).
+if [ -x "$F77" ]; then
+    for f in "$HERE"/stop/*.f; do
+        [ -e "$f" ] || continue
+        b="$(basename "$f" .f)"
+        IN="/dev/null"
+        [ -f "$HERE/stop/$b.in" ] && IN="$HERE/stop/$b.in"
+        if ! "$F77" "$f" "$W/stop-$b.s" >"$W/stop-$b.cc.log" 2>&1 ||
+           ! "$AS" "$W/stop-$b.s" "$W/stop-$b.s32o" >/dev/null 2>&1 ||
+           ! "$LD" -o "$W/stop-$b.s32x" --mmio 64K "$RT/crt0.s32o" "$W/stop-$b.s32o" "$LIBF77" \
+                 "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >/dev/null 2>&1; then
+            report "stop:$b" 1 "build"; continue
+        fi
+        (cd "$W" && "$EMU" "$W/stop-$b.s32x" < "$IN" 2>"$W/stop-$b.err") \
+            | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
+            > "$W/stop-$b.got"
+        (cd "$W" && "$EMU" "$W/stop-$b.s32x" < "$IN" >/dev/null 2>&1); src=$?
+        if [ "$src" != 2 ]; then
+            report "stop:$b" 1 "exit $src, not 2"
+        elif ! diff -q "$HERE/stop/$b.expected" "$W/stop-$b.got" >/dev/null 2>&1; then
+            report "stop:$b" 1 "output differs from $b.expected"
+            diff "$HERE/stop/$b.expected" "$W/stop-$b.got" | head -6
+        elif ! grep -qF "$(cat "$HERE/stop/$b.msg")" "$W/stop-$b.err"; then
+            report "stop:$b" 1 "said: $(head -1 "$W/stop-$b.err")"
+        else
+            report "stop:$b" 0
+        fi
+    done
+fi
+
 # --- Report: math libcalls emitted -----------------------------------
 # INFORMATIONAL, not a failure.  fortran/ lives in the tree's ordinary
 # universe, not selfhost's closed one: the compiler may use the host to
