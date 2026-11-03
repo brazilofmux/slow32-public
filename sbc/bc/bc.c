@@ -431,21 +431,65 @@ static int *bc_rets;
 static int bc_nrets, bc_caprets;
 static int bc_ret_blk = -1;
 
-static void gosub_to(int blk) {
-    int cb, back;
+/* a return point: its number; *back its block */
+static int ret_point(int *back) {
     if (bc_nrets == bc_caprets) {
         bc_caprets = bc_caprets ? bc_caprets * 2 : 32;
         bc_rets = realloc(bc_rets, (size_t)bc_caprets * sizeof(int));
         if (!bc_rets) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
     }
-    back = new_blk();
-    bc_rets[bc_nrets] = back;
-    cb = h_ncarg;
-    carg(iconst(bc_nrets), 0);
+    *back = new_blk();
+    bc_rets[bc_nrets] = *back;
+    return bc_nrets++;
+}
+
+/* push return point k, and go to blk */
+static void gosub_jump(int k, int blk) {
+    int cb = h_ncarg;
+    carg(iconst(k), 0);
     call_end(cb, 1, "bcrt_gosub", NULL);
-    bc_nrets++;
     goto_blk(blk);
+}
+
+static void gosub_to(int blk) {
+    int back, k = ret_point(&back);
+    gosub_jump(k, blk);
     begin_blk(back);
+}
+
+/* ON i GOTO / GOSUB l1, l2, ...: i made an integer as the interpreter
+ * makes it; 1..n jumps (a GOSUB to the statement after), anything else
+ * goes on */
+static void on_branch(stmt_t *s, int is_gosub) {
+    bv_t x = expr(s->on_branch.index);
+    int n = s->on_branch.nlabels, cb, i, k, ok, cont = new_blk(), tab = new_blk(), back = -1, rk = -1;
+    int *targets = malloc((size_t)(n ? n : 1) * sizeof(int));
+    if (!targets) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    cb = h_ncarg;
+    carg_bv(x);
+    i = call_end(cb, 3, "bcrt_int", NULL);
+    k = hi_emit(HI_ADDI, TY_INT, i, -1, -1, NULL);
+    ok = hi_emit(HI_SLTU, TY_INT, k, iconst(n), 0, NULL);
+    hi_emit(HI_BRC, TY_VOID, ok, tab, cont, NULL);
+    bc_live = 0;
+    if (is_gosub) rk = ret_point(&back);
+    for (int j = 0; j < n; j++) {
+        int lb = label_blk(s->on_branch.labels[j]);
+        if (!is_gosub) { targets[j] = lb; continue; }
+        targets[j] = new_blk();
+        begin_blk(targets[j]);
+        gosub_jump(rk, lb);
+    }
+    begin_blk(tab);
+    if (n > 0) hi_emit_jmptab(k, cont, targets, n);
+    else hi_emit(HI_BR, TY_VOID, -1, -1, cont, NULL);
+    bc_live = 0;
+    free(targets);
+    if (is_gosub) {             /* the return comes back to where going on goes */
+        begin_blk(back);
+        goto_blk(cont);
+    }
+    begin_blk(cont);
 }
 
 static void ret_dispatch(void) {
@@ -848,6 +892,12 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_GOSUB:
         gosub_to(label_blk(s->goto_stmt.label));
+        break;
+    case STMT_ON_GOTO:
+        on_branch(s, 0);
+        break;
+    case STMT_ON_GOSUB:
+        on_branch(s, 1);
         break;
     case STMT_RETURN:
         if (bc_ret_blk < 0) bc_ret_blk = new_blk();

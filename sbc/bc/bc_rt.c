@@ -341,3 +341,14 @@ pair_t bcrt_read(int t) {
 }
 
 void bcrt_restore(int offset) { eval_restore(offset); }
+
+/* a value as an integer, as ON ... GOTO makes its index (val_to_integer:
+ * rounding, Overflow, Type mismatch) */
+int bcrt_int(int lo, int hi, int t) {
+    value_t x = take(lo, hi, t);
+    int i;
+    error_t e = val_to_integer(&x, &i);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return i;
+}
