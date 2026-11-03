@@ -368,8 +368,11 @@ wrong. `mem_size` is a multiple of 4 KB from 0x10000000 (256 MB) to
 asks for 256 MB when that is less (until 2026-11-02 every executable had
 exactly 0x10000000).  A machine runs any `mem_size` up to what it
 supports, and refuses a larger one with a message saying so; it
-refuses one over 0x80000000.  What a value below 0x10000000 would mean
-is **Unspecified**.
+refuses one over 0x80000000.  What a value below 0x10000000, or one
+that is not a multiple of 4 KB, would mean is **Unspecified**.
+
+A machine that refuses an executable runs none of it: it writes one line
+saying why to standard error and exits with status 1.
 
 ### 5.2 Section table (28 bytes per entry)
 
@@ -754,7 +757,8 @@ diagnostics (§8.16), not guest output.
 | anything else | | success; meaning per opcode (0 = OK, byte count, fd, …) |
 
 The host puts errno `e` in `length` only if `0 < e < 4096`; otherwise it uses
-`EIO`. Guest library behaviour (for reference): `runtime/` sets C `errno` to
+`EIO`.  The one ERR that carries no errno is `GETCHAR`'s end of input
+(length 0, the quirk below). Guest library behaviour (for reference): `runtime/` sets C `errno` to
 `length` on ERR (to `EIO` if `length` is 0 or ≥ 4096) and to `EINTR` on
 `0xFFFFFFFE`; success leaves `errno` alone. The stage01/stage08 assembly
 helper sets `errno = EIO` on any ERR and `EINTR` on `0xFFFFFFFE`, ignoring
@@ -951,7 +955,8 @@ an older host refuses the bit with `EINVAL`.)
 | Errors | `EBADF` (fd), `EINVAL` (`length` < 8, `off` > CAP−8, whence > 2), lseek errno (`ESPIPE` on a pipe) |
 
 Positions ≥ 2³¹ appear negative to the guest library, which
-reports them as errors.
+reports them as errors; among them, 0xFFFFFFFD–0xFFFFFFFF read as the
+status codes of 8.4.1.  Files that large are not supported.
 
 #### 0x0D FTRUNCATE
 | | |
@@ -1371,9 +1376,12 @@ Response `status` 0; `ENOENT` if none active.
 DENIED if policy denies, else 0 OK. Response `length` 4. Does not consider
 active sessions.
 
-**0xF3 SVC_LIST.** No name needed (`length` not checked). Writes
-`"term\0tube\0"` at `off` (names that do not fit are left out); response
-`length` = bytes written (10). Policy is not applied.
+**0xF3 SVC_LIST.** No name needed (`length` not checked). Writes the
+names of the services the host has at `off`, each followed by a NUL, in
+the order `term`, `tube`, `crypto`: `"term\0tube\0crypto\0"` (17 bytes),
+or `"term\0tube\0"` (10) on a host without crypto.  The list stops at
+the first name that does not fit before CAP.  Response `length` = bytes
+written. Policy is not applied.
 
 **0xF4 SVC_VERSION.** No name and no checks. Response `status` = 1 (protocol
 version), `length` 0.

@@ -300,6 +300,14 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
         return false;
     }
 
+    /* the other engines' ceiling and message (s32x_loader.h); past it the
+     * RAM was sized from -m alone, and "machine has 256MB" blamed -m */
+    if (hdr.mem_size > 0x80000000u) {
+        error_setg(errp,
+                   "Executable needs 0x%08X bytes of address space; "
+                   "at most 0x80000000 (2GB) here", hdr.mem_size);
+        return false;
+    }
     if (hdr.mem_size == 0 || hdr.mem_size > sms->ram_bytes) {
         error_setg(errp,
                    "Executable requests %u bytes but machine has %zu bytes",
