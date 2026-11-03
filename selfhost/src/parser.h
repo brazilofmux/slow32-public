@@ -2923,28 +2923,72 @@ static Node *ps_local_rowptr(char *nm, int ty, int nstars, int is_static) {
     int cols;
     int off;
     int li;
+    int rty;
+    int rcty;
     Node *n;
     if (ps_vla_ahead()) return ps_local_vm_ptr(nm, ty, nstars, is_static);
     cols = ps_inner_dims(0, &ps_dims_sub);     /* T (*name)[M][K]: rows of rows */
-    if (nstars != 1 || is_static) {
+    if (nstars < 1 || is_static) {
         p_error("pointer to array: only a local T (*name)[N] is supported");
         return nd_num(0);
     }
-    off = add_local(nm, ty + TY_PTR);
+    /* T (**name)[N] and deeper (sbasic's name lists): a pointer to the
+     * row pointer.  The row width belongs to what the last star reaches,
+     * so it is in the C type alone; the variable indexes by pointers. */
+    rty = ty + nstars * TY_PTR;
+    off = add_local(nm, rty);
     li = ps_nlocals - 1;
-    ps_lcols[li] = cols;
-    ps_lsub[li] = ps_dims_sub;
-    ps_lcty[li] = ct_ptr(ps_rows_cty(ct_from_mty(ty, 0), cols, ps_dims_sub));
+    ps_lcols[li] = nstars == 1 ? cols : 0;
+    ps_lsub[li] = nstars == 1 ? ps_dims_sub : 0;
+    rcty = ct_ptr(ps_rows_cty(ct_from_mty(ty, 0), cols, ps_dims_sub));
+    while (nstars > 1) { rcty = ct_ptr(rcty); nstars = nstars - 1; }
+    ps_lcty[li] = rcty;
     if (lex_tok != TK_ASSIGN) {
         expect(TK_SEMI);
         return nd_block(NULL);
     }
     next();
-    n = nd_var(nm, off, ty + TY_PTR);
+    n = nd_var(nm, off, rty);
     ps_bind_var(n, li);
     n = nd_assign(n, parse_assign());
     expect(TK_SEMI);
     return nd_expr_stmt(n);
+}
+
+/* T (*name)[M] as a parameter, the cursor on the `[`: a pointer to a
+ * row of M elements -- the spelled-out form of `T name[][M]` -- or,
+ * with more stars inside the parentheses (sbasic's char (**list)[64]),
+ * a pointer to such a pointer, whose row width is in the C type alone.
+ * They were all one pointer, so *list came out the row itself, an
+ * array: "not assignable".  The local was added as a word; p is its
+ * VAR (NULL when unnamed).  Returns the parameter's machine type. */
+static int ps_param_rowptr(Node *p, int pty) {
+    int pcols;
+    int nst;
+    int cty;
+    int k;
+    nst = ps_fnptr_nstar;
+    if (nst < 1) nst = 1;
+    pcols = ps_inner_dims(0, &ps_dims_sub);   /* T (*name)[M][K]: rows of rows */
+    cty = ct_ptr(ps_rows_cty(ct_from_mty(pty, 0), pcols, ps_dims_sub));
+    k = nst;
+    while (k > 1) { cty = ct_ptr(cty); k = k - 1; }
+    pty = pty + nst * TY_PTR;
+    if (nst > 1) {
+        pcols = 0;
+        ps_dims_sub = 0;
+    }
+    if (p != NULL) {
+        ps_ltype[ps_nlocals - 1] = pty;
+        ps_lcols[ps_nlocals - 1] = pcols;
+        ps_lsub[ps_nlocals - 1] = ps_dims_sub;
+        ps_lcty[ps_nlocals - 1] = cty;
+        p->ty = pty;
+        p->arr_cols = pcols;
+        p->arr_sub = ps_dims_sub;
+        p->cty = cty;
+    }
+    return pty;
 }
 
 /* Add a local array. Returns offset of start of array. */
@@ -8678,6 +8722,40 @@ static void ps_static_struct_init(int ty, int gidx) {
     else parse_global_init_struct_at(ty, gidx, 0);
 }
 
+/* A static local's initializer, the '=' read: stored into its global gi.
+ * One chain for every declarator of the list -- the comma loop had a
+ * copy without the structure case, so `static const value_t a = {..},
+ * b = {..};` (sbasic's int_kind) failed on the second brace. */
+static void ps_static_local_init(int ty, int gi) {
+    int glo;
+    int ghi;
+    if (ty_is_struct(ty)) {
+        /* static event_t st_notify = { ev_keyup, ... } (am_map) */
+        ps_ginit_begin(gi);
+        ps_static_struct_init(ty, gi);
+        ps_ginit_finish(gi);
+    } else if (ty_is_llong(ty)) {
+        ghi = parse_const_ll_hi(&glo);
+        ps_set_scalar_init(gi, glo, ghi);
+    } else if (lex_tok == TK_STRING) {
+        /* static const char *zFormat1 = "..." (SQLite's
+         * sqlite3VdbePrintOp): a string, like a file-scope pointer's. */
+        ps_set_str_init(gi, parse_string_literal());
+    } else if (ty_is_fp(ty)) {
+        ps_ginit_begin(gi);
+        ps_fp_init_store_at(ty, gi, 0);
+        ps_ginit_ensure_len(gi, ty_size(ty));
+        ps_ginit_finish(gi);
+    } else if (ty_is_ptr(ty) &&
+               (lex_tok == TK_AMP ||
+                (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
+                 (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
+        ps_ptr_init_at(gi, ty);
+    } else {
+        ps_set_scalar_init(gi, parse_const_int(), 0);
+    }
+}
+
 static Node *parse_stmt(void) {
     int tdac;
     int td_elem;
@@ -9206,34 +9284,7 @@ static_scalar_decl:
             ps_glocal[sl_gi] = 1;
             if (lex_tok == TK_ASSIGN) {
                 next();
-                if (ty_is_struct(ty)) {
-                    /* static event_t st_notify = { ev_keyup, ... }
-                     * (am_map) — full struct initializer machinery. */
-                    ps_ginit_begin(sl_gi);
-                    ps_static_struct_init(ty, sl_gi);
-                    ps_ginit_finish(sl_gi);
-                } else if (ty_is_llong(ty)) {
-                    int glo;
-                    int ghi;
-                    ghi = parse_const_ll_hi(&glo);
-                    ps_set_scalar_init(sl_gi, glo, ghi);
-                } else if (lex_tok == TK_STRING) {
-                    /* static const char *zFormat1 = "..." (SQLite's
-                     * sqlite3VdbePrintOp): a string, like a file-scope pointer's. */
-                    ps_set_str_init(sl_gi, parse_string_literal());
-                } else if (ty_is_fp(ty)) {
-                    ps_ginit_begin(sl_gi);
-                    ps_fp_init_store_at(ty, sl_gi, 0);
-                    ps_ginit_ensure_len(sl_gi, ty_size(ty));
-                    ps_ginit_finish(sl_gi);
-                } else if (ty_is_ptr(ty) &&
-                           (lex_tok == TK_AMP ||
-                            (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
-                             (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
-                    ps_ptr_init_at(sl_gi, ty);
-                } else {
-                    ps_set_scalar_init(sl_gi, parse_const_int(), 0);
-                }
+                ps_static_local_init(ty, sl_gi);
             }
             /* Register, then loop on comma for further declarators:
              * static int lastlevel = -1, lastepisode = -1; (am_map).
@@ -9256,28 +9307,7 @@ static_scalar_decl:
                 ps_glocal[sl_gi] = 1;
                 if (lex_tok == TK_ASSIGN) {
                     next();
-                    if (ty_is_llong(ty)) {
-                        int glo;
-                        int ghi;
-                        ghi = parse_const_ll_hi(&glo);
-                        ps_set_scalar_init(sl_gi, glo, ghi);
-                    } else if (lex_tok == TK_STRING) {
-                        /* static const char *zFormat1 = "..." (SQLite's
-                         * sqlite3VdbePrintOp): a string, like a file-scope pointer's. */
-                        ps_set_str_init(sl_gi, parse_string_literal());
-                    } else if (ty_is_fp(ty)) {
-                        ps_ginit_begin(sl_gi);
-                        ps_fp_init_store_at(ty, sl_gi, 0);
-                        ps_ginit_ensure_len(sl_gi, ty_size(ty));
-                        ps_ginit_finish(sl_gi);
-                    } else if (ty_is_ptr(ty) &&
-                               (lex_tok == TK_AMP ||
-                                (lex_tok == TK_IDENT && find_const(lex_str) < 0 &&
-                                 (find_global(lex_str) >= 0 || ps_static_local_sym(lex_str))))) {
-                        ps_ptr_init_at(sl_gi, ty);
-                    } else {
-                        ps_set_scalar_init(sl_gi, parse_const_int(), 0);
-                    }
+                    ps_static_local_init(ty, sl_gi);
                 }
             }
             expect(TK_SEMI);
@@ -9850,19 +9880,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                 /* T (*name)[M]: a pointer to a row of M elements -- the
                  * spelled-out form of `T name[][M]`.  Retype the local
                  * (added above as a word) and record the row width. */
-                pcols = ps_inner_dims(0, &ps_dims_sub);   /* T (*name)[M][K]: rows of rows */
-                pty = pty + TY_PTR;
-                if (p != NULL) {
-                    ps_ltype[ps_nlocals - 1] = pty;
-                    ps_lcols[ps_nlocals - 1] = pcols;
-                    ps_lsub[ps_nlocals - 1] = ps_dims_sub;
-                    ps_lcty[ps_nlocals - 1] = ct_ptr(ps_rows_cty(ct_from_mty(ty_deref(pty), 0),
-                                                                 pcols, ps_dims_sub));
-                    p->ty = pty;
-                    p->arr_cols = pcols;
-                    p->arr_sub = ps_dims_sub;
-                    p->cty = ps_lcty[ps_nlocals - 1];
-                }
+                pty = ps_param_rowptr(p, pty);
             } else {
             if (lex_tok == TK_LPAREN) {
                 next();
@@ -9955,19 +9973,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                     /* T (*name)[M]: a pointer to a row of M elements -- the
                      * spelled-out form of `T name[][M]`.  Retype the local
                      * (added above as a word) and record the row width. */
-                    pcols = ps_inner_dims(0, &ps_dims_sub);   /* T (*name)[M][K]: rows of rows */
-                    pty = pty + TY_PTR;
-                    if (p != NULL) {
-                        ps_ltype[ps_nlocals - 1] = pty;
-                        ps_lcols[ps_nlocals - 1] = pcols;
-                        ps_lsub[ps_nlocals - 1] = ps_dims_sub;
-                        ps_lcty[ps_nlocals - 1] = ct_ptr(ps_rows_cty(ct_from_mty(ty_deref(pty), 0),
-                                                                     pcols, ps_dims_sub));
-                        p->ty = pty;
-                        p->arr_cols = pcols;
-                        p->arr_sub = ps_dims_sub;
-                        p->cty = ps_lcty[ps_nlocals - 1];
-                    }
+                    pty = ps_param_rowptr(p, pty);
                 } else {
                 if (lex_tok == TK_LPAREN) {
                     int pfpb;
