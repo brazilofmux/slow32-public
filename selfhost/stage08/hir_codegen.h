@@ -493,6 +493,7 @@ static void hcg_into(int reg, int inst) {
         return;
     }
     if (k == HI_SADDR) {
+        lex_str_used[h_val[inst]] = 1;
         cg_s("    lui r");
         cg_n(reg);
         cg_s(", %hi(.LS");
@@ -1784,6 +1785,7 @@ static void hcg_emit_sym(int inst) {
     off = bg_soff[inst];
     if (base < 0) base = inst;
     if (h_kind[base] == HI_SADDR) {
+        lex_str_used[h_val[base]] = 1;
         cg_s(".LS");
         cg_n(h_val[base]);
     } else {
@@ -5202,6 +5204,7 @@ static int gen_global_init(int i) {
         while (off < ps_ginit_count[i]) {
             if (reli < relend && ps_girel_off[reli] == off) {
                 if (ps_girel_kind[reli] == GIRELOC_STRING) {
+                    lex_str_used[ps_girel_idx[reli]] = 1;
                     cg_s("    .word .LS");
                     cg_n(ps_girel_idx[reli]);
                     if (ps_girel_add[reli] != 0) {      /* "hello" + 1 */
@@ -5244,6 +5247,7 @@ static int gen_global_init(int i) {
         hcg_overalign(i);
         if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
         cg_s(ps_gname[i]);
+        lex_str_used[ps_gstr[i]] = 1;
         cg_s(":\n    .word .LS");
         cg_n(ps_gstr[i]);
         cg_c(10);
@@ -5323,9 +5327,26 @@ static void gen_data(void) {
         }
     }
 
-    /* String literals */
+    /* String literals: those referred to.  The code has marked its own
+     * (functions are emitted first); the globals' come after the
+     * strings, so theirs are marked here: relocations to a string, and
+     * a pointer initialized to one. */
+    i = 0;
+    while (i < ps_nglobals) {
+        int ri;
+        if (ps_gstr[i] >= 0) lex_str_used[ps_gstr[i]] = 1;
+        if (ps_ginit_start[i] >= 0) {
+            ri = ps_girel_start[i];
+            while (ri < ps_girel_start[i] + ps_girel_count[i]) {
+                if (ps_girel_kind[ri] == GIRELOC_STRING) lex_str_used[ps_girel_idx[ri]] = 1;
+                ri = ri + 1;
+            }
+        }
+        i = i + 1;
+    }
     i = 0;
     while (i < lex_str_count) {
+        if (!lex_str_used[i]) { i = i + 1; continue; }
         if (lex_str_width[i] > 1) cg_s(".align 2\n");    /* a wide string's units are words or halfwords */
         cg_s(".LS");
         cg_n(i);

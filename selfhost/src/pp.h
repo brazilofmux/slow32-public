@@ -9,22 +9,21 @@
  * pp_install_predefs / next() specials).  Map: docs/DIALECT.md.
  */
 
-#define PP_MAX_DEFS  8192   /* was 2048 */  /* doom's header web defines >512 macros */
 
-static char *pp_dname[PP_MAX_DEFS];
-static int   pp_dval[PP_MAX_DEFS];
-static char *pp_dbody[PP_MAX_DEFS];   /* body text (strdup'd), NULL = int-only */
-static int   pp_dnpar[PP_MAX_DEFS];   /* param count, -1 = object-like */
-static char *pp_dparm[PP_MAX_DEFS];   /* packed param names "a\0b\0" (strdup'd) */
-static int   pp_dvar[PP_MAX_DEFS];    /* 1 = variadic macro (.../__VA_ARGS__) */
-static char *pp_dsig[PP_MAX_DEFS];   /* the definition as compared on redefinition (strdup'd); NULL = none */
+static char **pp_dname;
+static int *pp_dval;
+static char **pp_dbody;   /* body text (strdup'd), NULL = int-only */
+static int *pp_dnpar;   /* param count, -1 = object-like */
+static char **pp_dparm;   /* packed param names "a\0b\0" (strdup'd) */
+static int *pp_dvar;    /* 1 = variadic macro (.../__VA_ARGS__) */
+static char **pp_dsig;   /* the definition as compared on redefinition (strdup'd); NULL = none */
 /* A hash index over the table: SQLite defines 2,800 macros, and a linear
  * scan with strcmp on every identifier token was 93% of its compile
  * (the DBT's PC probe: strcmp 62%, pp_find 31%).  Chains run newest
  * first, so a redefinition still wins as the backward scan did. */
 #define PP_HASH_SZ 16384
 static int   pp_hhead[PP_HASH_SZ];
-static int   pp_dnext[PP_MAX_DEFS];
+static int *pp_dnext;
 static int   pp_hash_ready;
 
 static int pp_hash(char *name) {
@@ -46,6 +45,24 @@ static void pp_hash_reset(void) {
     pp_hash_ready = 1;
 }
 static int   pp_ndefs;
+static int pp_ndefs_cap;
+
+/* room for need entries (tables.h, TAB_PP_DEFS) */
+static void pp_defs_room(int need) {
+    if (need <= pp_ndefs_cap) return;
+    if (pp_ndefs_cap == 0) {
+        tab_add((char **)&pp_dname, (int)sizeof(char *), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dval, (int)sizeof(int), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dbody, (int)sizeof(char *), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dnpar, (int)sizeof(int), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dparm, (int)sizeof(char *), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dvar, (int)sizeof(int), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dsig, (int)sizeof(char *), TAB_PP_DEFS, 0);
+        tab_add((char **)&pp_dnext, (int)sizeof(int), TAB_PP_DEFS, 0);
+    }
+    tab_grow(TAB_PP_DEFS, &pp_ndefs_cap, 1024, need);
+}
+
 
 /* The presumed file name, for __FILE__ and diagnostics (6.10.8.1): the
  * file the lexer is in -- an included file's own path while its text is
@@ -63,9 +80,19 @@ static char pp_curfile[PP_FILE_LEN];
 /* The presumed file names, interned: a node records the index of the
  * one it was read in (Node.file), so a diagnostic after parsing can name
  * it.  pp_file_note runs wherever pp_curfile changes. */
-#define PP_MAX_FILES 1024
-static char *pp_files[PP_MAX_FILES];
+static char **pp_files;
 static int pp_nfiles;
+static int pp_nfiles_cap;
+
+/* room for need entries (tables.h, TAB_PP_FILES) */
+static void pp_files_room(int need) {
+    if (need <= pp_nfiles_cap) return;
+    if (pp_nfiles_cap == 0) {
+        tab_add((char **)&pp_files, (int)sizeof(char *), TAB_PP_FILES, 0);
+    }
+    tab_grow(TAB_PP_FILES, &pp_nfiles_cap, 64, need);
+}
+
 static int pp_file_id;
 
 static void pp_file_note(void) {
@@ -75,7 +102,7 @@ static void pp_file_note(void) {
         if (strcmp(pp_files[i], pp_curfile) == 0) { pp_file_id = i; return; }
         i = i + 1;
     }
-    if (pp_nfiles >= PP_MAX_FILES) { pp_file_id = 0; return; }
+    pp_files_room(pp_nfiles + 1);   /* past a fixed 1024, file 0 was named for them all */
     pp_files[pp_nfiles] = strdup(pp_curfile);
     pp_file_id = pp_nfiles;
     pp_nfiles = pp_nfiles + 1;
@@ -577,10 +604,7 @@ static void pp_add(char *name, int val) {
         pp_dvar[i] = 0;
         return;
     }
-    if (pp_ndefs >= PP_MAX_DEFS) {
-        fdputs("s12cc: too many #defines\n", 2);
-        exit(1);
-    }
+    pp_defs_room(pp_ndefs + 1);
     pp_dname[pp_ndefs] = strdup(name);
     pp_dval[pp_ndefs] = val;
     pp_dbody[pp_ndefs] = 0;
@@ -643,10 +667,21 @@ static void pp_sync(void) {
  * shift) rather than run backwards into the prefix. */
 static int pp_peek_depth;
 
-#define PP_DIS_MAX 256
-static int pp_dis_di[PP_DIS_MAX];
-static int pp_dis_end[PP_DIS_MAX];
+static int *pp_dis_di;
+static int *pp_dis_end;
 static int pp_ndis;
+static int pp_ndis_cap;
+
+/* room for need entries (tables.h, TAB_PP_DIS) */
+static void pp_dis_room(int need) {
+    if (need <= pp_ndis_cap) return;
+    if (pp_ndis_cap == 0) {
+        tab_add((char **)&pp_dis_di, (int)sizeof(int), TAB_PP_DIS, 0);
+        tab_add((char **)&pp_dis_end, (int)sizeof(int), TAB_PP_DIS, 0);
+    }
+    tab_grow(TAB_PP_DIS, &pp_ndis_cap, 256, need);
+}
+
 /* Entries below pp_dis_base belong to the text around a call whose
  * argument is being pre-expanded (pp_preexpand): they hold for the
  * whole argument and are not popped by positions in it. */
@@ -664,12 +699,9 @@ static int pp_xend;
  * during m's own rescan and is not replaced again (6.10.3.4p2) -- it
  * recursed until the stack ran out. */
 static void pp_dis_push(int di, int end) {
-    if (pp_ndis >= PP_DIS_MAX) {
-        /* Dropping the entry and still emitting the body is the vfsList
-         * infinite-expansion class, now silent (GitHub issue 48). */
-        fdputs("s12cc: too many nested macro expansions\n", 2);
-        exit(1);
-    }
+    /* (Dropping the entry and still emitting the body was the vfsList
+     * infinite-expansion class, GitHub issue 48; the stack grows now.) */
+    pp_dis_room(pp_ndis + 1);
     pp_dis_di[pp_ndis] = di;
     pp_dis_end[pp_ndis] = end;
     pp_ndis = pp_ndis + 1;
@@ -2186,29 +2218,20 @@ static void pp_emit_string_token(char *s) {
     slen = 0;
     i = 0;
     while (s[i] != 0) {
-        if (lex_strpool_len < LEX_POOL_SZ - 1) {
-            lex_strpool[lex_strpool_len] = s[i];
-            lex_strpool_len = lex_strpool_len + 1;
-        }
+        lex_pool_put(s[i]);
         if (slen < LEX_STR_SZ - 1) {
             lex_str[slen] = s[i];
             slen = slen + 1;
         }
         i = i + 1;
     }
-    if (lex_strpool_len < LEX_POOL_SZ) {
-        lex_strpool[lex_strpool_len] = 0;
-        lex_strpool_len = lex_strpool_len + 1;
-    }
+    lex_pool_put(0);
     lex_str[slen] = 0;
-    if (lex_str_count < LEX_POOL_MAX) {
-        lex_str_off[lex_str_count] = pool_start;
-        lex_str_len[lex_str_count] = slen;
-        lex_val = lex_str_count;
-        lex_str_count = lex_str_count + 1;
-    } else {
-        lex_val = 0;
-    }
+    lex_str_room(lex_str_count + 1);
+    lex_str_off[lex_str_count] = pool_start;
+    lex_str_len[lex_str_count] = slen;
+    lex_val = lex_str_count;
+    lex_str_count = lex_str_count + 1;
     lex_tok = TK_STRING;
 }
 
@@ -2395,9 +2418,19 @@ static int pp_include_operand(char *b, char *fname, int *angle) {
 }
 
 /* Files that said #pragma once, by the path they were included as. */
-#define PP_MAX_ONCE 512
-static char *pp_once[PP_MAX_ONCE];
+static char **pp_once;
 static int pp_nonce;
+static int pp_nonce_cap;
+
+/* room for need entries (tables.h, TAB_PP_ONCE) */
+static void pp_once_room(int need) {
+    if (need <= pp_nonce_cap) return;
+    if (pp_nonce_cap == 0) {
+        tab_add((char **)&pp_once, (int)sizeof(char *), TAB_PP_ONCE, 0);
+    }
+    tab_grow(TAB_PP_ONCE, &pp_nonce_cap, 64, need);
+}
+
 
 static int pp_is_once(char *path) {
     int i;
@@ -3408,7 +3441,8 @@ static void pp_directive(void) {
     if (strcmp(name, "pragma") == 0) {
         pp_skip_ws();
         pp_read_name(name);
-        if (strcmp(name, "once") == 0 && pp_nonce < PP_MAX_ONCE) {
+        if (strcmp(name, "once") == 0) {
+            pp_once_room(pp_nonce + 1);   /* past a fixed 512, ignored */
             pp_once[pp_nonce] = strdup(pp_curfile);
             pp_nonce = pp_nonce + 1;
         }

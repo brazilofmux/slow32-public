@@ -589,30 +589,54 @@ static int cg_label(void) {
 }
 
 /* --- Parser state --- */
-#define P_MAX_LOCALS  1024   /* was 128 */
-#define P_MAX_GLOBALS 32768   /* was 8192 */
-#define PS_MAX_CONSTS 16384   /* was 2048 */
 
-static int   ps_lscope[P_MAX_LOCALS];  /* the scope it was declared in (ps_scope_id) */
-static char *ps_lname[P_MAX_LOCALS];  /* local var names */
-static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
-static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
-static int   ps_lcty[P_MAX_LOCALS];   /* ... their C types (ctype.h) */
-static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
-static int   ps_lcols[P_MAX_LOCALS];  /* 2D arrays: last-dim count (0 = 1D) */
-static int   ps_lsub[P_MAX_LOCALS];   /* past 2 dimensions: ast_sub_cols entry */
-static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
-static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
-static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
-static int   ps_lreg[P_MAX_LOCALS];    /* 1 = declared register: no & (6.5.3.2p1) */
-static int   ps_lvolb[P_MAX_LOCALS];   /* volatile before the stars, at declaration */
-static int   ps_lvolp[P_MAX_LOCALS];   /* ... and after them */
-static int   ps_lfpbase[P_MAX_LOCALS]; /* function-pointer local: base into ps_fptypes, -1 = none */
-static int   ps_lfpn[P_MAX_LOCALS];
+static int *ps_lscope;  /* the scope it was declared in (ps_scope_id) */
+static char **ps_lname;  /* local var names */
+static int *ps_loff;   /* local var offsets from fp */
+static int *ps_ltype;  /* local var types */
+static int *ps_lcty;   /* ... their C types (ctype.h) */
+static int *ps_larr;   /* 1 if array (addr, no load) */
+static int *ps_lcols;  /* 2D arrays: last-dim count (0 = 1D) */
+static int *ps_lsub;   /* past 2 dimensions: ast_sub_cols entry */
+static int *ps_lsize;  /* total byte size (arrays: elem_sz*count) */
+static int *ps_lstatic; /* 1 = static local, 0 = normal */
+static char **ps_lsname;  /* mangled name (static locals only) */
+static int *ps_lreg;    /* 1 = declared register: no & (6.5.3.2p1) */
+static int *ps_lvolb;   /* volatile before the stars, at declaration */
+static int *ps_lvolp;   /* ... and after them */
+static int *ps_lfpbase; /* function-pointer local: base into ps_fptypes, -1 = none */
+static int *ps_lfpn;
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_stack_max;            /* high-water mark (fn->locals_size) */
-static int   ps_lslot[P_MAX_LOCALS];  /* per-declaration id; never reused */
+static int *ps_lslot;  /* per-declaration id; never reused */
+static int ps_nlocals_cap;
+
+/* room for need entries (tables.h, TAB_PS_LOCALS) */
+static void ps_locals_room(int need) {
+    if (need <= ps_nlocals_cap) return;
+    if (ps_nlocals_cap == 0) {
+        tab_add((char **)&ps_lscope, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lname, (int)sizeof(char *), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_loff, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_ltype, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lcty, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_larr, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lcols, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lsub, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lsize, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lstatic, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lsname, (int)sizeof(char *), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lreg, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lvolb, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lvolp, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lfpbase, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lfpn, (int)sizeof(int), TAB_PS_LOCALS, 0);
+        tab_add((char **)&ps_lslot, (int)sizeof(int), TAB_PS_LOCALS, 0);
+    }
+    tab_grow(TAB_PS_LOCALS, &ps_nlocals_cap, 256, need);
+}
+
 static int   ps_fn_setjmp;            /* the function being parsed has called setjmp */
 static int   ps_slot_gen;
 static int   ps_li_slot;              /* slot_id of the local being initialized */
@@ -622,28 +646,28 @@ static int   ps_struct_ret;           /* 1 if current func returns struct via hi
 static int   ps_retptr_off;           /* stack offset of hidden __retptr param */
 static int   ps_comp_lit_id;          /* unique hidden locals for compound literals */
 
-static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
-static int   ps_gvolb[P_MAX_GLOBALS]; /* volatile before the stars, at declaration */
-static int   ps_gvolp[P_MAX_GLOBALS]; /* ... and after them */
-static int   ps_galign[P_MAX_GLOBALS]; /* _Alignas, in bytes: more than a word is .align'd (0 = none) */
-static int   ps_gconst[P_MAX_GLOBALS]; /* the object itself is const: .rodata (ISSUES-99) */
+static char **ps_gname; /* global var names */
+static int *ps_gvolb; /* volatile before the stars, at declaration */
+static int *ps_gvolp; /* ... and after them */
+static int *ps_galign; /* _Alignas, in bytes: more than a word is .align'd (0 = none) */
+static int *ps_gconst; /* the object itself is const: .rodata (ISSUES-99) */
 /* The const-ness of the declarator about to be added, set by
  * parse_top_decl just before its add_*_global call and consumed (reset)
  * by that call, so it cannot reach a later declaration. */
 static int   ps_decl_objconst;
-static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
-static int   ps_gcty[P_MAX_GLOBALS];  /* ... their C types (ctype.h) */
-static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
-static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
-static int   ps_ginit_hi[P_MAX_GLOBALS]; /* hi word for 64-bit global initializers */
-static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
-static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
-static int   ps_gextern[P_MAX_GLOBALS]; /* 1 = declaration only, no storage */
-static int   ps_gcols[P_MAX_GLOBALS];   /* 2D arrays: last-dim count (0 = 1D) */
-static int   ps_gsub[P_MAX_GLOBALS];    /* past 2 dimensions: ast_sub_cols entry */
-static int   ps_ghasinit[P_MAX_GLOBALS]; /* 1 = completed initializer (incl. = 0) */
-static int   ps_gfpbase[P_MAX_GLOBALS]; /* function-pointer global: base into ps_fptypes */
-static int   ps_gfpn[P_MAX_GLOBALS];
+static int *ps_gtype; /* global var types */
+static int *ps_gcty;  /* ... their C types (ctype.h) */
+static int *ps_gsize; /* size in bytes (0=scalar, >0=array) */
+static int *ps_ginit; /* initial value for scalars */
+static int *ps_ginit_hi; /* hi word for 64-bit global initializers */
+static int *ps_gstr;  /* string init: pool index, -1 if none */
+static int *ps_glocal; /* 1 = static local (suppress .global) */
+static int *ps_gextern; /* 1 = declaration only, no storage */
+static int *ps_gcols;   /* 2D arrays: last-dim count (0 = 1D) */
+static int *ps_gsub;    /* past 2 dimensions: ast_sub_cols entry */
+static int *ps_ghasinit; /* 1 = completed initializer (incl. = 0) */
+static int *ps_gfpbase; /* function-pointer global: base into ps_fptypes */
+static int *ps_gfpn;
 static int   ps_nglobals;
 
 /* Static local variable state */
@@ -656,23 +680,73 @@ static int   ps_sl_count;             /* global static-local counter */
  * initializes ~80KB of LUTs) */
 static unsigned char *ps_ginit_pool;
 static int ps_ginit_pool_cap;
-static int ps_ginit_start[P_MAX_GLOBALS]; /* -1 = no init bytes */
-static int ps_ginit_count[P_MAX_GLOBALS]; /* byte count */
+static int *ps_ginit_start; /* -1 = no init bytes */
+static int *ps_ginit_count; /* byte count */
 static int ps_ginit_pool_len;
 
-#define PS_MAX_INIT_RELOCS 65536   /* was 8192 */
 #define GIRELOC_STRING 0
 #define GIRELOC_GLOBAL 1
 #define GIRELOC_SYMBOL 2
-static int ps_girel_start[P_MAX_GLOBALS];
-static int ps_girel_count[P_MAX_GLOBALS];
-static int ps_girel_off[PS_MAX_INIT_RELOCS];
-static int ps_girel_kind[PS_MAX_INIT_RELOCS];
-static int ps_girel_idx[PS_MAX_INIT_RELOCS];
-static int ps_girel_size[PS_MAX_INIT_RELOCS];
-static int   ps_girel_add[PS_MAX_INIT_RELOCS]; /* byte addend for GIRELOC_SYMBOL (&arr[k]) */
-static char *ps_girel_name[PS_MAX_INIT_RELOCS];
+static int *ps_girel_start;
+static int *ps_girel_count;
+/* The size an array's declaration wrote, kept for the next to agree
+ * with: the first one written, in bytes. */
+static int *ps_gdeclsz;
+static int ps_nglobals_cap;
+
+/* room for need entries (tables.h, TAB_PS_GLOBALS) */
+static void ps_globals_room(int need) {
+    if (need <= ps_nglobals_cap) return;
+    if (ps_nglobals_cap == 0) {
+        tab_add((char **)&ps_gname, (int)sizeof(char *), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gvolb, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gvolp, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_galign, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gconst, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gtype, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gcty, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gsize, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_ginit, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_ginit_hi, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gstr, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_glocal, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gextern, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gcols, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gsub, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_ghasinit, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gfpbase, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gfpn, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_ginit_start, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_ginit_count, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_girel_start, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_girel_count, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+        tab_add((char **)&ps_gdeclsz, (int)sizeof(int), TAB_PS_GLOBALS, 0);
+    }
+    tab_grow(TAB_PS_GLOBALS, &ps_nglobals_cap, 1024, need);
+}
+static int *ps_girel_off;
+static int *ps_girel_kind;
+static int *ps_girel_idx;
+static int *ps_girel_size;
+static int *ps_girel_add; /* byte addend for GIRELOC_SYMBOL (&arr[k]) */
+static char **ps_girel_name;
 static int ps_ngirelocs;
+static int ps_ngirelocs_cap;
+
+/* room for need entries (tables.h, TAB_PS_GIREL) */
+static void ps_girel_room(int need) {
+    if (need <= ps_ngirelocs_cap) return;
+    if (ps_ngirelocs_cap == 0) {
+        tab_add((char **)&ps_girel_off, (int)sizeof(int), TAB_PS_GIREL, 0);
+        tab_add((char **)&ps_girel_kind, (int)sizeof(int), TAB_PS_GIREL, 0);
+        tab_add((char **)&ps_girel_idx, (int)sizeof(int), TAB_PS_GIREL, 0);
+        tab_add((char **)&ps_girel_size, (int)sizeof(int), TAB_PS_GIREL, 0);
+        tab_add((char **)&ps_girel_add, (int)sizeof(int), TAB_PS_GIREL, 0);
+        tab_add((char **)&ps_girel_name, (int)sizeof(char *), TAB_PS_GIREL, 0);
+    }
+    tab_grow(TAB_PS_GIREL, &ps_ngirelocs_cap, 4096, need);
+}
+
 
 /* goto/label table (per-function, reset at each function) */
 static char **ps_lblname;     /* grown (tables.h, TAB_PS_LABELS) */
@@ -683,20 +757,48 @@ static int   ps_nlabels;
 static int   ps_labels_cap;
 
 /* Enum constant table */
-static char *ps_cname[PS_MAX_CONSTS];
-static int   ps_cval[PS_MAX_CONSTS];
+static char **ps_cname;
+static int *ps_cval;
 static int   ps_nconsts;
+static int ps_nconsts_cap;
+
+/* room for need entries (tables.h, TAB_PS_CONSTS) */
+static void ps_consts_room(int need) {
+    if (need <= ps_nconsts_cap) return;
+    if (ps_nconsts_cap == 0) {
+        tab_add((char **)&ps_cname, (int)sizeof(char *), TAB_PS_CONSTS, 0);
+        tab_add((char **)&ps_cval, (int)sizeof(int), TAB_PS_CONSTS, 0);
+    }
+    tab_grow(TAB_PS_CONSTS, &ps_nconsts_cap, 1024, need);
+}
+
 
 /* Typedef table */
-#define PS_MAX_TYPEDEFS 4096   /* was 1024 */
-static int   ps_tddepth[PS_MAX_TYPEDEFS];  /* block depth declared at; -1 = the compiler's own */
-static char *ps_tdname[PS_MAX_TYPEDEFS];
-static int   ps_tdtype[PS_MAX_TYPEDEFS];
-static int   ps_tdcty[PS_MAX_TYPEDEFS];   /* the typedef's C type, declarator included */
-static int   ps_tdarr[PS_MAX_TYPEDEFS];  /* array typedefs: element count (0 = scalar) */
-static int   ps_tdfpbase[PS_MAX_TYPEDEFS]; /* function-pointer typedef: ps_fptypes base */
-static int   ps_tdfpn[PS_MAX_TYPEDEFS];
+static int *ps_tddepth;  /* block depth declared at; -1 = the compiler's own */
+static char **ps_tdname;
+static int *ps_tdtype;
+static int *ps_tdcty;   /* the typedef's C type, declarator included */
+static int *ps_tdarr;  /* array typedefs: element count (0 = scalar) */
+static int *ps_tdfpbase; /* function-pointer typedef: ps_fptypes base */
+static int *ps_tdfpn;
 static int   ps_ntypedefs;
+static int ps_ntypedefs_cap;
+
+/* room for need entries (tables.h, TAB_PS_TYPEDEFS) */
+static void ps_typedefs_room(int need) {
+    if (need <= ps_ntypedefs_cap) return;
+    if (ps_ntypedefs_cap == 0) {
+        tab_add((char **)&ps_tddepth, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdname, (int)sizeof(char *), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdtype, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdcty, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdarr, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdfpbase, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+        tab_add((char **)&ps_tdfpn, (int)sizeof(int), TAB_PS_TYPEDEFS, 0);
+    }
+    tab_grow(TAB_PS_TYPEDEFS, &ps_ntypedefs_cap, 256, need);
+}
+
 static int   ps_in_body;    /* parsing a function's body: its locals are in scope (is_type) */
 /* Set by parse_type: element count when the type came from an array
  * typedef (typedef byte sha1_digest_t[20]); a declaration of that
@@ -717,7 +819,6 @@ static int   ps_type_fpn;
  * TAB_PS_FUNCS).  A fixed 16384 of them dropped every declaration past
  * the last without a word, and calls to those were "undeclared". */
 static int    ps_funcs_cap;
-#define PS_MAX_FPARAM 65536   /* was 16384 */
 static int   *ps_fdefined; /* 1 once its body has been read */
 static char **ps_fname;
 static int   *ps_ftype;
@@ -728,11 +829,25 @@ static int   *ps_fpn;    /* declared param count */
 static int   *ps_fretfpbase; /* return type is a function pointer */
 static int   *ps_fretfpn;
 
-static int   ps_fptypes[PS_MAX_FPARAM];
-static int   ps_fpctypes[PS_MAX_FPARAM]; /* ... their C types, unqualified (6.7.6.3p15) */
-static int   ps_fpret[PS_MAX_FPARAM];  /* return type of the fnptr signature at this base; 0 = TY_INT */
-static int   ps_fpvar[PS_MAX_FPARAM];  /* 1 = the signature at this base ends in `...` */
+static int *ps_fptypes;
+static int *ps_fpctypes; /* ... their C types, unqualified (6.7.6.3p15) */
+static int *ps_fpret;  /* return type of the fnptr signature at this base; 0 = TY_INT */
+static int *ps_fpvar;  /* 1 = the signature at this base ends in `...` */
 static int   ps_nfptypes;
+static int ps_nfptypes_cap;
+
+/* room for need entries (tables.h, TAB_PS_FPARAM) */
+static void ps_fparam_room(int need) {
+    if (need <= ps_nfptypes_cap) return;
+    if (ps_nfptypes_cap == 0) {
+        tab_add((char **)&ps_fptypes, (int)sizeof(int), TAB_PS_FPARAM, 0);
+        tab_add((char **)&ps_fpctypes, (int)sizeof(int), TAB_PS_FPARAM, 0);
+        tab_add((char **)&ps_fpret, (int)sizeof(int), TAB_PS_FPARAM, 0);
+        tab_add((char **)&ps_fpvar, (int)sizeof(int), TAB_PS_FPARAM, 0);
+    }
+    tab_grow(TAB_PS_FPARAM, &ps_nfptypes_cap, 1024, need);
+}
+
 static int   ps_nfuncs;
 static int   ps_pending_retfpbase = -1;
 static int   ps_pending_retfpn;
@@ -791,7 +906,8 @@ static void ps_pragma_operator(void) {
     sp = lex_strpool + lex_str_off[lex_val];
     n = lex_str_len[lex_val];
     while (n > 0 && (*sp == 32 || *sp == 9)) { sp = sp + 1; n = n - 1; }
-    if (n >= 4 && strncmp(sp, "once", 4) == 0 && (n == 4 || sp[4] == 32) && pp_nonce < PP_MAX_ONCE) {
+    if (n >= 4 && strncmp(sp, "once", 4) == 0 && (n == 4 || sp[4] == 32)) {
+        pp_once_room(pp_nonce + 1);
         pp_once[pp_nonce] = strdup(pp_curfile);
         pp_nonce = pp_nonce + 1;
     }
@@ -1034,7 +1150,7 @@ static int ps_parse_fp_params(int *np_out) {
     base = ps_fp_store(ptys, pctys, np);
     /* A call through a variadic signature packs its doubles the way a
      * direct call to a variadic function does (hl_expr, ND_CALL_PTR). */
-    if (base >= 0 && base < PS_MAX_FPARAM) ps_fpvar[base] = var;
+    if (base >= 0 && base < ps_nfptypes) ps_fpvar[base] = var;
     ps_type_cty = outer_cty;
     if (pblk != pbuf) free(pblk);
     return base;
@@ -1093,33 +1209,32 @@ static int is_type(void) {
 
 /* --- Enum helpers --- */
 
+/* name indexes (tables.h, tab_nix) over globals, enum constants,
+ * typedefs and functions: each lookup the last entry of the name, as
+ * the scans from the top found */
+static struct tab_nix ps_gix;
+static struct tab_nix ps_cix;
+static struct tab_nix ps_tix;
+static struct tab_nix ps_fix;
+
 static int find_const(char *name) {
-    int i;
-    i = ps_nconsts - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_cname[i]) == 0) return i;
-        i = i - 1;
-    }
-    return -1;
+    return tab_nix_find(&ps_cix, ps_cname, ps_nconsts, name);
+}
+
+static int ps_func_index(char *name) {
+    return tab_nix_find(&ps_fix, ps_fname, ps_nfuncs, name);
 }
 
 /* --- Typedef helpers --- */
 
 static int find_typedef(char *name) {
     int i;
-    i = ps_ntypedefs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_tdname[i]) == 0) return ps_tdtype[i];
-        i = i - 1;
-    }
-    return -1;
+    i = tab_nix_find(&ps_tix, ps_tdname, ps_ntypedefs, name);
+    return i >= 0 ? ps_tdtype[i] : -1;
 }
 
 static void add_typedef(char *name, int ty) {
-    if (ps_ntypedefs >= PS_MAX_TYPEDEFS) {
-        p_error("too many typedefs");
-        return;
-    }
+    ps_typedefs_room(ps_ntypedefs + 1);
     ps_tdname[ps_ntypedefs] = strdup(name);
     ps_tddepth[ps_ntypedefs] = ps_block_depth;
     ps_tdtype[ps_ntypedefs] = ty;
@@ -1133,21 +1248,15 @@ static void add_typedef(char *name, int ty) {
 /* Function return type table helpers */
 static int find_func_type(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) return ps_ftype[i];
-        i = i - 1;
-    }
+    i = ps_func_index(name);
+    if (i >= 0) return ps_ftype[i];
     return TY_INT;  /* default to int if not found */
 }
 
 static int is_known_func(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) return 1;
-        i = i - 1;
-    }
+    i = ps_func_index(name);
+    if (i >= 0) return 1;
     return 0;
 }
 
@@ -1155,11 +1264,8 @@ static int is_known_func(char *name) {
  * defaults unprototyped functions to non-variadic). */
 static int find_func_varargs(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) return ps_fvar[i];
-        i = i - 1;
-    }
+    i = ps_func_index(name);
+    if (i >= 0) return ps_fvar[i];
     return 0;
 }
 
@@ -1167,13 +1273,10 @@ static int find_func_varargs(char *name) {
  * it is unknown or has no prototype. */
 static int find_func_nparams(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) {
-            if (ps_fpbase[i] < 0) return -1;
-            return ps_fpn[i];
-        }
-        i = i - 1;
+    i = ps_func_index(name);
+    if (i >= 0) {
+        if (ps_fpbase[i] < 0) return -1;
+        return ps_fpn[i];
     }
     return -1;
 }
@@ -1183,9 +1286,14 @@ static int find_func_nparams(char *name) {
 static int ps_fp_store(int *ptys, int *pctys, int np) {
     int base;
     int i;
-    if (np < 0 || ps_nfptypes + np > PS_MAX_FPARAM) return -1;
+    if (np < 0) return -1;
+    /* Every list a base of its own, one entry even with no parameters:
+     * the variadic flag and the return type are kept by base, and an
+     * empty list's was the next list's -- `double (*f)(void)` then
+     * `int (*g)(int)` gave f g's int return, and f() came back garbage. */
+    ps_fparam_room(ps_nfptypes + (np > 0 ? np : 1));
     base = ps_nfptypes;
-    if (base < PS_MAX_FPARAM) ps_fpvar[base] = 0;
+    ps_fpvar[base] = 0;
     i = 0;
     while (i < np) {
         ps_fptypes[ps_nfptypes] = ptys[i];
@@ -1194,6 +1302,7 @@ static int ps_fp_store(int *ptys, int *pctys, int np) {
         ps_nfptypes = ps_nfptypes + 1;
         i = i + 1;
     }
+    if (np == 0) ps_nfptypes = ps_nfptypes + 1;
     return base;
 }
 
@@ -1208,11 +1317,11 @@ static int ps_fp_cty(int ret_cty, int base, int np, int var) {
  * base ps_parse_fp_params returns.  Unset (BSS 0) is TY_INT, which is
  * what ND_CALL_PTR used to hard-code — GitHub issue 69. */
 static void ps_fp_set_ret(int base, int ret_ty) {
-    if (base >= 0 && base < PS_MAX_FPARAM) ps_fpret[base] = ret_ty;
+    if (base >= 0 && base < ps_nfptypes) ps_fpret[base] = ret_ty;
 }
 
 static int ps_fp_get_ret(int base) {
-    if (base < 0 || base >= PS_MAX_FPARAM) return TY_INT;
+    if (base < 0 || base >= ps_nfptypes) return TY_INT;
     return ps_fpret[base];
 }
 
@@ -1257,8 +1366,7 @@ static void ps_func_redecl_check(int i, int ret_cty, int *ptys, int *pctys, int 
 /* A function's body: one per function (6.9p3). */
 static void ps_func_defined(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0 && strcmp(name, ps_fname[i]) != 0) i = i - 1;
+    i = ps_func_index(name);
     if (i < 0) return;
     if (ps_fdefined[i]) p_error("redefinition of function");
     ps_fdefined[i] = 1;
@@ -1278,22 +1386,19 @@ static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int
         i = i + 1;
     }
     /* Update existing entry if already registered */
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) {
-            ps_func_redecl_check(i, ret_cty, ptys, pctys, np);
-            ps_ftype[i] = ty;
-            ps_fvar[i] = ps_is_varargs;
-            if (np >= 0) {
-                ps_fpbase[i] = ps_fp_store(ptys, pctys, np);
-                ps_fpn[i] = (ps_fpbase[i] >= 0) ? np : 0;
-            }
-            ps_fcty[i] = ps_fp_cty(ret_cty, ps_fpbase[i], ps_fpn[i], ps_is_varargs);
-            ps_fretfpbase[i] = ps_pending_retfpbase;
-            ps_fretfpn[i] = ps_pending_retfpn;
-            return;
+    i = ps_func_index(name);
+    if (i >= 0) {
+        ps_func_redecl_check(i, ret_cty, ptys, pctys, np);
+        ps_ftype[i] = ty;
+        ps_fvar[i] = ps_is_varargs;
+        if (np >= 0) {
+            ps_fpbase[i] = ps_fp_store(ptys, pctys, np);
+            ps_fpn[i] = (ps_fpbase[i] >= 0) ? np : 0;
         }
-        i = i - 1;
+        ps_fcty[i] = ps_fp_cty(ret_cty, ps_fpbase[i], ps_fpn[i], ps_is_varargs);
+        ps_fretfpbase[i] = ps_pending_retfpbase;
+        ps_fretfpn[i] = ps_pending_retfpn;
+        return;
     }
     ps_funcs_room();
     ps_fname[ps_nfuncs] = strdup(name);
@@ -1312,11 +1417,8 @@ static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int
 /* A function's C type, or 0 when it has none recorded. */
 static int find_func_cty(char *name) {
     int i;
-    i = ps_nfuncs - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_fname[i]) == 0) return ps_fcty[i];
-        i = i - 1;
-    }
+    i = ps_func_index(name);
+    if (i >= 0) return ps_fcty[i];
     return 0;
 }
 
@@ -1519,7 +1621,7 @@ static int ps_cplx_struct(int kind) {
     int esz;
     if (kind == CT_FLOAT && ps_cplx_sif > 0) return ps_cplx_sif - 1;
     if (kind != CT_FLOAT && ps_cplx_sid > 0) return ps_cplx_sid - 1;
-    if (stm_count + 2 > ST_MAX_MEMBERS) p_error("too many struct members");
+    stm_room(stm_count + 2);
     ty = kind == CT_FLOAT ? TY_FLOAT : TY_DOUBLE;
     esz = kind == CT_FLOAT ? 4 : 8;
     si = add_struct(kind == CT_FLOAT ? "complex float" : "complex double");
@@ -1732,10 +1834,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
         p_error("anonymous aggregate member must be struct or union");
         return;
     }
-    if (stm_count >= ST_MAX_MEMBERS) {
-        p_error("too many struct members");
-        return;
-    }
+    stm_room(stm_count + 1);
 
     stm_name[stm_count] = strdup("");
     stm_fpbase[stm_count] = -1;
@@ -1758,10 +1857,7 @@ static void add_anonymous_aggregate_members(int owner_si, int nested_ty, int bas
     i = 0;
     while (i < limit) {
         if (stm_owner[i] == nsi && stm_name[i][0] != 0) {
-            if (stm_count >= ST_MAX_MEMBERS) {
-                p_error("too many struct members");
-                return;
-            }
+            stm_room(stm_count + 1);
             stm_name[stm_count] = strdup(stm_name[i]);
             stm_fpbase[stm_count] = stm_fpbase[i];
             stm_fpn[stm_count] = stm_fpn[i];
@@ -2123,7 +2219,7 @@ static int parse_type(void) {
             val = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 if (lex_tok != TK_IDENT) p_error("expected enum constant name");
-                if (ps_nconsts >= PS_MAX_CONSTS) p_error("too many enum constants");
+                ps_consts_room(ps_nconsts + 1);
                 ps_cname[ps_nconsts] = strdup(lex_str);
                 next();
                 if (lex_tok == TK_ASSIGN) {
@@ -2258,10 +2354,7 @@ static int parse_type(void) {
                         p_error("expected member name");
                         return TY_INT;
                     }
-                    if (stm_count >= ST_MAX_MEMBERS) {
-                        p_error("too many struct members");
-                        return TY_INT;
-                    }
+                    stm_room(stm_count + 1);
                     stm_name[stm_count] = strdup(lex_str);
                     stm_fpbase[stm_count] = -1;
                     stm_fpn[stm_count] = 0;
@@ -2597,10 +2690,7 @@ static int parse_type(void) {
                         p_error("expected member name");
                         return TY_INT;
                     }
-                    if (stm_count >= ST_MAX_MEMBERS) {
-                        p_error("too many struct members");
-                        return TY_INT;
-                    }
+                    stm_room(stm_count + 1);
                     stm_name[stm_count] = strdup(lex_str);
                     stm_fpbase[stm_count] = -1;
                     stm_fpn[stm_count] = 0;
@@ -2821,13 +2911,7 @@ static int find_local(char *name) {
 }
 
 static int find_global(char *name) {
-    int i;
-    i = ps_nglobals - 1;
-    while (i >= 0) {
-        if (strcmp(name, ps_gname[i]) == 0) return i;
-        i = i - 1;
-    }
-    return -1;
+    return tab_nix_find(&ps_gix, ps_gname, ps_nglobals, name);
 }
 
 /* A static local's object is a global under its mangled name, so an
@@ -2876,10 +2960,7 @@ static int add_local(char *name, int ty) {
     int idx;
     int sz;
     int al;
-    if (ps_nlocals >= P_MAX_LOCALS) {
-        p_error("too many locals");
-        return 0;
-    }
+    ps_locals_room(ps_nlocals + 1);
     sz = ty_size(ty);
     if (ty == TY_VOID) p_error("variable has incomplete type 'void'");
     ps_local_redecl_check(name);
@@ -2925,7 +3006,7 @@ static int add_local(char *name, int ty) {
 static int ps_add_local_alias_cty(char *name, int ty, char *sym, int cty) {
     int idx;
     idx = ps_nlocals;
-    if (idx >= P_MAX_LOCALS) { p_error("too many locals"); return -1; }
+    ps_locals_room(idx + 1);
     ps_lname[idx] = strdup(name);
     ps_lvolb[idx] = ps_type_volb;
     ps_lvolp[idx] = ps_type_volp;
@@ -3098,10 +3179,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     int idx;
     int total;
     int elem_sz;
-    if (ps_nlocals >= P_MAX_LOCALS) {
-        p_error("too many locals");
-        return 0;
-    }
+    ps_locals_room(ps_nlocals + 1);
     al = ps_local_alignas(elem_ty);
     elem_sz = ty_size(elem_ty);
     require_complete_type(elem_ty, "incomplete element type");
@@ -3204,10 +3282,7 @@ static int ps_global_cty(int ty, int size_bytes) {
 
 static int add_global(char *name, int ty, int size_bytes) {
     int idx;
-    if (ps_nglobals >= P_MAX_GLOBALS) {
-        p_error("too many globals");
-        return 0;
-    }
+    ps_globals_room(ps_nglobals + 1);
     idx = ps_nglobals;
     ps_gname[idx] = strdup(name);
     ps_gconst[idx] = ps_decl_objconst;
@@ -3308,11 +3383,9 @@ static int ps_global_types_agree(int a, int b) {
     return sema_compat(ps_array_elem(a, 1), ps_array_elem(b, 1));
 }
 
-/* The size an array's declaration wrote, kept for the next to agree
- * with: the first one written, in bytes.  An array declared without
- * one is given an element at once (ps_tentative_count), and says so in
- * ps_decl_unsized, so its 1 is not taken for a written [1]. */
-static int ps_gdeclsz[P_MAX_GLOBALS];
+/* An array declared without a size is given an element at once
+ * (ps_tentative_count), and says so here, so its 1 is not taken for a
+ * written [1] (ps_gdeclsz). */
 static int ps_decl_unsized;
 
 static void ps_note_declsz(int idx, int ty, int size_bytes) {
@@ -5169,9 +5242,13 @@ static void ps_ginit_insert_reloc_at(int gidx, int rel_off, int kind,
     int i;
 
     if (rel_off < 0) p_error("negative initializer offset");
-    if (ps_ngirelocs >= PS_MAX_INIT_RELOCS) p_error("too many init relocs");
+    ps_girel_room(ps_ngirelocs + 1);
     ps_ginit_ensure_len(gidx, rel_off + sz);
     pos = ps_girel_start[gidx];
+    /* In order (nearly always: an initializer is read front to back),
+     * the end; the scan from the global's first relocation made a table
+     * of 70,000 string pointers quadratic. */
+    if (ps_ngirelocs > pos && ps_girel_off[ps_ngirelocs - 1] <= rel_off) pos = ps_ngirelocs;
     while (pos < ps_ngirelocs && ps_girel_off[pos] <= rel_off) pos = pos + 1;
     i = ps_ngirelocs;
     while (i > pos) {
@@ -6349,7 +6426,7 @@ static int ps_wide_concat(int *idxs, int nidx) {
         i = i + 1;
     }
     if (w == 1) return -1;
-    if (lex_str_count >= LEX_POOL_MAX) p_error("too many string literals");
+    lex_str_room(lex_str_count + 1);
     start = lex_strpool_len;
     units = 0;
     i = 0;
@@ -6359,8 +6436,7 @@ static int ps_wide_concat(int *idxs, int nidx) {
         if (wi == w) {
             j = 0;
             while (j < (lex_str_len[idxs[i]] + 1) - w) {      /* its units, not its terminator */
-                lex_strpool[lex_strpool_len] = lex_strpool[src + j];
-                lex_strpool_len = lex_strpool_len + 1;
+                lex_pool_put(lex_strpool[src + j]);
                 j = j + 1;
             }
             units = units + (lex_str_len[idxs[i]] + 1) / w - 1;
@@ -6375,8 +6451,7 @@ static int ps_wide_concat(int *idxs, int nidx) {
         i = i + 1;
     }
     lex_pool_unit(0, w - 1);
-    lex_strpool[lex_strpool_len] = 0;
-    lex_strpool_len = lex_strpool_len + 1;
+    lex_pool_put(0);
     lex_str_off[lex_str_count] = start;
     lex_str_len[lex_str_count] = units * w + w - 1;
     lex_str_width[lex_str_count] = w;
@@ -6384,8 +6459,15 @@ static int ps_wide_concat(int *idxs, int nidx) {
     return lex_str_count - 1;
 }
 
+/* The adjacent literals being joined: a 64-entry local once (SQLite's
+ * shell builds one SQL statement from hundreds), then a static 1024
+ * (4KB a frame of the recursive expression parser overran the stack),
+ * now grown (tables.h, TAB_PS_STRCAT). */
+static int *ps_strcat_idx;
+static int ps_strcat_cap;
+
 static int parse_string_literal(void) {
-    static int idxs[1024];   /* was a 64-entry local: SQLite's shell builds one SQL statement from hundreds of adjacent literals; static because 4KB per frame of the recursive expression parser overran the stack */
+    int *idxs;
     int nidx;
     int total;
     int start;
@@ -6393,10 +6475,12 @@ static int parse_string_literal(void) {
     int j;
     int src;
 
+    idxs = ps_strcat_idx;
     nidx = 0;
     total = 0;
     while (lex_tok == TK_STRING) {
-        if (nidx >= 1024) p_error("too many adjacent string literals");
+        tab_room1((char **)&ps_strcat_idx, (int)sizeof(int), TAB_PS_STRCAT, &ps_strcat_cap, 1024, nidx + 1);
+        idxs = ps_strcat_idx;
         idxs[nidx] = lex_val;
         total = total + lex_str_len[lex_val];
         nidx = nidx + 1;
@@ -6405,22 +6489,19 @@ static int parse_string_literal(void) {
     if (nidx == 1) return idxs[0];
     i = ps_wide_concat(idxs, nidx);
     if (i >= 0) return i;
-    if (lex_str_count >= LEX_POOL_MAX) p_error("too many string literals");
-    if (lex_strpool_len + total + 1 > LEX_POOL_SZ) p_error("string pool overflow");
+    lex_str_room(lex_str_count + 1);
     start = lex_strpool_len;
     i = 0;
     while (i < nidx) {
         src = lex_str_off[idxs[i]];
         j = 0;
         while (j < lex_str_len[idxs[i]]) {
-            lex_strpool[lex_strpool_len] = lex_strpool[src + j];
-            lex_strpool_len = lex_strpool_len + 1;
+            lex_pool_put(lex_strpool[src + j]);
             j = j + 1;
         }
         i = i + 1;
     }
-    lex_strpool[lex_strpool_len] = 0;
-    lex_strpool_len = lex_strpool_len + 1;
+    lex_pool_put(0);
     i = lex_str_intern(start, total);
     if (i >= 0) {
         lex_strpool_len = start;    /* identical literal already pooled */
@@ -9581,6 +9662,7 @@ static Node *parse_block(void) {
      * it (6.2.1p4); they leaked, so an inner `enum { X = 100 }` was X
      * for the rest of the file, and an inner `struct t { ... }`
      * redefined the outer t (W11) */
+    tab_nix_sync(&ps_cix, ps_cname, saved_nconsts);   /* the block's names out, before they are overwritten */
     ps_nconsts = saved_nconsts;
     ps_end_block_tags();
     ps_block_depth = ps_block_depth - 1;
@@ -10723,6 +10805,7 @@ static Node *parse_program(void) {
     int usize_ty;
     int isize_ty;
 
+    tab_nix_sync(&ps_gix, ps_gname, 0);
     ps_nglobals = 0;
     ps_ginit_pool_len = 0;
     ps_ngirelocs = 0;

@@ -194,7 +194,6 @@ static int hl_narrow(int ty, int lv);
  * contain a loop are the helpers clang -Os deletes and we did not.
  * ================================================================= */
 #define HL_INL_MAX_DEPTH 3
-#define HL_INL_MAX_SYM   8192
 static Node *hl_prog;            /* program root; set by the codegen driver */
 static int   hl_inline_max;      /* node budget; 0 disables inlining */
 /* GitHub issue 73: a static with ONE call site just moves, so it gets
@@ -225,12 +224,28 @@ static int   hl_stat_inl_direct; /* splices that skipped the result slot */
  * address-taken (ND_FUNC_REF and data relocs), and a per-function ok
  * bit: only those statics are spliced, so DCE can drop the body. */
 static int   hl_inl_nsym;
-static char *hl_inl_name[HL_INL_MAX_SYM];
-static Node *hl_inl_fn[HL_INL_MAX_SYM];
-static int   hl_inl_ncalls[HL_INL_MAX_SYM];
-static char  hl_inl_taken[HL_INL_MAX_SYM];
-static char  hl_inl_recur[HL_INL_MAX_SYM];
-static char  hl_inl_ok[HL_INL_MAX_SYM];
+static char **hl_inl_name;
+static Node **hl_inl_fn;
+static int *hl_inl_ncalls;
+static char *hl_inl_taken;
+static char *hl_inl_recur;
+static char *hl_inl_ok;
+static int hl_inl_nsym_cap;
+
+/* room for need entries (tables.h, TAB_HL_INLSYM) */
+static void hl_inl_room(int need) {
+    if (need <= hl_inl_nsym_cap) return;
+    if (hl_inl_nsym_cap == 0) {
+        tab_add((char **)&hl_inl_name, (int)sizeof(char *), TAB_HL_INLSYM, 0);
+        tab_add((char **)&hl_inl_fn, (int)sizeof(Node *), TAB_HL_INLSYM, 0);
+        tab_add((char **)&hl_inl_ncalls, (int)sizeof(int), TAB_HL_INLSYM, 0);
+        tab_add((char **)&hl_inl_taken, (int)sizeof(char), TAB_HL_INLSYM, 0);
+        tab_add((char **)&hl_inl_recur, (int)sizeof(char), TAB_HL_INLSYM, 0);
+        tab_add((char **)&hl_inl_ok, (int)sizeof(char), TAB_HL_INLSYM, 0);
+    }
+    tab_grow(TAB_HL_INLSYM, &hl_inl_nsym_cap, 512, need);
+}
+
 
 /* Callee offsets are relocated by one constant; 0 when not inlining. */
 static int hl_map_off(int off) {
@@ -1551,7 +1566,8 @@ static int hl_inl_find_sym(char *name, int add) {
         if (strcmp(hl_inl_name[i], name) == 0) return i;
         i = i + 1;
     }
-    if (!add || hl_inl_nsym >= HL_INL_MAX_SYM) return -1;
+    if (!add) return -1;
+    hl_inl_room(hl_inl_nsym + 1);
     hl_inl_name[hl_inl_nsym] = name;
     hl_inl_fn[hl_inl_nsym] = 0;
     hl_inl_ncalls[hl_inl_nsym] = 0;

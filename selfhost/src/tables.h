@@ -39,8 +39,32 @@
 #define TAB_PP_SIG   20    /* pp.h: a definition's signature, for redefinition */
 #define TAB_PP_PARMS 21    /* pp.h: a function-like macro's parameter names */
 #define TAB_HL_PARAM 22    /* hir.h: a function's incoming parameter slots */
+#define TAB_PP_DEFS  23    /* pp.h: the macros defined, pp_ndefs */
+#define TAB_CT_PLIST 24    /* ctype.h: parameter-type lists */
+#define TAB_CT_REC   25    /* ctype.h: C type records, ct_n */
+#define TAB_ST_MEMB  26    /* ast.h, struct member */
+#define TAB_PS_TYPEDEFS 27    /* parser.h, typedef */
+#define TAB_PS_CONSTS 28    /* parser.h, enum constant */
+#define TAB_PS_GIREL 29    /* parser.h, initializer relocation */
+#define TAB_HL_INLSYM 30    /* hir_lower.h, inline candidate */
+#define TAB_PS_LOCALS 31    /* parser.h, local */
+#define TAB_PS_GLOBALS 32    /* parser.h, global */
+#define TAB_PS_FPARAM 33    /* parser.h, parameter type */
+#define TAB_LEX_STR  34    /* c_lexer.rl, string literal */
+#define TAB_LEX_POOL 35    /* c_lexer.rl, the string-literal pool's bytes */
+#define TAB_PS_STRCAT 39   /* parser.h, the adjacent literals being joined */
+#define TAB_PP_FILES 36    /* pp.h, source file */
+#define TAB_PP_DIS   37    /* pp.h, nested macro expansion */
+#define TAB_PP_ONCE  38    /* pp.h, #pragma once file */
 
 #define TAB_TABLES 512
+#define TAB_KIND_MAX 128   /* kinds are numbered below this */
+
+/* each kind's owner, by its cap variable: a kind number given twice
+ * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
+ * were reallocated at the joined literals' size) is caught at the
+ * second owner's first growth */
+static int *tab_kind_capp[TAB_KIND_MAX];
 static char **tab_ptr[TAB_TABLES];
 static int tab_esz[TAB_TABLES];
 static int tab_kind[TAB_TABLES];
@@ -70,6 +94,23 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_PP_SIG) return "macro signature";
     if (kind == TAB_PP_PARMS) return "macro parameter";
     if (kind == TAB_HL_PARAM) return "parameter slot";
+    if (kind == TAB_PP_DEFS) return "#define";
+    if (kind == TAB_CT_PLIST) return "parameter type list";
+    if (kind == TAB_CT_REC) return "C type";
+    if (kind == TAB_ST_MEMB) return "struct member";
+    if (kind == TAB_PS_TYPEDEFS) return "typedef";
+    if (kind == TAB_PS_CONSTS) return "enum constant";
+    if (kind == TAB_PS_GIREL) return "initializer relocation";
+    if (kind == TAB_HL_INLSYM) return "inline candidate";
+    if (kind == TAB_PS_LOCALS) return "local";
+    if (kind == TAB_PS_GLOBALS) return "global";
+    if (kind == TAB_PS_FPARAM) return "parameter type";
+    if (kind == TAB_LEX_STR) return "string literal";
+    if (kind == TAB_LEX_POOL) return "string literal bytes";
+    if (kind == TAB_PS_STRCAT) return "adjacent string literal";
+    if (kind == TAB_PP_FILES) return "source file";
+    if (kind == TAB_PP_DIS) return "nested macro expansion";
+    if (kind == TAB_PP_ONCE) return "#pragma once file";
     return "?";
 }
 
@@ -138,6 +179,14 @@ static int tab_try(int kind, int oldcap, int cap) {
  * time */
 static void tab_grow(int kind, int *capp, int first, int need) {
     int cap;
+    if (kind < 0 || kind >= TAB_KIND_MAX ||
+        (tab_kind_capp[kind] != 0 && tab_kind_capp[kind] != capp)) {
+        fdputs("s12cc: table kind ", 2);
+        fdputuint(2, (unsigned)kind);
+        fdputs(" has two owners (tables.h)\n", 2);
+        exit(1);
+    }
+    tab_kind_capp[kind] = capp;
     cap = *capp ? *capp : first;
     while (cap < need) cap = cap + cap / 2;
     if (cap == *capp) return;
@@ -186,4 +235,88 @@ static int *tab_iblk_grow(int *old, int nt, int cap, int n, int heap) {
     }
     if (heap) free(old);
     return nb;
+}
+
+/* A name index over a table of names (char **, entries 0..count-1, each
+ * set once and never changed): lookups as a scan from the last entry to
+ * the first would make -- the highest index with the name -- in a hash
+ * of newest-first chains.  It catches up on new entries at each lookup,
+ * and lets entries go when count goes down (a block's names, from the
+ * top: the newest of each chain).  The scans were quadratic in a
+ * translation unit's globals, constants, typedefs and functions. */
+struct tab_nix {
+    int *head;          /* bucket -> entry, -1 none */
+    int cap;            /* buckets, a power of two */
+    int *next;          /* entry -> next entry in its chain */
+    int ncap;           /* entries next has room for */
+    int hashed;         /* entries 0..hashed-1 are in */
+};
+
+static unsigned tab_nix_hash(char *s) {
+    unsigned h;
+    h = 2166136261u;
+    while (*s) {
+        h = (h ^ (unsigned)(*s & 255)) * 16777619u;
+        s = s + 1;
+    }
+    return h;
+}
+
+static void tab_nix_add(struct tab_nix *x, char **names, int k) {
+    int b;
+    b = (int)(tab_nix_hash(names[k]) & (unsigned)(x->cap - 1));
+    x->next[k] = x->head[b];
+    x->head[b] = k;
+}
+
+static void tab_nix_sync(struct tab_nix *x, char **names, int count) {
+    int k;
+    int b;
+    while (x->hashed > count) {         /* the top entries went away */
+        k = x->hashed - 1;
+        b = (int)(tab_nix_hash(names[k]) & (unsigned)(x->cap - 1));
+        x->head[b] = x->next[k];
+        x->hashed = k;
+    }
+    if (count > x->ncap) {
+        x->next = (int *)realloc(x->next, (unsigned long)(2 * count) * sizeof(int));
+        if (!x->next) {
+            fdputs("s12cc: out of memory (name index)\n", 2);
+            exit(1);
+        }
+        x->ncap = 2 * count;
+    }
+    if (count > x->cap) {               /* at most one entry a bucket, on average */
+        k = x->cap ? x->cap : 1024;
+        while (k < count) k = k * 2;
+        k = k * 2;
+        if (x->head) free(x->head);
+        x->head = (int *)malloc((unsigned long)k * sizeof(int));
+        if (!x->head) {
+            fdputs("s12cc: out of memory (name index)\n", 2);
+            exit(1);
+        }
+        x->cap = k;
+        k = 0;
+        while (k < x->cap) { x->head[k] = -1; k = k + 1; }
+        k = 0;
+        while (k < x->hashed) { tab_nix_add(x, names, k); k = k + 1; }
+    }
+    while (x->hashed < count) {
+        tab_nix_add(x, names, x->hashed);
+        x->hashed = x->hashed + 1;
+    }
+}
+
+/* the highest index whose name is `name`, or -1 */
+static int tab_nix_find(struct tab_nix *x, char **names, int count, char *name) {
+    int k;
+    if (count <= 0) return -1;
+    tab_nix_sync(x, names, count);
+    k = x->head[(int)(tab_nix_hash(name) & (unsigned)(x->cap - 1))];
+    while (k >= 0) {
+        if (strcmp(names[k], name) == 0) return k;
+        k = x->next[k];
+    }
+    return -1;
 }

@@ -151,8 +151,9 @@ void fdputuint(int f, int v);
 
 #define LEX_SRC_SZ   12000000   /* was 1100000 */
 #define LEX_STR_SZ   256
-#define LEX_POOL_SZ  4194304   /* was 524288 */
-#define LEX_POOL_MAX 65536   /* was 16384 */
+/* The string-literal pool and the table of literals grow (tables.h):
+ * they were 4MB and 65536, and their writers dropped what did not fit
+ * without a word. */
 
 static char lex_src[LEX_SRC_SZ];
 static int  lex_len;
@@ -180,18 +181,54 @@ static char *lex_warn_ts;   /* 1: the identifier was painted (pp_rescan_region),
 static int  lex_pos;
 
 /* String pool */
-static char lex_strpool[LEX_POOL_SZ];
+static char *lex_strpool;          /* grown (tables.h, TAB_LEX_POOL) */
+static int lex_strpool_cap;
 static int  lex_strpool_len;
-static int  lex_str_off[LEX_POOL_MAX];
-static int  lex_str_len[LEX_POOL_MAX];
+static int *lex_str_off;
+static int *lex_str_len;
 /* bytes per element: 1 for "..." and u8"...", 2 for u"...", 4 for L"..."
  * and U"..." (6.4.5).  A wide string's code units are pooled little-
  * endian, its length width*n + width-1 so the emitter's closing 0 byte
  * completes the terminating unit -- and sizeof, length + 1, is right. */
-static int  lex_str_width[LEX_POOL_MAX];
-static int  lex_str_pfx[LEX_POOL_MAX];    /* its prefix: 0, 'L', 'u', 'U', or 8 for u8 */
+static int *lex_str_width;
+static int *lex_str_pfx;    /* its prefix: 0, 'L', 'u', 'U', or 8 for u8 */
 static int  lex_chr_prefix;    /* L, u or U before a character constant, 0 for none */
 static int  lex_str_count;
+static int lex_str_count_cap;
+
+/* room for need entries (tables.h, TAB_LEX_STR) */
+/* the interning hash's chain and each literal's hash (lex_str_intern) */
+static int *lex_str_hnext;
+static unsigned *lex_str_hval;
+/* 1 once the code or data refers to it: only those are emitted (a piece
+ * of a concatenation never is, nor a literal only sizeof'd) */
+static char *lex_str_used;
+
+static void lex_str_room(int need) {
+    if (need <= lex_str_count_cap) return;
+    if (lex_str_count_cap == 0) {
+        tab_add((char **)&lex_str_hnext, (int)sizeof(int), TAB_LEX_STR, 0);
+        tab_add(&lex_str_used, 1, TAB_LEX_STR, 0);
+        tab_add((char **)&lex_str_hval, (int)sizeof(unsigned), TAB_LEX_STR, 0);
+        tab_add((char **)&lex_str_off, (int)sizeof(int), TAB_LEX_STR, 0);
+        tab_add((char **)&lex_str_len, (int)sizeof(int), TAB_LEX_STR, 0);
+        tab_add((char **)&lex_str_width, (int)sizeof(int), TAB_LEX_STR, 0);
+        tab_add((char **)&lex_str_pfx, (int)sizeof(int), TAB_LEX_STR, 0);
+    }
+    tab_grow(TAB_LEX_STR, &lex_str_count_cap, 1024, need);
+}
+
+/* room in the pool for n more bytes */
+static void lex_pool_room(int n) {
+    tab_room1(&lex_strpool, 1, TAB_LEX_POOL, &lex_strpool_cap, 65536, lex_strpool_len + n);
+}
+
+static void lex_pool_put(int c) {
+    lex_pool_room(1);
+    lex_strpool[lex_strpool_len] = c;
+    lex_strpool_len = lex_strpool_len + 1;
+}
+
 
 /* Ragel persistent state */
 static char *lex_rp;    /* scan cursor (Ragel p) */
@@ -1151,27 +1188,84 @@ static void lex_parse_fnum(char *ts, char *te) {
 /* === Helper: parse string literal from ts..te (includes quotes) === */
 
 /* Identical string literals share one pool entry (one .rodata copy, one
- * address), as clang and gcc do.  Returns the existing index, or -1.
- * Only for literals that were not truncated at LEX_STR_SZ, so equal
- * recorded lengths mean equal literals. */
+ * address), as clang and gcc do.  Returns the existing index, the
+ * lowest that matches, or -1.  Only for literals that were not
+ * truncated at LEX_STR_SZ, so equal recorded lengths mean equal
+ * literals.  A hash of chains (lex_str_hhead, by length and bytes)
+ * that catches up on the literals registered since the last lookup,
+ * whichever path registered them: it was a scan of every literal, and
+ * 70,000 of them took most of a minute. */
+static int *lex_str_hhead;
+static int lex_str_hcap;        /* buckets, a power of two */
+static int lex_str_hashed;      /* literals in the hash */
+
+static unsigned lex_str_hash(int off, int slen) {
+    unsigned h;
+    int j;
+    h = 2166136261u ^ (unsigned)slen;
+    j = 0;
+    while (j < slen) {
+        h = (h ^ (unsigned)(lex_strpool[off + j] & 255)) * 16777619u;
+        j = j + 1;
+    }
+    return h;
+}
+
+static void lex_str_hash_add(int k) {
+    int b;
+    b = (int)(lex_str_hval[k] & (unsigned)(lex_str_hcap - 1));
+    lex_str_hnext[k] = lex_str_hhead[b];
+    lex_str_hhead[b] = k;
+}
+
+static void lex_str_hash_sync(void) {
+    int k;
+    if (lex_str_count > lex_str_hcap) {
+        k = lex_str_hcap ? lex_str_hcap : 1024;
+        while (k < lex_str_count) k = k * 2;
+        if (lex_str_hhead) free(lex_str_hhead);
+        lex_str_hhead = (int *)malloc((unsigned long)k * sizeof(int));
+        if (!lex_str_hhead) {
+            fdputs("s12cc: out of memory (string literals)\n", 2);
+            exit(1);
+        }
+        lex_str_hcap = k;
+        k = 0;
+        while (k < lex_str_hcap) { lex_str_hhead[k] = -1; k = k + 1; }
+        k = 0;
+        while (k < lex_str_hashed) { lex_str_hash_add(k); k = k + 1; }
+    }
+    while (lex_str_hashed < lex_str_count) {
+        lex_str_hval[lex_str_hashed] = lex_str_hash(lex_str_off[lex_str_hashed], lex_str_len[lex_str_hashed]);
+        lex_str_hash_add(lex_str_hashed);
+        lex_str_hashed = lex_str_hashed + 1;
+    }
+}
+
 static int lex_str_intern(int pool_start, int slen) {
     int k;
     int j;
     int a;
     int b;
+    int best;
+    unsigned h;
     if (slen >= LEX_STR_SZ - 1) return -1;
-    k = 0;
-    while (k < lex_str_count) {
-        if (lex_str_len[k] == slen) {
+    if (lex_str_count == 0) return -1;
+    lex_str_hash_sync();
+    h = lex_str_hash(pool_start, slen);
+    best = -1;
+    k = lex_str_hhead[(int)(h & (unsigned)(lex_str_hcap - 1))];
+    while (k >= 0) {
+        if (lex_str_hval[k] == h && lex_str_len[k] == slen && (best < 0 || k < best)) {
             a = lex_str_off[k];
             b = pool_start;
             j = 0;
             while (j < slen && lex_strpool[a + j] == lex_strpool[b + j]) j = j + 1;
-            if (j == slen) return k;
+            if (j == slen) best = k;
         }
-        k = k + 1;
+        k = lex_str_hnext[k];
     }
-    return -1;
+    return best;
 }
 
 /* A source character from UTF-8, for a wide literal: the code point,
@@ -1258,7 +1352,7 @@ static int lex_parse_esc_wide(char *s, int *posout) {
  * and its digits.  Returns the bytes written. */
 static int lex_pool_utf8(int cp) {
     int n;
-    if (lex_strpool_len + 4 >= LEX_POOL_SZ) return 0;
+    lex_pool_room(5);
     if (cp < 128) {
         lex_strpool[lex_strpool_len] = cp;
         n = 1;
@@ -1286,9 +1380,8 @@ static int lex_pool_utf8(int cp) {
 static void lex_pool_unit(int u, int width) {
     int i;
     i = 0;
-    while (i < width && lex_strpool_len < LEX_POOL_SZ - 1) {
-        lex_strpool[lex_strpool_len] = u & 255;
-        lex_strpool_len = lex_strpool_len + 1;
+    while (i < width) {
+        lex_pool_put(u & 255);
         u = u >> 8;
         i = i + 1;
     }
@@ -1327,18 +1420,16 @@ static void lex_parse_wide_str(char *ts, char *te, int width) {
         }
     }
     lex_pool_unit(0, width - 1);    /* the terminator, less the byte the emitter adds */
-    lex_strpool[lex_strpool_len] = 0;
-    lex_strpool_len = lex_strpool_len + 1;
+    lex_pool_put(0);
     lex_str[0] = 0;
     lex_slen = 0;
-    if (lex_str_count < LEX_POOL_MAX) {
-        lex_str_off[lex_str_count] = pool_start;
-        lex_str_len[lex_str_count] = units * width + width - 1;
-        lex_str_width[lex_str_count] = width;
-        lex_str_pfx[lex_str_count] = ts[0];
-        lex_val = lex_str_count;
-        lex_str_count = lex_str_count + 1;
-    }
+    lex_str_room(lex_str_count + 1);
+    lex_str_off[lex_str_count] = pool_start;
+    lex_str_len[lex_str_count] = units * width + width - 1;
+    lex_str_width[lex_str_count] = width;
+    lex_str_pfx[lex_str_count] = ts[0];
+    lex_val = lex_str_count;
+    lex_str_count = lex_str_count + 1;
     lex_tok = TK_STRING;
 }
 
@@ -1380,19 +1471,13 @@ static void lex_parse_str(char *ts, char *te) {
         } else {
             pos = pos + 1;
         }
-        if (lex_strpool_len < LEX_POOL_SZ - 1) {
-            lex_strpool[lex_strpool_len] = ch;
-            lex_strpool_len = lex_strpool_len + 1;
-        }
+        lex_pool_put(ch);
         if (slen < LEX_STR_SZ - 1) {
             lex_str[slen] = ch;
             slen = slen + 1;
         }
     }
-    if (lex_strpool_len < LEX_POOL_SZ) {
-        lex_strpool[lex_strpool_len] = 0;
-        lex_strpool_len = lex_strpool_len + 1;
-    }
+    lex_pool_put(0);
     lex_str[slen] = 0;
     lex_slen = slen;
     dup = ts[0] == 117 ? -1 : lex_str_intern(pool_start, slen);   /* a u8 one keeps its own entry, and its prefix */
@@ -1402,14 +1487,13 @@ static void lex_parse_str(char *ts, char *te) {
         lex_tok = TK_STRING;
         return;
     }
-    if (lex_str_count < LEX_POOL_MAX) {
-        lex_str_off[lex_str_count] = pool_start;
-        lex_str_len[lex_str_count] = slen;
-        lex_str_width[lex_str_count] = 1;
-        lex_str_pfx[lex_str_count] = ts[0] == 117 ? 8 : 0;
-        lex_val = lex_str_count;
-        lex_str_count = lex_str_count + 1;
-    }
+    lex_str_room(lex_str_count + 1);
+    lex_str_off[lex_str_count] = pool_start;
+    lex_str_len[lex_str_count] = slen;
+    lex_str_width[lex_str_count] = 1;
+    lex_str_pfx[lex_str_count] = ts[0] == 117 ? 8 : 0;
+    lex_val = lex_str_count;
+    lex_str_count = lex_str_count + 1;
     lex_tok = TK_STRING;
 }
 
@@ -1721,6 +1805,10 @@ void lex_init(char *src, int len) {
 
     lex_strpool_len = 0;
     lex_str_count = 0;
+    lex_str_hashed = 0;            /* the interning hash starts over */
+    if (lex_str_hhead) free(lex_str_hhead);
+    lex_str_hhead = 0;
+    lex_str_hcap = 0;
 
     lex_rp = lex_src;
     lex_rpe = lex_src + lex_len;

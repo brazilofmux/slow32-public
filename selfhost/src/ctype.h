@@ -54,20 +54,39 @@
 /* --- Function flags --- */
 #define CF_VARIADIC 1
 
-#define CT_MAX       16384   /* records: distinct unqualified types */
-#define CT_HASH      32768   /* open-addressed intern table, a power of two */
-#define CT_MAX_PLIST 65536   /* parameter-type list pool */
+/* Records, the parameter-list pool and the intern hash all grow (tables.h
+ * kinds TAB_CT_REC and TAB_CT_PLIST; the hash, a power of two, is rebuilt
+ * at twice the size whenever the records reach half of it).  They were
+ * 16384 records and 65536 list entries: SQLite came within 16 of both. */
 
 static int ct_n;                       /* records in use; record 0 is unused */
-static int ct_kind[CT_MAX];
-static int ct_base[CT_MAX];
-static int ct_count[CT_MAX];
-static int ct_parm[CT_MAX];
-static int ct_nparm[CT_MAX];           /* -1: declared without a prototype */
-static int ct_flags[CT_MAX];
-static int ct_hash[CT_HASH];           /* record index, 0 = empty */
-static int ct_plist[CT_MAX_PLIST];
+
+static int *ct_kind;
+static int *ct_base;
+static int *ct_count;
+static int *ct_parm;
+static int *ct_nparm;           /* -1: declared without a prototype */
+static int *ct_flags;
+static int ct_n_cap;
+
+/* room for need entries (tables.h, TAB_CT_REC) */
+static void ct_rec_room(int need) {
+    if (need <= ct_n_cap) return;
+    if (ct_n_cap == 0) {
+        tab_add((char **)&ct_kind, (int)sizeof(int), TAB_CT_REC, 0);
+        tab_add((char **)&ct_base, (int)sizeof(int), TAB_CT_REC, 0);
+        tab_add((char **)&ct_count, (int)sizeof(int), TAB_CT_REC, 0);
+        tab_add((char **)&ct_parm, (int)sizeof(int), TAB_CT_REC, 0);
+        tab_add((char **)&ct_nparm, (int)sizeof(int), TAB_CT_REC, 0);
+        tab_add((char **)&ct_flags, (int)sizeof(int), TAB_CT_REC, 0);
+    }
+    tab_grow(TAB_CT_REC, &ct_n_cap, 1024, need);
+}
+static int *ct_hash;                   /* record index, 0 = empty */
+static int ct_hash_cap;                /* entries, a power of two */
+static int *ct_plist;
 static int ct_nplist;
+static int ct_plist_cap;
 
 /* The basic types, interned at ct_init: ct_basic[CT_INT] and so on. */
 static int ct_basic[CT_NKINDS];
@@ -110,20 +129,45 @@ static int ct_same_plist(int a, int b, int n) {
 
 /* The one record for (kind, base, count, parameters, flags); parm is an
  * index into ct_plist holding nparm entries (nparm -1 or 0: none). */
-static int ct_intern(int kind, int base, int count, int parm, int nparm, int flags) {
+static unsigned ct_key(int kind, int base, int count, int parm, int nparm, int flags) {
     unsigned h;
     int i;
-    int slot;
-    int r;
-    int np;
     h = ct_mix(ct_mix(ct_mix(ct_mix(ct_mix(2166136261u, kind), base), count), nparm), flags);
-    np = nparm > 0 ? nparm : 0;
     i = 0;
-    while (i < np) {
+    while (i < nparm) {
         h = ct_mix(h, ct_plist[parm + i]);
         i = i + 1;
     }
-    slot = (int)(h & (CT_HASH - 1));
+    return h;
+}
+
+/* the hash rebuilt with cap entries, every record in it again */
+static void ct_rehash(int cap) {
+    int r;
+    int slot;
+    if (ct_hash) free(ct_hash);
+    ct_hash = (int *)calloc((unsigned long)cap, sizeof(int));
+    if (!ct_hash) ct_full("C types (out of memory)");
+    ct_hash_cap = cap;
+    r = 1;
+    while (r < ct_n) {
+        slot = (int)(ct_key(ct_kind[r], ct_base[r], ct_count[r], ct_parm[r],
+                            ct_nparm[r] > 0 ? ct_nparm[r] : 0, ct_flags[r]) & (unsigned)(cap - 1));
+        while (ct_hash[slot] != 0) slot = (slot + 1) & (cap - 1);
+        ct_hash[slot] = r;
+        r = r + 1;
+    }
+}
+
+/* The one record for (kind, base, count, parameters, flags); parm is an
+ * index into ct_plist holding nparm entries (nparm -1 or 0: none). */
+static int ct_intern(int kind, int base, int count, int parm, int nparm, int flags) {
+    int slot;
+    int r;
+    int np;
+    np = nparm > 0 ? nparm : 0;
+    if (2 * (ct_n + 1) > ct_hash_cap) ct_rehash(ct_hash_cap ? 2 * ct_hash_cap : 4096);
+    slot = (int)(ct_key(kind, base, count, parm, np, flags) & (unsigned)(ct_hash_cap - 1));
     while (1) {
         r = ct_hash[slot];
         if (r == 0) break;
@@ -131,9 +175,9 @@ static int ct_intern(int kind, int base, int count, int parm, int nparm, int fla
             ct_nparm[r] == nparm && ct_flags[r] == flags &&
             (np == 0 || ct_same_plist(ct_parm[r], parm, np)))
             return r << 3;
-        slot = (slot + 1) & (CT_HASH - 1);
+        slot = (slot + 1) & (ct_hash_cap - 1);
     }
-    if (ct_n >= CT_MAX) ct_full("C types");
+    ct_rec_room(ct_n + 1);
     r = ct_n;
     ct_n = ct_n + 1;
     ct_kind[r] = kind;
@@ -195,7 +239,7 @@ static int ct_func(int ret, int *parms, int nparm, int variadic) {
     int t;
     start = ct_nplist;
     if (nparm > 0) {
-        if (ct_nplist + nparm > CT_MAX_PLIST) ct_full("parameter types");
+        tab_room1((char **)&ct_plist, (int)sizeof(int), TAB_CT_PLIST, &ct_plist_cap, 4096, ct_nplist + nparm);
         i = 0;
         while (i < nparm) {
             ct_plist[ct_nplist + i] = parms[i];

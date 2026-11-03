@@ -32,7 +32,8 @@
 /* TY_STRUCT_BASE + i must stay below TY_PTR (0x1000).  4096 let i >= 4088
  * encode as a pointer (GitHub issue 50). */
 #define ST_MAX_STRUCTS (TY_PTR - TY_STRUCT_BASE)
-#define ST_MAX_MEMBERS 32768
+/* struct members grow (tables.h, TAB_ST_MEMB): a full fixed table was
+ * reported, but SQLite came within 16 of its 32768 */
 
 static char *st_name[ST_MAX_STRUCTS];
 static int   st_nfields[ST_MAX_STRUCTS];
@@ -44,15 +45,15 @@ static int   st_is_union[ST_MAX_STRUCTS]; /* 1 if union, 0 if struct */
 static int   st_cplx[ST_MAX_STRUCTS];
 static int   st_count;
 
-static char *stm_name[ST_MAX_MEMBERS];
-static int   stm_type[ST_MAX_MEMBERS];
-static int   stm_cty[ST_MAX_MEMBERS];   /* the member's C type (ctype.h), docs/TYPES.md */
-static int   stm_vol[ST_MAX_MEMBERS];  /* declared volatile */
-static int   stm_off[ST_MAX_MEMBERS];
-static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
-static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
-static int   stm_arr_cols[ST_MAX_MEMBERS]; /* 2D members: last-dim count (0 = 1D) */
-static int   stm_arr_sub[ST_MAX_MEMBERS];  /* more than 2 dimensions: ast_sub_cols entry */
+static char **stm_name;
+static int *stm_type;
+static int *stm_cty;   /* the member's C type (ctype.h), docs/TYPES.md */
+static int *stm_vol;  /* declared volatile */
+static int *stm_off;
+static int *stm_is_arr; /* 1 if array member (address, no load) */
+static int *stm_arr_size; /* total byte size for array members */
+static int *stm_arr_cols; /* 2D members: last-dim count (0 = 1D) */
+static int *stm_arr_sub;  /* more than 2 dimensions: ast_sub_cols entry */
 
 /* Arrays of more than two dimensions.  An array is held flat; its node's
  * arr_cols is the elements one subscript steps over, and arr_sub names
@@ -64,19 +65,45 @@ static int   stm_arr_sub[ST_MAX_MEMBERS];  /* more than 2 dimensions: ast_sub_co
 static int   ast_sub_cols[AST_MAX_SUBS];
 static int   ast_sub_next[AST_MAX_SUBS];
 static int   ast_nsubs = 1;               /* entry 0 is "none" */
-static int   stm_owner[ST_MAX_MEMBERS]; /* owning struct index for this member */
-static int   stm_synth[ST_MAX_MEMBERS]; /* 1 = lookup alias from anonymous aggregate */
+static int *stm_owner; /* owning struct index for this member */
+static int *stm_synth; /* 1 = lookup alias from anonymous aggregate */
 /* Bit-field metadata.  stm_bit_width[mi]==0 means "not a bit-field" — the
  * common case, and the default since these arrays sit in BSS.  For bit-
  * fields, stm_off[mi] is the byte offset of the containing storage unit,
  * stm_type[mi] is the declared base type (carries signedness), and
  * stm_bit_off is the bit position within that unit (LSB=0). */
-static int   stm_bit_off[ST_MAX_MEMBERS];
-static int   stm_bit_width[ST_MAX_MEMBERS];
-static int   stm_fpbase[ST_MAX_MEMBERS];   /* function-pointer member: base into ps_fptypes, -1 = none */
-static int   stm_fpn[ST_MAX_MEMBERS];      /* ... and its declared parameter count */
-static int   stm_isfp[ST_MAX_MEMBERS];     /* 1 = a function-pointer member, T (*name)(...), signature known or not */
+static int *stm_bit_off;
+static int *stm_bit_width;
+static int *stm_fpbase;   /* function-pointer member: base into ps_fptypes, -1 = none */
+static int *stm_fpn;      /* ... and its declared parameter count */
+static int *stm_isfp;     /* 1 = a function-pointer member, T (*name)(...), signature known or not */
 static int   stm_count;
+static int stm_count_cap;
+
+/* room for need entries (tables.h, TAB_ST_MEMB) */
+static void stm_room(int need) {
+    if (need <= stm_count_cap) return;
+    if (stm_count_cap == 0) {
+        tab_add((char **)&stm_name, (int)sizeof(char *), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_type, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_cty, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_vol, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_off, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_is_arr, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_arr_size, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_arr_cols, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_arr_sub, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_owner, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_synth, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_bit_off, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_bit_width, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_fpbase, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_fpn, (int)sizeof(int), TAB_ST_MEMB, 0);
+        tab_add((char **)&stm_isfp, (int)sizeof(int), TAB_ST_MEMB, 0);
+    }
+    tab_grow(TAB_ST_MEMB, &stm_count_cap, 1024, need);
+}
+
 
 /* --- Type helpers --- */
 

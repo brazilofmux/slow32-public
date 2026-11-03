@@ -1895,7 +1895,7 @@ static void gen_program(Node *prog) {
     cg_str_pool_used = lex_strpool_len;
     cg_nstrings = 0;
     i = 0;
-    while (i < LEX_POOL_MAX && lex_str_off[i] < lex_strpool_len) {
+    while (i < lex_str_count && lex_str_off[i] < lex_strpool_len) {   /* the literals (the table grows: tables.h) */
         cg_str_off[i] = lex_str_off[i];
         cg_str_len[i] = lex_str_len[i];
         cg_nstrings = cg_nstrings + 1;
