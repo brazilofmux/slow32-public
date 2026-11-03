@@ -338,6 +338,17 @@ static int hcg_stat_brc_fuse;
 static int hcg_stat_br_fallthru;
 static int hcg_cur_blk;                  /* current block being emitted */
 
+/* Where control goes falling off the current block: the next block
+ * laid out, or where that one forwards to -- a trampoline is only its
+ * branch, so falling into it reaches its target (with its own jal
+ * elided when it too falls through).  bb_nblk after the last block. */
+static int hcg_falls_to(void) {
+    int ne;
+    ne = hcg_next_emit[hcg_cur_blk];
+    if (ne < bb_nblk) ne = hcg_fwd[ne];
+    return ne;
+}
+
 /* Spill slots must start below any lowered HI_ALLOCA temp, not just
  * fn->locals_size, because lowering can introduce extra stack temps. */
 static int hcg_hir_frame_base(Node *fn) {
@@ -2490,7 +2501,7 @@ static void hcg_condbr_finish(int idx, char *bt, char *bf, int ra, int rb) {
     f = h_val[idx];
     ft = hcg_fwd[t];
     ff = hcg_fwd[f];
-    ne = hcg_next_emit[hcg_cur_blk];
+    ne = hcg_falls_to();
 
     if (hcg_edge_nocopy(hcg_cur_blk, t) && hcg_edge_nocopy(hcg_cur_blk, f)) {
         if (ft == ne && hcg_bnear(hcg_cur_blk, ff)) {
@@ -3722,7 +3733,7 @@ static void hcg_inst(int idx) {
         tb = hcg_fwd[h_val[idx]];
         /* Fallthrough elimination: skip jal if target is the next
          * emitted (non-forwarded) block */
-        if (tb >= bb_nblk || tb != hcg_next_emit[hcg_cur_blk]) {
+        if (tb >= bb_nblk || tb != hcg_falls_to()) {
             cg_s("    jal r0, ");
             cg_lref(hcg_blk_lbl[tb]);
             cg_c(10);
@@ -3749,7 +3760,7 @@ static void hcg_inst(int idx) {
                 int tb2;
                 hcg_phi_copies(h_blk[idx], s2);
                 tb2 = hcg_fwd[s2];
-                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
+                if (tb2 >= bb_nblk || tb2 != hcg_falls_to()) {
                     cg_s("    jal r0, ");
                     cg_lref(hcg_blk_lbl[tb2]);
                     cg_c(10);
@@ -3758,7 +3769,7 @@ static void hcg_inst(int idx) {
                 int tb2;
                 hcg_phi_copies(h_blk[idx], h_val[idx]);
                 tb2 = hcg_fwd[h_val[idx]];
-                if (tb2 >= bb_nblk || tb2 != hcg_next_emit[hcg_cur_blk]) {
+                if (tb2 >= bb_nblk || tb2 != hcg_falls_to()) {
                     cg_s("    jal r0, ");
                     cg_lref(hcg_blk_lbl[tb2]);
                     cg_c(10);
@@ -4231,6 +4242,20 @@ static void hcg_mark_loop_consts(void) {
  * qualifies, and a phi-ful target keeps its preds intact).  Block 0
  * never forwards: it is entered by fallthrough from the prologue,
  * not by a branch that could be redirected. */
+/* The block to lay out after one that branches to t, or -1.  A
+ * forwarding trampoline (an empty block, hcg_fwd[t] != t) still
+ * unplaced goes next, where it falls into its target and costs no
+ * instruction; branches elsewhere skip it.  Laid out anywhere else it
+ * is an unreached jal -- pruned SSA (no dead phis left to stop the
+ * forwarding) turned 546 of s12cc.c's edge blocks into those. */
+static int hcg_pref_next(int t) {
+    if (t < 0 || t >= bb_nblk) return -1;
+    if (!hcg_placed[t]) return t;
+    t = hcg_fwd[t];
+    if (t < bb_nblk && !hcg_placed[t]) return t;
+    return -1;
+}
+
 static void hcg_compute_fwd(void) {
     int b;
     int i;
@@ -4329,15 +4354,10 @@ static void hcg_compute_fwd(void) {
                 i = i - 1;
             }
             if (term >= 0 && h_kind[term] == HI_BR) {
-                scan = hcg_fwd[h_val[term]];
-                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
+                pick = hcg_pref_next(h_val[term]);
             } else if (term >= 0 && h_kind[term] == HI_BRC) {
-                scan = hcg_fwd[h_src2[term]];        /* then-arm */
-                if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
-                if (pick < 0) {
-                    scan = hcg_fwd[h_val[term]];     /* else-arm */
-                    if (scan < bb_nblk && !hcg_placed[scan]) pick = scan;
-                }
+                pick = hcg_pref_next(h_src2[term]);  /* then-arm */
+                if (pick < 0) pick = hcg_pref_next(h_val[term]);   /* else-arm */
             }
             if (pick < 0) {
                 scan = 0;

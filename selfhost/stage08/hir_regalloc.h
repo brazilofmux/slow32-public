@@ -331,6 +331,8 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * ================================================================= */
 
 #define GC_MAX_NODE  65536   /* was 4096 */
+#define GC_ACT_MAX   128     /* values live at once, interval builder (gc_build) */
+#define GC_ROUNDS_INTERVALS 4  /* colouring rounds without exact liveness (gc_alloc_rounds) */
 #define GC_MAX_MOVE  65536   /* was 8192 */
 
 static int gc_nnode;
@@ -1122,10 +1124,9 @@ static int gc_has_edge(int u, int v) {
     return 0;
 }
 
-static void gc_add_edge(int u, int v) {
+/* an edge known not to be there yet */
+static void gc_add_new_edge(int u, int v) {
     int e1, e2;
-    if (u == v) return;
-    if (gc_has_edge(u, v)) return;
     if (gc_nedge + 2 > gc_edge_cap) {
         /* the edges grow (registry kind 3); they were a fixed 2M, 16MB
          * of cc.s32x whatever the function, and an edge past them made
@@ -1150,6 +1151,12 @@ static void gc_add_edge(int u, int v) {
 
     gc_degree[u] = gc_degree[u] + 1;
     gc_degree[v] = gc_degree[v] + 1;
+}
+
+static void gc_add_edge(int u, int v) {
+    if (u == v) return;
+    if (gc_has_edge(u, v)) return;
+    gc_add_new_edge(u, v);
 }
 
 static void gc_add_node_move(int node, int mv) {
@@ -1804,6 +1811,32 @@ static void gc_build(void) {
          * register.  HI_COPY is the same case trivially.  We do NOT
          * suppress d<->s2 (mirrors the x64 rule; keeps the two files'
          * logic identical and avoids auditing every s2 emission). */
+        /* At most GC_ACT_MAX values live at once: past it the one that
+         * ends last goes to memory (linear scan's choice), so the graph
+         * has at most GC_ACT_MAX edges a node.  Only functions too big
+         * for exact liveness come here, and there every value spanning
+         * the linearized order interferes with all the rest: a BASIC
+         * dispatch function (salvoend at 128KB chunks, 26K blocks) built
+         * 48M edges, 780MB, before the heap gave out.  The fixed edge
+         * table this replaces force-spilled whichever two nodes
+         * overflowed it (b6f0832f). */
+        if (ni >= 0 && nact >= GC_ACT_MAX) {
+            int far;
+            far = 0;
+            j = 1;
+            while (j < nact) {
+                if (ra_iend[gc_inst[act[j]]] > ra_iend[gc_inst[act[far]]]) far = j;
+                j = j + 1;
+            }
+            if (ra_iend[gc_inst[act[far]]] > ra_iend[inst]) {
+                gc_force_spill[act[far]] = 1;
+                nact = nact - 1;
+                act[far] = act[nact];
+            } else {
+                gc_force_spill[ni] = 1;
+                ni = -1;
+            }
+        }
         if (ni >= 0) {
             int skip_node;
             skip_node = -1;
@@ -1912,14 +1945,31 @@ static int gc_simplify(void) {
     return 0;
 }
 
+/* u's neighbours, stamped for the coalescing tests: "t interferes
+ * with u" is then one load, not a walk of t's list (gc_has_edge) --
+ * edges are added both ways, so u on t's list is t on u's.  The walk
+ * per neighbour of v was nearly all of salvoend's 25 minutes. */
+static int gc_nbr_mark[GC_MAX_NODE];
+static int gc_nbr_stamp;
+static void gc_mark_nbrs(int u) {
+    int e;
+    gc_nbr_stamp = gc_nbr_stamp + 1;
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        gc_nbr_mark[gc_adj_peer[e]] = gc_nbr_stamp;
+        e = gc_adj_next[e];
+    }
+}
+
 static int gc_george(int u, int v) {
     int e, t, kk;
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
             kk = gc_k(t);
-            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) return 0;
+            if (gc_degree[t] >= kk && gc_nbr_mark[t] != gc_nbr_stamp) return 0;
         }
         e = gc_adj_next[e];
     }
@@ -1940,11 +1990,12 @@ static int gc_briggs(int u, int v) {
         }
         e = gc_adj_next[e];
     }
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != u) {
-            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) count = count + 1;
+            if (gc_degree[t] >= kk && gc_nbr_mark[t] != gc_nbr_stamp) count = count + 1;
         }
         e = gc_adj_next[e];
     }
@@ -1975,11 +2026,15 @@ static void gc_combine(int u, int v) {
      * side via the alias was sufficient.  The two-pass select that
      * colors PARAMs first (or any ordering change) surfaces the bug.
      * This fix (e4681a1d) was ported into the SLOW-32 selfhost IRC. */
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_COALESCED) {
-            gc_add_edge(t, u);
+            if (t != u && gc_nbr_mark[t] != gc_nbr_stamp) {
+                gc_add_new_edge(t, u);
+                gc_nbr_mark[t] = gc_nbr_stamp;
+            }
             if (gc_wl[t] != GC_WL_SELECT) gc_dec_degree(t);
         }
         e = gc_adj_next[e];
@@ -4693,7 +4748,14 @@ static void gc_alloc_rounds(void) {
         gc_find_moves();
         gc_irc();
         gc_select();
-        if (iter >= 32) break;
+        /* A function too big for exact liveness (lv_on 0) has a graph
+         * from linearized intervals, where most of what a round spills
+         * is false interference, and each round costs the whole graph:
+         * salvoend at 128KB chunks, 65K nodes and 14M edges, took 15 s
+         * a round natively and ran its 32 respilling ~350 nodes each.
+         * A few rounds, then what is left uncoloured lives in memory,
+         * as it does past the 32. */
+        if (iter >= (lv_on ? 32 : GC_ROUNDS_INTERVALS)) break;
         if (gc_respill() == 0) break;
         if (gc_rs_nregion > 0) {
             /* Regional splits appended copies and moved reads: rebuild

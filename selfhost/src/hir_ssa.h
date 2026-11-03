@@ -102,6 +102,30 @@ static int *ssa_dtc_cnt;
  * table, and a depth ceiling raised from 64 to 256 to 1024 as
  * functions in tools/dbt hit it; what is left is the push log's. */
 static int ssa_vtop[SSA_MAX_PROMO];
+/* Pruned SSA (ssa_insert_phis): a variable gets a phi only where its
+ * stores' iterated frontier meets the blocks it is live into.  Minimal
+ * SSA placed one at every block of the frontier: in a BASIC program's
+ * 465KB dispatch function (salvoend at 128KB chunks: 26K blocks, ~4,000
+ * variables, nearly all locals of inlined helpers) that was ~320 phis a
+ * variable through the dispatch loop and the error exit, 13M phi
+ * arguments, all but a few dead.  Per variable, two lists threaded
+ * through ssa_ent_blk/ssa_ent_next: ssa_dhead[v], the blocks storing it;
+ * ssa_uhead[v], the blocks reading it before any store of their own
+ * (upward-exposed); ssa_khead[v], the blocks with a store ssa_rename
+ * will see (before the block's first terminator), which end liveness.
+ * ssa_vlast[v] is the block of v's last store in the scan; ssa_pidx
+ * maps an alloca to its index in ssa_promo (or -1), so neither
+ * placement nor ssa_rename searches ssa_promo per access. */
+static int ssa_dhead[SSA_MAX_PROMO];
+static int ssa_uhead[SSA_MAX_PROMO];
+static int ssa_khead[SSA_MAX_PROMO];
+static int ssa_vlast[SSA_MAX_PROMO];
+static int *ssa_ent_blk;
+static int *ssa_ent_next;
+static int *ssa_pidx;
+static int ssa_npidx;     /* entries of ssa_pidx in use; 0 = none */
+static int *ssa_live;     /* per block: v + 1 when v is live into it */
+static int *ssa_lwl;      /* the liveness worklist */
 
 /* --- Rename: DFS stack --- */
 #define SSA_DFS 16384   /* was 2048 */
@@ -129,6 +153,7 @@ static int ssa_find_promo_idx(int inst) {
     int i;
     if (inst < 0) return -1;
     if (h_kind[inst] != HI_ALLOCA) return -1;
+    if (inst < ssa_npidx) return ssa_pidx[inst];
     i = 0;
     while (i < ssa_npromo) {
         if (ssa_promo[i] == inst) return i;
@@ -717,6 +742,13 @@ static void ssa_build_dtree(void) {
 /* Step 7: Insert phi nodes                                      */
 /* ------------------------------------------------------------ */
 
+static int ssa_ent_add(int n, int v, int b, int *head) {
+    ssa_ent_blk[n] = b;
+    ssa_ent_next[n] = head[v];
+    head[v] = n;
+    return n + 1;
+}
+
 static void ssa_insert_phis(void) {
     int v;
     int i;
@@ -728,45 +760,144 @@ static void ssa_insert_phis(void) {
     int j;
     int wh;
     int wt;
+    int k;
+    int n;
+    int e;
 
     ssa_phi_base = h_ninst;
+
+    /* the alloca -> variable map, and room for the lists: a store can
+     * be on two of them, a read on one */
+    ssa_pidx = (int *)malloc((ssa_phi_base + 1) * (int)sizeof(int));
+    n = 0;
+    i = 0;
+    while (i < ssa_phi_base) {
+        if (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE) n = n + 2;
+        i = i + 1;
+    }
+    ssa_ent_blk = (int *)malloc((n + 1) * (int)sizeof(int));
+    ssa_ent_next = (int *)malloc((n + 1) * (int)sizeof(int));
+    if (!ssa_pidx || !ssa_ent_blk || !ssa_ent_next) {
+        fdputs("s12cc: out of memory (SSA)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < ssa_phi_base) { ssa_pidx[i] = -1; i = i + 1; }
+    v = 0;
+    while (v < ssa_npromo) {
+        ssa_pidx[ssa_promo[v]] = v;
+        ssa_dhead[v] = -1;
+        ssa_uhead[v] = -1;
+        ssa_khead[v] = -1;
+        ssa_vlast[v] = -1;
+        v = v + 1;
+    }
+    ssa_npidx = ssa_phi_base;
+
+    /* The stores' blocks, from every store (as minimal SSA had them) */
+    e = 0;
+    i = 0;
+    while (i < ssa_phi_base) {
+        if (h_kind[i] == HI_STORE) {
+            v = ssa_find_promo_idx(h_src1[i]);
+            if (v >= 0) e = ssa_ent_add(e, v, h_blk[i], ssa_dhead);
+        }
+        i = i + 1;
+    }
+    /* The upward-exposed reads, from what ssa_rename will see: each
+     * block up to its first terminator */
+    b = 0;
+    while (b < bb_nblk) {
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k == HI_LOAD || k == HI_STORE) {
+                v = ssa_find_promo_idx(h_src1[i]);
+                if (v >= 0) {
+                    if (k == HI_STORE) {
+                        if (ssa_vlast[v] != b) e = ssa_ent_add(e, v, b, ssa_khead);
+                        ssa_vlast[v] = b;
+                    } else if (ssa_vlast[v] != b) e = ssa_ent_add(e, v, b, ssa_uhead);
+                }
+            }
+            i = i + 1;
+            if (hi_is_terminator(k)) break;
+        }
+        b = b + 1;
+    }
+
+    /* Stamps, so nothing is cleared per variable -- ssa_tmp2: v + 1,
+     * the block has v's phi (-(v + 1) while liveness runs: it stores v);
+     * ssa_tmp3: v + 1, it stores v or has its phi (on the worklist once);
+     * ssa_live: v + 1, v is live into it. */
+    b = 0;
+    while (b < bb_nblk) {
+        ssa_tmp2[b] = 0;
+        ssa_tmp3[b] = 0;
+        ssa_live[b] = 0;
+        b = b + 1;
+    }
 
     v = 0;
     while (v < ssa_npromo) {
         ty = h_ty[ssa_promo[v]];
+        /* never read before a store in the same block: no phi is used */
+        if (ssa_uhead[v] < 0) { v = v + 1; continue; }
 
-        /* ssa_tmp2 = has_phi, ssa_tmp3 = in_wl, ssa_tmp1 = wl */
-        b = 0;
-        while (b < bb_nblk) {
-            ssa_tmp2[b] = 0;
-            ssa_tmp3[b] = 0;
-            b = b + 1;
-        }
-
-        /* Worklist: blocks with stores to this var */
+        /* the worklist: the blocks storing v */
         wh = 0;
         wt = 0;
-        i = 0;
-        while (i < ssa_phi_base) {
-            if (h_kind[i] == HI_STORE && h_src1[i] == ssa_promo[v]) {
-                b = h_blk[i];
-                if (!ssa_tmp3[b]) {
-                    ssa_tmp3[b] = 1;
-                    ssa_tmp1[wt] = b;
-                    wt = wt + 1;
-                }
+        e = ssa_dhead[v];
+        while (e >= 0) {
+            b = ssa_ent_blk[e];
+            if (ssa_tmp3[b] != v + 1) {
+                ssa_tmp3[b] = v + 1;
+                ssa_tmp1[wt] = b;
+                wt = wt + 1;
             }
-            i = i + 1;
+            e = ssa_ent_next[e];
         }
 
+        /* v is live into the blocks that read it first, and from there
+         * back through each predecessor that does not store it */
+        e = ssa_khead[v];
+        while (e >= 0) { ssa_tmp2[ssa_ent_blk[e]] = -(v + 1); e = ssa_ent_next[e]; }
+        n = 0;
+        e = ssa_uhead[v];
+        while (e >= 0) {
+            b = ssa_ent_blk[e];
+            if (ssa_live[b] != v + 1) {
+                ssa_live[b] = v + 1;
+                ssa_lwl[n] = b;
+                n = n + 1;
+            }
+            e = ssa_ent_next[e];
+        }
+        k = 0;
+        while (k < n) {
+            b = ssa_lwl[k];
+            k = k + 1;
+            j = 0;
+            while (j < ssa_npred[b]) {
+                d = ssa_pred[ssa_pbase[b] + j];
+                if (ssa_live[d] != v + 1 && ssa_tmp2[d] != -(v + 1)) {
+                    ssa_live[d] = v + 1;
+                    ssa_lwl[n] = d;
+                    n = n + 1;
+                }
+                j = j + 1;
+            }
+        }
+
+        /* the iterated frontier, where v is live */
         while (wh < wt) {
             b = ssa_tmp1[wh];
             wh = wh + 1;
             di = 0;
             while (di < ssa_dfc[b]) {
                 d = ssa_dfv[ssa_dfo[b] + di];
-                if (!ssa_tmp2[d] && ssa_rpo[d] >= 0) {
-                    ssa_tmp2[d] = 1;
+                if (ssa_tmp2[d] != v + 1 && ssa_live[d] == v + 1 && ssa_rpo[d] >= 0) {
+                    ssa_tmp2[d] = v + 1;
                     /* Emit PHI, pre-allocate arg slots */
                     phi = hi_emit(HI_PHI, ty, -1, -1, v, NULL);
                     h_blk[phi] = d;
@@ -780,8 +911,8 @@ static void ssa_insert_phis(void) {
                         h_nparg = h_nparg + 1;
                         j = j + 1;
                     }
-                    if (!ssa_tmp3[d]) {
-                        ssa_tmp3[d] = 1;
+                    if (ssa_tmp3[d] != v + 1) {
+                        ssa_tmp3[d] = v + 1;
                         ssa_tmp1[wt] = d;
                         wt = wt + 1;
                     }
@@ -791,6 +922,8 @@ static void ssa_insert_phis(void) {
         }
         v = v + 1;
     }
+    free(ssa_ent_blk);
+    free(ssa_ent_next);
 
     /* Build PHI lists per block for fast lookup in ssa_rename.  A late
      * pass (ssa_sroa_late) keeps the first construction's phis on the
@@ -953,6 +1086,10 @@ static void ssa_rename(void) {
             }
         }
     }
+    /* the alloca map ssa_insert_phis made is for this construction only */
+    free(ssa_pidx);
+    ssa_pidx = NULL;
+    ssa_npidx = 0;
 }
 
 /* ------------------------------------------------------------ */
@@ -1214,6 +1351,8 @@ static void ssa_tables(void) {
     hir_blk_table((char **)&ssa_tmp1, (int)sizeof(int));
     hir_blk_table((char **)&ssa_tmp2, (int)sizeof(int));
     hir_blk_table((char **)&ssa_tmp3, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_live, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_lwl, (int)sizeof(int));
     hir_inst_table((char **)&ssa_phi_next, (int)sizeof(int));
     hir_inst_table((char **)&ssa_sr_flag, (int)sizeof(char));
 }

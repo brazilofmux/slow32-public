@@ -150,11 +150,14 @@ executable that puts the stack above 2 GB as the test.
 - **Step 4 started:** cc.s32x is linked with `--mem-size 1G` (and so are
   the suite's gen1/gen2/gen3).  With it, boxing at 128KB chunks
   compiles (187 s, ~300MB resident) and prints what its clang build
-  prints.  salvoend at 128KB chunks, a single 465KB function, still
-  fills the whole 1GB after 20 minutes.  ~3.5M instructions' worth of
-  tables is more than the function should need: probably a pass that
-  grows without bound now that the near-ceiling guards are gone
-  (4076e91b).  To trace with S12CC_TABDBG.
+  prints.  salvoend at 128KB chunks, a single 465KB function, filled
+  the whole 1GB: minimal SSA laid 13M phi arguments (~4,000 variables
+  of inlined helpers, each through the dispatch loop), then the
+  interval-built interference graph went past 48M edges.  Pruned SSA
+  and a bounded interval allocator fixed both; it now compiles in
+  406MB (~20 minutes on the DBT).  Its 12MB function does not link
+  yet: calls out of it are past `jal`'s 1MB reach, and veneers cannot
+  go inside a function.
 - The kit and images pick all this up at the next builder round.
 
 ## Out of scope
