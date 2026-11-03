@@ -10,7 +10,6 @@
  */
 
 #define PP_MAX_DEFS  8192   /* was 2048 */  /* doom's header web defines >512 macros */
-#define PP_MAX_IF    16
 
 static char *pp_dname[PP_MAX_DEFS];
 static int   pp_dval[PP_MAX_DEFS];
@@ -128,15 +127,41 @@ static void pp_exp_end(int len) {
 
 /* Static buffers for pp_define — kept out of stack to avoid
    exceeding the 12-bit addi immediate limit in tree-walk codegen */
-#define PP_DEF_BODY_SZ 4096
-static char pp_def_body[PP_DEF_BODY_SZ];
-static char pp_def_parms[1024];
+/* The #define being read: its body (a fixed 4096 bytes, "#define body
+ * too long"; SQLite came within a quarter) and its parameters' names
+ * packed "a\0b\0" (a fixed 1024, unchecked: 127 parameters, C11
+ * 5.2.4.1's minimum, of eight letters each overran it).  Both grow
+ * (tables.h, TAB_PP_BODY, TAB_PP_PARMS). */
+static char *pp_def_body;
+static int pp_def_body_cap;
+static char *pp_def_parms;
+static int pp_def_parms_cap;
+
+/* room in pp_def_parms for a byte at i and one after */
+static void pp_parms_room(int i) {
+    tab_room1(&pp_def_parms, 1, TAB_PP_PARMS, &pp_def_parms_cap, 1024, i + 2);
+}
 
 static int pp_skip;                /* 1 = skipping tokens (ifdef false branch) */
-static int pp_stk[PP_MAX_IF];     /* ifdef nesting: was-skipping before this level */
+/* the open #if levels, grown (tables.h, TAB_PP_IF): 16 of them was a
+ * quarter of the 63 C11 5.2.4.1 asks for, and every #include level
+ * holding an open guard counted toward it */
+static int *pp_stk;     /* ifdef nesting: was-skipping before this level */
+static int pp_if_cap;
 static int pp_dep;                 /* ifdef nesting depth */
-static int pp_elsed[PP_MAX_IF];   /* 1 once this level's #else is seen */
-static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
+static int *pp_elsed;   /* 1 once this level's #else is seen */
+static int *pp_taken;   /* 1 if any branch taken at this depth */
+
+/* room for level pp_dep, about to open */
+static void pp_if_room(void) {
+    if (pp_dep < pp_if_cap) return;
+    if (pp_if_cap == 0) {
+        tab_add((char **)&pp_stk, (int)sizeof(int), TAB_PP_IF, 0);
+        tab_add((char **)&pp_elsed, (int)sizeof(int), TAB_PP_IF, 0);
+        tab_add((char **)&pp_taken, (int)sizeof(int), TAB_PP_IF, 0);
+    }
+    tab_grow(TAB_PP_IF, &pp_if_cap, 64, pp_dep + 1);
+}
 
 static char pp_sdir[256];         /* source directory prefix for includes */
 /* Directory stack of the files currently being spliced.  A quoted #include
@@ -433,16 +458,16 @@ static long long pp_read_int(void) {
     return (long long)uval;
 }
 
-static void pp_body_putc(char *buf, int *bi, int c) {
-    if (*bi >= PP_DEF_BODY_SZ - 1) {
-        fdputs("s12cc: #define body too long\n", 2);
-        exit(1);
-    }
-    buf[*bi] = c;
+static void pp_body_putc(int *bi, int c) {
+    tab_room1(&pp_def_body, 1, TAB_PP_BODY, &pp_def_body_cap, 4096, *bi + 2);
+    pp_def_body[*bi] = c;
     *bi = *bi + 1;
 }
 
-static int pp_read_body_text(char *buf) {
+/* The rest of the directive's line, the #define body, into pp_def_body
+ * (a signature's reading and the definition's are one after the other,
+ * so they share it).  Returns its length. */
+static int pp_read_body_text(void) {
     int bi;
     int c;
     int in_str;
@@ -485,7 +510,7 @@ static int pp_read_body_text(char *buf) {
                     lex_pos = lex_pos + 1;
                 }
                 lex_pos = lex_pos + 2;
-                pp_body_putc(buf, &bi, 32);
+                pp_body_putc(&bi, 32);
                 continue;
             }
         }
@@ -493,15 +518,15 @@ static int pp_read_body_text(char *buf) {
          * those here, the replacement list is read for the operators by
          * its characters */
         if (!in_str && !in_chr && c == 37 && lex_src[lex_pos + 1] == 58) {
-            pp_body_putc(buf, &bi, 35);
+            pp_body_putc(&bi, 35);
             lex_pos = lex_pos + 2;
             if (lex_src[lex_pos] == 37 && lex_src[lex_pos + 1] == 58) {
-                pp_body_putc(buf, &bi, 35);
+                pp_body_putc(&bi, 35);
                 lex_pos = lex_pos + 2;
             }
             continue;
         }
-        pp_body_putc(buf, &bi, c);
+        pp_body_putc(&bi, c);
         lex_pos = lex_pos + 1;
         if (esc) {
             esc = 0;
@@ -513,10 +538,11 @@ static int pp_read_body_text(char *buf) {
             in_chr = !in_chr;
         }
     }
-    while (bi > 0 && (buf[bi - 1] == 32 || buf[bi - 1] == 9)) {
+    while (bi > 0 && (pp_def_body[bi - 1] == 32 || pp_def_body[bi - 1] == 9)) {
         bi = bi - 1;
     }
-    buf[bi] = 0;
+    tab_room1(&pp_def_body, 1, TAB_PP_BODY, &pp_def_body_cap, 4096, bi + 1);
+    pp_def_body[bi] = 0;
     return bi;
 }
 
@@ -1258,6 +1284,10 @@ static int pp_subst(int di, int *rfrom, int *rto, int *pre_off, int *pre_len, in
     return len;
 }
 
+/* A macro call's per-argument arrays live in the caller's frame for
+ * the usual few arguments (PP_MAX_ARGS) and move to the heap past that
+ * (tab_iblk_grow, tables.h).  C11 5.2.4.1 asks for 127 parameters and
+ * arguments; a variadic macro takes any number. */
 static int pp_expand_func(int di) {
     int call_nl;
     int name_end;
@@ -1265,13 +1295,19 @@ static int pp_expand_func(int di) {
     int ins_pos;
     int depth;
     int nargs;
-    int arg_start[PP_MAX_ARGS];
-    int arg_len[PP_MAX_ARGS];
-    int rfrom[PP_MAX_ARGS + 1];
-    int rto[PP_MAX_ARGS + 1];
-    int pre_off[PP_MAX_ARGS + 1];
-    int pre_len[PP_MAX_ARGS + 1];
-    int need[PP_MAX_ARGS + 1];
+    int abuf[2 * PP_MAX_ARGS];          /* arg_start, arg_len */
+    int sbuf[5 * (PP_MAX_ARGS + 1)];    /* rfrom, rto, pre_off, pre_len, need */
+    int *ablk;
+    int *sblk;
+    int acap;
+    int scap;
+    int *arg_start;
+    int *arg_len;
+    int *rfrom;
+    int *rto;
+    int *pre_off;
+    int *pre_len;
+    int *need;
     int nslot;
     int base;
     int again;
@@ -1281,6 +1317,12 @@ static int pp_expand_func(int di) {
     int delta;
     int tail_len;
     int i;
+
+    ablk = abuf;
+    acap = PP_MAX_ARGS;
+    arg_start = ablk;
+    arg_len = ablk + acap;
+    sblk = sbuf;
 
     /* pos starts at current Ragel scan position (after identifier) */
     pos = lex_rp - lex_src;
@@ -1365,9 +1407,11 @@ static int pp_expand_func(int di) {
                 nargs = nargs + 1;
                 pos = pos + 1;
                 while (lex_src[pos] == 32 || lex_src[pos] == 9) pos = pos + 1;
-                if (nargs >= PP_MAX_ARGS) {
-                    fdputs("s12cc: too many macro arguments\n", 2);
-                    exit(1);
+                if (nargs >= acap) {
+                    ablk = tab_iblk_grow(ablk, 2, acap, nargs, ablk != abuf);
+                    acap = acap * 2;
+                    arg_start = ablk;
+                    arg_len = ablk + acap;
                 }
                 arg_start[nargs] = pos;
             } else {
@@ -1382,6 +1426,20 @@ static int pp_expand_func(int di) {
     /* The parameter slots: one per argument, and for a variadic macro
      * one more, the variable arguments from the first to the last. */
     nslot = pp_dnpar[di];
+    scap = PP_MAX_ARGS + 1;
+    if (nslot + 1 > scap) {
+        scap = nslot + 1;
+        sblk = (int *)malloc((unsigned long)(5 * scap) * sizeof(int));
+        if (!sblk) {
+            fdputs("s12cc: out of memory (macro arguments)\n", 2);
+            exit(1);
+        }
+    }
+    rfrom = sblk;
+    rto = sblk + scap;
+    pre_off = sblk + 2 * scap;
+    pre_len = sblk + 3 * scap;
+    need = sblk + 4 * scap;
     i = 0;
     while (i < nslot) {
         rfrom[i] = 0;
@@ -1464,6 +1522,8 @@ static int pp_expand_func(int di) {
         pp_xend = pos;
         lex_pos = ins_pos;
         pp_sync();
+        if (ablk != abuf) free(ablk);
+        if (sblk != sbuf) free(sblk);
         return 1;
     }
     /* In place, the name goes too: left before the '(' it was read again
@@ -1500,6 +1560,8 @@ static int pp_expand_func(int di) {
     lex_src[lex_len] = 0;
     lex_pos = ins_pos;
     pp_sync();
+    if (ablk != abuf) free(ablk);
+    if (sblk != sbuf) free(sblk);
     return 1;
 }
 
@@ -1663,9 +1725,16 @@ static void pp_check_body(char *body, int is_func, int is_var, char *parms, int 
  * like, the parameters, and the replacement list with each run of white
  * space one space -- (1+2) and (1 + 2) differ.  Read ahead from the
  * name, the position left where it was. */
-#define PP_SIG_SZ (PP_DEF_BODY_SZ + 1100)
-static char pp_sig[PP_SIG_SZ];
-static char pp_sig_body[PP_DEF_BODY_SZ];
+/* a definition's signature, grown (TAB_PP_SIG); it stopped at a fixed
+ * size before, so two long definitions differing past it compared equal */
+static char *pp_sig;
+static int pp_sig_cap;
+
+static int pp_sig_put(int n, int c) {
+    tab_room1(&pp_sig, 1, TAB_PP_SIG, &pp_sig_cap, 1024, n + 2);
+    pp_sig[n] = c;
+    return n + 1;
+}
 
 static void pp_define_sig(char *name) {
     int save_pos;
@@ -1679,41 +1748,36 @@ static void pp_define_sig(char *name) {
     save_line = lex_line;
     n = 0;
     if (lex_src[lex_pos] == 40) {
-        pp_sig[n] = 70;   /* 'F' */
-        n = n + 1;
-        while (lex_src[lex_pos] != 41 && lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0 && n < 1000) {
+        n = pp_sig_put(n, 70);   /* 'F' */
+        while (lex_src[lex_pos] != 41 && lex_src[lex_pos] != 10 && lex_src[lex_pos] != 0) {
             c = lex_src[lex_pos];
-            if (c != 32 && c != 9 && c != 92 && c != 13) { pp_sig[n] = c; n = n + 1; }
+            if (c != 32 && c != 9 && c != 92 && c != 13) { n = pp_sig_put(n, c); }
             lex_pos = lex_pos + 1;
         }
         if (lex_src[lex_pos] == 41) lex_pos = lex_pos + 1;
     } else {
-        pp_sig[n] = 79;   /* 'O' */
-        n = n + 1;
+        n = pp_sig_put(n, 79);   /* 'O' */
     }
-    pp_sig[n] = 32;
-    n = n + 1;
+    n = pp_sig_put(n, 32);
     pp_skip_ws();
-    pp_read_body_text(pp_sig_body);
+    pp_read_body_text();
     j = 0;
     q = 0;
     sp = 0;
-    while (pp_sig_body[j] != 0 && n < PP_SIG_SZ - 2) {
-        c = pp_sig_body[j];
+    while (pp_def_body[j] != 0) {
+        c = pp_def_body[j];
         j = j + 1;
         if (q == 0 && (c == 32 || c == 9)) { sp = 1; continue; }
-        if (sp) { pp_sig[n] = 32; n = n + 1; sp = 0; }
+        if (sp) { n = pp_sig_put(n, 32); sp = 0; }
         if (q == 0 && (c == 34 || c == 39)) q = c;
-        else if (q != 0 && c == 92 && pp_sig_body[j] != 0) {
-            pp_sig[n] = c;
-            n = n + 1;
-            c = pp_sig_body[j];
+        else if (q != 0 && c == 92 && pp_def_body[j] != 0) {
+            n = pp_sig_put(n, c);
+            c = pp_def_body[j];
             j = j + 1;
         } else if (q != 0 && c == q) q = 0;
-        pp_sig[n] = c;
-        n = n + 1;
+        n = pp_sig_put(n, c);
     }
-    pp_sig[n] = 0;
+    pp_sig_put(n, 0);
     lex_pos = save_pos;
     lex_line = save_line;
     j = pp_find(name);
@@ -1791,6 +1855,7 @@ static void pp_define(void) {
     if (lex_src[lex_pos] == 40) {  /* '(' */
         lex_pos = lex_pos + 1;  /* skip '(' */
         npar = 0;
+        pp_parms_room(0);
         pi = 0;
         is_var = 0;
         pp_skip_ws();
@@ -1809,11 +1874,13 @@ static void pp_define(void) {
                 k = pi;
                 while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
                        (c >= 48 && c <= 57) || c == 95) {
+                    pp_parms_room(pi);
                     pp_def_parms[pi] = c;
                     pi = pi + 1;
                     lex_pos = lex_pos + 1;
                     c = lex_src[lex_pos];
                 }
+                pp_parms_room(pi);
                 pp_def_parms[pi] = 0;
                 pi = pi + 1;
                 if (pp_parm_index(pp_def_parms, k, pp_def_parms + k) >= 0)
@@ -1831,7 +1898,7 @@ static void pp_define(void) {
         if (lex_src[lex_pos] != 41) pp_error("missing ')' in macro parameter list");
         lex_pos = lex_pos + 1;
         pp_skip_ws();
-        bi = pp_read_body_text(pp_def_body);
+        bi = pp_read_body_text();
         pp_check_body(pp_def_body, 1, is_var, pp_def_parms, pi);
         pp_add_func(name, npar, pp_def_parms, pi, pp_def_body);
         if (is_var) {
@@ -1892,7 +1959,7 @@ static void pp_define(void) {
                              lex_src[lex_pos + 1] == 42)))) {
             /* More than a number: store the full text body. */
             lex_pos = save_pos;
-            bi = pp_read_body_text(pp_def_body);
+            bi = pp_read_body_text();
             pp_paste_object_body(pp_def_body);
             pp_add(name, 0);
             pp_dbody[pp_find(name)] = strdup(pp_def_body);
@@ -1914,7 +1981,7 @@ static void pp_define(void) {
         return;
     } else {
         /* Non-numeric value — store as text body */
-        bi = pp_read_body_text(pp_def_body);
+        bi = pp_read_body_text();
         pp_check_body(pp_def_body, 0, 0, pp_def_parms, 0);
         pp_paste_object_body(pp_def_body);
         pp_add(name, 0);
@@ -2481,11 +2548,14 @@ static long long pp_ev_from_text(char *body) {
  * with its own `#define __has_extension(x) 0` gave 0 by luck: the call
  * was dropped with the rest of the line. */
 static long long pp_ev_call(int di) {
-    int rfrom[PP_MAX_ARGS + 1];
-    int rto[PP_MAX_ARGS + 1];
-    int pre_off[PP_MAX_ARGS + 1];
-    int pre_len[PP_MAX_ARGS + 1];
-    int need[PP_MAX_ARGS + 1];
+    int sbuf[5 * (PP_MAX_ARGS + 1)];    /* rfrom, rto, pre_off, pre_len, need */
+    int *sblk;
+    int scap;
+    int *rfrom;
+    int *rto;
+    int *pre_off;
+    int *pre_len;
+    int *need;
     int nargs;
     int depth;
     int nslot;
@@ -2494,6 +2564,13 @@ static long long pp_ev_call(int di) {
     int k;
     char *text;
     long long val;
+    sblk = sbuf;
+    scap = PP_MAX_ARGS + 1;
+    rfrom = sblk;
+    rto = sblk + scap;
+    pre_off = sblk + 2 * scap;
+    pre_len = sblk + 3 * scap;
+    need = sblk + 4 * scap;
     pp_skip_ws();
     if (lex_src[lex_pos] != 40) return 0;
     lex_pos = lex_pos + 1;
@@ -2510,7 +2587,15 @@ static long long pp_ev_call(int di) {
             if (c == 34 || c == 39) { lex_pos = pp_skip_literal(lex_pos, lex_len); continue; }
             if (c == 40) depth = depth + 1;
             if ((c == 41 && depth == 0) || (c == 44 && depth == 0)) {
-                if (nargs >= PP_MAX_ARGS) pp_error("too many macro arguments");
+                if (nargs + 2 > scap) {
+                    sblk = tab_iblk_grow(sblk, 5, scap, nargs + 1, sblk != sbuf);
+                    scap = scap * 2;
+                    rfrom = sblk;
+                    rto = sblk + scap;
+                    pre_off = sblk + 2 * scap;
+                    pre_len = sblk + 3 * scap;
+                    need = sblk + 4 * scap;
+                }
                 rto[nargs] = lex_pos;
                 nargs = nargs + 1;
                 lex_pos = lex_pos + 1;
@@ -2524,6 +2609,15 @@ static long long pp_ev_call(int di) {
         }
     }
     nslot = pp_dnpar[di];
+    while (nslot + 2 > scap) {
+        sblk = tab_iblk_grow(sblk, 5, scap, nargs + 1, sblk != sbuf);
+        scap = scap * 2;
+        rfrom = sblk;
+        rto = sblk + scap;
+        pre_off = sblk + 2 * scap;
+        pre_len = sblk + 3 * scap;
+        need = sblk + 4 * scap;
+    }
     if (nargs > nslot && !pp_dvar[di]) pp_error("too many arguments to function-like macro");
     if (nargs < nslot && !(nslot == 1 && nargs == 0)) pp_error("too few arguments to function-like macro");
     i = nargs;
@@ -2555,6 +2649,7 @@ static long long pp_ev_call(int di) {
     val = pp_ev_from_text(text);
     pp_ev_ndis = pp_ev_ndis - 1;
     free(text);
+    if (sblk != sbuf) free(sblk);
     return val;
 }
 
@@ -3072,20 +3167,35 @@ static void pp_line_directive(void) {
 static int pp_mk_dep[PP_MK_MAX];
 static int pp_mk_skip[PP_MK_MAX];
 static int pp_mk_incdepth[PP_MK_MAX];
-static int pp_mk_stk[PP_MK_MAX * PP_MAX_IF];
-static int pp_mk_taken[PP_MK_MAX * PP_MAX_IF];
-static int pp_mk_elsed[PP_MK_MAX * PP_MAX_IF];
+/* The levels' copies, grown (TAB_PP_MK): marks nest, so mark d's copy
+ * starts where mark d-1's ends, and saving mark d gives up those above. */
+static int *pp_mk_stk;
+static int *pp_mk_taken;
+static int *pp_mk_elsed;
+static int pp_mk_base[PP_MK_MAX];
+static int pp_mk_cap;
 
 static void pp_cond_save(int d) {
     int i;
+    int base;
+    base = d > 0 ? pp_mk_base[d - 1] + pp_mk_dep[d - 1] : 0;
+    pp_mk_base[d] = base;
     pp_mk_dep[d] = pp_dep;
     pp_mk_skip[d] = pp_skip;
     pp_mk_incdepth[d] = pp_incdepth;
+    if (base + pp_dep > pp_mk_cap) {
+        if (pp_mk_cap == 0) {
+            tab_add((char **)&pp_mk_stk, (int)sizeof(int), TAB_PP_MK, 0);
+            tab_add((char **)&pp_mk_taken, (int)sizeof(int), TAB_PP_MK, 0);
+            tab_add((char **)&pp_mk_elsed, (int)sizeof(int), TAB_PP_MK, 0);
+        }
+        tab_grow(TAB_PP_MK, &pp_mk_cap, 128, base + pp_dep);
+    }
     i = 0;
     while (i < pp_dep) {
-        pp_mk_stk[d * PP_MAX_IF + i] = pp_stk[i];
-        pp_mk_taken[d * PP_MAX_IF + i] = pp_taken[i];
-        pp_mk_elsed[d * PP_MAX_IF + i] = pp_elsed[i];
+        pp_mk_stk[base + i] = pp_stk[i];
+        pp_mk_taken[base + i] = pp_taken[i];
+        pp_mk_elsed[base + i] = pp_elsed[i];
         i = i + 1;
     }
 }
@@ -3097,9 +3207,9 @@ static void pp_cond_restore(int d) {
     pp_incdepth = pp_mk_incdepth[d];
     i = 0;
     while (i < pp_dep) {
-        pp_stk[i] = pp_mk_stk[d * PP_MAX_IF + i];
-        pp_taken[i] = pp_mk_taken[d * PP_MAX_IF + i];
-        pp_elsed[i] = pp_mk_elsed[d * PP_MAX_IF + i];
+        pp_stk[i] = pp_mk_stk[pp_mk_base[d] + i];
+        pp_taken[i] = pp_mk_taken[pp_mk_base[d] + i];
+        pp_elsed[i] = pp_mk_elsed[pp_mk_base[d] + i];
         i = i + 1;
     }
 }
@@ -3136,10 +3246,7 @@ static void pp_directive(void) {
         if (strcmp(name, "s12cc_popdir") == 0) pp_error("unterminated conditional directive");
         if (strcmp(name, "ifdef") == 0 || strcmp(name, "ifndef") == 0 ||
             strcmp(name, "if") == 0) {
-            if (pp_dep >= PP_MAX_IF) {
-                fdputs("s12cc: #if nesting too deep\n", 2);
-                exit(1);
-            }
+            pp_if_room();
             pp_stk[pp_dep] = pp_skip;
             pp_elsed[pp_dep] = 0;
             pp_taken[pp_dep] = 1;  /* suppress nested elif evaluation */
@@ -3189,10 +3296,7 @@ static void pp_directive(void) {
     }
     if (strcmp(name, "if") == 0) {
         int val;
-        if (pp_dep >= PP_MAX_IF) {
-            fdputs("s12cc: #if nesting too deep\n", 2);
-            exit(1);
-        }
+        pp_if_room();
         pp_stk[pp_dep] = pp_skip;
         pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;
@@ -3208,10 +3312,7 @@ static void pp_directive(void) {
     if (strcmp(name, "ifdef") == 0) {
         pp_skip_ws();
         pp_read_name(name);
-        if (pp_dep >= PP_MAX_IF) {
-            fdputs("s12cc: #ifdef nesting too deep\n", 2);
-            exit(1);
-        }
+        pp_if_room();
         pp_stk[pp_dep] = pp_skip;
         pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;
@@ -3228,10 +3329,7 @@ static void pp_directive(void) {
     if (strcmp(name, "ifndef") == 0) {
         pp_skip_ws();
         pp_read_name(name);
-        if (pp_dep >= PP_MAX_IF) {
-            fdputs("s12cc: #ifdef nesting too deep\n", 2);
-            exit(1);
-        }
+        pp_if_room();
         pp_stk[pp_dep] = pp_skip;
         pp_elsed[pp_dep] = 0;
         pp_taken[pp_dep] = 0;

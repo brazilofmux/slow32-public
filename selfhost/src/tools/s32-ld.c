@@ -109,8 +109,6 @@ char *memset(char *dst, int c, int n);
 /* === End inlined header === */
 
 /* === Buffer size constants === */
-#define MAX_GSYM     4096
-#define MAX_GREL     32768
 #define GSYM_NBUF_SZ 131072
 /* 8MB text / 4MB file: veneer tests use --code-size 2M/4M and .space
  * gaps over 1MB.  Stage07 s32-as MAX_BSS is 16MB, so these plus data,
@@ -184,25 +182,25 @@ int init_array_base;
 int init_array_end_off;
 
 /* === Global symbol table (parallel arrays) === */
-int gsym_noff[MAX_GSYM];
-int gsym_nlen[MAX_GSYM];
-int gsym_val[MAX_GSYM];
-int gsym_sec[MAX_GSYM];
-int gsym_bind[MAX_GSYM];
-int gsym_def[MAX_GSYM];
+int *gsym_noff;
+int *gsym_nlen;
+int *gsym_val;
+int *gsym_sec;
+int *gsym_bind;
+int *gsym_def;
 char gsym_nbuf[GSYM_NBUF_SZ];
 int gsym_cnt;
 int gsym_nptr;
 
 /* === Global relocation table (parallel arrays) === */
-int grel_off[MAX_GREL];
-int grel_sec[MAX_GREL];
-int grel_typ[MAX_GREL];
-int grel_add[MAX_GREL];
-int grel_sym[MAX_GREL];
-int grel_file[MAX_GREL];
-int grel_lsec[MAX_GREL];   /* the local symbol's section and value, when grel_sym is SYM_LOCAL_REL */
-int grel_lval[MAX_GREL];
+int *grel_off;
+int *grel_sec;
+int *grel_typ;
+int *grel_add;
+int *grel_sym;
+int *grel_file;
+int *grel_lsec;   /* the local symbol's section and value, when grel_sym is SYM_LOCAL_REL */
+int *grel_lval;
 int grel_cnt;
 
 /* === Layout variables === */
@@ -288,19 +286,66 @@ int pack_sections;
 int input_file_idx;
 
 /* Emitted symbol table (parallel arrays) */
-#define MAX_EMIT_SYM 4096
-#define SYM_STRTAB_SZ 65536
 
-int emit_sym_noff[MAX_EMIT_SYM];
-int emit_sym_val[MAX_EMIT_SYM];
-int emit_sym_sec[MAX_EMIT_SYM];
-int emit_sym_type[MAX_EMIT_SYM];
-int emit_sym_bind[MAX_EMIT_SYM];
-int emit_sym_size[MAX_EMIT_SYM];
+int *emit_sym_noff;
+int *emit_sym_val;
+int *emit_sym_sec;
+int *emit_sym_type;
+int *emit_sym_bind;
+int *emit_sym_size;
 int emit_sym_cnt;
 
-char sym_strtab[SYM_STRTAB_SZ];
+char *sym_strtab;
 int sym_strtab_sz;
+int sym_strtab_cap;
+
+/* === The tables that grow (s32vec.h) ===
+ * Global symbols, relocations, and the executable's symbol table were
+ * fixed: 4096 symbols ("gsym table full" for C11 5.2.4.1's 4095
+ * external identifiers and the library), and past 32768 relocations or
+ * 4096 emitted symbols the rest were dropped without a word -- the
+ * relocations, so a large program linked wrong. */
+int gsym_cap;
+int grel_cap;
+int emit_sym_cap;
+
+void gsym_room(int need) {
+    int c;
+    if (need <= gsym_cap) return;
+    c = gsym_cap; gsym_noff = (int *)sv_grow((char *)gsym_noff, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_nlen = (int *)sv_grow((char *)gsym_nlen, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_val = (int *)sv_grow((char *)gsym_val, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_sec = (int *)sv_grow((char *)gsym_sec, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_bind = (int *)sv_grow((char *)gsym_bind, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_def = (int *)sv_grow((char *)gsym_def, &c, need, 4, "symbols");
+    gsym_cap = c;
+}
+
+void grel_room(int need) {
+    int c;
+    if (need <= grel_cap) return;
+    c = grel_cap; grel_off = (int *)sv_grow((char *)grel_off, &c, need, 4, "relocations");
+    c = grel_cap; grel_sec = (int *)sv_grow((char *)grel_sec, &c, need, 4, "relocations");
+    c = grel_cap; grel_typ = (int *)sv_grow((char *)grel_typ, &c, need, 4, "relocations");
+    c = grel_cap; grel_add = (int *)sv_grow((char *)grel_add, &c, need, 4, "relocations");
+    c = grel_cap; grel_sym = (int *)sv_grow((char *)grel_sym, &c, need, 4, "relocations");
+    c = grel_cap; grel_file = (int *)sv_grow((char *)grel_file, &c, need, 4, "relocations");
+    c = grel_cap; grel_lsec = (int *)sv_grow((char *)grel_lsec, &c, need, 4, "relocations");
+    c = grel_cap; grel_lval = (int *)sv_grow((char *)grel_lval, &c, need, 4, "relocations");
+    grel_cap = c;
+}
+
+void emit_sym_room(int need) {
+    int c;
+    if (need <= emit_sym_cap) return;
+    c = emit_sym_cap; emit_sym_noff = (int *)sv_grow((char *)emit_sym_noff, &c, need, 4, "symbol table");
+    c = emit_sym_cap; emit_sym_val = (int *)sv_grow((char *)emit_sym_val, &c, need, 4, "symbol table");
+    c = emit_sym_cap; emit_sym_sec = (int *)sv_grow((char *)emit_sym_sec, &c, need, 4, "symbol table");
+    c = emit_sym_cap; emit_sym_type = (int *)sv_grow((char *)emit_sym_type, &c, need, 4, "symbol table");
+    c = emit_sym_cap; emit_sym_bind = (int *)sv_grow((char *)emit_sym_bind, &c, need, 4, "symbol table");
+    c = emit_sym_cap; emit_sym_size = (int *)sv_grow((char *)emit_sym_size, &c, need, 4, "symbol table");
+    emit_sym_cap = c;
+}
 
 /* === Helper functions === */
 
@@ -485,11 +530,7 @@ int gsym_add_new(char *name, int sec, int val, int bind, int def) {
     int idx;
     int nlen;
     int noff;
-    if (gsym_cnt >= MAX_GSYM) {
-        fputs("error: gsym table full\n", stderr);
-        link_error = 1;
-        return -1;
-    }
+    gsym_room(gsym_cnt + 1);
     idx = gsym_cnt;
     nlen = strlen(name);
     noff = gsym_add_name(name, nlen);
@@ -838,7 +879,8 @@ void merge_relocs() {
             rl_typ = rd32(file_buf, roff + 8);
             rl_add = rd32(file_buf, roff + 12);
 
-            if (grel_cnt < MAX_GREL) {
+            grel_room(grel_cnt + 1);
+            {
                 grel_add[grel_cnt] = rl_add;
                 grel_typ[grel_cnt] = rl_typ;
 
@@ -1459,6 +1501,7 @@ void collect_symtab() {
     int sec_idx;
     int j;
 
+    sym_strtab = sv_grow(sym_strtab, &sym_strtab_cap, 1, 1, "symbol names");
     sym_strtab[0] = 0;
     sym_strtab_sz = 1;
     emit_sym_cnt = 0;
@@ -1466,12 +1509,13 @@ void collect_symtab() {
     i = 0;
     while (i < gsym_cnt) {
         if (gsym_bind[i] == BIND_GLOBAL && gsym_def[i] != 0) {
-            if (emit_sym_cnt >= MAX_EMIT_SYM) break;
+            emit_sym_room(emit_sym_cnt + 1);
 
             /* Add name to symbol string table */
             noff = gsym_noff[i];
             nlen = gsym_nlen[i];
-            if (sym_strtab_sz + nlen + 1 <= SYM_STRTAB_SZ) {
+            sym_strtab = sv_grow(sym_strtab, &sym_strtab_cap, sym_strtab_sz + nlen + 1, 1, "symbol names");
+            if (1) {
                 soff = sym_strtab_sz;
                 j = 0;
                 while (j < nlen) {

@@ -33,6 +33,12 @@
 #define TAB_PS_LABELS 14   /* parser.h: a function's labels, ps_nlabels */
 #define TAB_SSA_PROMO 15   /* hir_ssa.h: the variables promoted, ssa_npromo */
 #define TAB_HCG_PHI  16    /* hir_codegen.h: one edge's phi copies */
+#define TAB_PP_IF    17    /* pp.h: the open #if levels, pp_dep */
+#define TAB_PP_MK    18    /* pp.h: their copies at the parser's lexer marks */
+#define TAB_PP_BODY  19    /* pp.h: the #define body being read */
+#define TAB_PP_SIG   20    /* pp.h: a definition's signature, for redefinition */
+#define TAB_PP_PARMS 21    /* pp.h: a function-like macro's parameter names */
+#define TAB_HL_PARAM 22    /* hir.h: a function's incoming parameter slots */
 
 #define TAB_TABLES 512
 static char **tab_ptr[TAB_TABLES];
@@ -58,6 +64,12 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_PS_LABELS) return "label";
     if (kind == TAB_SSA_PROMO) return "promoted variable";
     if (kind == TAB_HCG_PHI) return "phi copy";
+    if (kind == TAB_PP_IF) return "#if level";
+    if (kind == TAB_PP_MK) return "#if level copy";
+    if (kind == TAB_PP_BODY) return "#define body";
+    if (kind == TAB_PP_SIG) return "macro signature";
+    if (kind == TAB_PP_PARMS) return "macro parameter";
+    if (kind == TAB_HL_PARAM) return "parameter slot";
     return "?";
 }
 
@@ -149,4 +161,29 @@ static void tab_room1(char **p, int esz, int kind, int *capp, int first, int nee
     if (need <= *capp) return;
     if (*capp == 0) tab_add(p, esz, kind, 0);
     tab_grow(kind, capp, first, need);
+}
+
+/* A block of nt int arrays of cap entries each, one after another, that
+ * starts in its user's frame and moves to the heap when it fills: the
+ * block twice as big, the first n entries of each array kept, the old
+ * block freed when it was the heap's (heap != 0).  For lists that are
+ * short nearly always and must not be limited -- a macro's arguments,
+ * a function's parameters (C11 5.2.4.1: 127 of each at least). */
+static int *tab_iblk_grow(int *old, int nt, int cap, int n, int heap) {
+    int *nb;
+    int t;
+    int k;
+    nb = (int *)malloc((unsigned long)(nt * cap * 2) * sizeof(int));
+    if (!nb) {
+        fdputs("s12cc: out of memory (argument lists)\n", 2);
+        exit(1);
+    }
+    t = 0;
+    while (t < nt) {
+        k = 0;
+        while (k < n) { nb[t * cap * 2 + k] = old[t * cap + k]; k = k + 1; }
+        t = t + 1;
+    }
+    if (heap) free(old);
+    return nb;
 }

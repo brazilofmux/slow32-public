@@ -22,6 +22,20 @@ at least one row on its page.  Totals from one run of `./probe.sh`:
 (Page counts are each agent's own run; the totals above are the whole
 set at once, with one probe added since, `6.5.5-double-times-pow2-int`.)
 
+**Translation limits (5.2.4.1), 2026-11-03.**  `gen-limits.py` writes 20
+probes, `probes/5.2.4.1-*.c`, each one limit at exactly the standard's
+minimum (127 nested blocks, 63 nested `#if`, 4095 external identifiers,
+127 parameters and arguments, a 4095-character line, 1023 case labels,
+members and enumerators, ...).  Six failed when written, all from fixed
+tables smaller than the standard asks: `#if` nesting (16, which every
+open include guard also counted toward, so 15 nested `#include`s failed
+too), macro parameters and arguments (32), function parameters (64,
+dropped without a word, so a full call was "too many arguments") and
+call arguments (32), grouping parentheses around a declarator (one
+level), and the self-hosted linker's global symbols (4096).  All 20
+pass; the tables grow (src/tables.h).  Not yet: grouping parentheses
+inside a function-pointer declarator, `int ((*g))(void)`.
+
 **Progress.**  2026-10-28, selfhost ISSUES-100: W1, W3, W4 (except the
 2-D `2[m][1]`), W5, W7, W8, W9, W10 and W14's octal escapes fixed, and
 `&function` accepted; `probe.sh --check` against `verdicts.txt` now

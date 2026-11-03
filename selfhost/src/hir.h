@@ -219,17 +219,38 @@ static int hi_abi_assign(int *tags, int n, int *out) {
 /* Per-function incoming-parameter ABI map, filled by hl_func from the
  * parameter list and consumed by the register allocator (preferred
  abi colors) and the codegen entry sequence. */
-static int hl_param_tags[64];
-static int hl_param_map[64];     /* reg 3..10 or -1 = stack */
-static int hl_param_stkord[64];  /* for -1 slots: BYTE offset from the
+/* By flat incoming slot (a long long or double takes two, a struct
+ * return's hidden pointer one), grown (tables.h, TAB_HL_PARAM): a fixed
+ * 64 of them, written without a bound, were overrun by a function of
+ * 127 parameters (C11 5.2.4.1). */
+static int *hl_param_tags;
+static int *hl_param_map;        /* reg 3..10 or -1 = stack */
+static int *hl_param_stkord;     /* for -1 slots: BYTE offset from the
                                     incoming sp (byval slots reserve the
                                     struct's rounded size, so ordinals
                                     would lie) */
 static int hl_param_nflat;
-static int hl_pp_inst[66];       /* HI_PARAM inst id per flat phys slot;
+static int *hl_pp_inst;          /* HI_PARAM inst id per flat phys slot;
                                     all PARAMs are emitted before any
                                     param-copy code so incoming registers
                                     stay pinned across earlier copies */
+static int hl_param_cap;
+
+/* room for n flat slots, all zero up to n */
+static void hl_param_room(int n) {
+    int i;
+    if (n > hl_param_cap) {
+        if (hl_param_cap == 0) {
+            tab_add((char **)&hl_param_tags, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_map, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_stkord, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_pp_inst, (int)sizeof(int), TAB_HL_PARAM, 0);
+        }
+        tab_grow(TAB_HL_PARAM, &hl_param_cap, 66, n);
+    }
+    i = 0;
+    while (i < n) { hl_param_tags[i] = 0; i = i + 1; }
+}
 static int   *h_cbase;
 static int   h_ncarg;
 

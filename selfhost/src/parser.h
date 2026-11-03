@@ -472,21 +472,50 @@ static int ps_declarator_stars(int ty, int cty) {
 /* Grouping parens around a declarator: `char *(name[])` is `char *name[]`,
  * not a function pointer.  After '(' the current token is the identifier;
  * if the next raw byte is '[' or ')', blank the matching ')' so the rest
- * of the declarator parses as ordinary.  Returns 1 if grouped. */
+ * of the declarator parses as ordinary.  Returns 1 if grouped.  More of
+ * them -- `int ((x));`, 63 deep in C11 5.2.4.1's minimum -- are taken
+ * when the raw text after the current '(' is only '('s, a name and ')'
+ * or '[': each is read, and as many ')' blanked.  (`((*fp))(int)` and
+ * the like go on to the function-pointer path, as before.) */
+static int ps_grouping_extra(void) {
+    char *q;
+    int n;
+    if (lex_tok != TK_LPAREN) return 0;
+    q = lex_rp;
+    n = 1;
+    while (*q == 32 || *q == 9 || *q == 10 || *q == 40) {
+        if (*q == 40) n = n + 1;
+        q = q + 1;
+    }
+    if (!((*q >= 65 && *q <= 90) || (*q >= 97 && *q <= 122) || *q == 95)) return 0;
+    while ((*q >= 65 && *q <= 90) || (*q >= 97 && *q <= 122) || *q == 95 ||
+           (*q >= 48 && *q <= 57)) q = q + 1;
+    while (*q == 32 || *q == 9 || *q == 10) q = q + 1;
+    if (*q != 91 && *q != 41) return 0;          /* '[' or ')' */
+    return n;
+}
+
 static int ps_try_grouping_paren(void) {
     char *q;
     int depth;
+    int close;
+    close = 1 + ps_grouping_extra();
+    if (close > 1) {
+        int k;
+        k = close - 1;
+        while (k > 0) { next(); k = k - 1; }
+    }
     if (lex_tok != TK_IDENT) return 0;
     q = lex_rp;
     while (*q == 32 || *q == 9 || *q == 10) q = q + 1;
     if (*q != 91 && *q != 41) return 0;          /* '[' or ')' */
     depth = 0;
-    while (*q) {
+    while (*q && close > 0) {
         if (*q == 40 || *q == 91) depth = depth + 1;
         else if (*q == 93) depth = depth - 1;
         else if (*q == 41) {
-            if (depth == 0) { *q = 32; return 1; }
-            depth = depth - 1;
+            if (depth == 0) { *q = 32; close = close - 1; }
+            else depth = depth - 1;
         }
         q = q + 1;
     }
@@ -932,8 +961,11 @@ static void p_skip_to_rparen(void) {
  * type plus pointer depth.  SQLite's xTruncate(sqlite3_file*,
  * sqlite3_int64) received a literal 0 as one word without this. */
 static int ps_parse_fp_params(int *np_out) {
-    int ptys[64];
-    int pctys[64];
+    int pbuf[128];      /* ptys then pctys, 64 each; tab_iblk_grow past that */
+    int *pblk;
+    int pcap;
+    int *ptys;
+    int *pctys;
     int pcty;
     int np;
     int ty;
@@ -946,13 +978,22 @@ static int ps_parse_fp_params(int *np_out) {
      * parameter's type -- SQLite's sqlite3_result_text(..., void(*)(void*))
      * had an int where the destructor goes. */
     outer_cty = ps_type_cty;
+    pblk = pbuf;
+    pcap = 64;
+    ptys = pblk;
+    pctys = pblk + pcap;
     np = 0;
     var = 0;
     *np_out = 0;
     if (lex_tok == TK_RPAREN) { next(); ps_type_cty = outer_cty; return ps_fp_store(ptys, pctys, 0); }
     while (lex_tok != TK_EOF) {
         if (lex_tok == TK_ELLIPSIS) { next(); var = 1; break; }
-        if (!is_type()) { p_skip_to_rparen(); ps_type_cty = outer_cty; return -1; }
+        if (!is_type()) {
+            p_skip_to_rparen();
+            ps_type_cty = outer_cty;
+            if (pblk != pbuf) free(pblk);
+            return -1;
+        }
         ty = parse_type();
         skip_decl_qualifiers();
         ty = ps_declarator_stars(ty, ps_type_cty);
@@ -974,7 +1015,15 @@ static int ps_parse_fp_params(int *np_out) {
                 pcty = ct_ptr(pcty);
             }
         }
-        if (np < 64) { ptys[np] = ty; pctys[np] = pcty; np = np + 1; }
+        if (np >= pcap) {   /* 64 of them dropped the rest without a word */
+            pblk = tab_iblk_grow(pblk, 2, pcap, np, pblk != pbuf);
+            pcap = pcap * 2;
+            ptys = pblk;
+            pctys = pblk + pcap;
+        }
+        ptys[np] = ty;
+        pctys[np] = pcty;
+        np = np + 1;
         if (lex_tok == TK_COMMA) { next(); continue; }
         break;
     }
@@ -987,6 +1036,7 @@ static int ps_parse_fp_params(int *np_out) {
      * direct call to a variadic function does (hl_expr, ND_CALL_PTR). */
     if (base >= 0 && base < PS_MAX_FPARAM) ps_fpvar[base] = var;
     ps_type_cty = outer_cty;
+    if (pblk != pbuf) free(pblk);
     return base;
 }
 
@@ -1185,17 +1235,21 @@ static int ps_fp_ret_of_callee(Node *lhs) {
 static void ps_func_redecl_check(int i, int ret_cty, int *ptys, int *pctys, int np) {
     int t;
     int k;
-    int pc[64];
+    int pbuf[64];
+    int *pc;
     if (ps_fcty[i] <= 0) return;
     if (np < 0) {
         t = ct_func(ret_cty, 0, -1, ps_is_varargs);
     } else {
+        pc = pbuf;
+        if (np > 64) pc = tab_iblk_grow(pbuf, 1, (np + 1) / 2, 0, 0);   /* np entries or more */
         k = 0;
-        while (k < np && k < 64) {
+        while (k < np) {
             pc[k] = pctys ? ct_unqual(pctys[k]) : ct_from_mty(ptys[k], 0);
             k = k + 1;
         }
         t = ct_func(ret_cty, pc, k, ps_is_varargs);
+        if (pc != pbuf) free(pc);
     }
     if (!sema_compat(ps_fcty[i], t)) p_error("conflicting types for function");
 }
@@ -8697,8 +8751,9 @@ static Node *ps_for_node(Node *pre, Node *f) {
  * (6.2.2p5: it has external linkage).  It was skipped, and the call
  * after it taken as an implicit declaration -- which went with C99. */
 static Node *ps_local_prototype(char *nm, int ty) {
-    int ptys[64];
-    int pctys[64];
+    int pbuf[128];      /* ptys then pctys; the heap past 64 parameters */
+    int *pblk;
+    int pcap;
     int base;
     int np;
     int i;
@@ -8707,15 +8762,22 @@ static Node *ps_local_prototype(char *nm, int ty) {
     ret_cty = ps_type_cty;
     next();
     base = ps_parse_fp_params(&np);
+    pblk = pbuf;
+    pcap = 64;
+    if (base >= 0 && np > pcap) {
+        pblk = tab_iblk_grow(pbuf, 2, (np + 1) / 2, 0, 0);
+        pcap = ((np + 1) / 2) * 2;
+    }
     i = 0;
-    while (i < np && i < 64 && base >= 0) {
-        ptys[i] = ps_fptypes[base + i];
-        pctys[i] = ps_fpctypes[base + i];
+    while (i < np && base >= 0) {
+        pblk[i] = ps_fptypes[base + i];
+        pblk[pcap + i] = ps_fpctypes[base + i];
         i = i + 1;
     }
     sv_var = ps_is_varargs;
     ps_is_varargs = base >= 0 ? ps_fpvar[base] : 0;
-    add_func_type(nm, ty, ptys, pctys, base >= 0 ? np : -1, ret_cty);
+    add_func_type(nm, ty, pblk, pblk + pcap, base >= 0 ? np : -1, ret_cty);
+    if (pblk != pbuf) free(pblk);
     ps_is_varargs = sv_var;
     skip_gnu_decl_suffixes();
     expect(TK_SEMI);
@@ -9787,6 +9849,20 @@ static int ps_fn_ret_outer(int ret_cty) {
  * parameters.  nm and ty the declarator's name and type (the return
  * type), ret_cty its C type; fn_ret_fnptr when the function returns a
  * function pointer, T (*name(params))(params). */
+/* Parameter n of a function being declared, its machine and C types, into
+ * the block *blkp (types, then C types, cap each; it starts at buf in the
+ * caller's frame).  64 of them dropped the rest without a word, so a
+ * 127-parameter prototype (C11 5.2.4.1) had 64 and a full call was "too
+ * many arguments". */
+static void ps_fp_param_add(int **blkp, int *buf, int *capp, int n, int ty, int cty) {
+    if (n >= *capp) {
+        *blkp = tab_iblk_grow(*blkp, 2, *capp, n, *blkp != buf);
+        *capp = *capp * 2;
+    }
+    (*blkp)[n] = ty;
+    (*blkp)[*capp + n] = cty;
+}
+
 static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int fn_ret_fnptr) {
     Node *fn;
     Node *kr_pre;
@@ -9798,13 +9874,20 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
     char pnm[256];
     int pcols;
     int pty;
-    int fp_tys[64];
-    int fp_ctys[64];
+    int fpbuf[128];     /* fp_tys then fp_ctys; the heap past 64 parameters */
+    int *fpblk;
+    int fpcap;
+    int *fp_tys;
+    int *fp_ctys;
     int fp_n;
     int off;
     int i;
     int saw_unnamed_param;
     fp_n = 0;
+    fpblk = fpbuf;
+    fpcap = 64;
+    fp_tys = fpblk;
+    fp_ctys = fpblk + fpcap;
     expect(TK_LPAREN);
 
     /* Reset locals for this function */
@@ -9942,7 +10025,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
             }
         }
         skip_gnu_decl_suffixes();
-        if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
+        ps_fp_param_add(&fpblk, fpbuf, &fpcap, fp_n, pty, (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty)); fp_tys = fpblk; fp_ctys = fpblk + fpcap; fp_n = fp_n + 1;
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -10059,7 +10142,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                 ptail->next = p;
                 ptail = p;
             }
-            if (fp_n < 64) { fp_tys[fp_n] = pty; fp_ctys[fp_n] = (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty); fp_n = fp_n + 1; }
+            ps_fp_param_add(&fpblk, fpbuf, &fpcap, fp_n, pty, (p != NULL && p->cty > 0) ? p->cty : ps_cty_quiet(pty)); fp_tys = fpblk; fp_ctys = fpblk + fpcap; fp_n = fp_n + 1;
             ps_nparams = ps_nparams + 1;
         }
     }
@@ -10077,6 +10160,7 @@ params_done:
         ps_decl_more();
         add_func_type(nm, ty, fp_tys, fp_ctys, noproto ? -1 : fp_n,
                       ret_cty);
+        if (fpblk != fpbuf) free(fpblk);
         return NULL;
     }
 
@@ -10092,6 +10176,7 @@ params_done:
     if (noproto) fp_n = -1;
     add_func_type(nm, ty, fp_tys, fp_ctys, fp_n,
                   ret_cty);
+    if (fpblk != fpbuf) free(fpblk);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->ty = ty;  /* store return type for sema pass */

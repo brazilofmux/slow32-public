@@ -2144,9 +2144,29 @@ static int hl_inl_is_tail_ret(Node *body) {
 
 /* Lower a call by splicing the callee's body in.  Returns the result
  * value (and sets hl_hi for 64-bit results), or -1 for void. */
+/* A call's per-argument arrays: nt of them, one block, as many entries
+ * each as the call has arguments (hl_call_n says how many).  They were
+ * fixed at 32 -- "too many call args (limit 32)", where C11 5.2.4.1 asks
+ * for 127 -- and the inliner, which counted them while lowering them,
+ * gave up at the 33rd with the first 32 already emitted. */
+static int hl_call_n;
+static int *hl_call_arrays(Node *args, int nt) {
+    Node *a;
+    int *b;
+    hl_call_n = 0;
+    a = args;
+    while (a) { hl_call_n = hl_call_n + 1; a = a->next; }
+    b = (int *)malloc((unsigned long)(nt * (hl_call_n + 1)) * sizeof(int));
+    if (!b) {
+        fdputs("s12cc: out of memory (call arguments)\n", 2);
+        exit(1);
+    }
+    return b;
+}
+
 static int hl_inline_call(Node *call, Node *fn) {
-    int av[32];
-    int av_hi[32];
+    int *av;
+    int *av_hi;
     int nargs;
     int save_shift;
     int save_ret_blk;
@@ -2169,9 +2189,10 @@ static int hl_inline_call(Node *call, Node *fn) {
     /* 1. Actuals are evaluated in the CALLER's frame, before the shift
      *    moves offsets, and in argument order. */
     nargs = 0;
+    av = hl_call_arrays(call->args, 2);
+    av_hi = av + hl_call_n + 1;
     a = call->args;
     while (a) {
-        if (nargs >= 32) return -1;
         av[nargs] = hl_expr(a);
         av_hi[nargs] = (ty_is_llong(a->ty) || ty_is_double(a->ty)) ? hl_hi : -1;
         nargs = nargs + 1;
@@ -2306,6 +2327,7 @@ static int hl_inline_call(Node *call, Node *fn) {
     hl_inl_loop_base = save_loop;
     hl_inl_sw_base = save_sw;
     hl_stat_inlined = hl_stat_inlined + 1;
+    free(av);
     return rv;
 }
 
@@ -4148,8 +4170,8 @@ static int hl_expr_main(Node *n) {
 
     /* Direct function call */
     if (n->kind == ND_CALL) {
-        int av[32];
-        int av_hi[32];
+        int *av;
+        int *av_hi;
         {
             Node *inl_fn;
             inl_fn = hl_inl_candidate(n);
@@ -4158,9 +4180,9 @@ static int hl_expr_main(Node *n) {
 #ifndef S12CC_X64_HOST
         if (hl_small_memcpy_ok(n)) return hl_small_memcpy(n);
 #endif
-        int is64[32];   /* 0 = word, 1 = llong pair, 2 = double pair.
-                           (No extra arrays: hl_expr's frame is near
-                           stage07's 12-bit offset ceiling.) */
+        int *is64;      /* 0 = word, 1 = llong pair, 2 = double pair.
+                           (Pointers into hl_call_arrays' block: hl_expr's
+                           frame is near stage07's 12-bit offset ceiling.) */
         int callee_var;
         int phys_count;
         int ret_ty;
@@ -4184,10 +4206,12 @@ static int hl_expr_main(Node *n) {
 #endif
 
         /* Lower all arguments first (inner calls may use h_carg) */
+        av = hl_call_arrays(n->args, 3);
+        av_hi = av + hl_call_n + 1;
+        is64 = av_hi + hl_call_n + 1;
         a = n->args;
         nargs = 0;
         while (a) {
-            if (nargs >= 32) p_error("too many call args (limit 32)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
 #ifdef S12CC_X64_HOST
@@ -4239,6 +4263,7 @@ static int hl_expr_main(Node *n) {
             }
             i = i + 1;
         }
+        free(av);
         ret_ty = find_func_type(n->name);
         if (ty_is_struct(ret_ty)) {
             /* Struct return: allocate temp, pass address as hidden first arg */
@@ -4296,15 +4321,17 @@ static int hl_expr_main(Node *n) {
 
     /* Indirect call through expression */
     if (n->kind == ND_CALL_PTR) {
-        int av[32];
-        int av_hi2[32];
-        int is64_2[32];  /* tri-state like is64 */
+        int *av;
+        int *av_hi2;
+        int *is64_2;     /* tri-state like is64 */
         int phys_count2;
         callee = hl_expr(n->lhs);
+        av = hl_call_arrays(n->args, 3);
+        av_hi2 = av + hl_call_n + 1;
+        is64_2 = av_hi2 + hl_call_n + 1;
         a = n->args;
         nargs = 0;
         while (a) {
-            if (nargs >= 32) p_error("too many call args (limit 32)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
 #ifdef S12CC_X64_HOST
@@ -4350,6 +4377,7 @@ static int hl_expr_main(Node *n) {
             }
             i = i + 1;
         }
+        free(av);
         i = hi_emit(HI_CALLP, n->ty, callee, -1, phys_count2, NULL);
         h_cbase[i] = carg_base;
 #ifdef S12CC_X64_HOST
@@ -4978,11 +5006,7 @@ static void hl_func(Node *fn) {
         Node *pp;
         phys_idx = 0;
 
-        {
-            int pt_i;
-            pt_i = 0;
-            while (pt_i < 64) { hl_param_tags[pt_i] = 0; pt_i = pt_i + 1; }
-        }
+        hl_param_room(2 * fn->nparams + 2);   /* two a parameter at most, and a hidden one */
 
         /* Pass 1: emit EVERY HI_PARAM before any copy/store code.  A
          * PARAM's incoming register is only pinned from its def point
