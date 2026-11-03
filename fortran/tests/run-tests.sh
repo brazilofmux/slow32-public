@@ -195,7 +195,10 @@ fi
 # constant, is checked (from fort370): an nH running past the end
 # (fmth), a count with no descriptor (fmtcnt), a missing width (fmtwid),
 # a letter that is no descriptor (fmtlet), unpaired parentheses (fmtpar),
-# a constant format (fmtcon).  The runtime used to read each some other way.
+# a constant format (fmtcon), an Iw.m with m past w (fmtiwm: I10.20 printed
+# asterisks).  The runtime used to read each some other way.  A list after
+# PRINT f or READ f needs its comma (prcomma, rdcomma): blanks do not count,
+# so PRINT * 1234 was PRINT*1234 and printed 1234 (from fort370, MV410).
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -220,6 +223,9 @@ if [ -x "$F77" ]; then
     printf '      WRITE (6, 10) 1\n   10 FORMAT (1X, Q5)\n      END\n' > "$W/fmtlet.f"
     printf '      WRITE (6, 10) 1\n   10 FORMAT ((1X, I5)\n      END\n' > "$W/fmtpar.f"
     printf "      WRITE (6, '(1X, F)') 2.5\n      END\n" > "$W/fmtcon.f"
+    printf '      WRITE (6, 10) 5\n   10 FORMAT (1X, I10.20)\n      END\n' > "$W/fmtiwm.f"
+    printf '      PRINT * 1234\n      END\n' > "$W/prcomma.f"
+    printf '      INTEGER I\n      READ * I\n      END\n' > "$W/rdcomma.f"
     printf "      READ ('(I4)') M\n      END\n" > "$W/intnofmt.f"
     printf '      CHARACTER*8 B\n      WRITE (B) 3.5\n      END\n' > "$W/intunf.f"
     printf "      CHARACTER*6 G\n      G = 'KLMNOP'\n      WRITE (6, *) G(0:4)\n      END\n" > "$W/sub0.f"
@@ -261,6 +267,9 @@ if [ -x "$F77" ]; then
              "fmtlet:line 2: FORMAT: Q is no edit descriptor" \
              "fmtpar:line 2: FORMAT: the format ends without its )" \
              "fmtcon:line 1: FORMAT: F needs a width" \
+             "fmtiwm:line 2: FORMAT: Iw.m needs m no more than w" \
+             "prcomma:line 1: a comma after the format, before the list" \
+             "rdcomma:line 2: a comma after the format, before the list" \
              "intnofmt:line 1: a CHARACTER unit is an internal file and needs a format" \
              "intunf:line 2: a CHARACTER unit is an internal file and needs a format" \
              "sub0:line 3: substring outside its string" \

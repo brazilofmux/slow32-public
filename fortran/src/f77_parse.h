@@ -6721,8 +6721,11 @@ static void f77_check_format(const char *s, int n) {
             continue;
         }
         if (c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' || c == 'L') {
+            int w;
+            int d;
             i = i + 1;
-            if (f77_fmt_digits(s, n, &i) < 0) {
+            w = f77_fmt_digits(s, n, &i);
+            if (w < 0) {
                 char m[48];
                 sprintf(m, "%c needs a width", c);
                 f77_fmt_bad(m);
@@ -6730,7 +6733,11 @@ static void f77_check_format(const char *s, int n) {
             }
             if (f77_fmt_peek(s, n, &i) == '.') {
                 i = i + 1;
-                if (f77_fmt_digits(s, n, &i) < 0) { f77_fmt_bad("a . needs digits after it"); return; }
+                d = f77_fmt_digits(s, n, &i);
+                if (d < 0) { f77_fmt_bad("a . needs digits after it"); return; }
+                /* Iw.m: m digits at least, in a field of w (13.5.9.1);
+                 * I10.20 printed asterisks (fort370 issue 38, from MV410) */
+                if ((c == 'I' || c == 'i') && d > w) { f77_fmt_bad("Iw.m needs m no more than w"); return; }
             }
             k = f77_fmt_peek(s, n, &i);
             if ((c == 'E' || c == 'G' || c == 'D') && (k == 'E' || k == 'e')) {
@@ -7073,7 +7080,13 @@ static void f77_stmt_print(int skip) {
     int fmt_label;
     f77_scan_from(skip);
     fmt_label = f77_io_fmt_spec();
+    /* blanks do not count: PRINT * 1234 is PRINT*1234, no list -- a
+     * comma is required before one (fort370 issue 38) */
     if (lx_t == T_COMMA) f77_tok();
+    else if (lx_t != T_EOF) {
+        f77_error("a comma after the format, before the list");
+        return;
+    }
     f77_io_int = 0;
     f77_io_rec = -1;
     f77_wr_begin(f77_iconst(6), fmt_label);
@@ -7109,7 +7122,11 @@ static void f77_stmt_read(int skip) {
         /* READ fmt, list  --  always unit 5. */
         unit_val = f77_iconst(5);
         fmt_label = f77_io_fmt_spec();
-        if (lx_t == T_COMMA) f77_tok();
+        if (lx_t == T_COMMA) f77_tok();         /* READ f, list: the comma required */
+        else if (lx_t != T_EOF) {
+            f77_error("a comma after the format, before the list");
+            return;
+        }
     }
     f77_io_announce();
 
