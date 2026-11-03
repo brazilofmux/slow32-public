@@ -102,6 +102,8 @@ static int *ssa_dtc_cnt;
  * table, and a depth ceiling raised from 64 to 256 to 1024 as
  * functions in tools/dbt hit it; what is left is the push log's. */
 static int ssa_vtop[SSA_MAX_PROMO];
+#define SSA_DEMOTE_BLOCKS 16384   /* = HL_BLOCK_BUDGET: past it, ...      */
+#define SSA_DEMOTE_PHIS   64      /* ... a variable with more phis stays in memory */
 /* Pruned SSA (ssa_insert_phis): a variable gets a phi only where its
  * stores' iterated frontier meets the blocks it is live into.  Minimal
  * SSA placed one at every block of the frontier: in a BASIC program's
@@ -889,7 +891,9 @@ static void ssa_insert_phis(void) {
             }
         }
 
-        /* the iterated frontier, where v is live */
+        /* the iterated frontier, where v is live: the phi blocks, in
+         * the order found (ssa_lwl, free again once liveness is done) */
+        n = 0;
         while (wh < wt) {
             b = ssa_tmp1[wh];
             wh = wh + 1;
@@ -898,19 +902,8 @@ static void ssa_insert_phis(void) {
                 d = ssa_dfv[ssa_dfo[b] + di];
                 if (ssa_tmp2[d] != v + 1 && ssa_live[d] == v + 1 && ssa_rpo[d] >= 0) {
                     ssa_tmp2[d] = v + 1;
-                    /* Emit PHI, pre-allocate arg slots */
-                    phi = hi_emit(HI_PHI, ty, -1, -1, v, NULL);
-                    h_blk[phi] = d;
-                    h_pbase[phi] = h_nparg;
-                    h_pcnt[phi] = ssa_npred[d];
-                    hir_parg_room(ssa_npred[d]);
-                    j = 0;
-                    while (j < ssa_npred[d]) {
-                        h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
-                        h_pval[h_nparg] = -1;
-                        h_nparg = h_nparg + 1;
-                        j = j + 1;
-                    }
+                    ssa_lwl[n] = d;
+                    n = n + 1;
                     if (ssa_tmp3[d] != v + 1) {
                         ssa_tmp3[d] = v + 1;
                         ssa_tmp1[wt] = d;
@@ -918,6 +911,39 @@ static void ssa_insert_phis(void) {
                     }
                 }
                 di = di + 1;
+            }
+        }
+
+        /* A variable live through a function far past the inliner's block
+         * budget, merging at hundreds of blocks, stays in memory: one
+         * load a read, one store a write.  Promoted, each of its phis
+         * spilled, and every edge into each copied it frame slot to frame
+         * slot -- salvoend at 128KB chunks: ~92 such variables (the
+         * dispatch loop's state), 32K phis, 269K copies through the stack,
+         * most of its 3M instructions.  No hand-written function in the
+         * gates comes near the block count. */
+        if (bb_nblk > SSA_DEMOTE_BLOCKS && n > SSA_DEMOTE_PHIS) {
+            ssa_pidx[ssa_promo[v]] = -1;
+            v = v + 1;
+            continue;
+        }
+
+        k = 0;
+        while (k < n) {
+            d = ssa_lwl[k];
+            k = k + 1;
+            /* Emit PHI, pre-allocate arg slots */
+            phi = hi_emit(HI_PHI, ty, -1, -1, v, NULL);
+            h_blk[phi] = d;
+            h_pbase[phi] = h_nparg;
+            h_pcnt[phi] = ssa_npred[d];
+            hir_parg_room(ssa_npred[d]);
+            j = 0;
+            while (j < ssa_npred[d]) {
+                h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
+                h_pval[h_nparg] = -1;
+                h_nparg = h_nparg + 1;
+                j = j + 1;
             }
         }
         v = v + 1;
