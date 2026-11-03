@@ -305,3 +305,39 @@ void bcrt_aset(const char *name, int n, int alo, int ahi, int at, int blo, int b
 void bcrt_option_base(int base) { eval_set_option_base(base); }
 
 void bcrt_erase(const char *name) { array_erase(name); }
+
+/* --- INPUT, DATA, READ, RESTORE: the interpreter's cores ------------- */
+
+static value_t bcrt_in[64];
+
+/* INPUT's line (eval_input_line): types[i] is 'A' + the i-th field's
+ * type; the values are taken one by one (bcrt_input_take) */
+void bcrt_input(const char *prompt, int no_question, int same_line, int n, const char *types) {
+    val_type_t t[64];
+    error_t e;
+    for (int i = 0; i < n; i++) t[i] = (val_type_t)(types[i] - 'A');
+    e = eval_input_line(prompt, no_question, same_line, n, t, bcrt_in);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+pair_t bcrt_input_take(int i) {
+    pair_t r = give(&bcrt_in[i]);       /* (its string's reference goes with it) */
+    bcrt_in[i].type = VAL_INTEGER;
+    return r;
+}
+
+void bcrt_data(int lo, int hi, int t, int quoted) {
+    value_t v = take(lo, hi, t);
+    error_t e = eval_data_add(&v, quoted);
+    val_clear(&v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+pair_t bcrt_read(int t) {
+    value_t v;
+    error_t e = eval_read_value((val_type_t)t, &v);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return give(&v);
+}
+
+void bcrt_restore(int offset) { eval_restore(offset); }

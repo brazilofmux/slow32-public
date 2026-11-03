@@ -1689,19 +1689,19 @@ static int input_field(const char **pp, val_type_t t, value_t *out) {
  * taken before anything is stored; a field that is not of its variable's
  * type, or too few or too many of them, is "Redo from start" and the
  * prompt again. */
-static error_t exec_input(env_t *env, stmt_t *s) {
+/* INPUT's line: the prompt (NULL: none), "? " unless no_question, a
+ * line read, its n fields parsed as types[] says (VAL_STRING, or a
+ * number), and "Redo from start" until they fit -- the values into
+ * vals[], the caller's to store.  The interpreter's INPUT, and compiled
+ * code's (s32-bc). */
+error_t eval_input_line(const char *prompt, int no_question, int same_line,
+                        int n, const val_type_t *types, value_t *vals) {
     char line[1024];
-    value_t vals[64];
-    int n = s->input.nvars;
-    if (n > 64) return ERR_SYNTAX;
-    for (int i = 0; i < n; i++)
-        if (env_is_const(env, s->input.varnames[i]))
-            return ERR_CONST_REASSIGN;
     while (1) {
         const char *p;
         int i, ok = 1;
-        if (s->input.prompt) col_puts(s->input.prompt);
-        if (!s->input.prompt || !s->input.no_question) col_puts("? ");
+        if (prompt) col_puts(prompt);
+        if (!prompt || !no_question) col_puts("? ");
         if (read_input_line(line, sizeof(line)) < 0) {
             col_puts("\n");
             return ERR_INPUT_PAST_END;
@@ -1709,20 +1709,15 @@ static error_t exec_input(env_t *env, stmt_t *s) {
         /* the Enter: on a terminal it moved the cursor itself */
         if (isatty(0))
             print_col = 0;
-        else if (!s->input.same_line)
+        else if (!same_line)
             col_puts("\n");
         p = line;
         for (i = 0; i < n && ok; i++) {
-            val_type_t t = s->input.vartypes[i];
-            if (s->input.targets[i] == NULL) {
-                value_t *cur = env_get(env, s->input.varnames[i]);
-                if (cur) t = cur->type == VAL_STRING ? VAL_STRING : VAL_DOUBLE;
-            }
             if (i > 0) {
                 if (*p != ',') { ok = 0; break; }
                 p++;
             }
-            if (!input_field(&p, t, &vals[i])) { ok = 0; break; }
+            if (!input_field(&p, types[i], &vals[i])) { ok = 0; break; }
         }
         while (ok && *p == ' ') p++;
         if (ok && *p) ok = 0;            /* more fields than variables */
@@ -1731,8 +1726,27 @@ static error_t exec_input(env_t *env, stmt_t *s) {
             col_puts("\nRedo from start\n");
             continue;
         }
-        break;
+        return ERR_NONE;
     }
+}
+
+static error_t exec_input(env_t *env, stmt_t *s) {
+    value_t vals[64];
+    val_type_t types[64];
+    int n = s->input.nvars;
+    if (n > 64) return ERR_SYNTAX;
+    for (int i = 0; i < n; i++)
+        if (env_is_const(env, s->input.varnames[i]))
+            return ERR_CONST_REASSIGN;
+    for (int i = 0; i < n; i++) {
+        types[i] = s->input.vartypes[i];
+        if (s->input.targets[i] == NULL) {
+            value_t *cur = env_get(env, s->input.varnames[i]);
+            if (cur) types[i] = cur->type == VAL_STRING ? VAL_STRING : VAL_DOUBLE;
+        }
+    }
+    EVAL_CHECK(eval_input_line(s->input.prompt, s->input.no_question, s->input.same_line,
+                               n, types, vals));
     for (int i = 0; i < n; i++) {
         error_t err = store_target(env, s->input.targets[i], s->input.varnames[i], &vals[i]);
         val_clear(&vals[i]);
@@ -2294,25 +2308,34 @@ static int data_number(const char *t, double *out) {
     return 1;
 }
 
+/* the next DATA item, read into a variable of type t: a DATA item is
+ * text, and read into a number it has to be one, and not a quoted string.
+ * The interpreter's READ, and compiled code's (s32-bc). */
+error_t eval_read_value(val_type_t t, value_t *out) {
+    if (data_read_ptr >= data_pool_count)
+        return ERR_OUT_OF_DATA;
+    int quoted = data_quoted[data_read_ptr];
+    value_t v = val_copy(&data_pool[data_read_ptr++]);
+    if (t != VAL_STRING && v.type == VAL_STRING) {
+        double d;
+        int ok = !quoted && data_number(v.sval->data, &d);
+        val_clear(&v);
+        if (!ok) return ERR_SYNTAX;
+        v = val_double(d);
+    }
+    *out = v;
+    return ERR_NONE;
+}
+
+/* RESTORE: the next item read is the offset-th of the program's */
+void eval_restore(int offset) { data_read_ptr = offset; }
+
 static error_t exec_read(env_t *env, stmt_t *s) {
     for (int i = 0; i < s->read_stmt.nvars; i++) {
         if (env_is_const(env, s->read_stmt.varnames[i]))
             return ERR_CONST_REASSIGN;
-        if (data_read_ptr >= data_pool_count)
-            return ERR_OUT_OF_DATA;
-
-        int quoted = data_quoted[data_read_ptr];
-        value_t v = val_copy(&data_pool[data_read_ptr++]);
-
-        /* a DATA item is text; read into a number, it has to be one, and
-         * not a quoted string */
-        if (s->read_stmt.vartypes[i] != VAL_STRING && v.type == VAL_STRING) {
-            double d;
-            int ok = !quoted && data_number(v.sval->data, &d);
-            val_clear(&v);
-            if (!ok) return ERR_SYNTAX;
-            v = val_double(d);
-        }
+        value_t v;
+        EVAL_CHECK(eval_read_value(s->read_stmt.vartypes[i], &v));
 
         error_t err = store_target(env, s->read_stmt.targets[i], s->read_stmt.varnames[i], &v);
         val_clear(&v);
@@ -3354,6 +3377,24 @@ error_t eval_stmts(env_t *env, stmt_t *stmts) {
 
 /* --- Program execution with GOTO/GOSUB/SUB/FUNCTION support --- */
 
+/* a DATA item, the next of the program's: the interpreter's scan, and
+ * compiled code's (s32-bc) as it starts */
+error_t eval_data_add(const value_t *v, int quoted) {
+    if (data_pool_count == data_pool_cap) {
+        int cap = data_pool_cap ? data_pool_cap * 2 : 1024;
+        value_t *t = realloc(data_pool, cap * sizeof(*t));
+        if (!t) return ERR_OUT_OF_MEMORY;
+        data_pool = t;
+        unsigned char *q = realloc(data_quoted, cap);
+        if (!q) return ERR_OUT_OF_MEMORY;
+        data_quoted = q;
+        data_pool_cap = cap;
+    }
+    data_quoted[data_pool_count] = (unsigned char)quoted;
+    data_pool[data_pool_count++] = val_copy(v);
+    return ERR_NONE;
+}
+
 static void data_pool_clear(void) {
     for (int i = 0; i < data_pool_count; i++)
         val_clear(&data_pool[i]);
@@ -3403,23 +3444,9 @@ static error_t scan_one_stmt(stmt_t *s) {
         label_table[label_count].data_offset = data_pool_count;
         label_count++;
     }
-    if (s->type == STMT_DATA) {
-        for (int j = 0; j < s->data_stmt.nvalues; j++) {
-            if (data_pool_count == data_pool_cap) {
-                int cap = data_pool_cap ? data_pool_cap * 2 : 1024;
-                value_t *t = realloc(data_pool, cap * sizeof(*t));
-                if (!t) return ERR_OUT_OF_MEMORY;
-                data_pool = t;
-                unsigned char *q = realloc(data_quoted, cap);
-                if (!q) return ERR_OUT_OF_MEMORY;
-                data_quoted = q;
-                data_pool_cap = cap;
-            }
-            data_quoted[data_pool_count] = s->data_stmt.quoted[j];
-            data_pool[data_pool_count++] =
-                val_copy(&s->data_stmt.values[j]);
-        }
-    }
+    if (s->type == STMT_DATA)
+        for (int j = 0; j < s->data_stmt.nvalues; j++)
+            EVAL_CHECK(eval_data_add(&s->data_stmt.values[j], s->data_stmt.quoted[j]));
     if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) {
         error_t perr = proc_register(s->proc_def.name, s);
         if (perr != ERR_NONE) return perr;

@@ -99,6 +99,11 @@ error_t eval_dim(const char *name, val_type_t type, int ndims, const int *uppers
 error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
+error_t eval_input_line(const char *prompt, int no_question, int same_line,
+                        int n, const val_type_t *types, value_t *vals);
+error_t eval_data_add(const value_t *v, int quoted);
+error_t eval_read_value(val_type_t t, value_t *out);
+void eval_restore(int offset);
 void eval_set_option_base(int base);
 sb_array_t *eval_call_array(const char *name);
 /* a FUNCTION's call (out its value) or a SUB's (out NULL) with its

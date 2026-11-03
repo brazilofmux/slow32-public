@@ -700,6 +700,131 @@ static void hoist_dims(stmt_t *s) {
     }
 }
 
+/* a value taken back from the runtime (INPUT, READ), stored in a
+ * variable or an array element, the target as an assignment's */
+static void store_target(int line, const char *name, int type, expr_t *target, bv_t x) {
+    if (target && target->type == EXPR_CALL) {
+        bv_t a[3];
+        int cb;
+        sub_args(line, target->call.nargs, target->call.args, a);
+        cb = h_ncarg;
+        carg(saddr(target->call.name, (int)strlen(target->call.name)), 0);
+        carg(iconst(target->call.nargs), 0);
+        for (int i = 0; i < 3; i++) carg_bv(a[i]);
+        carg_bv(x);
+        call_end(cb, 14, "bcrt_aset", NULL);
+        return;
+    }
+    if (target) { bc_not_yet(line, "this INPUT or READ target"); return; }
+    var_store(var_get(name, type, line), x);
+}
+
+/* --- DATA: the program's items, in the order the interpreter's scan
+ * pools them (every block of the main program's text), registered as
+ * it starts; a label's offset is the items before it, for RESTORE ---- */
+
+typedef struct { char name[64]; int off; } dlabel_t;
+static dlabel_t *bc_dlabels;
+static int bc_ndlabels, bc_capdlabels, bc_ndata;
+
+static bv_t literal(const value_t *v) {
+    bv_t r;
+    if (v->type == VAL_STRING) {
+        int cb = h_ncarg;
+        carg(saddr(v->sval->data, v->sval->len), 0);
+        carg(iconst(v->sval->len), 0);
+        r.lo = call_end(cb, 2, "bcrt_str_lit", NULL);
+        r.hi = iconst(0);
+        r.t = iconst(VAL_STRING);
+    } else {
+        double d = 0;
+        val_to_double(v, &d);
+        r.lo = dconst(d, &r.hi);
+        r.t = iconst(v->type);
+    }
+    return r;
+}
+
+static void pool_data(stmt_t *s) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_LABEL) {
+            if (bc_ndlabels == bc_capdlabels) {
+                bc_capdlabels = bc_capdlabels ? bc_capdlabels * 2 : 64;
+                bc_dlabels = realloc(bc_dlabels, (size_t)bc_capdlabels * sizeof(dlabel_t));
+                if (!bc_dlabels) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            }
+            strncpy(bc_dlabels[bc_ndlabels].name, s->label.name, 63);
+            bc_dlabels[bc_ndlabels].name[63] = '\0';
+            bc_dlabels[bc_ndlabels++].off = bc_ndata;
+        }
+        if (s->type == STMT_DATA)
+            for (int j = 0; j < s->data_stmt.nvalues; j++) {
+                int cb;
+                bv_t x = literal(&s->data_stmt.values[j]);
+                cb = h_ncarg;
+                carg_bv(x);
+                carg(iconst(s->data_stmt.quoted[j]), 0);
+                call_end(cb, 4, "bcrt_data", NULL);
+                bc_ndata++;
+            }
+        switch (s->type) {
+        case STMT_FOR: pool_data(s->for_stmt.body); break;
+        case STMT_IF: pool_data(s->if_stmt.then_body); pool_data(s->if_stmt.else_body); break;
+        case STMT_WHILE: pool_data(s->while_stmt.body); break;
+        case STMT_DO_LOOP: pool_data(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) pool_data(c->body);
+            break;
+        default: break;
+        }
+    }
+}
+
+static int data_offset(const char *label) {
+    for (int i = 0; i < bc_ndlabels; i++)
+        if (strcmp(bc_dlabels[i].name, label) == 0) return bc_dlabels[i].off;
+    return 0;               /* (the checker refused an undefined label) */
+}
+
+static void bc_input(stmt_t *s) {
+    char types[65];
+    int n = s->input.nvars, cb;
+    if (n > 64) { bc_not_yet(s->line, "an INPUT of more than 64"); return; }
+    for (int i = 0; i < n; i++) {
+        int t = s->input.vartypes[i];
+        if (!s->input.targets[i])       /* a variable: a string's, or a number (exec_input) */
+            t = var_get(s->input.varnames[i], s->input.vartypes[i], s->line)->type == VAL_STRING
+                ? VAL_STRING : VAL_DOUBLE;
+        types[i] = (char)('A' + t);
+    }
+    types[n] = '\0';
+    cb = h_ncarg;
+    carg(s->input.prompt ? saddr(s->input.prompt, (int)strlen(s->input.prompt)) : iconst(0), 0);
+    carg(iconst(s->input.no_question), 0);
+    carg(iconst(s->input.same_line), 0);
+    carg(iconst(n), 0);
+    carg(saddr(types, n), 0);
+    call_end(cb, 5, "bcrt_input", NULL);
+    for (int i = 0; i < n; i++) {
+        bv_t x;
+        cb = h_ncarg;
+        carg(iconst(i), 0);
+        x = bv_call("bcrt_input_take", cb, 1);
+        store_target(s->line, s->input.varnames[i], s->input.vartypes[i], s->input.targets[i], x);
+    }
+}
+
+static void bc_read(stmt_t *s) {
+    for (int i = 0; i < s->read_stmt.nvars; i++) {
+        bv_t x;
+        int cb = h_ncarg;
+        carg(iconst(s->read_stmt.vartypes[i]), 0);
+        x = bv_call("bcrt_read", cb, 1);
+        store_target(s->line, s->read_stmt.varnames[i], s->read_stmt.vartypes[i],
+                     s->read_stmt.targets[i], x);
+    }
+}
+
 static void bc_stmt(stmt_t *s) {
     if (!bc_live && s->type != STMT_LABEL) dead_blk();
     switch (s->type) {
@@ -782,6 +907,20 @@ static void bc_stmt(stmt_t *s) {
         int cb = h_ncarg;
         carg(iconst(s->option_base.base), 0);
         call_end(cb, 1, "bcrt_option_base", NULL);
+        break;
+    }
+    case STMT_INPUT:
+        bc_input(s);
+        break;
+    case STMT_READ:
+        bc_read(s);
+        break;
+    case STMT_DATA:
+        break;                  /* (pooled as the program starts) */
+    case STMT_RESTORE: {
+        int cb = h_ncarg;
+        carg(iconst(s->restore_stmt.label[0] ? data_offset(s->restore_stmt.label) : 0), 0);
+        call_end(cb, 1, "bcrt_restore", NULL);
         break;
     }
     case STMT_ERASE:
@@ -912,6 +1051,9 @@ static void hl_func(Node *fn) {
     bc_nstatics = 0;
     bc_base = 0;
     hoist_dims(bc_program);
+    bc_ndlabels = 0;
+    bc_ndata = 0;
+    pool_data(bc_program);
     {
         int cb = h_ncarg;
         carg(iconst(bc_base), 0);
