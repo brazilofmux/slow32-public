@@ -3,7 +3,7 @@
 compiled by s32-sbc, with the same keys on stdin, and the two must print
 the same bytes.
 
-    sbc/tests/run-oracle.py [-j N] [-v] [DIR_OR_FILE ...]
+    sbc/tests/run-oracle.py [-j N] [-v] [--bc] [DIR_OR_FILE ...]
 
 With no arguments the corpus is sbasic's own tests and, when they are
 there, the collections in ~/refs/basic/nbs-ecma55-test (NBS/,
@@ -15,6 +15,11 @@ kept in out/oracle/); NOCOMPILE (s32-sbc refuses it: where the
 interpreter refuses it too, at the same line, that is agreement, and
 counted as AGREE-REJECT); TIMEOUT (either side).  Exit status 1 when
 anything DIFFERs.
+
+--bc holds s32-bc (bc/, compile-bc.sh) to the interpreter instead.  Its
+refusals are tallied by reason: a checker finding (the program is no
+QuickBASIC loads; the interpreter runs it anyway), or "not yet: ..." --
+what s32-bc does not do yet, the list of what to do next.
 """
 import concurrent.futures as cf
 import difflib
@@ -29,6 +34,8 @@ ROOT = os.path.dirname(SBC)
 EMU = os.environ.get('EMU', os.path.join(ROOT, 'tools/emulator/slow32-fast'))
 SBASIC = os.path.join(ROOT, 'sbasic/sbasic.s32x')
 OUT = os.path.join(SBC, 'out/oracle')
+COMPILE = 'compile-bas.sh'
+BUILD = 'build.sh' 
 REFS = os.path.expanduser('~/refs/basic/nbs-ecma55-test')
 TLIMIT = int(os.environ.get('TIMEOUT', '60'))
 
@@ -61,7 +68,7 @@ def one(path):
     exe = os.path.join(OUT, tag + '.s32x')
     work = os.path.join(OUT, 'work-' + tag)
     os.makedirs(work, exist_ok=True)
-    c = subprocess.run(['bash', os.path.join(SBC, 'compile-bas.sh'), path, exe],
+    c = subprocess.run(['bash', os.path.join(SBC, COMPILE), path, exe],
                        capture_output=True, cwd=cwd, env=dict(os.environ, SBC_WORK=work))
     interp = run([EMU, '-q', SBASIC, path], keys, cwd)
     if interp is not None:
@@ -112,13 +119,18 @@ def main():
         jobs = int(args[args.index('-j') + 1])
         del args[args.index('-j'):args.index('-j') + 2]
     args = [a for a in args if a != '-v']
+    global OUT, COMPILE, BUILD
+    bc = '--bc' in args
+    if bc:
+        args = [a for a in args if a != '--bc']
+        OUT, COMPILE, BUILD = os.path.join(SBC, 'out/oracle-bc'), 'compile-bc.sh', 'build-bc.sh' 
     if not args:
         args = [os.path.join(ROOT, 'sbasic/tests')]
         args += [os.path.join(REFS, d) for d in ('NBS', 'basic_computer_games', 'fast')
                  if os.path.isdir(os.path.join(REFS, d))]
     os.makedirs(OUT, exist_ok=True)
     # the runtime's own object, made once before the programs race for it
-    subprocess.run(['bash', os.path.join(SBC, 'build.sh')], check=True, capture_output=True)
+    subprocess.run(['bash', os.path.join(SBC, BUILD)], check=True, capture_output=True)
     with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
         res = list(ex.map(one, corpus(args)))
     counts = {}
@@ -127,6 +139,15 @@ def main():
         if verbose or verdict not in ('AGREE', 'AGREE-REJECT'):
             print('%-60s %s %s' % (name, verdict, note))
     print('  '.join('%s %d' % (k, counts[k]) for k in sorted(counts)), '(of %d)' % len(res))
+    if bc:
+        why = {}
+        for name, verdict, note in res:
+            if verdict in ('NOCOMPILE', 'AGREE-REJECT'):
+                k = note[note.index('not yet'):] if 'not yet' in note else \
+                    note.split(': ')[2] if note.count(': ') >= 2 else note
+                why[k] = why.get(k, 0) + 1
+        for k in sorted(why, key=lambda k: -why[k]):
+            print('    %4d  %s' % (why[k], k))
     sys.exit(1 if counts.get('DIFFER') else 0)
 
 

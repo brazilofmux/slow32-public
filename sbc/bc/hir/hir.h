@@ -1,0 +1,687 @@
+/* COPIED from selfhost/src/hir.h at 4dc9b60a (first copy, 2026-11-03).
+ * s32-bc keeps its own copy, as fortran/ and cobol/ do by ruling: selfhost
+ * must be free to evolve without breaking it.  Do NOT symlink this back.
+ * Re-sync deliberately (fortran/README.md has the recipe), and record the
+ * new vintage here.
+ */
+/* hir.h -- High-level IR for s12cc
+ *
+ * Parallel-array instruction representation.
+ * Each instruction slot is identified by its index.
+ * Instructions that produce values use their index as the value number.
+ */
+
+/* --- Instruction kinds --- */
+#define HI_NOP       0
+#define HI_ICONST    1
+#define HI_PARAM     2
+#define HI_ADD       3
+#define HI_SUB       4
+#define HI_MUL       5
+#define HI_DIV       6
+#define HI_REM       7
+#define HI_AND       8
+#define HI_OR        9
+#define HI_XOR      10
+#define HI_SLL      11
+#define HI_SRA      12
+#define HI_SRL      13
+#define HI_SEQ      14
+#define HI_SNE      15
+#define HI_SLT      16
+#define HI_SGT      17
+#define HI_SLE      18
+#define HI_SGE      19
+#define HI_SLTU     20
+#define HI_SGTU     21
+#define HI_SLEU     22
+#define HI_SGEU     23
+#define HI_NEG      24
+#define HI_NOT      25
+#define HI_BNOT     26
+#define HI_LOAD     27
+#define HI_STORE    28
+#define HI_ALLOCA   29
+#define HI_GADDR    30
+#define HI_SADDR    31
+#define HI_FADDR    32
+#define HI_BR       33
+#define HI_BRC      34
+#define HI_RET      35
+#define HI_CALL     36
+#define HI_CALLP    37
+#define HI_PHI      38
+#define HI_COPY     39
+#define HI_ADDI     40
+#define HI_GETFP    41
+#define HI_CALLHI   42  /* hi word of 64-bit return: src1=CALL instruction */
+
+/* Floating-point operations (f32/f64 determined by h_ty) */
+#define HI_FADD     43  /* FP add */
+#define HI_FSUB     44  /* FP subtract */
+#define HI_FMUL     45  /* FP multiply */
+#define HI_FDIV     46  /* FP divide */
+#define HI_FNEG     47  /* FP negate */
+#define HI_FEQ      48  /* FP equal → int 0/1 */
+#define HI_FLT      49  /* FP less than → int 0/1 */
+#define HI_FLE      50  /* FP less-equal → int 0/1 */
+#define HI_FCVT_ItoF 51 /* int to float conversion */
+#define HI_FCVT_FtoI 52 /* float to int conversion */
+#define HI_FCVT_FtoD 53 /* f32 to f64 promotion */
+#define HI_FCVT_DtoF 54 /* f64 to f32 truncation */
+#define HI_FCONST   55  /* float constant: val=bits (f32 in val, f64 in val+val_hi via CALLHI-like) */
+
+/* Varargs (x64-specific; emitted only when S12CC_X64_HOST is defined) */
+#define HI_VA_START 56  /* va_start: val=nparams. Produces initial va_list value. */
+#define HI_VA_ARG   57  /* va_arg:   src1=current va_list, ty=arg type. Produces argument. */
+#define HI_VA_NEXT  58  /* va_next:  src1=current va_list. Produces updated va_list. */
+
+/* Widening (x64-specific; the optimizer must NOT fold these) */
+#define HI_SEXT32   59  /* sign-extend 32→64: src1=32-bit value → 64-bit signed */
+#define HI_ZEXT32   60  /* zero-extend 32→64: src1=32-bit value → 64-bit unsigned */
+
+/* AArch64 inline-asm subset needed by tools/dbt. */
+#define HI_A64_MRS_CNTVCT     61  /* mrs Xt, cntvct_el0 */
+#define HI_A64_DBT_TRAMPOLINE 62  /* execute translated block trampoline; args in h_carg */
+#define HI_A64_DC_CVAU        63  /* dc cvau, Xt */
+#define HI_A64_IC_IVAU        64  /* ic ivau, Xt */
+#define HI_A64_DSB_ISH        65  /* dsb ish */
+#define HI_A64_ISB            66  /* isb */
+
+/* Floating-point square root.  Single-source FP op; ty selects S/D form.
+ * Recognised by the lower from __builtin_sqrt / __builtin_sqrtf source
+ * patterns and lowered directly to FSQRT on backends that support it. */
+#define HI_FSQRT    67
+
+/* x86-64 inline-asm subset needed by tools/dbt.  Both ops produce no
+ * value; their effects are stores via addresses passed as arguments. */
+#define HI_X64_RDTSC          68  /* lfence;rdtsc → store eax to src1, edx to src2 */
+#define HI_X64_DBT_TRAMPOLINE 69  /* execute translated block trampoline; args in h_carg */
+
+/* Jump-table dispatch terminator (issue #32).  Used for dense switches.
+ * src1 = index value, already normalised to [0,span) and bounds-checked by
+ * a preceding BRC to the default block.  h_val = default block (taken for
+ * table holes).  The per-index target block list lives in hjt_target[]
+ * (hjt_base[]/hjt_span[]), NOT h_carg — h_carg entries are value
+ * instructions that several passes rewrite, but these are block numbers. */
+#define HI_JMPTAB   70
+
+/* The high word of a product, signed and unsigned -- SLOW-32's mulh and
+ * mulhu.  A 64-bit product is lo = MUL, hi = MULH when both operands are
+ * sign-extended words, else MULHU + two MULs (hir_lower.h hl_ll_op); it
+ * was a __muldi3 call.  Binary like ADD..SGEU: pure, CSE-able, the result
+ * may reuse src1's register.  Came up from the COBOL front's copy of these
+ * headers (cobol/src/hir), 2026-10-03. */
+#define HI_MULH     71
+#define HI_MULHU    72
+/* The stack pointer, read and set (ASM_S32_GETSP / ASM_S32_SETSP): a
+ * variable length array is allocated by moving sp down, and freed by
+ * setting it back.  GETSP is not pure -- never CSE'd or hoisted -- and
+ * SETSP, having no value, is kept by DCE as every value-less kind is.
+ * SLOW-32 only: the cross targets refuse VLAs. */
+#define HI_GETSP    73
+#define HI_SETSP    74
+/* a binary operation over two value operands (the ADD..SGEU range and
+ * the two above); the passes that classified by the range ask this */
+static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
+
+/* --- Limits --- */
+
+/* s12cc.c is built without -I, so these come from the implicit
+ * declaration everywhere they are used for truthiness (HIR_*_DEBUG
+ * gates).  The inline budget needs getenv's real return type, and a
+ * later prototype would conflict with the earlier implicit int -- so
+ * declare both here, ahead of every use in the HIR headers. */
+static int hl_inl_depth_dbg;
+static char *hl_cur_fn_dbg;
+
+char *getenv(const char *name);
+int atoi(const char *nptr);
+
+
+/* --- Diagnostic flags --- */
+static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
+
+/* --- Instruction parallel arrays --- */
+static int   *h_kind;
+static int   *h_ty;
+static int   *h_src1;
+static int   *h_src2;
+static int   *h_val;
+static char **h_name;
+static int   *h_blk;
+static int   h_ninst;
+
+/* Call arguments (flat array, indexed per-call), grown with their tags
+ * (tables.h, TAB_HIR_CARG; hcg_argmap rides along) */
+static int   *h_carg;
+static int   hir_carg_cap;
+/* ABI tag per flat call-arg slot: 0 = 32-bit word (ints, i64 halves,
+ * varargs doubles), 1 = f64 LO half, 2 = f64 HI half, 16+k = byval
+ * struct pointer whose stack slot reserves k words.  Non-varargs
+ * doubles occupy an even-odd aligned register pair (r3:r4, r5:r6,
+ * r7:r8, r9:r10) in clang's convention; byval pointers always go to
+ * the stack (clang never assigns them a register, and the slot keeps
+ * the struct's full rounded size so later stack args land where a
+ * clang callee expects them); everything else fills the lowest free
+ * register. */
+#define HI_TAG_BYVAL 16
+static int   *h_carg_tag;
+
+/* Assign physical argument locations for n flat slots with the given
+ * tags (see h_carg_tag).  out[i] = register number 3..10, or -1 for a
+ * stack slot.  Returns the number of stack WORDS (byval slots count
+ * their full reserved size).  Mirrors clang's CC_SLOW32: f64 takes the
+ * lowest free even-odd aligned pair, byval pointers (tag 16+k) always
+ * take a k-word stack slot and never a register, every other slot
+ * (ints, i64 halves, f32, varargs f64 halves) takes the lowest free
+ * single register; later args back-fill skipped registers; spilled
+ * args go to the stack in argument order. */
+static int hi_abi_assign(int *tags, int n, int *out) {
+    int freeb[8];
+    int i;
+    int p;
+    int nstk;
+
+    i = 0;
+    while (i < 8) { freeb[i] = 1; i = i + 1; }
+    nstk = 0;
+    i = 0;
+    while (i < n) {
+        if (tags[i] >= HI_TAG_BYVAL) {
+            out[i] = -1;
+            nstk = nstk + (tags[i] - HI_TAG_BYVAL);
+            i = i + 1;
+        } else if (tags[i] == 1 && i + 1 < n && tags[i + 1] == 2) {
+            p = 0;
+            while (p < 8 && !(freeb[p] && freeb[p + 1])) p = p + 2;
+            if (p < 8) {
+                out[i] = 3 + p;
+                out[i + 1] = 4 + p;
+                freeb[p] = 0;
+                freeb[p + 1] = 0;
+            } else {
+                out[i] = -1;
+                out[i + 1] = -1;
+                nstk = nstk + 2;
+            }
+            i = i + 2;
+        } else {
+            p = 0;
+            while (p < 8 && !freeb[p]) p = p + 1;
+            if (p < 8) {
+                out[i] = 3 + p;
+                freeb[p] = 0;
+            } else {
+                out[i] = -1;
+                nstk = nstk + 1;
+            }
+            i = i + 1;
+        }
+    }
+    return nstk;
+}
+
+/* Per-function incoming-parameter ABI map, filled by hl_func from the
+ * parameter list and consumed by the register allocator (preferred
+ abi colors) and the codegen entry sequence. */
+/* By flat incoming slot (a long long or double takes two, a struct
+ * return's hidden pointer one), grown (tables.h, TAB_HL_PARAM): a fixed
+ * 64 of them, written without a bound, were overrun by a function of
+ * 127 parameters (C11 5.2.4.1). */
+static int *hl_param_tags;
+static int *hl_param_map;        /* reg 3..10 or -1 = stack */
+static int *hl_param_stkord;     /* for -1 slots: BYTE offset from the
+                                    incoming sp (byval slots reserve the
+                                    struct's rounded size, so ordinals
+                                    would lie) */
+static int hl_param_nflat;
+static int *hl_pp_inst;          /* HI_PARAM inst id per flat phys slot;
+                                    all PARAMs are emitted before any
+                                    param-copy code so incoming registers
+                                    stay pinned across earlier copies */
+static int hl_param_cap;
+
+/* room for n flat slots, all zero up to n */
+static void hl_param_room(int n) {
+    int i;
+    if (n > hl_param_cap) {
+        if (hl_param_cap == 0) {
+            tab_add((char **)&hl_param_tags, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_map, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_stkord, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_pp_inst, (int)sizeof(int), TAB_HL_PARAM, 0);
+        }
+        tab_grow(TAB_HL_PARAM, &hl_param_cap, 66, n);
+    }
+    i = 0;
+    while (i < n) { hl_param_tags[i] = 0; i = i + 1; }
+}
+static int   *h_cbase;
+static int   h_ncarg;
+
+/* Jump-table targets (flat pool; per-HI_JMPTAB-instruction slice).
+ * hjt_target[hjt_base[i] .. hjt_base[i]+hjt_span[i]) are the destination
+ * block numbers for index 0..span-1.  Kept separate from h_carg because
+ * these are block numbers, not value instructions. */
+#define HIR_MAX_JT  32768   /* was 8192 */
+static int   hjt_target[HIR_MAX_JT];
+static int   *hjt_base;
+static int   *hjt_span;
+static int   hjt_n;
+
+/* Phi arguments (Phase B): hir_parg_cap entries, grown by
+ * hir_parg_room before a phi's arguments are laid down */
+static int  *h_pblk;
+static int  *h_pval;
+static int   hir_parg_cap;
+static int   *h_pbase;
+static int   *h_pcnt;
+static int   h_nparg;
+
+/* Basic blocks */
+static int  *bb_start;
+static int  *bb_end;
+static int   bb_nblk;
+
+/* The per-function tables grow with the function.  A block-indexed one
+ * holds hir_blk_cap entries, more than bb_nblk; a module registers its
+ * tables once (hir_blk_table) before the first function's blocks are
+ * made, and a new block grows every one together, so none is ever
+ * shorter than another (the fixed 16384 stopped stage08 on the C s32-sbc
+ * writes for a BASIC program: "too many HIR blocks").  A table nobody
+ * registered stays NULL: the first function compiled stops on it.
+ * Instruction-indexed tables (hir_inst_table) grow the same way, with
+ * hir_inst_cap entries, more than h_ninst: by a new instruction
+ * (hi_emit, or hir_inst_room where a pass writes the tables at h_ninst
+ * itself).  cc.s32x is linked with --heap-size max for them.  Two more kinds
+ * have their own counts: the phi arguments (2, h_nparg) and the
+ * allocator's interference edges (3, gc_nedge). */
+static int hir_blk_cap;
+static int hir_inst_cap;
+static int hir_blk_based;      /* bb_start, bb_end registered */
+
+/* the registry is tables.h's; these are its HIR kinds (0 block-indexed,
+ * 1 instruction-indexed, 2 phi arguments, 3 interference edges) */
+static void hir_tab_add(char **p, int esz, int inst) {
+    tab_add(p, esz, inst, inst == TAB_HIR_BLK ? hir_blk_cap : inst == TAB_HIR_INST ? hir_inst_cap : 0);
+}
+
+static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_BLK); }
+static void hir_inst_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_INST); }
+
+static void hir_tab_grow(int inst, int *capp, int first, int need) {
+    tab_grow(inst, capp, first, need);
+}
+
+/* room for n more call arguments */
+static void hir_carg_room(int n) {
+    if (h_ncarg + n <= hir_carg_cap) return;
+    if (hir_carg_cap == 0) {
+        tab_add((char **)&h_carg, (int)sizeof(int), TAB_HIR_CARG, 0);
+        tab_add((char **)&h_carg_tag, (int)sizeof(int), TAB_HIR_CARG, 0);
+    }
+    tab_grow(TAB_HIR_CARG, &hir_carg_cap, 4096, h_ncarg + n);
+}
+
+static void hir_blk_grow(int need) {
+    if (!hir_blk_based) {
+        hir_blk_based = 1;
+        hir_blk_table((char **)&bb_start, (int)sizeof(int));
+        hir_blk_table((char **)&bb_end, (int)sizeof(int));
+    }
+    hir_tab_grow(0, &hir_blk_cap, 256, need);
+}
+
+/* room for n more phi arguments (the fixed 2M of them were 16MB of
+ * cc.s32x's address space whatever the function) */
+static void hir_parg_room(int n) {
+    if (h_nparg + n <= hir_parg_cap) return;
+    if (hir_parg_cap == 0) {
+        hir_tab_add((char **)&h_pblk, (int)sizeof(int), 2);
+        hir_tab_add((char **)&h_pval, (int)sizeof(int), 2);
+    }
+    hir_tab_grow(2, &hir_parg_cap, 4096, h_nparg + n);
+}
+
+/* Current block being built (used by lowering) */
+static int   hl_cur_blk;
+
+/* --- Functions --- */
+
+/* Rematerialized address arithmetic (memory model, step 5b.1): an
+ * ADDI of a register-resident value chosen as a respill victim is
+ * recomputed at each use -- one instruction, like a reload, but no
+ * store and no slot.  Set by gc_respill, read through hi_inst_remat
+ * so the allocator gives it no node and the emitter nothing at its
+ * definition; hcg_into emits `addi reg, src, imm` at the use, and the
+ * liveness builder reads the operand where the value is read
+ * (lv_uses).  Cleared here, per function, before anything reads it:
+ * LICM and the loop-constant pass ask hi_inst_remat long before the
+ * allocator, and liveness is computed before the allocator's own
+ * per-function reset (a stale flag from the previous function made
+ * test_respill's blam read through another function's ADDI). */
+static char *ra_remat_op;
+
+/* Memory model step 5b.2/5b.3: a COPY the allocator appended -- a
+ * block reload of a spilled value (ra_insert_reloads), or the memory
+ * copy a value becomes across one region (ra_region_split) -- whose
+ * OWN storage is where its readers find the value.  The address-fold
+ * walks stop at one: a load folding through it must read its register
+ * or slot, not the original's.  Read by the emitter, so declared here. */
+static char *ra_is_reload;
+
+static void hir_reset(void) {
+    {
+        int hi_i;
+        hi_i = 0;
+        while (hi_i < h_ninst) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
+    }
+    h_ninst = 0;
+    h_ncarg = 0;
+    {
+        int hi_i;
+        hi_i = 0;
+        while (hi_i < hir_carg_cap) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
+    }
+    h_nparg = 0;
+    hjt_n = 0;
+    bb_nblk = 0;
+    hl_cur_blk = -1;
+}
+
+static int hir_new_block(void) {
+    int b;
+    b = bb_nblk;
+    /* room for this block and one more (a reader may look one past) */
+    if (b + 2 > hir_blk_cap) hir_blk_grow(b + 2);
+    bb_start[b] = -1;  /* set lazily when block becomes current */
+    bb_end[b] = -1;
+    bb_nblk = bb_nblk + 1;
+    return b;
+}
+
+/* Switch current block; fix up start/end to current h_ninst */
+static void hl_switch_block(int blk) {
+    hl_cur_blk = blk;
+    bb_start[blk] = h_ninst;
+    bb_end[blk] = h_ninst;
+}
+
+/* DIVERGENCE (f77, port upstream candidate): a LOAD the FRONTEND
+ * asserts reads storage no store in this unit can legally alias --
+ * F77 scalar dummies under 15.9.3.6 -- may be hoisted by LICM like a
+ * pure instruction.  The frontend sets the flag at emission and must
+ * RETRACT it (at unit end) for any symbol the unit itself stores.
+ * Nothing in a C-compiler frontend sets it, so the mechanism is inert
+ * when ported. */
+static char *h_ld_ro;
+/* volatile (docs/plans/memory-model.md, step 2a).  h_voladdr marks an
+ * address value the lowering computed for a volatile-qualified lvalue;
+ * an ADDI or COPY off one is one too.  A LOAD or STORE through such an
+ * address is a volatile access, h_vol: never forwarded, never removed,
+ * never hoisted, and nothing is known about memory across it. */
+static char *h_voladdr;
+static char *h_vol;
+
+static void hir_inst_base(void);
+
+/* every instruction table to need entries at least */
+static void hir_inst_grow(int need) {
+    hir_inst_base();
+    hir_tab_grow(1, &hir_inst_cap, 4096, need);
+}
+
+/* room for n more instructions at h_ninst (and one past, which a reader
+ * may look at), for the passes that write the tables at h_ninst
+ * themselves rather than through hi_emit */
+static void hir_inst_room(int n) {
+    if (h_ninst + n + 1 > hir_inst_cap) hir_inst_grow(h_ninst + n + 1);
+}
+
+static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
+    int idx;
+    idx = h_ninst;
+    if (idx + 2 > hir_inst_cap) hir_inst_grow(idx + 2);
+    h_ld_ro[idx] = 0;
+    h_kind[idx] = kind;
+    h_ty[idx] = ty;
+    h_src1[idx] = s1;
+    h_src2[idx] = s2;
+    h_val[idx] = val;
+    h_name[idx] = name;
+    h_blk[idx] = hl_cur_blk;
+    h_cbase[idx] = -1;
+    h_pbase[idx] = -1;
+    h_pcnt[idx] = 0;
+    h_voladdr[idx] = 0;
+    h_vol[idx] = 0;
+    if (s1 >= 0 && h_voladdr[s1]) {
+        if (kind == HI_ADDI || kind == HI_COPY) h_voladdr[idx] = 1;
+        if (kind == HI_LOAD || kind == HI_STORE) h_vol[idx] = 1;
+    }
+    h_ninst = h_ninst + 1;
+    if (hl_cur_blk >= 0) {
+        bb_end[hl_cur_blk] = h_ninst;
+    }
+    return idx;
+}
+
+/* Does an instruction produce a value? */
+static int hi_has_value(int kind) {
+    if (kind == HI_NOP) return 0;
+    if (kind == HI_STORE) return 0;
+    if (kind == HI_BR) return 0;
+    if (kind == HI_BRC) return 0;
+    if (kind == HI_RET) return 0;
+    if (kind == HI_A64_DBT_TRAMPOLINE) return 0;
+    if (kind == HI_A64_DC_CVAU) return 0;
+    if (kind == HI_A64_IC_IVAU) return 0;
+    if (kind == HI_A64_DSB_ISH) return 0;
+    if (kind == HI_A64_ISB) return 0;
+    if (kind == HI_X64_RDTSC) return 0;
+    if (kind == HI_X64_DBT_TRAMPOLINE) return 0;
+    if (kind == HI_JMPTAB) return 0;
+    if (kind == HI_SETSP) return 0;
+    return 1;
+}
+
+/* Can a value be rematerialized (no spill needed)? */
+static int hi_is_remat(int kind) {
+    if (kind == HI_ICONST) return 1;
+    if (kind == HI_ALLOCA) return 1;
+    if (kind == HI_GADDR) return 1;
+    if (kind == HI_SADDR) return 1;
+    if (kind == HI_FADDR) return 1;
+    if (kind == HI_GETFP) return 1;
+    return 0;
+}
+
+/* Per-instruction remat override.  hcg_mark_loop_consts sets this
+ * for big (non-i12) HI_ICONSTs used inside loops: instead of a
+ * lui+addi rematerialized at every use (two instructions per loop
+ * iteration), the value gets a graph node, a color, and one
+ * materialization at its def.  Reset per function by that pass. */
+static int *h_no_remat;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hir_inst_base_done;
+static void hir_inst_base(void) {
+    if (hir_inst_base_done) return;
+    hir_inst_base_done = 1;
+    hir_inst_table((char **)&h_kind, (int)sizeof(int));
+    hir_inst_table((char **)&h_ty, (int)sizeof(int));
+    hir_inst_table((char **)&h_src1, (int)sizeof(int));
+    hir_inst_table((char **)&h_src2, (int)sizeof(int));
+    hir_inst_table((char **)&h_val, (int)sizeof(int));
+    hir_inst_table((char **)&h_name, (int)sizeof(char *));
+    hir_inst_table((char **)&h_blk, (int)sizeof(int));
+    hir_inst_table((char **)&h_cbase, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_base, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_span, (int)sizeof(int));
+    hir_inst_table((char **)&h_pbase, (int)sizeof(int));
+    hir_inst_table((char **)&h_pcnt, (int)sizeof(int));
+    hir_inst_table((char **)&ra_remat_op, (int)sizeof(char));
+    hir_inst_table((char **)&ra_is_reload, (int)sizeof(char));
+    hir_inst_table((char **)&h_ld_ro, (int)sizeof(char));
+    hir_inst_table((char **)&h_voladdr, (int)sizeof(char));
+    hir_inst_table((char **)&h_vol, (int)sizeof(char));
+    hir_inst_table((char **)&h_no_remat, (int)sizeof(int));
+}
+
+/* Instruction-level remat query: kind says remat, override says
+ * keep it in a register.  Use wherever an instruction (not just a
+ * kind) is in hand. */
+static int hi_inst_remat(int i) {
+    if (i < 0) return 0;
+    if (ra_remat_op[i]) return 1;
+    if (h_no_remat[i]) return 0;
+    return hi_is_remat(h_kind[i]);
+}
+
+static int hi_is_a64_cache_asm(int kind) {
+    return kind == HI_A64_DC_CVAU || kind == HI_A64_IC_IVAU ||
+           kind == HI_A64_DSB_ISH || kind == HI_A64_ISB;
+}
+
+/* Is this instruction kind safe to hoist/CSE? Pure, non-faulting. */
+static int hi_is_pure(int k) {
+    /* Binary arithmetic/logic/comparison, excluding DIV/REM */
+    if (hi_is_binop(k)) {
+        if (k == HI_DIV || k == HI_REM) return 0;
+        return 1;
+    }
+    if (k == HI_NEG) return 1;
+    if (k == HI_NOT) return 1;
+    if (k == HI_BNOT) return 1;
+    if (k == HI_ADDI) return 1;
+    if (k == HI_COPY) return 1;
+    if (k == HI_ICONST) return 1;
+    if (k == HI_PARAM) return 1;
+    if (k == HI_ALLOCA) return 1;
+    if (k == HI_GADDR) return 1;
+    if (k == HI_SADDR) return 1;
+    if (k == HI_FADDR) return 1;
+    if (k == HI_GETFP) return 1;
+    if (k == HI_FSQRT) return 1;
+    return 0;
+}
+
+/* --- Operand references ---------------------------------------------
+ * An instruction refers to other instructions through src1 (always a
+ * reference when >= 0), src2 (a reference for a binop, STORE, RET and
+ * the FP ops; a block number for BR and BRC, a variable index for a
+ * PHI), its call arguments, and its phi arguments.  Five passes walked
+ * those four places by hand, each with its own list of the kinds that
+ * carry an argument list, and two of the lists disagreed.  This is the
+ * one walk: reference n of instruction i is src1 first, then src2, then
+ * the arguments in order (docs/plans/memory-model.md, step 1). */
+static int hi_src2_is_ref(int k) {
+    if (hi_is_binop(k)) return 1;
+    if (k == HI_STORE) return 1;
+    if (k == HI_RET) return 1;
+    if (k >= HI_FADD && k <= HI_FDIV) return 1;
+    if (k >= HI_FEQ && k <= HI_FLE) return 1;
+    return 0;
+}
+
+static int hi_nargs(int i) {
+    int k;
+    if (h_cbase[i] < 0) return 0;
+    k = h_kind[i];
+    if (k == HI_CALL || k == HI_CALLP ||
+        k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) return h_val[i];
+    return 0;
+}
+
+static int hi_nrefs(int i) {
+    int n;
+    int k;
+    k = h_kind[i];
+    n = 0;
+    if (h_src1[i] >= 0) n = n + 1;
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) n = n + 1;
+    n = n + hi_nargs(i);
+    if (k == HI_PHI && h_pbase[i] >= 0) n = n + h_pcnt[i];
+    return n;
+}
+
+/* The slot index reference n of i lives in: 0 src1, 1 src2, 2 + j the
+ * j-th call argument, -2 - j the j-th phi argument. */
+static int hi_ref_slot(int i, int n) {
+    int k;
+    int na;
+    k = h_kind[i];
+    if (h_src1[i] >= 0) { if (n == 0) return 0; n = n - 1; }
+    if (h_src2[i] >= 0 && hi_src2_is_ref(k)) { if (n == 0) return 1; n = n - 1; }
+    na = hi_nargs(i);
+    if (n < na) return 2 + n;
+    return -2 - (n - na);
+}
+
+static int hi_ref(int i, int n) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) return h_src1[i];
+    if (s == 1) return h_src2[i];
+    if (s >= 2) return h_carg[h_cbase[i] + (s - 2)];
+    return h_pval[h_pbase[i] + (-2 - s)];
+}
+
+static void hi_ref_set(int i, int n, int v) {
+    int s;
+    s = hi_ref_slot(i, n);
+    if (s == 0) h_src1[i] = v;
+    else if (s == 1) h_src2[i] = v;
+    else if (s >= 2) h_carg[h_cbase[i] + (s - 2)] = v;
+    else h_pval[h_pbase[i] + (-2 - s)] = v;
+}
+
+/* Is reference n of i the address a LOAD reads or a STORE writes? */
+static int hi_ref_is_addr(int i, int n) {
+    return n == 0 && h_src1[i] >= 0 && (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE);
+}
+
+/* Control-flow terminators that end a basic block (define its CFG successors).
+ * BR/BRC/RET/JMPTAB. (Calls are regular value-producing instructions here.) */
+static int hi_is_terminator(int kind) {
+    if (kind == HI_BR) return 1;
+    if (kind == HI_BRC) return 1;
+    if (kind == HI_RET) return 1;
+    if (kind == HI_JMPTAB) return 1;
+    return 0;
+}
+
+/* Is the current block terminated? */
+static int hl_terminated(void) {
+    int last;
+    if (hl_cur_blk < 0) return 1;
+    if (bb_start[hl_cur_blk] >= bb_end[hl_cur_blk]) return 0;
+    last = bb_end[hl_cur_blk] - 1;
+    if (hi_is_terminator(h_kind[last])) return 1;
+    return 0;
+}
+
+/* Emit a HI_JMPTAB terminator dispatching `index_val` (already in [0,span)
+ * and bounds-checked) through a table of `span` destination blocks.  Holes
+ * in the table should be filled with `def_blk` by the caller. */
+static int hi_emit_jmptab(int index_val, int def_blk, int *targets, int span) {
+    int idx;
+    int j;
+    if (hjt_n + span > HIR_MAX_JT) {
+        fdputs("s12cc: jump-table target pool overflow\n", 2);
+        exit(1);
+    }
+    idx = hi_emit(HI_JMPTAB, 0, index_val, -1, def_blk, NULL);
+    hjt_base[idx] = hjt_n;
+    hjt_span[idx] = span;
+    j = 0;
+    while (j < span) {
+        hjt_target[hjt_n] = targets[j];
+        hjt_n = hjt_n + 1;
+        j = j + 1;
+    }
+    return idx;
+}

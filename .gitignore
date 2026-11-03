@@ -139,6 +139,7 @@ bbs/bbs.port
 xbc/s32-xbc
 xbc/out/
 sbc/s32-sbc
+sbc/s32-bc
 sbc/out/
 
 # Temporary LLVM files

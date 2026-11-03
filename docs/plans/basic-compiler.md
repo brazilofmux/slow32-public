@@ -238,3 +238,38 @@ compiler's front end, which must do them anyway: types (a string where a
 number goes, 10 programs), a literal out of range (`3E-99999`, NBS
 P034), and syntax -- empty parentheses (`RND()`, `FNP()`) and two
 statements with no colon between them (P194).
+
+## s32-bc (sbc/bc/, 2026-11-03)
+
+The compiler that decides up front, begun.  `sbc/compile-bc.sh
+prog.bas [prog.s32x]`; `sbc/build-bc.sh` builds `sbc/s32-bc` (host) and
+`sbc/out/bc_rt.s32o`.
+
+- **Front end:** sbasic's loader, lexer, parser and checker, linked on
+  the host (the builtins' names and argument counts are one list now,
+  `sbasic/src/builtins.def`, read by builtin.c for its functions and by
+  builtin_names.c for the checker, so the host build needs none of the
+  interpreter).  A program is compiled only if the checker passes it.
+- **Back end:** a copy of stage08's (`sbc/bc/hir/`, at 4dc9b60a), as
+  fortran/ and cobol/ keep theirs; `sbc/bc/bc_contract.h` is
+  fortran's contract.
+- **Values:** every operator, conversion and PRINT item goes through
+  the interpreter's own code (`bc_rt.c`: eval_binary, eval_compare,
+  eval_store, print_value), a value crossing as a double and a run-time
+  type -- the type is a run-time one because some results' types are
+  their values' (5.5 \ 2 is an INTEGER, 100000.5 \ 2 a LONG).  So the
+  compiled program computes and prints what the interpreter does by
+  construction; native code for the common cases comes after, held to
+  this.  Variables, labels and control flow are native: a variable's
+  slot (a double's two words) made and zeroed in the entry block; a FOR's
+  limit and step in slots of its own, its NEXT a direct jump.
+- **Milestone 0:** numeric scalars, assignment, PRINT (numbers, string
+  literals, `;` `,`), IF, GOTO, labels and line numbers, FOR/NEXT,
+  WHILE/WEND, DO/LOOP, END.  Anything else is "not yet: ...".
+- **Gate:** `sbc/tests/run-oracle.py --bc` -- every program of the
+  corpus through s32-bc and the interpreter, the same keys, the same
+  bytes; refusals tallied by reason.  At milestone 0: 63 agree, 20
+  refused where the interpreter refuses too, none differ; of the rest,
+  what is "not yet" is the list of what to do next -- arrays and
+  functions (99 programs), GOSUB/RETURN (49), strings (40), DATA/READ
+  (35), INPUT (11).

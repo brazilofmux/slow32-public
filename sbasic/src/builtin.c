@@ -1360,102 +1360,10 @@ typedef struct {
 } builtin_entry_t;
 
 static const builtin_entry_t builtins[] = {
-    /* Math */
-    { "ABS",    fn_abs,          1, 1 },
-    { "INT",    fn_int,          1, 1 },
-    { "SGN",    fn_sgn,          1, 1 },
-    { "SQR",    fn_sqr,          1, 1 },
-    { "FIX",    fn_fix,          1, 1 },
-    { "CINT",   fn_cint,         1, 1 },
-    { "CLNG",   fn_clng,         1, 1 },
-    { "CDBL",   fn_cdbl,         1, 1 },
-    { "CSNG",   fn_csng,         1, 1 },
-    { "SIN",    fn_sin,          1, 1 },
-    { "COS",    fn_cos,          1, 1 },
-    { "TAN",    fn_tan,          1, 1 },
-    { "ATN",    fn_atn,          1, 1 },
-    { "ATN2",   fn_atn2,         2, 2 },
-    { "ASIN",   fn_asin,         1, 1 },
-    { "ACOS",   fn_acos,         1, 1 },
-    { "SINH",   fn_sinh,         1, 1 },
-    { "COSH",   fn_cosh,         1, 1 },
-    { "TANH",   fn_tanh,         1, 1 },
-    { "ASINH",  fn_asinh,        1, 1 },
-    { "ACOSH",  fn_acosh,        1, 1 },
-    { "ATANH",  fn_atanh,        1, 1 },
-    { "EXP",    fn_exp,          1, 1 },
-    { "LOG",    fn_log,          1, 1 },
-    { "LOG10",  fn_log10,        1, 1 },
-    { "LOG2",   fn_log2,         1, 1 },
-    { "ROUND",  fn_round,        1, 2 },
-    { "MIN",    fn_min,          2, -1 },
-    { "MAX",    fn_max,          2, -1 },
-    { "FLOOR",  fn_floor,        1, -1 },
-    { "CEIL",   fn_ceil,         1, -1 },
-    { "RND",    fn_rnd,          0, 1 },
-    { "TIMER",  fn_timer,        0, 0 },
-    { "DATE$",  fn_date,         0, 0 },
-    { "TIME$",  fn_time_str,     0, 0 },
-    { "TAB",    fn_tab,          1, 1 },
-    { "SPC",    fn_spc,          1, 1 },
-    /* String */
-    { "LEN",    fn_len,          1, 1 },
-    { "CHR$",   fn_chr,          1, 1 },
-    { "ASC",    fn_asc,          1, 1 },
-    { "STR$",   fn_str,          1, 1 },
-    { "VAL",    fn_val,          1, 1 },
-    { "LEFT$",  fn_left,         2, 2 },
-    { "RIGHT$", fn_right,        2, 2 },
-    { "MID$",   fn_mid,          2, 3 },
-    { "INSTR",  fn_instr,        2, 3 },
-    { "INSTRREV", fn_instrrev,     2, 3 },
-    { "UCASE$", fn_ucase,        1, 1 },
-    { "LCASE$", fn_lcase,        1, 1 },
-    { "LTRIM$", fn_ltrim,        1, 1 },
-    { "RTRIM$", fn_rtrim,        1, 1 },
-    { "TRIM$",  fn_trim,         1, 1 },
-    { "SPACE$", fn_space,        1, 1 },
-    { "STRING$", fn_string,       2, 2 },
-    { "HEX$",   fn_hex,          1, 1 },
-    { "OCT$",   fn_oct,          1, 1 },
-    { "BIN$",   fn_bin,          1, 1 },
-    { "REPLACE$", fn_replace,      3, 3 },
-    { "REVERSE$", fn_reverse,      1, -1 },
-    /* Binary packing */
-    { "MKI$",   fn_mki,          1, 1 },
-    { "MKL$",   fn_mkl,          1, 1 },
-    { "MKS$",   fn_mks,          1, 1 },
-    { "MKD$",   fn_mkd,          1, 1 },
-    { "CVI",    fn_cvi,          1, 1 },
-    { "CVL",    fn_cvl,          1, 1 },
-    { "CVS",    fn_cvs,          1, 1 },
-    { "CVD",    fn_cvd,          1, 1 },
-    /* File I/O */
-    { "EOF",    fn_eof,          1, 1 },
-    { "FREEFILE", fn_freefile,     0, 0 },
-    { "LOC",    fn_loc,          1, 1 },
-    { "LOF",    fn_lof,          1, 1 },
-    { "CSRLIN", fn_csrlin,       0, 0 },
-    { "POS",    fn_pos,          1, 1 },
-    { "INPUT$", fn_input_str,    1, 2 },
-    /* System */
-    { "ENVIRON$", fn_environ,      1, 1 },
-    { "COMMAND$", fn_command,      0, 1 },
-    { "INKEY$", fn_inkey,        0, 0 },
-    { "DIR$",   fn_dir,          0, 1 },
-    { "CURDIR$", fn_curdir,       0, 0 },
-    { "FILEEXISTS", fn_fileexists,   1, 1 },
-    { "FRE",    fn_fre,          1, 1 },
-    { "LPOS",   fn_lpos,         1, 1 },
-    { "INP",    fn_inp,          1, 1 },
-    { "VARPTR", fn_varptr,       1, 1 },
-    { "SADD",   fn_sadd,         1, 1 },
-    { "SEEK",   fn_seek,         1, 1 },
-    { "PEEK",   fn_peek,         1, 1 },
-    { "STRIG",  fn_strig,        1, 1 },
-    { "STICK",  fn_stick,        1, 1 },
-    { "POINT",  fn_point,        2, 2 },
-    { NULL, NULL }
+#define BUILTIN(name, fn, min, max) { name, fn, min, max },
+#include "builtins.def"
+#undef BUILTIN
+    { NULL, NULL, 0, 0 }
 };
 
 /* The builtin of a name, or -1: an open hash of the table's indices
@@ -1487,21 +1395,7 @@ static int builtin_index(const char *name) {
     return -1;
 }
 
-int builtin_exists(const char *name) {
-    return builtin_index(name) >= 0;
-}
-
-/* the arguments a builtin takes, at least *min and at most *max (-1:
- * any number); 0 when name is no builtin.  The counts are the ones each
- * function checks when it runs; strict.c holds a call to them at load
- * time, as QuickBASIC does (NBS P143-P155). */
-int builtin_arity(const char *name, int *min, int *max) {
-    int i = builtin_index(name);
-    if (i < 0) return 0;
-    *min = builtins[i].min_args;
-    *max = builtins[i].max_args;
-    return 1;
-}
+/* builtin_exists and builtin_arity: builtin_names.c, from the same list */
 
 /* A numeric function's result is a double when an argument is one, a
  * single otherwise (SQR(2) prints 1.414214); CDBL and VAL say double */

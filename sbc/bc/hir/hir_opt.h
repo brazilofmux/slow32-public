@@ -1,0 +1,2072 @@
+/* COPIED from selfhost/src/hir_opt.h at 4dc9b60a.  See note in hir.h. */
+/* hir_opt.h -- SSA optimization passes for s12cc
+ *
+ * Runs after hir_ssa.h, before hir_codegen.h.
+ * 1. Copy propagation (eliminate HI_COPY chains)
+ * 2. Constant folding + strength reduction (MUL by pow2 -> SLL)
+ * 3. Algebraic simplifications (identity/absorbing elements)
+ * 4. Dead block elimination (NOP unreachable blocks after BRC->BR)
+ * 5. PHI simplification (trivial phis -> COPY)
+ * 6. Dead code elimination (remove unused value-producing instructions)
+ */
+
+/* Use count per instruction */
+static int *ho_use;
+static char *ho_phi_vouched;   /* ho_count_uses: this live phi has counted its args */
+
+/* Resolve COPY chains: follow src1 until non-COPY */
+static int ho_resolve(int inst) {
+    int depth;
+    depth = 0;
+    while (inst >= 0 && h_kind[inst] == HI_COPY && depth < 100) {
+        inst = h_src1[inst];
+        depth = depth + 1;
+    }
+    return inst;
+}
+
+/* Is src2 an instruction reference (not a block number)? */
+static int ho_src2_is_ref(int k) { return hi_src2_is_ref(k); }
+
+/* ----------------------------------------------------------------
+ * Pass 1: Copy propagation
+ * Rewrite all instruction references through COPY chains.
+ * Also inline rematerializable COPY sources (COPY of ICONST -> ICONST).
+ * ---------------------------------------------------------------- */
+
+static int ho_copy_prop(void) {
+    int changed;
+    int i;
+    int j;
+    int k;
+    int r;
+    int base;
+    int cnt;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* Rewrite src1 */
+        if (h_src1[i] >= 0) {
+            r = ho_resolve(h_src1[i]);
+            if (r != h_src1[i]) {
+                h_src1[i] = r;
+                changed = 1;
+            }
+        }
+
+        /* Rewrite src2 (only if it's an instruction ref, not a block number) */
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k)) {
+            r = ho_resolve(h_src2[i]);
+            if (r != h_src2[i]) {
+                h_src2[i] = r;
+                changed = 1;
+            }
+        }
+
+        /* Rewrite call args */
+        if ((k == HI_CALL || k == HI_CALLP ||
+             k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0) {
+                    r = ho_resolve(h_carg[base + j]);
+                    if (r != h_carg[base + j]) {
+                        h_carg[base + j] = r;
+                        changed = 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+
+        /* Rewrite PHI args */
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0) {
+                    r = ho_resolve(h_pval[h_pbase[i] + j]);
+                    if (r != h_pval[h_pbase[i] + j]) {
+                        h_pval[h_pbase[i] + j] = r;
+                        changed = 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+
+        /* Inline rematerializable COPY sources:
+         * COPY of ICONST -> ICONST (saves a spill slot) */
+        if (k == HI_COPY && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 2: Constant folding and algebraic simplifications
+ * ---------------------------------------------------------------- */
+
+/* The edge pred -> b is gone (a BRC folded to the other arm): b's phis
+ * lose pred's argument.  Left in place, the argument named a value the
+ * phi never receives, and passes that read phi arguments without asking
+ * which edges exist took it for one: after full unrolling, every copy's
+ * `if (i != 7)` folded, and return pinning put the stale argument and
+ * the value an emitter-folded ADDI chain reads in r1 together. */
+static void ho_phi_drop_pred(int b, int pred) {
+    int i;
+    int j;
+    int base;
+    int cnt;
+    if (b < 0 || pred < 0) return;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI && h_blk[i] == b && h_pbase[i] >= 0) {
+            base = h_pbase[i];
+            cnt = h_pcnt[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_pblk[base + j] == pred) {
+                    while (j + 1 < cnt) {
+                        h_pblk[base + j] = h_pblk[base + j + 1];
+                        h_pval[base + j] = h_pval[base + j + 1];
+                        j = j + 1;
+                    }
+                    h_pcnt[i] = cnt - 1;
+                    break;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+static int ho_const_fold(void) {
+    int changed;
+    int i;
+    int k;
+    int a;
+    int b;
+    int result;
+    int can_fold;
+    int s1c;
+    int s2c;
+    int shift;
+    int tmp;
+    int ci;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+
+        /* === Binop optimizations === */
+        if (hi_is_binop(k)) {
+            s1c = (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST);
+            s2c = (h_src2[i] >= 0 && h_kind[h_src2[i]] == HI_ICONST);
+
+#ifdef S12CC_X64_HOST
+            /* On x64, skip constant folding for TY_LLONG operations:
+             * h_val is 32-bit and can't hold 64-bit results. */
+            if (ty_is_llong(h_ty[i])) { i = i + 1; continue; }
+#endif
+
+            if (s1c && s2c) {
+                /* Both operands constant: evaluate at compile time */
+                a = h_val[h_src1[i]];
+                b = h_val[h_src2[i]];
+                result = 0;
+                can_fold = 1;
+
+                if      (k == HI_ADD) result = a + b;
+                else if (k == HI_SUB) result = a - b;
+                else if (k == HI_MUL) result = a * b;
+                else if (k == HI_MULH) result = (int)(((long long)a * (long long)b) >> 32);
+                else if (k == HI_MULHU) result = (int)(((unsigned long long)(unsigned)a * (unsigned long long)(unsigned)b) >> 32);
+                else if (k == HI_DIV) {
+                    /* -2**31 / -1 overflows in C; DIV gives -2**31, REM 0 */
+                    if (b == -1) result = (int)(0u - (unsigned int)a);
+                    else if (b != 0) result = a / b; else can_fold = 0;
+                }
+                else if (k == HI_REM) {
+                    if (b == -1) result = 0;
+                    else if (b != 0) result = a % b; else can_fold = 0;
+                }
+                else if (k == HI_AND) result = a & b;
+                else if (k == HI_OR)  result = a | b;
+                else if (k == HI_XOR) result = a ^ b;
+                else if (k == HI_SLL) result = a << (b & 31);
+                else if (k == HI_SRA) result = a >> (b & 31);
+                else if (k == HI_SRL) result = (int)((unsigned int)a >> (b & 31));
+                else if (k == HI_SEQ) {
+                    if (a == b) result = 1; else result = 0;
+                }
+                else if (k == HI_SNE) {
+                    if (a != b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLT) {
+                    if (a < b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGT) {
+                    if (a > b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLE) {
+                    if (a <= b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGE) {
+                    if (a >= b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLTU) {
+                    if ((unsigned int)a < (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGTU) {
+                    if ((unsigned int)a > (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLEU) {
+                    if ((unsigned int)a <= (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGEU) {
+                    if ((unsigned int)a >= (unsigned int)b) result = 1; else result = 0;
+                }
+                else can_fold = 0;
+
+                if (can_fold) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = result;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            } else if (s2c) {
+                /* Right operand constant: identity/absorbing simplifications */
+                b = h_val[h_src2[i]];
+
+                /* x + 0, x - 0, x | 0, x ^ 0, x << 0, x >> 0 -> x */
+                if (b == 0 && (k == HI_ADD || k == HI_SUB || k == HI_OR ||
+                               k == HI_XOR || k == HI_SLL || k == HI_SRA ||
+                               k == HI_SRL)) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* SNE(cmp,0) -> COPY(cmp) when cmp produces 0/1 */
+                else if (k == HI_SNE && b == 0 && h_src1[i] >= 0 &&
+                         h_kind[h_src1[i]] >= HI_SEQ &&
+                         h_kind[h_src1[i]] <= HI_SGEU) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* SEQ(cmp,0) -> NOT(cmp) when cmp produces 0/1 */
+                else if (k == HI_SEQ && b == 0 && h_src1[i] >= 0 &&
+                         h_kind[h_src1[i]] >= HI_SEQ &&
+                         h_kind[h_src1[i]] <= HI_SGEU) {
+                    h_kind[i] = HI_NOT;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x * 1 -> x, x / 1 -> x */
+                else if ((k == HI_MUL || k == HI_DIV) && b == 1) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x % 1 -> 0 */
+                else if (k == HI_REM && b == 1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x * 0 -> 0, x & 0 -> 0 */
+                else if ((k == HI_MUL || k == HI_AND) && b == 0) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x & -1 -> x */
+                else if (k == HI_AND && b == -1) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x | -1 -> -1 */
+                else if (k == HI_OR && b == -1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = -1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x ^ -1 -> ~x */
+                else if (k == HI_XOR && b == -1) {
+                    h_kind[i] = HI_BNOT;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            } else if (s1c) {
+                /* Left operand constant: identity/absorbing simplifications */
+                a = h_val[h_src1[i]];
+
+                /* 0 + x -> x */
+                if (k == HI_ADD && a == 0) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 1 * x -> x */
+                else if (k == HI_MUL && a == 1) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 0 * x -> 0, 0 & x -> 0 */
+                else if ((k == HI_MUL || k == HI_AND) && a == 0) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 0 | x -> x, 0 ^ x -> x */
+                else if ((k == HI_OR || k == HI_XOR) && a == 0) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 & x -> x */
+                else if (k == HI_AND && a == -1) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 | x -> -1 */
+                else if (k == HI_OR && a == -1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = -1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 ^ x -> ~x */
+                else if (k == HI_XOR && a == -1) {
+                    h_kind[i] = HI_BNOT;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+
+            /* The high word of x * 2^k is x >> (32 - k), and of x * 1 is
+             * 0: a 64-bit 2 * m (BlaMka's multiply-add) asked MULHU for
+             * the bits its low word shifts out, and a 2 to ask with. */
+            if (h_kind[i] == HI_MULHU && (s1c || s2c)) {
+                int other;
+                if (s2c) { b = h_val[h_src2[i]]; other = h_src1[i]; }
+                else { b = h_val[h_src1[i]]; other = h_src2[i]; }
+                if (b == 1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                } else if (b > 1 && (b & (b - 1)) == 0) {
+                    shift = 0; tmp = b;
+                    while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, 32 - shift, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_SRL;
+                    h_src1[i] = other;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
+            /* Strength reduction: MUL by power-of-2 -> SLL */
+            if (h_kind[i] == HI_MUL) {
+                if (s2c) {
+                    b = h_val[h_src2[i]];
+                    if (b > 0 && (b & (b - 1)) == 0) {
+                        shift = 0; tmp = b;
+                        while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                        ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                        h_blk[ci] = h_blk[i];
+                        h_kind[i] = HI_SLL;
+                        h_src2[i] = ci;
+                        changed = 1;
+                    }
+                } else if (s1c) {
+                    a = h_val[h_src1[i]];
+                    if (a > 0 && (a & (a - 1)) == 0) {
+                        shift = 0; tmp = a;
+                        while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                        ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                        h_blk[ci] = h_blk[i];
+                        h_kind[i] = HI_SLL;
+                        h_src1[i] = h_src2[i];
+                        h_src2[i] = ci;
+                        changed = 1;
+                    }
+                }
+            }
+
+            /* Strength reduction: unsigned DIV by power-of-2 -> SRL */
+            if (h_kind[i] == HI_DIV && (h_ty[i] & TY_UNSIGNED) && s2c) {
+                b = h_val[h_src2[i]];
+                if (b > 0 && (b & (b - 1)) == 0) {
+                    shift = 0; tmp = b;
+                    while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_SRL;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
+            /* Strength reduction: unsigned REM by power-of-2 -> AND mask */
+            if (h_kind[i] == HI_REM && (h_ty[i] & TY_UNSIGNED) && s2c) {
+                b = h_val[h_src2[i]];
+                if (b > 0 && (b & (b - 1)) == 0) {
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, b - 1, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_AND;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
+            /* Same-operand simplifications (only if not already folded) */
+            if (h_kind[i] == k && h_src1[i] >= 0 && h_src1[i] == h_src2[i]) {
+                /* x - x -> 0, x ^ x -> 0, x % x -> 0 */
+                if (k == HI_SUB || k == HI_XOR || k == HI_REM) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x / x -> 1 */
+                else if (k == HI_DIV) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x == x -> 1, x <= x -> 1, x >= x -> 1 */
+                else if (k == HI_SEQ || k == HI_SLE || k == HI_SGE ||
+                         k == HI_SLEU || k == HI_SGEU) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x != x -> 0, x < x -> 0, x > x -> 0 */
+                else if (k == HI_SNE || k == HI_SLT || k == HI_SGT ||
+                         k == HI_SLTU || k == HI_SGTU) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x & x -> x, x | x -> x */
+                else if (k == HI_AND || k == HI_OR) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+        }
+
+        /* === Unary ops with constant operand === */
+        if (k == HI_NEG && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = 0 - h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+        if (k == HI_NOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            if (h_val[h_src1[i]] == 0) h_val[i] = 1;
+            else h_val[i] = 0;
+            h_src1[i] = -1;
+            changed = 1;
+        }
+        /* NOT(comparison) -> inverted comparison */
+        if (k == HI_NOT && h_src1[i] >= 0) {
+            int sk;
+            int inv;
+            sk = h_kind[h_src1[i]];
+            inv = -1;
+            if (sk == HI_SEQ)  inv = HI_SNE;
+            else if (sk == HI_SNE)  inv = HI_SEQ;
+            else if (sk == HI_SLT)  inv = HI_SGE;
+            else if (sk == HI_SGE)  inv = HI_SLT;
+            else if (sk == HI_SGT)  inv = HI_SLE;
+            else if (sk == HI_SLE)  inv = HI_SGT;
+            else if (sk == HI_SLTU) inv = HI_SGEU;
+            else if (sk == HI_SGEU) inv = HI_SLTU;
+            else if (sk == HI_SGTU) inv = HI_SLEU;
+            else if (sk == HI_SLEU) inv = HI_SGTU;
+            if (inv >= 0) {
+                h_kind[i] = inv;
+                h_src2[i] = h_src2[h_src1[i]];
+                h_src1[i] = h_src1[h_src1[i]];
+                changed = 1;
+            }
+        }
+        /* NOT(NOT(x)) -> COPY(x), when x is already 0 or 1 (a comparison
+         * or a NOT).  NOT is the logical !: !!x is x != 0, not x -- the
+         * rule applied to any x, and `v = !p; v = !(unsigned)v;` gave p
+         * back (cfuzz seed 500). */
+        if (k == HI_NOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_NOT && h_src1[h_src1[i]] >= 0 &&
+            (h_kind[h_src1[h_src1[i]]] == HI_NOT ||
+             (h_kind[h_src1[h_src1[i]]] >= HI_SEQ && h_kind[h_src1[h_src1[i]]] <= HI_SGEU))) {
+            h_kind[i] = HI_COPY;
+            h_src1[i] = h_src1[h_src1[i]];
+            changed = 1;
+        }
+        if (k == HI_BNOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = (-1) ^ h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+
+        /* === ADDI peepholes === */
+        if (k == HI_ADDI) {
+            /* addi x, 0 -> x */
+            if (h_val[i] == 0) {
+                h_kind[i] = HI_COPY;
+                changed = 1;
+            }
+            /* addi const, c -> const */
+            else if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST) {
+                h_kind[i] = HI_ICONST;
+                h_val[i] = h_val[h_src1[i]] + h_val[i];
+                h_src1[i] = -1;
+                changed = 1;
+            }
+        }
+
+        /* === BRC with constant condition -> unconditional BR === */
+        if (k == HI_BRC && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            if (h_val[h_src1[i]] != 0) {
+                /* Always true: branch to then-block (src2) */
+                if (h_val[i] != h_src2[i]) ho_phi_drop_pred(h_val[i], h_blk[i]);
+                h_kind[i] = HI_BR;
+                h_val[i] = h_src2[i];
+            } else {
+                /* Always false: branch to else-block (val unchanged) */
+                if (h_val[i] != h_src2[i]) ho_phi_drop_pred(h_src2[i], h_blk[i]);
+                h_kind[i] = HI_BR;
+            }
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 3: Branch simplification
+ * ---------------------------------------------------------------- */
+
+static int ho_branch_simplify(void) {
+    int changed;
+    int i;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_BRC) {
+            /* If both BRC successors are identical, collapse to BR. */
+            if (h_src2[i] == h_val[i]) {
+                h_kind[i] = HI_BR;
+                h_val[i] = h_src2[i];
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 4: PHI simplification
+ * If all non-self-referential PHI args are the same value,
+ * replace the PHI with a COPY of that value.
+ * ---------------------------------------------------------------- */
+
+/* Does block a strictly dominate block b?  (ho_block_dominates, below,
+ * is the same walk; this pass comes first in the file.) */
+static int ho_phi_sdom(int a, int b) {
+    int depth;
+    if (a == b || a < 0 || b < 0) return 0;
+    depth = 0;
+    while (depth < hir_blk_cap) {
+        if (b == ssa_idom[b]) return 0;  /* root */
+        b = ssa_idom[b];
+        if (b == a) return 1;
+        depth = depth + 1;
+    }
+    return 0;
+}
+
+static int ho_phi_simplify(void) {
+    int changed;
+    int i;
+    int j;
+    int v;
+    int unique;
+    int undef;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_PHI) { i = i + 1; continue; }
+        if (h_pbase[i] < 0 || h_pcnt[i] == 0) { i = i + 1; continue; }
+
+        /* Find unique non-self-referential arg, apart from the undefined
+         * value (-1).  phi(undefined, x) may become x only where x
+         * dominates the phi: the undefined value can be taken to be
+         * anything, x's among them, but only if x has one there.  It
+         * used to become x unconditionally (-1 was also the "none yet"
+         * sentinel), and x need not dominate: a variable set in a loop
+         * only on a new maximum became the loop index itself, its value
+         * when the loop ended.  Found by fort370 on René Ferland's
+         * ANCORR; C had it the same way. */
+        unique = -3;    /* none yet */
+        undef = 0;
+        j = 0;
+        while (j < h_pcnt[i]) {
+            v = h_pval[h_pbase[i] + j];
+            if (v < 0) {
+                undef = 1;
+            } else if (v != i) {
+                if (unique == -3) {
+                    unique = v;
+                } else if (v != unique) {
+                    unique = -2;  /* multiple distinct values */
+                }
+            }
+            j = j + 1;
+        }
+
+        if (unique >= 0 &&
+            (!undef || ho_phi_sdom(h_blk[unique], h_blk[i]))) {
+            /* All non-self args are the same value -> COPY */
+            h_kind[i] = HI_COPY;
+            h_src1[i] = unique;
+            h_pbase[i] = -1;
+            h_pcnt[i] = 0;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 5: Dead block elimination
+ * DFS from block 0, NOP unreachable blocks, fix PHI args from
+ * dead predecessors (make self-referential so phi_simplify ignores them).
+ * Reuses ho_use[] as visited + DFS stack (non-overlapping regions).
+ * ---------------------------------------------------------------- */
+
+static int ho_dead_blocks(void) {
+    int changed;
+    int i;
+    int j;
+    int sp;
+    int b;
+    int t;
+    int k;
+
+    if (bb_nblk == 0) return 0;
+
+    /* ho_use[0..bb_nblk-1] = visited, ho_use[bb_nblk..] = DFS stack */
+    i = 0;
+    while (i < bb_nblk) { ho_use[i] = 0; i = i + 1; }
+
+    /* DFS from block 0 */
+    sp = bb_nblk;
+    ho_use[0] = 1;
+    ho_use[sp] = 0;
+    sp = sp + 1;
+
+    while (sp > bb_nblk) {
+        sp = sp - 1;
+        b = ho_use[sp];
+
+        /* Scan block for branch targets */
+        if (bb_start[b] < 0) continue;
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k == HI_BR) {
+                t = h_val[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+            }
+            if (k == HI_BRC) {
+                t = h_src2[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+                t = h_val[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+            }
+            if (k == HI_JMPTAB) {
+                int jb; int js; int jj;
+                t = h_val[i];   /* default block */
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+                jb = hjt_base[i];
+                js = hjt_span[i];
+                jj = 0;
+                while (jj < js) {
+                    t = hjt_target[jb + jj];
+                    if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                        ho_use[t] = 1;
+                        ho_use[sp] = t;
+                        sp = sp + 1;
+                    }
+                    jj = jj + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    /* NOP dead blocks + fixup PHI args from dead predecessors */
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        b = h_blk[i];
+        if (b >= 0 && b < bb_nblk && !ho_use[b]) {
+            /* Dead block: NOP this instruction -- but not an ALLOCA,
+             * which is a frame slot and no code: the front end can make
+             * one where a variable is first named, in a block that turns
+             * out dead, while a live block still uses the slot (found by
+             * fort370; harmless while every such variable is promoted). */
+            if (h_kind[i] != HI_NOP && h_kind[i] != HI_ALLOCA) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+            /* Live block PHI: make args from dead predecessors self-ref */
+            j = 0;
+            while (j < h_pcnt[i]) {
+                t = h_pblk[h_pbase[i] + j];
+                /* only an argument not yet self-referential is a change:
+                 * re-marking the done ones every round reported progress
+                 * forever, and the loop ran to its cap (68 of 192 FCVS
+                 * programs; found by fort370) */
+                if (t >= 0 && t < bb_nblk && !ho_use[t] &&
+                    h_pval[h_pbase[i] + j] != i) {
+                    h_pval[h_pbase[i] + j] = i;
+                    changed = 1;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 6: Dead code elimination
+ * Count uses of each instruction, delete unused value-producers
+ * (except calls which have side effects).
+ * ---------------------------------------------------------------- */
+
+static void ho_count_uses(void) {
+    int i;
+    int j;
+    int k;
+    int base;
+    int cnt;
+    int changed;
+
+    i = 0;
+    while (i < h_ninst) {
+        ho_use[i] = 0;
+        ho_phi_vouched[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* src1 is always an instruction ref when >= 0 */
+        if (h_src1[i] >= 0)
+            ho_use[h_src1[i]] = ho_use[h_src1[i]] + 1;
+
+        /* src2 is an instruction ref only for binops and STORE */
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            ho_use[h_src2[i]] = ho_use[h_src2[i]] + 1;
+
+        /* Call arguments */
+        if ((k == HI_CALL || k == HI_CALLP ||
+             k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0)
+                    ho_use[h_carg[base + j]] = ho_use[h_carg[base + j]] + 1;
+                j = j + 1;
+            }
+        }
+
+        /* PHI arguments are counted below, and only from live phis. */
+
+        i = i + 1;
+    }
+
+    /* PHI arguments.  A use from a phi is real only if the phi itself
+     * is live.  Counting every phi's arguments kept dead phis alive
+     * through each other: a loop header's phi feeds the join after the
+     * switch in its body, whose phi feeds the header, and neither has a
+     * real reader.  The SSA is minimal, not pruned, so sqlite3VdbeExec
+     * carried one such pair per case-local -- 384 phis at one join,
+     * each copied on every one of ~190 edges: three quarters of the
+     * function.  (A phi's reference to ITSELF, x = phi(pre, x), is
+     * likewise not a use.)  So: seed with the uses from real
+     * instructions, then let each live phi vouch for its arguments,
+     * to a fixpoint. */
+    changed = 1;
+    while (changed) {
+        changed = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PHI && h_pbase[i] >= 0 && ho_use[i] > 0 &&
+                !ho_phi_vouched[i]) {
+                ho_phi_vouched[i] = 1;
+                changed = 1;
+                j = 0;
+                while (j < h_pcnt[i]) {
+                    if (h_pval[h_pbase[i] + j] >= 0 &&
+                        h_pval[h_pbase[i] + j] != i)
+                        ho_use[h_pval[h_pbase[i] + j]] =
+                            ho_use[h_pval[h_pbase[i] + j]] + 1;
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+}
+
+static int ho_dce(void) {
+    int changed;
+    int i;
+    int k;
+
+    ho_count_uses();
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* Delete if: produces value, no uses, no side effects */
+        if (hi_has_value(k) && ho_use[i] == 0 &&
+            k != HI_CALL && k != HI_CALLP && !(k == HI_LOAD && h_vol[i])) {
+            h_kind[i] = HI_NOP;
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * CSE (Common Subexpression Elimination)
+ * Hash table keyed on (kind, src1, src2, val).
+ * Forward scan: if duplicate found in a dominating block, replace
+ * with COPY. Uses ssa_idom[] for cross-block domination checks.
+ * ---------------------------------------------------------------- */
+
+/* Does block a dominate block b?  Walk idom chain from b toward root. */
+static int ho_dominates(int a, int b) {
+    int depth;
+    depth = 0;
+    while (b >= 0 && depth < 200) {
+        if (b == a) return 1;
+        if (b == ssa_idom[b]) return 0;
+        b = ssa_idom[b];
+        depth = depth + 1;
+    }
+    return 0;
+}
+#define HO_CSE_SLOTS  2048
+#define HO_CSE_MASK   2047
+
+static int ho_cse_head[HO_CSE_SLOTS];   /* slot -> first inst index, -1 if empty */
+static int *ho_cse_next;    /* inst -> next in chain, -1 if end */
+static int ho_stat_cse;
+
+static int ho_cse_hash(int kind, int s1, int s2, int val) {
+    int h;
+    h = kind * 73 + (s1 + 1) * 131 + (s2 + 1) * 257 + val * 37;
+    if (h < 0) h = 0 - h;
+    return h & HO_CSE_MASK;
+}
+
+/* Operands as CSE sees them: every literal lowers to its own ICONST,
+ * so `w[i-15]` written three times was three SUBs against three
+ * different 15s, three addresses and three loads (SHA-512's message
+ * schedule).  Two ICONSTs of one value and type are the same operand;
+ * the nodes themselves stay apart, so each use keeps its immediate.
+ * Only within a block: across blocks it matched &c->h[k] at the top
+ * of sha512_block with the same address after its 80-round loop and
+ * held all eight through it.  On SQLite (static / shell dynamic insns)
+ * block-local is the best of the variants tried: 306,449 / 2,897,362
+ * before, 294,261 / 2,882,384 after; across dominating blocks
+ * 292,065 / 2,888,514. */
+static int ho_cse_key(int x) {
+    if (x >= 0 && h_kind[x] == HI_ICONST)
+        return h_val[x] * 7919 + h_ty[x] * 31 + 5;
+    return x;
+}
+
+static int ho_cse_same(int a, int b) {
+    if (a == b) return 1;
+    if (a < 0 || b < 0) return 0;
+    return h_kind[a] == HI_ICONST && h_kind[b] == HI_ICONST &&
+           h_val[a] == h_val[b] && h_ty[a] == h_ty[b];
+}
+
+static int ho_cse_eligible(int k) {
+    /* Binary arithmetic/logic/comparison (not div/rem) */
+    if (hi_is_binop(k) && k != HI_DIV && k != HI_REM) return 1;
+    /* Unary */
+    if (k == HI_NEG || k == HI_NOT || k == HI_BNOT) return 1;
+    /* ADDI */
+    if (k == HI_ADDI) return 1;
+    return 0;
+}
+
+static int ho_cse(void) {
+    int i;
+    int k;
+    int s1;
+    int s2;
+    int v;
+    int slot;
+    int j;
+    int found;
+    int changed;
+
+    /* Initialize hash table */
+    i = 0;
+    while (i < HO_CSE_SLOTS) { ho_cse_head[i] = -1; i = i + 1; }
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP || !ho_cse_eligible(k)) { i = i + 1; continue; }
+
+        s1 = h_src1[i];
+        s2 = h_src2[i];
+        v = h_val[i];
+        slot = ho_cse_hash(k, ho_cse_key(s1), ho_cse_key(s2), v);
+
+        /* Search chain for match */
+        found = -1;
+        j = ho_cse_head[slot];
+        while (j >= 0) {
+            if (h_kind[j] == k && h_val[j] == v &&
+                ((h_src1[j] == s1 && h_src2[j] == s2 &&
+                  ho_dominates(h_blk[j], h_blk[i])) ||
+                 (h_blk[j] == h_blk[i] &&
+                  ho_cse_same(h_src1[j], s1) &&
+                  ho_cse_same(h_src2[j], s2)))) {
+                found = j;
+                j = -1;  /* break */
+            } else {
+                j = ho_cse_next[j];
+            }
+        }
+
+        if (found >= 0) {
+            /* Replace with COPY of the earlier instruction */
+            h_kind[i] = HI_COPY;
+            h_src1[i] = found;
+            h_src2[i] = -1;
+            h_val[i] = 0;
+            changed = 1;
+            ho_stat_cse = ho_stat_cse + 1;
+        } else {
+            /* Insert into hash table */
+            ho_cse_next[i] = ho_cse_head[slot];
+            ho_cse_head[slot] = i;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Dead store elimination
+ * If two STOREs in the same block write to the same address with
+ * no intervening LOAD/CALL/CALLP, the first STORE is dead.
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_dse;
+
+/* Does the store at j overwrite every byte the store at i wrote? */
+static int ho_dse_covers(int i, int j) {
+    int bi; int oi; int ki;
+    int bj; int oj; int kj;
+    if (h_src1[j] == h_src1[i])
+        return al_acc_size(h_ty[j]) >= al_acc_size(h_ty[i]);
+    ki = al_resolve(h_src1[i], &bi, &oi);
+    kj = al_resolve(h_src1[j], &bj, &oj);
+    if (ki == AL_UNKNOWN || ki != kj || bi != bj) return 0;
+    return oj <= oi && oj + al_acc_size(h_ty[j]) >= oi + al_acc_size(h_ty[i]);
+}
+
+/* A store with nothing after it in its block (ho_dse_pass): is it dead
+ * on every path from the block's end?  Walk the successors; in each
+ * block scan from its start.  A load that may read the bytes, or a
+ * volatile access, keeps the store; so does a call, unless the store
+ * is to a frame slot whose address never escaped, which no callee can
+ * reach.  A store that covers the bytes ends the path dead; a return
+ * ends it dead for a frame slot (the frame is gone) and live for
+ * anything else.  A block reached twice adds nothing.  More than
+ * HO_DSE_WALK blocks: keep the store (docs/plans/memory-model.md,
+ * step 4). */
+#define HO_DSE_WALK 48
+static int ho_dse_seen[HO_DSE_WALK];
+static int ho_dse_stack[HO_DSE_WALK];
+
+static int ho_dse_dead_after(int st) {
+    int addr;
+    int sz;
+    int kind;
+    int base;
+    int off;
+    int frame;
+    int nseen;
+    int sp;
+    int b;
+    int j;
+    int k;
+    int si;
+    int t;
+    int q;
+    int live;
+    int startb;
+    int from;
+    int upto;
+    addr = h_src1[st];
+    sz = al_acc_size(h_ty[st]);
+    kind = al_resolve(addr, &base, &off);
+    if (kind == AL_UNKNOWN) return 0;
+    frame = (kind == AL_FRAME && base >= 0 && base < al_n && !al_escaped[base]);
+    nseen = 0;
+    sp = 0;
+    /* The store's own block first, from the store on: its terminator
+     * decides what a return means (a global or a pointer's bytes are
+     * observable after it), and the walk starts only past a block that
+     * fell off its end.  That block is not marked seen by this partial
+     * scan: a back edge may bring the walk to its start, and the loads
+     * above the store are reads on that path (log's loop kept `term` in
+     * a slot, loaded at the top and stored at the bottom of one block;
+     * the first version called the store dead). */
+    startb = h_blk[st];
+    if (startb < 0 || startb >= bb_nblk) return 0;
+    ho_dse_stack[0] = startb;
+    sp = 1;
+    from = st + 1;
+    while (sp > 0) {
+        sp = sp - 1;
+        b = ho_dse_stack[sp];
+        if (b < 0 || b >= bb_nblk) return 0;
+        q = 0;
+        while (q < nseen && ho_dse_seen[q] != b) q = q + 1;
+        if (q < nseen) continue;
+        if (from < 0) {
+            /* a later visit: the whole block, and only up to the store
+             * when it is the store's own */
+            if (nseen >= HO_DSE_WALK) return 0;
+            ho_dse_seen[nseen] = b;
+            nseen = nseen + 1;
+            j = bb_start[b];
+            upto = (b == startb) ? st : bb_end[b];
+        } else {
+            j = from;
+            upto = bb_end[b];
+            from = -1;
+        }
+        live = 0;      /* 0: fell off the block's end; 1: a read; 2: covered */
+        while (j < upto && live == 0) {
+            k = h_kind[j];
+            if (k == HI_NOP) { j = j + 1; continue; }
+            if ((k == HI_LOAD || k == HI_STORE) && h_vol[j]) live = 1;
+            else if (k == HI_LOAD) {
+                if (al_may_alias(addr, sz, h_src1[j], al_acc_size(h_ty[j]), 1)) live = 1;
+            } else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+                       hi_is_a64_cache_asm(k) || k == HI_X64_DBT_TRAMPOLINE ||
+                       k == HI_X64_RDTSC) {
+                if (!frame) live = 1;
+            } else if (k == HI_STORE) {
+                if (ho_dse_covers(st, j)) live = 2;
+            } else if (k == HI_RET) {
+                live = frame ? 2 : 1;
+            }
+            j = j + 1;
+        }
+        if (live == 1) return 0;
+        if (live == 2) continue;
+        if (b == startb && upto == st) return 0;   /* reached the store again: a loop keeps it */
+        if (ssa_nsucc[b] == 0) return 0;   /* fell off a block with no successor: keep it */
+        si = 0;
+        while (si < ssa_nsucc[b]) {
+            t = ssa_succ[ssa_soff[b] + si];
+            if (sp >= HO_DSE_WALK) return 0;
+            ho_dse_stack[sp] = t;
+            sp = sp + 1;
+            si = si + 1;
+        }
+    }
+    return 1;
+}
+
+static int ho_dse_pass(void) {
+    int changed;
+    int i;
+    int j;
+    int addr;
+    int blk;
+    int end;
+    int alive;
+    int jk;
+
+    changed = 0;
+    if (bb_nblk < 1) return 0;
+    al_escapes();
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_STORE || h_vol[i]) { i = i + 1; continue; }
+        addr = h_src1[i];  /* address operand of STORE */
+        blk = h_blk[i];
+        end = bb_end[blk];
+
+        /* Scan forward in same block for another STORE to same address */
+        alive = 1;
+        j = i + 1;
+        while (j < end && alive) {
+            jk = h_kind[j];
+            if (jk == HI_NOP) { j = j + 1; continue; }
+            /* A load that may read the stored bytes, or a call, observes
+             * them.  A load that cannot -- another word off the same
+             * pointer, another frame slot -- does not: BlaMka's z[k] were
+             * stored twice per permutation, the first dead under loads of
+             * their neighbours. */
+            if ((jk == HI_LOAD || jk == HI_STORE) && h_vol[j]) alive = 0;
+            if (jk == HI_LOAD &&
+                al_may_alias(addr, al_acc_size(h_ty[i]), h_src1[j], al_acc_size(h_ty[j]), 1))
+                alive = 0;
+            if (jk == HI_CALL || jk == HI_CALLP ||
+                jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk) ||
+                jk == HI_X64_DBT_TRAMPOLINE || jk == HI_X64_RDTSC) {
+                alive = 0;
+            }
+            /* Found another STORE over the same bytes — first store is dead */
+            if (alive && jk == HI_STORE && ho_dse_covers(i, j)) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+                ho_stat_dse = ho_stat_dse + 1;
+                alive = 0;
+            }
+            j = j + 1;
+        }
+        /* Nothing in its block reads or covers it: is every path from
+         * the block's end dead for it too? */
+        if (alive && j >= end && ho_dse_dead_after(i)) {
+            h_kind[i] = HI_NOP;
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+            ho_stat_dse = ho_stat_dse + 1;
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Memory forwarding (store-load, load-load, load-store elimination)
+ *
+ * Within a basic block, track the "last known value" for each address:
+ *   STORE addr val → remember val for addr
+ *   LOAD addr      → if we know the value at addr, replace with COPY
+ *                     Also remember the LOAD's result for addr
+ *   STORE/CALL/CALLP → invalidate all known values
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_slf;   /* store-load and load-load forwards */
+static int ho_stat_lse;   /* load-store eliminations */
+
+/* Small table for tracking known values per address.
+ * Key: address (instruction index), Value: known value (instruction index). */
+#define HO_MEM_SLOTS 64
+static int ho_mem_addr[HO_MEM_SLOTS];  /* address, or -1 if empty */
+static int ho_mem_val[HO_MEM_SLOTS];   /* known value at that address */
+static int ho_mem_ty[HO_MEM_SLOTS];    /* type of the value */
+static int ho_mem_cnt;
+
+static void ho_mem_clear(void) { ho_mem_cnt = 0; }
+
+static int ho_mem_find(int addr) {
+    int k;
+    k = 0;
+    while (k < ho_mem_cnt) {
+        if (al_same_loc(ho_mem_addr[k], addr)) return k;
+        k = k + 1;
+    }
+    return -1;
+}
+
+static void ho_mem_set(int addr, int val, int ty) {
+    int k;
+    k = ho_mem_find(addr);
+    if (k >= 0) {
+        ho_mem_val[k] = val;
+        ho_mem_ty[k] = ty;
+        return;
+    }
+    if (ho_mem_cnt < HO_MEM_SLOTS) {
+        ho_mem_addr[ho_mem_cnt] = addr;
+        ho_mem_val[ho_mem_cnt] = val;
+        ho_mem_ty[ho_mem_cnt] = ty;
+        ho_mem_cnt = ho_mem_cnt + 1;
+    }
+}
+
+/* A STORE to `addr` of `sz` bytes: forget every remembered value whose
+ * bytes it may overwrite.  Entries keyed by a different address value
+ * used to survive any store -- `*p = 10; *q = 20; return *p;` returned
+ * 10 when p == q, a union's short store vanished under its word, and a
+ * struct returned by value lost a member stored after its compound-
+ * literal init (libutf's co_cs_bg). */
+static void ho_mem_kill_aliases(int addr, int sz) {
+    int k;
+    k = 0;
+    while (k < ho_mem_cnt) {
+        if (!al_same_loc(ho_mem_addr[k], addr) &&
+            al_may_alias(addr, sz, ho_mem_addr[k], al_acc_size(ho_mem_ty[k]), 0)) {
+            ho_mem_cnt = ho_mem_cnt - 1;
+            ho_mem_addr[k] = ho_mem_addr[ho_mem_cnt];
+            ho_mem_val[k] = ho_mem_val[ho_mem_cnt];
+            ho_mem_ty[k] = ho_mem_ty[ho_mem_cnt];
+        } else {
+            k = k + 1;
+        }
+    }
+}
+
+static int ho_mem_fwd(void) {
+    int changed;
+    int i;
+    int b;
+    int start;
+    int end;
+    int k;
+    int kk;
+    int addr;
+    int val;
+
+    changed = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        start = bb_start[b];
+        end = bb_end[b];
+        if (start < 0 || end <= start) { b = b + 1; continue; }
+
+        ho_mem_clear();
+        i = start;
+        while (i < end) {
+            k = h_kind[i];
+            if (k == HI_NOP) { i = i + 1; continue; }
+
+            if ((k == HI_LOAD || k == HI_STORE) && h_vol[i]) {
+                /* a volatile access: made as written, and nothing is
+                 * known across it */
+                ho_mem_clear();
+                i = i + 1;
+                continue;
+            }
+            if (k == HI_STORE) {
+                addr = h_src1[i];
+                val = h_src2[i];
+                /* Check if we're storing the same value we just loaded.
+                 * LOAD addr → v; STORE addr, v  → eliminate the STORE */
+                kk = ho_mem_find(addr);
+                if (kk >= 0 && ho_mem_val[kk] == val && ho_mem_ty[kk] == h_ty[i]) {
+                    h_kind[i] = HI_NOP;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                    ho_stat_lse = ho_stat_lse + 1;
+                } else {
+                    /* Record: after this STORE, addr holds val -- and
+                     * nothing it may overlap is known any more. */
+                    ho_mem_kill_aliases(addr, al_acc_size(h_ty[i]));
+                    ho_mem_set(addr, val, h_ty[i]);
+                }
+            }
+            else if (k == HI_LOAD) {
+                addr = h_src1[i];
+                kk = ho_mem_find(addr);
+                if (kk >= 0 && ho_mem_ty[kk] == h_ty[i]) {
+                    /* We know the value at this address — forward it */
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = ho_mem_val[kk];
+                    h_src2[i] = -1;
+                    changed = 1;
+                    ho_stat_slf = ho_stat_slf + 1;
+                } else {
+                    /* Record: after this LOAD, addr holds result i */
+                    ho_mem_set(addr, i, h_ty[i]);
+                }
+            }
+            else if (k == HI_CALL || k == HI_CALLP ||
+                     k == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k) ||
+                     k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) {
+                /* Calls may write to any memory — invalidate all */
+                ho_mem_clear();
+            }
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Single-store alloca promotion (mem2reg, trivial case)
+ *
+ * The lowering emits `STORE alloca, PARAM` at function entry for every
+ * parameter (so `&param` would work) and replaces every read of `param`
+ * with `LOAD alloca`.  Within a basic block, ho_mem_fwd forwards these
+ * loads to the stored value; across blocks it cannot.  Branchy functions
+ * (e.g. h_bne) end up with a real stack spill of `e` plus a reload in
+ * each branch arm.
+ *
+ * This pass handles the trivial single-store case: if an HI_ALLOCA is
+ * referenced only as the address operand of a single HI_STORE and a set
+ * of HI_LOADs (no escapes via h_src2-as-ref / h_carg / h_pval / arithmetic),
+ * and that one STORE dominates every LOAD, replace each LOAD with a
+ * HI_COPY of the stored value and NOP the STORE/ALLOCA.  Subsequent
+ * ho_copy_prop folds the COPYs.
+ *
+ * Multi-store allocas need phi insertion (full mem2reg); we punt those.
+ * ---------------------------------------------------------------- */
+
+/* Does block `a` dominate block `b`? Walks ssa_idom[] from b. */
+static int ho_block_dominates(int a, int b) {
+    int depth;
+    depth = 0;
+    while (b >= 0 && depth < hir_blk_cap) {
+        if (b == a) return 1;
+        if (b == ssa_idom[b]) return 0;  /* root */
+        b = ssa_idom[b];
+        depth = depth + 1;
+    }
+    return 0;
+}
+
+/* Each alloca's references, ascending, threaded through ho_ps_next:
+ * the instructions with it as src1 or src2, a call argument or a phi
+ * argument.  Built once per run of the pass, so an alloca is judged by
+ * its own references, not a scan of the function -- a scan per alloca
+ * was most of compiling 9,000 inlined calls (allocas x instructions). */
+static int *ho_ps_head;
+static int *ho_ps_ent;
+static int *ho_ps_next;
+static int ho_ps_n;
+
+static void ho_ps_add(int a, int j) {
+    ho_ps_ent[ho_ps_n] = j;
+    ho_ps_next[ho_ps_n] = ho_ps_head[a];
+    ho_ps_head[a] = ho_ps_n;
+    ho_ps_n = ho_ps_n + 1;
+}
+
+static int ho_ps_is_alloca(int v) {
+    return v >= 0 && v < h_ninst && h_kind[v] == HI_ALLOCA;
+}
+
+/* the references of j to allocas, each alloca once */
+static void ho_ps_refs(int j, int count_only) {
+    int k;
+    int kk;
+    int v;
+    int last;
+    k = h_kind[j];
+    last = -1;
+    if (ho_ps_is_alloca(h_src1[j])) {
+        last = h_src1[j];
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(last, j);
+    }
+    if (ho_ps_is_alloca(h_src2[j]) && h_src2[j] != last) {
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(h_src2[j], j);
+    }
+    if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+        k == HI_X64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k)) {
+        kk = 0;
+        while (kk < h_val[j]) {
+            v = h_carg[h_cbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+    if (k == HI_PHI) {
+        kk = 0;
+        while (kk < h_pcnt[j]) {
+            v = h_pval[h_pbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+}
+
+static int ho_promote_single_store_alloca(void) {
+    int changed;
+    int i;
+    int fn_has_call;
+    int e;
+    int nref;
+
+    /* Conservative gate (precomputed once per function): when a function
+     * contains any HI_CALL/HI_CALLP/DBT trampoline, we skip promoting
+     * allocas whose stored value is an HI_PARAM.  After promotion such
+     * loads become direct PARAM uses, which extends the precolored
+     * range across the call.  IRC coalescing on the extended PARAM live
+     * range can drop ABI hints on sibling PARAMs (see PARAM-coalesce
+     * hazard memory) and produces miscompiled code.  Non-PARAM stored
+     * values and call-free functions are still promoted. */
+    fn_has_call = 0;
+    i = 0;
+    while (i < h_ninst) {
+        int k;
+        k = h_kind[i];
+        if (k == HI_CALL || k == HI_CALLP ||
+            k == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k) ||
+            k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) {
+            fn_has_call = 1; break;
+        }
+        i = i + 1;
+    }
+
+    /* The reference lists: counted, then made from the last instruction
+     * back, so each list runs in ascending order.  Twice the room, for
+     * the loads a promotion turns into copies of another alloca. */
+    ho_ps_n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 1);
+        i = i + 1;
+    }
+    nref = ho_ps_n;
+    ho_ps_head = (int *)malloc((h_ninst + 1) * (int)sizeof(int));
+    ho_ps_ent = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    ho_ps_next = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    if (!ho_ps_head || !ho_ps_ent || !ho_ps_next) {
+        fdputs("s12cc: out of memory (alloca references)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < h_ninst) { ho_ps_head[i] = -1; i = i + 1; }
+    ho_ps_n = 0;
+    i = h_ninst - 1;
+    while (i >= 0) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 0);
+        i = i - 1;
+    }
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA) {
+            int store_inst;
+            int n_stores;
+            int has_bad;
+            int j;
+
+            store_inst = -1;
+            n_stores = 0;
+            has_bad = 0;
+
+            /* Classify each reference to alloca i, as it stands now. */
+            e = ho_ps_head[i];
+            while (e >= 0) {
+                int k;
+                int s1; int s2;
+
+                j = ho_ps_ent[e];
+                e = ho_ps_next[e];
+                k = h_kind[j];
+                if (k == HI_NOP) continue;
+
+                s1 = h_src1[j];
+                s2 = h_src2[j];
+
+                if (k == HI_LOAD && s1 == i) {
+                    if (h_vol[j]) has_bad = 1;
+                    /* Direct load via alloca: OK — but only when the
+                     * load's type matches the alloca's.  A type-PUNNED
+                     * load (`*(unsigned long long *)&d`) must read the
+                     * slot's bytes; forwarding it to the stored value
+                     * handed the raw double to an integer consumer
+                     * (cc-a64: every local-double pun returned junk —
+                     * d35_fp_loads' locmem shape). */
+                    if (ty_is_fp(h_ty[j]) != ty_is_fp(h_ty[i]) ||
+                        ty_size(h_ty[j]) != ty_size(h_ty[i]))
+                        has_bad = 1;
+                } else if (k == HI_STORE && s1 == i) {
+                    if (h_vol[j]) has_bad = 1;
+                    /* Direct store *into* alloca.  But if the value being
+                     * stored is also the alloca itself, the address
+                     * escapes through itself — bail.  A type-punned
+                     * store blocks promotion the same way a punned
+                     * load does. */
+                    if (s2 == i) { has_bad = 1; }
+                    else if (ty_is_fp(h_ty[j]) != ty_is_fp(h_ty[i]) ||
+                             ty_size(h_ty[j]) != ty_size(h_ty[i])) {
+                        has_bad = 1;
+                    } else {
+                        n_stores = n_stores + 1;
+                        store_inst = j;
+                    }
+                } else {
+                    /* Any other reference means the alloca's address is
+                     * being used in a way we can't safely model. */
+                    if (s1 == i) has_bad = 1;
+                    if (s2 == i && ho_src2_is_ref(k)) has_bad = 1;
+                    if (k == HI_CALL || k == HI_CALLP
+                            || k == HI_A64_DBT_TRAMPOLINE
+                            || k == HI_X64_DBT_TRAMPOLINE
+                            || hi_is_a64_cache_asm(k)) {
+                        int base; int cnt; int kk;
+                        base = h_cbase[j];
+                        cnt = h_val[j];
+                        kk = 0;
+                        while (kk < cnt) {
+                            if (h_carg[base + kk] == i) has_bad = 1;
+                            kk = kk + 1;
+                        }
+                    }
+                    if (k == HI_PHI) {
+                        int base; int cnt; int kk;
+                        base = h_pbase[j];
+                        cnt = h_pcnt[j];
+                        kk = 0;
+                        while (kk < cnt) {
+                            if (h_pval[base + kk] == i) has_bad = 1;
+                            kk = kk + 1;
+                        }
+                    }
+                }
+            }
+
+            if (!has_bad && n_stores == 1) {
+                int store_val;
+                int store_blk;
+                int can_promote;
+
+                store_val = h_src2[store_inst];
+                store_blk = h_blk[store_inst];
+                can_promote = 1;
+
+                /* Verify the STORE dominates every LOAD. */
+                e = ho_ps_head[i];
+                while (e >= 0) {
+                    j = ho_ps_ent[e];
+                    e = ho_ps_next[e];
+                    if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
+                        int load_blk;
+                        load_blk = h_blk[j];
+                        if (store_blk == load_blk) {
+                            /* Same block: STORE must come before LOAD. */
+                            if (store_inst >= j) { can_promote = 0; break; }
+                        } else if (!ho_block_dominates(store_blk, load_blk)) {
+                            can_promote = 0;
+                            break;
+                        }
+                    }
+                }
+
+                if (can_promote) {
+                    /* See fn_has_call comment at top: punt PARAM-store
+                     * allocas in functions that have any call. */
+                    if (fn_has_call && h_kind[store_val] == HI_PARAM) {
+                        i = i + 1; continue;
+                    }
+                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA.
+                     * A copy of another alloca is a reference to it. */
+                    e = ho_ps_head[i];
+                    while (e >= 0) {
+                        j = ho_ps_ent[e];
+                        e = ho_ps_next[e];
+                        if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
+                            h_kind[j] = HI_COPY;
+                            h_src1[j] = store_val;
+                            h_src2[j] = -1;
+                            if (ho_ps_is_alloca(store_val) && ho_ps_n < 2 * nref + 1)
+                                ho_ps_add(store_val, j);
+                        }
+                    }
+                    h_kind[store_inst] = HI_NOP;
+                    h_src1[store_inst] = -1;
+                    h_src2[store_inst] = -1;
+                    h_kind[i] = HI_NOP;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    free(ho_ps_head);
+    free(ho_ps_ent);
+    free(ho_ps_next);
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Main optimization driver: iterate until fixpoint
+ * ---------------------------------------------------------------- */
+
+/* Cumulative count of HIR instructions eliminated across all functions */
+#ifndef S12CC_X64_HOST
+/* ----------------------------------------------------------------
+ * Known bits: for each 32-bit integer value, a mask of the bits that
+ * may be set.  An AND whose constant keeps every such bit is a COPY,
+ * and so is the SLL/SRA sign-extension pair on a value whose sign bit
+ * at that width is known clear.  Every unsigned char the source reads
+ * and every byte it computes was narrowed again at each assignment,
+ * cast and store: `andi rX, rX, 255` after an `ldbu`, twice after an
+ * xor of two bytes -- an AES round was a third masks.
+ *
+ * Least fixed point from all-zero: the transfer functions are
+ * monotone, so phis around a loop settle on the bits that can really
+ * arrive.  SLOW-32 only: the crosses carry 64-bit values in the same
+ * instruction kinds.
+ * ---------------------------------------------------------------- */
+
+static unsigned int *ho_kb;
+static int ho_stat_kb;
+
+static unsigned int ho_kb_of(int v) {
+    if (v < 0 || v >= h_ninst) return 0xFFFFFFFFu;
+    return ho_kb[v];
+}
+
+static unsigned int ho_kb_eval(int i) {
+    int k;
+    int ty;
+    int c;
+    int j;
+    int hb;
+    unsigned int a;
+    unsigned int b;
+
+    k = h_kind[i];
+    ty = h_ty[i];
+    if (ty_is_fp(ty) || ty_is_struct(ty) || ty_is_llong(ty)) return 0xFFFFFFFFu;
+    if (k == HI_ICONST) return (unsigned int)h_val[i];
+    if (k == HI_LOAD) {
+        if ((ty & TY_PTR_MASK) == 0 && (ty & TY_UNSIGNED)) {
+            if ((ty & TY_BASE_MASK) == TY_CHAR) return 0xFFu;
+            if ((ty & TY_BASE_MASK) == TY_SHORT) return 0xFFFFu;
+        }
+        return 0xFFFFFFFFu;
+    }
+    if (k == HI_COPY) return ho_kb_of(h_src1[i]);
+    if (k == HI_PHI) {
+        if (h_pbase[i] < 0) return 0xFFFFFFFFu;
+        a = 0;
+        j = 0;
+        while (j < h_pcnt[i]) {
+            a = a | ho_kb_of(h_pval[h_pbase[i] + j]);
+            j = j + 1;
+        }
+        return a;
+    }
+    if (k == HI_NOT || (k >= HI_SEQ && k <= HI_SGEU)) return 1;
+    if (k == HI_AND || k == HI_OR || k == HI_XOR || k == HI_ADD) {
+        a = ho_kb_of(h_src1[i]);
+        b = ho_kb_of(h_src2[i]);
+        if (k == HI_AND) return a & b;
+        if (k != HI_ADD) return a | b;
+        /* Two values below 2**(hb+1) sum below 2**(hb+2). */
+        a = a | b;
+        if (a & 0xC0000000u) return 0xFFFFFFFFu;
+        if (a == 0) return 0;
+        hb = 0;
+        while ((a >> hb) > 1) hb = hb + 1;
+        return (1u << (hb + 2)) - 1;
+    }
+    if (k == HI_SLL || k == HI_SRL || k == HI_SRA) {
+        if (h_src2[i] < 0 || h_kind[h_src2[i]] != HI_ICONST) return 0xFFFFFFFFu;
+        c = h_val[h_src2[i]] & 31;
+        a = ho_kb_of(h_src1[i]);
+        if (k == HI_SLL) return a << c;
+        if (k == HI_SRL) return a >> c;
+        return (unsigned int)((int)a >> c);
+    }
+    return 0xFFFFFFFFu;
+}
+
+static int ho_known_bits(void) {
+    int i;
+    int pass;
+    int moved;
+    int changed;
+    unsigned int m;
+    unsigned int c;
+    int x;
+    int y;
+    int z;
+    int b;
+
+    i = 0;
+    while (i < h_ninst) { ho_kb[i] = 0; i = i + 1; }
+    pass = 0;
+    moved = 1;
+    while (moved) {
+        if (pass >= 64) return 0;   /* not settled: transform nothing */
+        moved = 0;
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] != HI_NOP) {
+                m = ho_kb_eval(i) | ho_kb[i];
+                if (m != ho_kb[i]) { ho_kb[i] = m; moved = 1; }
+            }
+            i = i + 1;
+        }
+        pass = pass + 1;
+    }
+
+    changed = 0;
+    ho_count_uses();
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_AND && h_src2[i] >= 0 &&
+            h_kind[h_src2[i]] == HI_ICONST && h_src1[i] >= 0 &&
+            !ty_is_llong(h_ty[i])) {
+            c = (unsigned int)h_val[h_src2[i]];
+            if ((ho_kb_of(h_src1[i]) & ~c) == 0) {
+                h_kind[i] = HI_COPY;
+                h_src2[i] = -1;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_SRA && h_src2[i] >= 0 &&
+                   h_kind[h_src2[i]] == HI_ICONST && h_src1[i] >= 0 &&
+                   h_kind[h_src1[i]] == HI_SLL && !ty_is_llong(h_ty[i])) {
+            x = h_src1[i];
+            c = (unsigned int)(h_val[h_src2[i]] & 31);
+            if (c > 0 && h_src2[x] >= 0 && h_kind[h_src2[x]] == HI_ICONST &&
+                (unsigned int)(h_val[h_src2[x]] & 31) == c && h_src1[x] >= 0 &&
+                !ty_is_llong(h_ty[x]) &&
+                (ho_kb_of(h_src1[x]) >> (31 - c)) == 0) {
+                h_kind[i] = HI_COPY;
+                h_src1[i] = h_src1[x];
+                h_src2[i] = -1;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_NEG && h_src1[i] >= 0 &&
+                   h_kind[h_src1[i]] == HI_SNE && ho_use[h_src1[i]] == 1 &&
+                   !ty_is_llong(h_ty[i])) {
+            /* -((x & (1 << b)) != 0), the AND used only here: (x << (31
+             * - b)) >> 31, arithmetic -- xtime's (x & 0x80) ? 0x1b : 0
+             * mask in two instructions, not three.  Without an AND to
+             * drop it is two for two, and the shifts only stir the
+             * allocator (three such sites cost sqlite3VdbeExec 200
+             * instructions of spill code). */
+            x = h_src1[i];
+            y = h_src1[x];
+            z = h_src2[x];
+            if (y >= 0 && z >= 0 && h_kind[y] == HI_ICONST) { b = y; y = z; z = b; }
+            m = ho_kb_of(y);
+            if (y >= 0 && z >= 0 && h_kind[z] == HI_ICONST && h_val[z] == 0 &&
+                m != 0 && (m & (m - 1)) == 0 && !ty_is_llong(h_ty[y])) {
+                b = 0;
+                while ((m >> b) != 1) b = b + 1;
+                if (h_kind[y] == HI_AND && ho_use[y] == 1 &&
+                    h_src1[y] >= 0 && h_src2[y] >= 0 &&
+                    h_kind[h_src2[y]] == HI_ICONST &&
+                    (unsigned int)h_val[h_src2[y]] == m)
+                    y = h_src1[y];
+                else
+                    y = -1;
+            } else {
+                y = -1;
+            }
+            if (y >= 0) {
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 31 - b, NULL);
+                h_blk[z] = h_blk[x];
+                h_kind[x] = HI_SLL;
+                h_ty[x] = TY_INT;
+                h_src1[x] = y;
+                h_src2[x] = z;
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL);
+                h_blk[z] = h_blk[i];
+                h_kind[i] = HI_SRA;
+                h_src2[i] = z;
+                ho_stat_kb = ho_stat_kb + 1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+#endif
+
+#ifndef S12CC_X64_HOST
+/* ----------------------------------------------------------------
+ * Write-only frame slots.  An ALLOCA whose every derived address
+ * (ADDI, COPY, ADD of a constant) is used only as the address of a
+ * STORE is never read and never escapes, so its stores are dead.  A
+ * fully unrolled loop over a local array whose loads all forwarded or
+ * folded left exactly that: test_unroll's tally8 computed 580 at
+ * compile time and still stored all eight elements.  Any other use
+ * -- a load, a call argument, a phi, the address stored as a value,
+ * anything this does not recognise -- keeps every store.  Not in a
+ * function that calls setjmp (ssa_fn_setjmp), whose locals stay in
+ * memory on purpose.
+ * ---------------------------------------------------------------- */
+
+static char *ho_ds_bad;
+
+static int ho_stat_dslot;
+
+/* v is used; fine or not.  A root with a use that is not fine keeps
+ * its stores. */
+static void ho_ds_use(int v, int ok) {
+    if (v < 0 || v >= al_n || al_root[v] < 0) return;
+    if (!ok) ho_ds_bad[al_root[v]] = 1;
+}
+
+static int ho_dead_slots(void) {
+    int i;
+    int j;
+    int k;
+    int n;
+    int r;
+    int any;
+    int changed;
+
+    if (ssa_fn_setjmp) return 0;
+    al_roots();
+    any = 0;
+    i = 0;
+    while (i < h_ninst) {
+        ho_ds_bad[i] = 0;
+        if (h_kind[i] == HI_ALLOCA) any = 1;
+        i = i + 1;
+    }
+    if (!any) return 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_NOP) {
+            r = al_root[i];
+            if (h_cbase[i] >= 0 && hi_nargs(i) == 0) {
+                /* an argument list on a kind not known here: keep all */
+                j = 0;
+                while (j < h_ninst) {
+                    if (h_kind[j] == HI_ALLOCA) ho_ds_bad[j] = 1;
+                    j = j + 1;
+                }
+            }
+            /* fine: the address a STORE writes, or the base of a step off
+             * the same root; anything else reads the slot or lets its
+             * address out */
+            n = 0;
+            while (n < hi_nrefs(i)) {
+                j = hi_ref(i, n);
+                if (al_is_step(i))
+                    ho_ds_use(j, j >= 0 && j < al_n && al_root[j] == r);
+                else
+                    ho_ds_use(j, k == HI_STORE && hi_ref_is_addr(i, n) && !h_vol[i]);
+                n = n + 1;
+            }
+        }
+        i = i + 1;
+    }
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_STORE && h_src1[i] >= 0 && h_src1[i] < al_n) {
+            r = al_root[h_src1[i]];
+            if (r >= 0 && !ho_ds_bad[r]) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                ho_stat_dslot = ho_stat_dslot + 1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+#endif
+
+static int ho_stat_elim;
+
+/* -fopt=MASK (s12cc.c): which passes run; a bisection aid.  Bits: 1 copy
+ * propagation, 2 constant folding, 4 CSE, 8 branch simplification,
+ * 16 dead blocks, 32 phi simplification, 64 DSE, 128 store-load forwarding,
+ * 256 single-store alloca promotion, 512 DCE, 1024 LICM, 2048 known bits,
+ * 4096 dead slots, 8192 late scalar replacement (stage08 hcg_func). */
+static int ho_mask = -1;
+
+static void hir_opt(void) {
+    int changed;
+    int iter;
+    int before;
+    int after;
+    int i;
+
+    /* Count live instructions before */
+    before = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) before = before + 1;
+        i = i + 1;
+    }
+
+    iter = 0;
+    changed = 1;
+    while (changed && iter < 10) {
+        changed = 0;
+        if (ho_mask & 1)   changed = changed | ho_copy_prop();
+        if (ho_mask & 2)   changed = changed | ho_const_fold();
+        if (ho_mask & 4)   changed = changed | ho_cse();
+        if (ho_mask & 8)   changed = changed | ho_branch_simplify();
+        if (ho_mask & 16)  changed = changed | ho_dead_blocks();
+        if (ho_mask & 32)  changed = changed | ho_phi_simplify();
+        if (ho_mask & 64)  changed = changed | ho_dse_pass();
+        if (ho_mask & 128) changed = changed | ho_mem_fwd();
+        if (ho_mask & 256) changed = changed | ho_promote_single_store_alloca();
+#ifndef S12CC_X64_HOST
+        if (ho_mask & 2048) changed = changed | ho_known_bits();
+        if (ho_mask & 4096) changed = changed | ho_dead_slots();
+#endif
+        if (ho_mask & 512) changed = changed | ho_dce();
+        iter = iter + 1;
+    }
+    /* Stopped by the iteration cap with work left, the last round's
+     * phi_simplify may have turned a phi into a COPY that nothing has
+     * been rewritten past yet -- and a COPY on a phi list is never
+     * emitted: its users read a register or slot nobody wrote.  A full
+     * unroll of ten copies of `v ^= (v ? 1 : p) - i` needed one round per
+     * copy (cfuzz seed 4267).  Hitting the cap may cost optimization,
+     * never correctness: one more copy propagation leaves no reader. */
+    if (changed && (ho_mask & 1)) ho_copy_prop();
+
+    /* Count live instructions after */
+    after = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) after = after + 1;
+        i = i + 1;
+    }
+
+    ho_stat_elim = ho_stat_elim + (before - after);
+}
+
+/* This module's tables, grown with the function's instructions
+ * (hir_tab_add, hir.h): registered once, before any block of the first
+ * function is made (ho_kb and ho_ds_bad are SLOW-32's alone). */
+static int ho_tables_done;
+static void ho_tables(void) {
+    if (ho_tables_done) return;
+    ho_tables_done = 1;
+    hir_inst_table((char **)&ho_use, (int)sizeof(int));
+    hir_inst_table((char **)&ho_phi_vouched, (int)sizeof(char));
+    hir_inst_table((char **)&ho_cse_next, (int)sizeof(int));
+#ifndef S12CC_X64_HOST
+    hir_inst_table((char **)&ho_kb, (int)sizeof(unsigned int));
+    hir_inst_table((char **)&ho_ds_bad, (int)sizeof(char));
+#endif
+}
