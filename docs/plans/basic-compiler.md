@@ -273,3 +273,30 @@ prog.bas [prog.s32x]`; `sbc/build-bc.sh` builds `sbc/s32-bc` (host) and
   what is "not yet" is the list of what to do next -- arrays and
   functions (99 programs), GOSUB/RETURN (49), strings (40), DATA/READ
   (35), INPUT (11).
+
+**Milestone 1 (2026-11-03).**  GOSUB/RETURN (a return point's number on
+a stack the depth of the interpreter's, every RETURN through one jump
+table made last), builtin functions (builtin_call, numeric and string;
+TAB and SPC as PRINT items), strings (a value crosses as three words --
+a string's lo its sb_string_t, the interpreter's refcounted string --
+and every value compiled code holds owns its reference), arrays
+(eval_dim, eval_array_get, eval_array_store; static DIMs made before
+the run as the scan makes them), INPUT, DATA, READ and RESTORE (the
+interpreter's cores, now calls its own statements make: eval_input_line,
+eval_read_value, eval_data_add), ON GOTO/GOSUB, DEF FN (inlined at each
+call, parameters in slots of the call's own).  The interpreter's start
+of a program is one call now, eval_reset, which the runtime makes too.
+DEF FN is defined before the program runs in the interpreter as well
+(its scan registers each), so it runs what the compiler takes.
+
+`run-oracle.py --bc`: 327 agree, 20 refused as the interpreter refuses,
+none differ; of the rest, about 40 are refused by the checker (QB would
+not load them) and about 30 are "not yet": SUB/FUNCTION/CALL, SELECT
+CASE, EXIT, ON ERROR/RESUME, DEFINT and its kind, SWAP, PRINT USING.
+
+Speed, the 92 games both compilers take: interpreter 417M instructions,
+s32-sbc 137M, s32-bc 223M -- every operator still a call into the
+interpreter's code.  Native paths next: a static type for each
+expression where the program fixes one, integer arithmetic with QB's
+Overflow checks inline, doubles and singles through the hardware, each
+held to the runtime's answer.
