@@ -79,6 +79,7 @@
 #define TAB_HL_CTEMP 57    /* hir_lower.h, complex temporary */
 #define TAB_LEX_SRC  58    /* c_lexer.rl, the translation unit's text (lex_src) */
 #define TAB_PP_PRE   59    /* pp.h, pre-expanded macro arguments */
+#define TAB_ST       60    /* ast.h, structure or union */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -151,6 +152,7 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_HL_CTEMP) return "complex temporary";
     if (kind == TAB_LEX_SRC) return "source text";
     if (kind == TAB_PP_PRE) return "pre-expanded argument";
+    if (kind == TAB_ST) return "structure";
     return "?";
 }
 

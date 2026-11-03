@@ -1503,18 +1503,19 @@ static int ps_define_label(char *name) {
 
 /* --- Struct helpers --- */
 
-/* Structure and union tags have block scope (6.2.1p4).  st_depth is
- * the block nesting a tag was declared at, 0 for file scope, -1 once its
- * block has closed: the entry stays (types name it by index), only the
- * name is gone. */
-static int st_depth[ST_MAX_STRUCTS];
+/* Structure and union tags have block scope (6.2.1p4): st_depth
+ * (ast.h).  The newest tag of the name still in scope, by the name
+ * index (a scan from the top, per lookup, was quadratic in tags). */
+static struct tab_nix ps_six;
 
 static int find_struct(char *name) {
     int i;
-    i = st_count - 1;
-    while (i >= 0) {
+    if (st_count <= 0) return -1;
+    tab_nix_sync(&ps_six, st_name, st_count);
+    i = ps_six.head[(int)(tab_nix_hash(name) & (unsigned)(ps_six.cap - 1))];
+    while (i >= 0) {           /* newest first */
         if (st_depth[i] >= 0 && strcmp(name, st_name[i]) == 0) return i;
-        i = i - 1;
+        i = ps_six.next[i];
     }
     return -1;
 }
@@ -1551,7 +1552,7 @@ static int ps_tag_defines_here(int si) {
 static void ps_check_dup_members(int si) {
     int i;
     int j;
-    i = 0;
+    i = st_first[si];           /* its members come after; none before */
     while (i < stm_count) {
         if (stm_owner[i] == si && stm_name[i][0] != 0) {
             j = i + 1;
@@ -1577,10 +1578,11 @@ static void ps_end_block_tags(void) {
 
 static int add_struct(char *name) {
     int idx;
-    if (st_count >= ST_MAX_STRUCTS) {
+    if (st_count >= ST_MAX_STRUCTS) {   /* a million: the type encoding's */
         p_error("too many structs");
         return 0;
     }
+    st_room(st_count + 1);
     idx = st_count;
     st_name[idx] = strdup(name);
     st_nfields[idx] = 0;

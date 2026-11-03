@@ -21,29 +21,53 @@
 #define TY_FLOAT  5       /* float (32-bit IEEE 754) */
 #define TY_DOUBLE 6       /* double (64-bit IEEE 754) */
 #define TY_I128   7       /* __int128 / __uint128_t (128-bit integer) */
-#define TY_STRUCT_BASE 8  /* struct index i → type = 8+i; fits 8..4095 (SQLite declares ~600 structs; 255 was the ceiling) */
-#define TY_PTR  0x1000   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
+#define TY_STRUCT_BASE 8  /* struct index i -> type = 8+i, below TY_PTR */
+#define TY_PTR  0x100000 /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
-#define TY_UNSIGNED  0x40000  /* flag bit: unsigned qualifier */
-#define TY_BASE_MASK 0x0FFF  /* bits 0-11: base type */
-#define TY_PTR_MASK  0x3F000  /* bits 12-17: pointer depth */
+/* The base was 12 bits, 4,088 structures a translation unit (SQLite
+ * declares ~600; 255 was the ceiling once).  20 bits, a million. */
+#define TY_UNSIGNED  0x4000000   /* flag bit: unsigned qualifier */
+#define TY_BASE_MASK 0x00FFFFF   /* bits 0-19: base type */
+#define TY_PTR_MASK  0x3F00000   /* bits 20-25: pointer depth */
 
 /* --- Struct definition tables --- */
-/* TY_STRUCT_BASE + i must stay below TY_PTR (0x1000).  4096 let i >= 4088
- * encode as a pointer (GitHub issue 50). */
+/* TY_STRUCT_BASE + i must stay below TY_PTR: past it, i encodes as a
+ * pointer (GitHub issue 50).  The tables grow (tables.h, TAB_ST). */
 #define ST_MAX_STRUCTS (TY_PTR - TY_STRUCT_BASE)
 /* struct members grow (tables.h, TAB_ST_MEMB): a full fixed table was
  * reported, but SQLite came within 16 of its 32768 */
 
-static char *st_name[ST_MAX_STRUCTS];
-static int   st_nfields[ST_MAX_STRUCTS];
-static int   st_first[ST_MAX_STRUCTS];
-static int   st_size[ST_MAX_STRUCTS];
-static int   st_is_union[ST_MAX_STRUCTS]; /* 1 if union, 0 if struct */
+static char **st_name;
+static int   *st_nfields;
+static int   *st_first;
+static int   *st_size;
+static int   *st_is_union; /* 1 if union, 0 if struct */
 /* a complex type's machine form (ctype.h CT_COMPLEX): the CT_ kind of its
  * parts, CT_FLOAT or CT_DOUBLE; 0 for every structure a program declares */
-static int   st_cplx[ST_MAX_STRUCTS];
+static int   *st_cplx;
+static int   *st_align;    /* alignment of each struct (max member align) */
+/* Tags have block scope (6.2.1p4): the block nesting a tag was declared
+ * at, 0 for file scope, -1 once its block has closed -- the entry stays
+ * (types name it by index), only the name is gone (parser.h). */
+static int   *st_depth;
 static int   st_count;
+static int   st_cap;
+
+/* room for need structures */
+static void st_room(int need) {
+    if (need <= st_cap) return;
+    if (st_cap == 0) {
+        tab_add((char **)&st_name, (int)sizeof(char *), TAB_ST, 0);
+        tab_add((char **)&st_nfields, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_first, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_size, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_is_union, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_cplx, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_align, (int)sizeof(int), TAB_ST, 0);
+        tab_add((char **)&st_depth, (int)sizeof(int), TAB_ST, 0);
+    }
+    tab_grow(TAB_ST, &st_cap, 1024, need);
+}
 
 static char **stm_name;
 static int *stm_type;
@@ -159,7 +183,6 @@ static int ty_is_incomplete_struct(int ty) {
 /* Target pointer size: 4 for SLOW-32, 8 for x86-64.
  * Set by driver before compilation. Default 4 for backward compat. */
 static int ty_ptr_size = 4;
-static int st_align[ST_MAX_STRUCTS];   /* alignment of each struct (max member align) */
 
 static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return ty_ptr_size;
