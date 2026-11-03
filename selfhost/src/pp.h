@@ -259,7 +259,7 @@ static void pp_skip_ws(void) {
      * on continued directives. */
     /* Bound by the buffer, not lex_len: #if text-macro expansions park
      * past the file (GitHub issue 45). */
-    while (lex_pos < LEX_SRC_SZ && lex_src[lex_pos] != 0) {
+    while (lex_pos < lex_src_cap && lex_src[lex_pos] != 0) {
         if (lex_src[lex_pos] == 32 || lex_src[lex_pos] == 9) {
             lex_pos = lex_pos + 1;
         } else if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
@@ -269,19 +269,19 @@ static void pp_skip_ws(void) {
                    lex_src[lex_pos + 2] == 10) {
             lex_pos = lex_pos + 3;
             lex_line = lex_line + 1;
-        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < LEX_SRC_SZ &&
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_src_cap &&
                    lex_src[lex_pos + 1] == 42) {
             lex_pos = lex_pos + 2;
-            while (lex_pos + 1 < LEX_SRC_SZ &&
+            while (lex_pos + 1 < lex_src_cap &&
                    !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
                 if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
                 lex_pos = lex_pos + 1;
             }
-            if (lex_pos + 1 < LEX_SRC_SZ) lex_pos = lex_pos + 2;
-        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < LEX_SRC_SZ &&
+            if (lex_pos + 1 < lex_src_cap) lex_pos = lex_pos + 2;
+        } else if (lex_src[lex_pos] == 47 && lex_pos + 1 < lex_src_cap &&
                    lex_src[lex_pos + 1] == 47) {
             lex_pos = lex_pos + 2;
-            while (lex_pos < LEX_SRC_SZ && lex_src[lex_pos] != 10) {
+            while (lex_pos < lex_src_cap && lex_src[lex_pos] != 10) {
                 if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
                     lex_pos = lex_pos + 2;
                     lex_line = lex_line + 1;
@@ -902,10 +902,11 @@ static int pp_stringize(int from, int to, int len) {
 }
 
 #define PP_MAX_ARGS 32
-#define PP_PRE_SZ 1048576
 /* Pre-expanded arguments, stacked: each call takes what it needs above
- * pp_pre_top and gives it back when its body is laid down. */
-static char pp_pre[PP_PRE_SZ];
+ * pp_pre_top and gives it back when its body is laid down.  Grown
+ * (tables.h, TAB_PP_PRE); it was 1MB. */
+static char *pp_pre;
+static int pp_pre_cap;
 static int pp_pre_top;
 static int pp_pre_n;            /* length of the last pp_preexpand result */
 static char pp_iname[256];
@@ -971,17 +972,52 @@ static int pp_glues(int a, int b) {
     return strchr("+-*/%&|^<>=!#:.", a) != 0 && strchr("+-*/%&|^<>=!#:.", b) != 0;
 }
 
-/* lex_src holds the translation unit as the preprocessor rewrites it,
- * includes spliced in and macros expanded in place: room for delta
- * more bytes, or stop.  (Fixed, 12MB: the lexer and the parser's marks
- * hold pointers into it.  Past it an #include was cut short without a
- * word and an in-place expansion wrote past the end.) */
+/* Room in lex_src for delta more bytes past lex_len (and its 0).  Text
+ * parked at the top for #if (pp_ev_park) stays where it is: growth adds
+ * room above it, so the parking area moves up only when none is parked.
+ * A parked text in the way of lex_len is the one thing growth cannot
+ * fix. */
+static int pp_ev_park;          /* grow-down parking in unused lex_src tail, 0 none */
+#define PP_PARK_GAP 1048576
+static void pp_park_full(void) {
+    pp_where();
+    fdputs("error: macro arguments in #if past 1MB (PP_PARK_GAP) collide with the expression being evaluated\n", 2);
+    exit(1);
+}
+
 static void pp_src_room(int delta) {
-    if (delta > 0 && lex_len + delta >= LEX_SRC_SZ - 1) {
-        pp_where();
-        fdputs("error: the source with its includes and expansions is past the buffer (12MB)\n", 2);
+    if (delta <= 0) return;
+    if (pp_ev_park != 0 && lex_len + delta + 1 >= pp_ev_park) pp_park_full();
+    lex_src_room(lex_len + delta + 2);
+}
+
+/* All of an open file, in a malloc'd block with a 0 after it; *np its
+ * length. */
+static char *pp_slurp(int fd, int *np) {
+    char *b;
+    int cap;
+    int n;
+    int k;
+    cap = 65536;
+    n = 0;
+    b = (char *)malloc((unsigned long)cap);
+    while (b) {
+        if (cap - n < 4096) {
+            cap = cap * 2;
+            b = (char *)realloc(b, (unsigned long)cap);
+            if (!b) break;
+        }
+        k = read(fd, b + n, cap - n - 1);
+        if (k <= 0) break;
+        n = n + k;
+    }
+    if (!b) {
+        fdputs("s12cc: out of memory reading a source file\n", 2);
         exit(1);
     }
+    b[n] = 0;
+    *np = n;
+    return b;
 }
 
 /* lex_src[at..at+dellen) becomes ins[0..inslen), the tail moving. */
@@ -1179,10 +1215,7 @@ static int pp_preexpand(int from, int to) {
     pp_dis_base = pp_ndis;
     n = to - from;
     r = lex_len + 2;
-    if (r + n + 2 >= LEX_SRC_SZ) {
-        fdputs("s12cc: macro argument overflows the source buffer\n", 2);
-        exit(1);
-    }
+    pp_src_room(r + n + 2 - lex_len);
     i = 0;
     while (i < n) {
         lex_src[r + i] = lex_src[from + i];
@@ -1193,10 +1226,7 @@ static int pp_preexpand(int from, int to) {
     pp_peek_depth = 1;          /* replace in place: the text is the result */
     pp_rescan_region(r);
     n = lex_len - r;
-    if (pp_pre_top + n > PP_PRE_SZ) {
-        fdputs("s12cc: macro arguments too large\n", 2);
-        exit(1);
-    }
+    tab_room1(&pp_pre, 1, TAB_PP_PRE, &pp_pre_cap, 65536, pp_pre_top + n + 1);   /* + 1: pp_include_from_macro's 0 */
     off = pp_pre_top;
     i = 0;
     while (i < n) {
@@ -2298,7 +2328,6 @@ static void pp_splice_file(char *path) {
     int slen;
     int total;
     int last_slash;
-    int room;
 
     fd = open(path, 0);
     if (fd < 0) {
@@ -2307,11 +2336,8 @@ static void pp_splice_file(char *path) {
         fdputc(10, 2);
         exit(1);
     }
-    tmp = malloc(LEX_SRC_SZ);
-    if (!tmp) {
-        fdputs("s12cc: out of memory for include\n", 2);
-        exit(1);
-    }
+    tmp = pp_slurp(fd, &n);
+    close(fd);
 
     /* Marker lines: "#s12cc_pushdir <path>\n" before the file's text and
        "\n#s12cc_popdir\n" after it, so a quoted #include inside the file
@@ -2339,12 +2365,7 @@ static void pp_splice_file(char *path) {
     suf = "\n#s12cc_popdir\n";
     slen = strlen(suf);
 
-    room = LEX_SRC_SZ - lex_len - 1 - plen - slen;
-    if (room < 0) room = 0;
-    n = read(fd, tmp, room + 1);     /* a byte more: whether it fits */
-    close(fd);
-    if (n < 0) n = 0;
-    pp_src_room(plen + n + slen);    /* the markers too, though the file is empty */
+    pp_src_room(plen + n + slen);
     total = plen + n + slen;
 
     /* Splice: shift tail right by total, insert marker + content + marker */
@@ -2594,7 +2615,6 @@ static int pp_ev_has_include(void) {
 static long long pp_ev_cond(void);
 
 static int pp_ev_depth;
-static int pp_ev_park;          /* grow-down parking in unused lex_src tail */
 static int pp_ev_dis[32];       /* macros being expanded in this #if */
 static int pp_ev_ndis;
 
@@ -2609,14 +2629,21 @@ static long long pp_ev_from_text(char *body) {
     int place;
     int saved_pos;
     int saved_park;
+    int top;
     long long val;
 
     blen = 0;
     while (body[blen] != 0) blen = blen + 1;
     if (blen < 1) return 0;
-    if (pp_ev_park == 0) pp_ev_park = LEX_SRC_SZ;
-    place = pp_ev_park - blen - 2;
-    if (place <= lex_len) pp_src_room(LEX_SRC_SZ);   /* no room to park: stop */
+    /* The first text parks at the top, PP_PARK_GAP above lex_len at
+     * least: expanding it puts macro arguments past lex_len
+     * (pp_preexpand), and the parked texts, whose offsets the
+     * evaluations under way hold, cannot move. */
+    saved_park = pp_ev_park;        /* 0: nothing parked yet */
+    if (saved_park == 0) lex_src_room(lex_len + PP_PARK_GAP + blen + 4);
+    top = saved_park != 0 ? saved_park : lex_src_cap;
+    if (top - blen - 2 <= lex_len + 1) pp_park_full();
+    place = top - blen - 2;
     i = 0;
     while (i < blen) {
         lex_src[place + i] = body[i];
@@ -2624,7 +2651,6 @@ static long long pp_ev_from_text(char *body) {
     }
     lex_src[place + blen] = 10;
     lex_src[place + blen + 1] = 0;
-    saved_park = pp_ev_park;
     pp_ev_park = place;
     saved_pos = lex_pos;
     lex_pos = place;

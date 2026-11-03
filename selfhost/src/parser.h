@@ -4268,6 +4268,18 @@ static void ps_lex_mark(void) {
     pp_peek_depth = pp_peek_depth + 1;
 }
 
+/* lex_src moved (lex_src_room): the marks' pointers follow it */
+static void ps_mk_rebase(char *old, int oldcap, char *nw) {
+    int d;
+    d = 0;
+    while (d < ps_mk_depth) {
+        ps_mk_rp[d] = lex_rebase(ps_mk_rp[d], old, oldcap, nw);
+        ps_mk_rts[d] = lex_rebase(ps_mk_rts[d], old, oldcap, nw);
+        ps_mk_rte[d] = lex_rebase(ps_mk_rte[d], old, oldcap, nw);
+        d = d + 1;
+    }
+}
+
 static void ps_lex_commit(void) {
     ps_mk_depth = ps_mk_depth - 1;
     pp_peek_depth = pp_peek_depth - 1;

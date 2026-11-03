@@ -149,13 +149,18 @@ void fdputuint(int f, int v);
 
 /* === Lexer globals === */
 
-#define LEX_SRC_SZ   12000000   /* was 1100000 */
 #define LEX_STR_SZ   256
 /* The string-literal pool and the table of literals grow (tables.h):
  * they were 4MB and 65536, and their writers dropped what did not fit
  * without a word. */
 
-static char lex_src[LEX_SRC_SZ];
+/* The translation unit as the preprocessor rewrites it -- includes
+ * spliced in, macros expanded in place -- grown (tables.h, TAB_LEX_SRC;
+ * lex_src_room).  It was 12MB: a longer source or #include was cut to
+ * what fit.  Past lex_len are scratch areas (pp_preexpand's argument
+ * text, pp_ev_from_text's parking), within lex_src_cap. */
+static char *lex_src;
+static int  lex_src_cap;
 static int  lex_len;
 static int  lex_line;
 static int  lex_col;
@@ -237,6 +242,58 @@ static int   lex_rcs;   /* current state */
 static int   lex_ract;  /* scanner action */
 static char *lex_rts;   /* token start */
 static char *lex_rte;   /* token end */
+
+/* Growing lex_src moves it, and these follow it: the scanner's
+ * pointers above, lex_warn_ts, and the parser's lexer marks.  Nothing
+ * else keeps a pointer into it across a call that can grow it -- the
+ * preprocessor works in offsets, and the scanner's own locals (lex_next)
+ * never call the preprocessor. */
+static void ps_mk_rebase(char *old, int oldcap, char *nw);   /* parser.h */
+
+static char *lex_rebase(char *q, char *old, int oldcap, char *nw) {
+    if (q == 0 || q < old || q > old + oldcap) return q;
+    return nw + (q - old);
+}
+
+/* S12CC_SRCMOVE=1: every request for room past lex_len moves lex_src
+ * to a new block, so a pointer left behind shows up at once (a test
+ * knob, as S12CC_TABDBG is; test_src_moves) */
+static int lex_src_moves = -1;
+
+/* room for need bytes in lex_src */
+static void lex_src_room(int need) {
+    char *old;
+    int oldcap;
+    if (lex_src_moves < 0) lex_src_moves = getenv("S12CC_SRCMOVE") != 0;
+    if (need <= lex_src_cap && !(lex_src_moves && need > lex_len + 1)) return;
+    old = lex_src;
+    oldcap = lex_src_cap;
+    if (lex_src_moves && old != 0) {
+        char *nb;
+        int nc;
+        nc = need > oldcap ? need : oldcap;
+        nb = (char *)malloc((unsigned long)nc);
+        if (!nb) {
+            fdputs("s12cc: out of memory (S12CC_SRCMOVE)\n", 2);
+            exit(1);
+        }
+        memcpy(nb, old, (unsigned long)oldcap);
+        if (nc > oldcap) memset(nb + oldcap, 0, (unsigned long)(nc - oldcap));
+        memset(old, 85, (unsigned long)oldcap);     /* what is left behind is garbage */
+        free(old);
+        lex_src = nb;
+        lex_src_cap = nc;
+    } else {
+        tab_room1(&lex_src, 1, TAB_LEX_SRC, &lex_src_cap, 1 << 20, need);
+    }
+    if (old == 0 || lex_src == old) return;
+    lex_rp = lex_rebase(lex_rp, old, oldcap, lex_src);
+    lex_rpe = lex_rebase(lex_rpe, old, oldcap, lex_src);
+    lex_rts = lex_rebase(lex_rts, old, oldcap, lex_src);
+    lex_rte = lex_rebase(lex_rte, old, oldcap, lex_src);
+    lex_warn_ts = lex_rebase(lex_warn_ts, old, oldcap, lex_src);
+    ps_mk_rebase(old, oldcap, lex_src);
+}
 
 /* === Keyword lookup === */
 
@@ -1786,8 +1843,9 @@ void lex_init(char *src, int len) {
     char *ts;
     char *te;
     int act;
+    lex_src_room(len + 1);
     i = 0;
-    while (i < len && i < LEX_SRC_SZ - 1) {
+    while (i < len) {
         lex_src[i] = src[i];
         i = i + 1;
     }

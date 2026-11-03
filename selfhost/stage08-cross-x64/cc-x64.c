@@ -491,11 +491,8 @@ int main(int argc, char **argv) {
         write(2, "cc-x64: cannot open input\n", 29);
         return 1;
     }
-    src = malloc(LEX_SRC_SZ);
-    n = read(fd, src, LEX_SRC_SZ - 1);
+    src = pp_slurp(fd, &n);
     close(fd);
-    if (n < 0) n = 0;
-    src[n] = 0;
 
     /* Lex + Parse */
     lex_init(src, n);
