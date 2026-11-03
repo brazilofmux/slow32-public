@@ -142,12 +142,15 @@ def qb_lines(data):
     return lines
 
 
-def run_qbasic(src, inp, exe):
+def run_qbasic(src, inp, exe, fresh=False):
+    """QBasic's output for src with keys inp, or its verdict (ERROR(msg),
+    TIMEOUT); cached, unless fresh -- a TIMEOUT can be a run cut off
+    before its screen was dumped, worth asking again"""
     prog = for_qbasic(src)
     keys = inp.replace(b'\r\n', b'\n').replace(b'\n', b'\r')
     key = hashlib.sha256(prog + b'\0' + keys).hexdigest()
     cached = os.path.join(CACHE, 'qb-' + key + '.txt')
-    if os.path.exists(cached):
+    if os.path.exists(cached) and not fresh:
         data = open(cached, 'rb').read().decode('utf-8')
         if data.startswith('\0'):
             return data[1:]

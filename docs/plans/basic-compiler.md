@@ -199,12 +199,29 @@ in two branches over one `NEXT A`, awari.bas's second `FOR I` reaching
 the first's `NEXT I` by GOTO -- and one DEF FN after its use
 (bullfght.bas).
 
-**What that means for the compiler.**  Classic BASIC is more static than
-it looks.  With FOR's state in slots of the loop variable's own -- the
-limit, the step, and which FOR began the loop -- every NEXT is resolved
-from the text: one FOR of its variable in reach, a direct jump to that
-FOR's body; more than one, a dispatch on the slot.  Jumping into a
-loop is then no different from staying in one.  So the two FOR/NEXT
-findings could become paid-for counts too, and the compilable dialect
-would be QuickBASIC's load-time checks and nothing more -- the user's
-call, before the compiler is written.
+**Ruled (user, 2026-11-03): the compilable dialect is what QuickBASIC
+loads** -- so every finding can be checked against QBasic 1.1 (and
+QB64-PE, which agreed on every shape tried), and it is what people will
+expect.  One deliberate difference: a DEF FN used before its definition,
+or in its own, is taken -- the compiler defines them all first ("QB was
+just being lazy").  QB's FOR/NEXT rule turned out stricter than the
+first checker: a NEXT closes the innermost FOR open in its own block,
+and nothing else -- `IF ... THEN PRINT X$;: NEXT Z` and a NEXT skipping
+an inner FOR are "NEXT without FOR" in both; jumps into and out of a
+loop are allowed.  So the compiler keeps a FOR's limit and step in
+slots of that FOR's own, and every NEXT is a direct jump.
+
+The findings now: `next-without-for`, `for-without-next`,
+`label-twice`, `label-undefined`, `dim-twice`, `dim-after-use`,
+`option-base` (twice, or after an array), `fn-twice`, `fn-undefined`.
+
+`sbasic/tests/strict-qb.py DIR...` holds the checker to QBasic: over
+tests/strict/ (the shapes, one each), the 97 games, NBS and fast/, 352
+agree, 4 are the hoisted DEF FNs, and the checker refuses nothing QBasic
+loads.  QBasic refuses 11 more, all syntax the interpreter's parser
+takes and QB's does not: a builtin with the wrong argument count
+(NBS P143-P155), malformed quoted DATA (P099, P103, P194), and
+`40 REMARKABLE PROGRAM` read as a REM (sinewave.bas, GW's reading).
+That is the interpreter being the friendly one, as ruled; whether
+`-strict` should also refuse them -- an arity table for the builtins, a
+QB reading of REM -- is the next question.

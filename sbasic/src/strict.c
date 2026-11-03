@@ -21,6 +21,7 @@ typedef struct {
     refs_t labels, jumps;
     refs_t dims, uses;          /* arrays: DIMs, and uses */
     refs_t erased;              /* arrays ERASEd, which may be DIMmed again */
+    refs_t options;             /* OPTION BASE statements */
     range_t *fors; int nfors, capfors;
 } unit_t;
 
@@ -39,7 +40,7 @@ typedef struct {
 
 static const char *info_names[STRICT_NINFO] = {
     "gosub", "on-error", "resume", "resume-next", "erl", "clear", "goto-out-of-for",
-    "goto-into-for", "next-in-block", "next-skips",
+    "goto-into-for", "fn-hoisted",
 };
 
 const char *strict_info_name(int i) { return i >= 0 && i < STRICT_NINFO ? info_names[i] : "?"; }
@@ -100,26 +101,18 @@ static void scan_top(expr_t *e, void *vc) { expr_walk(e, scan_expr, vc); }
 
 /* --- statements --- */
 
-/* a FOR open in the text: closed in its own block, or only by a NEXT in a
- * block inside it (IF ... THEN ...: NEXT Z, the "loop until" idiom) */
-typedef struct open_for { char var[64]; int seq; int line; int closed_inner; } open_for_t;
+/* a FOR open in the text */
+typedef struct open_for { char var[64]; int seq; int line; } open_for_t;
 
 static void walk_unit(check_t *c, stmt_t *body);
 
-/* the innermost open FOR named v (any, for NEXT alone) at or above lo */
-static int open_find(check_t *c, int lo, const char *v) {
-    for (int j = c->nst - 1; j >= lo; j--)
-        if (!v || strcmp(c->st[j].var, v) == 0) return j;
-    return -1;
-}
-
-/* One statement list.  A NEXT closes the innermost FOR of its name open
- * in this block (any open FOR, without a name); failing that, one open in
- * an enclosing block, which stays open there (next-in-block).  Either
- * is decided from the text, which is all a compiler needs: the FOR's
- * limit and step in slots of its own, each NEXT its own increment and
- * test.  A NEXT with no FOR before it, and a FOR no NEXT closes, are the
- * findings. */
+/* One statement list.  FOR and NEXT pair as QuickBASIC pairs them at load
+ * time (QBasic 1.1 and QB64 agree, 2026-11-03): a NEXT closes the
+ * innermost FOR open in its own block -- the one named, which must be
+ * that one; NEXT K, J closes K then J -- and a block ends with none
+ * open.  So `IF ... THEN PRINT X$;: NEXT Z` is "NEXT without FOR", and
+ * so is a NEXT that would skip an inner FOR; a FOR left open is "FOR
+ * without NEXT".  Jumps into and out of a FOR are allowed. */
 static void walk_list(check_t *c, stmt_t *s) {
     int base = c->nst;
     char d[128];
@@ -143,7 +136,6 @@ static void walk_list(check_t *c, stmt_t *s) {
             strcpy(c->st[c->nst].var, s->for_stmt.var_name);
             c->st[c->nst].seq = seq;
             c->st[c->nst].line = s->line;
-            c->st[c->nst].closed_inner = 0;
             c->nst++;
             if (s->for_stmt.body) walk_list(c, s->for_stmt.body);
             break;
@@ -151,23 +143,16 @@ static void walk_list(check_t *c, stmt_t *s) {
             int k = s->next_stmt.nvars ? s->next_stmt.nvars : 1;
             for (int i = 0; i < k; i++) {
                 const char *v = s->next_stmt.nvars ? s->next_stmt.vars[i] : NULL;
-                int j = open_find(c, base, v);
-                if (j >= 0) {               /* in its own block */
-                    if (j != c->nst - 1) c->info[STRICT_NEXT_SKIPS]++;
-                    while (c->nst - 1 >= j) {
-                        add_for(c->u, c->st[c->nst - 1].seq, seq);
-                        c->nst--;
-                    }
+                if (c->nst > base && (!v || strcmp(c->st[c->nst - 1].var, v) == 0)) {
+                    c->nst--;
+                    add_for(c->u, c->st[c->nst].seq, seq);
                     continue;
                 }
-                j = open_find(c, 0, v);
-                if (j >= 0) {               /* in an enclosing block */
-                    c->info[STRICT_NEXT_IN_BLOCK]++;
-                    c->st[j].closed_inner = 1;
-                    add_for(c->u, c->st[j].seq, seq);
-                    continue;
-                }
-                snprintf(d, sizeof d, "NEXT %s with no FOR open before it", v ? v : "");
+                if (c->nst > base)
+                    snprintf(d, sizeof d, "NEXT %s where FOR %s (line %d) is the one open",
+                             v, c->st[c->nst - 1].var, c->st[c->nst - 1].line);
+                else
+                    snprintf(d, sizeof d, "NEXT %s closes no FOR of its own block", v ? v : "");
                 finding(c, s->line, "next-without-for", d);
                 break;
             }
@@ -217,6 +202,9 @@ static void walk_list(check_t *c, stmt_t *s) {
         case STMT_ARRAY_ASSIGN:
             push(&c->u->uses, s->array_assign.name, seq, s->line, 0);
             break;
+        case STMT_OPTION_BASE:
+            push(&c->u->options, "OPTION BASE", seq, s->line, 0);
+            break;
         case STMT_ERASE:                /* an erased array may be DIMmed again */
             for (int i = 0; i < s->erase_stmt.nnames; i++) {
                 ref_t *dm = find(&c->u->dims, s->erase_stmt.names[i]);
@@ -257,16 +245,15 @@ static void walk_list(check_t *c, stmt_t *s) {
     }
     while (c->nst > base) {
         open_for_t *f = &c->st[--c->nst];
-        if (!f->closed_inner) {
-            snprintf(d, sizeof d, "FOR %s has no NEXT", f->var);
-            finding(c, f->line, "for-without-next", d);
-        }
+        snprintf(d, sizeof d, "FOR %s has no NEXT in its own block", f->var);
+        finding(c, f->line, "for-without-next", d);
         add_for(c->u, f->seq, c->seq);      /* to the block's end, for goto-into-for */
     }
 }
 
 static void free_unit(unit_t *u) {
-    free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v); free(u->fors);
+    free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v);
+    free(u->options.v); free(u->fors);
 }
 
 /* the main program, or a SUB's or FUNCTION's body: its own labels and arrays */
@@ -305,6 +292,25 @@ static void walk_unit(check_t *c, stmt_t *body) {
                 break;
             }
     }
+    /* OPTION BASE: once, and before any array is DIMmed or used (QB:
+     * "Array already dimensioned"; NBS P080-P082) */
+    for (int i = 0; i < u.options.n; i++) {
+        ref_t *o = &u.options.v[i];
+        int first = 0;
+        if (i > 0) {
+            snprintf(d, sizeof d, "OPTION BASE again (first at line %d)", u.options.v[0].line);
+            finding(c, o->line, "option-base", d);
+            continue;
+        }
+        for (int k = 0; k < u.dims.n && !first; k++)
+            if (u.dims.v[k].seq < o->seq) first = u.dims.v[k].line;
+        for (int k = 0; k < u.uses.n && !first; k++)
+            if (u.uses.v[k].seq < o->seq) first = u.uses.v[k].line;
+        if (first) {
+            snprintf(d, sizeof d, "OPTION BASE after an array at line %d", first);
+            finding(c, o->line, "option-base", d);
+        }
+    }
     free_unit(&u);
     c->u = outer;
 }
@@ -322,10 +328,14 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
         ref_t *def = find(&c.fndefs, use->name);
-        if (def && use->seq < def->seq) {
-            snprintf(d, sizeof d, "%s used before its DEF at line %d", use->name, def->line);
-            finding(&c, use->line, "fn-before-def", d);
-        }
+        /* QuickBASIC refuses this ("Function not defined"); a compiler
+         * defines every DEF FN before the program runs (user, 2026-11-03:
+         * QB was being lazy), so it is only counted */
+        if (!def) {
+            snprintf(d, sizeof d, "%s is not defined", use->name);
+            finding(&c, use->line, "fn-undefined", d);
+        } else if (use->seq <= def->seq)    /* before it, or in its own body */
+            c.info[STRICT_FN_HOISTED]++;
     }
     if (info) memcpy(info, c.info, sizeof c.info);
     free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.st);

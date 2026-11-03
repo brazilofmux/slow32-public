@@ -5,13 +5,16 @@
  * compiler that decides up front").  The interpreter runs every
  * program it can parse; a compiler that fixes a program's shape before
  * it runs needs that shape to be in the text.  This pass finds what is
- * not: a NEXT with no FOR before it, a FOR no NEXT closes, an array used
- * before its DIM or DIMmed twice, a DEF FN used before it is defined, a
- * label defined twice or not at all -- QuickBASIC's load-time checks,
- * mostly.  Each finding has a code (next-without-for, ...).  It also
- * counts what a compiler can do from the text but pays for or must take
- * care with: GOSUB, ON ERROR, RESUME, ERL, jumps into and out of a FOR,
- * a NEXT closing a FOR from a block inside it.
+ * not -- what QuickBASIC refuses when it loads a program (the rule, user
+ * 2026-11-03, so any finding can be checked against QBasic 1.1 and QB64):
+ * FOR and NEXT paired in their own block, labels defined once and used
+ * defined, an array DIMmed once (again after an ERASE) and not used
+ * before its DIM, a DEF FN defined once.  One deliberate difference: a
+ * DEF FN used before its definition is fine here (the compiler defines
+ * them all first).  Each finding has a code (next-without-for, ...).  It
+ * also counts what a compiler can do from the text but pays for or must
+ * take care with: GOSUB, ON ERROR, RESUME, ERL, jumps into and out of a
+ * FOR, a DEF FN used before it is defined.
  *
  *   sbasic -check prog.bas    the findings, and the counts; exit 1 if any
  *   sbasic -strict prog.bas   run it only if there are none
@@ -22,7 +25,7 @@
 enum {
     STRICT_GOSUB, STRICT_ON_ERROR, STRICT_RESUME, STRICT_RESUME_NEXT,
     STRICT_ERL, STRICT_CLEAR, STRICT_GOTO_OUT_OF_FOR,
-    STRICT_GOTO_INTO_FOR, STRICT_NEXT_IN_BLOCK, STRICT_NEXT_SKIPS,
+    STRICT_GOTO_INTO_FOR, STRICT_FN_HOISTED,
     STRICT_NINFO
 };
 
