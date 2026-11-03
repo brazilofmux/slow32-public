@@ -269,98 +269,21 @@ static int   bb_nblk;
  * itself).  cc.s32x is linked with --heap-size max for them.  Two more kinds
  * have their own counts: the phi arguments (2, h_nparg) and the
  * allocator's interference edges (3, gc_nedge). */
-#define HIR_TABLES 512
-static char **hir_tab[HIR_TABLES];
-static int hir_tab_esz[HIR_TABLES];
-static int hir_tab_inst[HIR_TABLES];    /* 1: instruction-indexed */
-static int hir_ntab;
 static int hir_blk_cap;
 static int hir_inst_cap;
 static int hir_blk_based;      /* bb_start, bb_end registered */
 
-/* p's table from oldcap entries of esz bytes to cap, the new ones zero
- * (as the static tables were) */
-static char *hir_tab_resize(char *p, int esz, int oldcap, int cap) {
-    char *q;
-    int i;
-    q = (char *)realloc(p, (unsigned long)cap * (unsigned long)esz);
-    if (!q) {
-        fdputs("s12cc: out of memory (HIR tables)\n", 2);
-        exit(1);
-    }
-    i = oldcap * esz;
-    while (i < cap * esz) { q[i] = 0; i = i + 1; }
-    return q;
-}
-
+/* the registry is tables.h's; these are its HIR kinds (0 block-indexed,
+ * 1 instruction-indexed, 2 phi arguments, 3 interference edges) */
 static void hir_tab_add(char **p, int esz, int inst) {
-    if (hir_ntab >= HIR_TABLES) {
-        fdputs("s12cc: too many HIR tables (HIR_TABLES)\n", 2);
-        exit(1);
-    }
-    hir_tab[hir_ntab] = p;
-    hir_tab_esz[hir_ntab] = esz;
-    hir_tab_inst[hir_ntab] = inst;
-    hir_ntab = hir_ntab + 1;
-    if (!inst && hir_blk_cap > 0) *p = hir_tab_resize(*p, esz, 0, hir_blk_cap);
-    if (inst && hir_inst_cap > 0) *p = hir_tab_resize(*p, esz, 0, hir_inst_cap);
+    tab_add(p, esz, inst, inst == TAB_HIR_BLK ? hir_blk_cap : inst == TAB_HIR_INST ? hir_inst_cap : 0);
 }
 
-static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, 0); }
-static void hir_inst_table(char **p, int esz) { hir_tab_add(p, esz, 1); }
+static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_BLK); }
+static void hir_inst_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_INST); }
 
-/* every table of the kind to need entries at least, from *capp */
-/* every table of the kind from oldcap entries to cap; 0, all left at
- * oldcap, when the heap has not that much (the ones already grown are
- * shrunk back, which realloc always can) */
-static int hir_tab_try(int inst, int oldcap, int cap) {
-    int i;
-    int j;
-    char *q;
-    i = 0;
-    while (i < hir_ntab) {
-        if (hir_tab_inst[i] == inst) {
-            q = (char *)realloc(*hir_tab[i], (unsigned long)cap * (unsigned long)hir_tab_esz[i]);
-            if (!q) {
-                j = 0;
-                while (j < i) {
-                    if (hir_tab_inst[j] == inst)
-                        *hir_tab[j] = (char *)realloc(*hir_tab[j], (unsigned long)oldcap * (unsigned long)hir_tab_esz[j]);
-                    j = j + 1;
-                }
-                return 0;
-            }
-            j = oldcap * hir_tab_esz[i];
-            while (j < cap * hir_tab_esz[i]) { q[j] = 0; j = j + 1; }
-            *hir_tab[i] = q;
-        }
-        i = i + 1;
-    }
-    return 1;
-}
-
-/* every table of the kind to need entries at least, from *capp: half as
- * much again each time (the instruction tables are ~300 bytes an
- * instruction, so doubling past 262144 asks the heap for 160MB), and
- * when that is more than the heap has, halfway back toward need, and
- * so on to need exactly -- so a function the old fixed tables held is
- * never refused for the step past it, and one near the heap's end
- * still grows in steps, not an entry at a time */
 static void hir_tab_grow(int inst, int *capp, int first, int need) {
-    int cap;
-    cap = *capp ? *capp : first;
-    while (cap < need) cap = cap + cap / 2;
-    if (cap == *capp) return;
-    if (getenv("S12CC_TABDBG")) { fdputs(inst == 3 ? "grow edge " : inst == 2 ? "grow parg " : inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
-    while (!hir_tab_try(inst, *capp, cap)) {
-        if (cap == need) {
-            fdputs("s12cc: out of memory (HIR tables)\n", 2);
-            exit(1);
-        }
-        cap = need + (cap - need) / 2;
-        if (getenv("S12CC_TABDBG")) { fdputs("  (backing off to) ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }
-    }
-    *capp = cap;
+    tab_grow(inst, capp, first, need);
 }
 
 static void hir_blk_grow(int need) {

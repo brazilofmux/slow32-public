@@ -41,6 +41,9 @@ int fdputs(char *s, int f);
 int fdputc(int c, int f);
 void fdputuint(int f, int v);
 
+/* grown tables, for every module after this one */
+#include "tables.h"
+
 #ifndef NULL
 #define NULL 0
 #endif
