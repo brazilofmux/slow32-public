@@ -263,14 +263,34 @@ static int hcg_dyn_sp;
  * (negative locals, non-negative incoming stack args).  When the frame
  * pointer is elided they become SP-relative: sp + (fs + fp_off + delta).
  * delta tracks mid-function SP adjusts (stack args, PHI shuffles). */
+/* A frame over 2KB that keeps fp is reached from both ends: a slot out
+ * of fp's 12-bit reach but in sp's is addressed from sp (hcg_dual_base;
+ * not with a moving sp or a realigned one).  hcg_slot_off picks the base
+ * and hcg_slot_base names it, so a caller asks for the offset first and
+ * lets nothing that addresses another slot (hcg_src, hcg_into) run in
+ * between -- an xBase cmd_join store went to sp + its fp offset.
+ * Single-based, the first-declared locals of a big frame -- the ones
+ * nearest fp -- each cost lui/addi/add before the load or store. */
+static int hcg_dual_base;
+static int hcg_slot_reg;
+
 static int hcg_slot_base(void) {
     if (hcg_omit_fp) return 29;
-    return 30;
+    return hcg_slot_reg;
 }
 
 static int hcg_slot_off(int fp_off) {
-    if (!hcg_omit_fp) return fp_off;
-    return hcg_frame + fp_off + hcg_sp_delta;
+    int sp_off;
+    if (hcg_omit_fp) return hcg_frame + fp_off + hcg_sp_delta;
+    hcg_slot_reg = 30;
+    if (hcg_dual_base && (fp_off < -2048 || fp_off > 2047)) {
+        sp_off = hcg_frame + fp_off + hcg_sp_delta;
+        if (sp_off >= -2048 && sp_off <= 2047) {
+            hcg_slot_reg = 29;
+            return sp_off;
+        }
+    }
+    return fp_off;
 }
 
 /* Block labels */
@@ -2123,22 +2143,26 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
                 if (off == 0) {
                     /* no slot: the value is never read; drop the copy */
                 } else if (hcg_phi_is_const[j] == 0) {
+                    int so;
+                    so = hcg_slot_off(off);     /* before the base */
                     cg_s("    stw r");
                     cg_n(hcg_slot_base());
                     cg_s(", r");
                     cg_n(hcg_phi_src_reg[j]);
                     cg_s(", ");
-                    cg_n(hcg_slot_off(off));
+                    cg_n(so);
                     cg_c(10);
                 } else if (hcg_phi_is_const[j] == 2 && v >= 0 &&
                            ra_spill_off[v] == off) {
                     /* same slot: no-op */
                 } else {
+                    int so;
                     hcg_into(2, v);
+                    so = hcg_slot_off(off);     /* after hcg_into, before the base */
                     cg_s("    stw r");
                     cg_n(hcg_slot_base());
                     cg_s(", r2, ");
-                    cg_n(hcg_slot_off(off));
+                    cg_n(so);
                     cg_c(10);
                 }
                 hcg_phi_active[j] = 0;
@@ -3650,10 +3674,12 @@ static void hcg_inst(int idx) {
     /* Store — dispatched by BURG left-child NT */
     if (k == HI_STORE) {
         if (lnt == BG_FADDR) {
-            /* STORE(faddr, reg): direct store to fp/sp + offset */
-            off = hcg_slot_off(bg_foff[s1]);
+            /* STORE(faddr, reg): direct store to fp/sp + offset.  The
+             * value first: hcg_src may address a slot of its own, and
+             * the base belongs to the last hcg_slot_off. */
             if (hcg_const_is_zero(s2)) vreg = 0;
             else vreg = hcg_src(s2, 2);
+            off = hcg_slot_off(bg_foff[s1]);
             if (off >= -2048 && off <= 2047) {
                 hcg_store_off(hcg_slot_base(), vreg, off, ty);
             } else {
@@ -4673,6 +4699,10 @@ static void hcg_func(Node *fn) {
     }
     ra_r30_alloc = 0;
     if (!fn->is_varargs && !hcg_dyn_sp) ra_r30_alloc = 1;
+    /* Locals alone past 2KB: keep r30 the frame pointer, so the frame is
+     * reached from both ends (hcg_dual_base). */
+    if (hl_temp_stack > 2047 && !fn->is_varargs && !hcg_dyn_sp && fn->bit_width <= 4)
+        ra_r30_alloc = 0;
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
     if (getenv("HIR_RA_DEBUG")) {
@@ -4736,6 +4766,9 @@ static void hcg_func(Node *fn) {
      * caller's frame (fort370's ANCORR test cmpscr, a 15-argument leaf). */
     if (hcg_frameless) hcg_omit_fp = 1;
     if (hcg_dyn_sp) hcg_omit_fp = 0;
+    hcg_slot_reg = 30;
+    hcg_dual_base = !hcg_omit_fp && !hcg_dyn_sp && !hcg_align &&
+                    !fn->is_varargs && fs > 2047;
 
     /* Frame-escape scan for the tail-call guard.  A tail call pops this
      * frame BEFORE entering the callee; if any local's address escaped
