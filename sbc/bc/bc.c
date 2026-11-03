@@ -180,7 +180,14 @@ static int is_builtin_call(const char *name) {
 static var_t *bc_vars;
 static int bc_nvars, bc_capvars;
 
+/* a DEF FN's parameters, while its body is lowered: they shadow the
+ * program's variables of their names (call_def_fn's scope of its own) */
+static var_t *bc_scope[64];
+static int bc_nscope;
+
 static var_t *var_find(const char *name) {
+    for (int i = bc_nscope - 1; i >= 0; i--)
+        if (strcmp(bc_scope[i]->name, name) == 0) return bc_scope[i];
     for (int i = 0; i < bc_nvars; i++)
         if (strcmp(bc_vars[i].name, name) == 0) return &bc_vars[i];
     return NULL;
@@ -202,6 +209,34 @@ static var_t *var_get(const char *name, int type, int line) {
         if (!bc_vars) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
     }
     v = &bc_vars[bc_nvars++];
+    strncpy(v->name, name, 63);
+    v->name[63] = '\0';
+    v->type = type;
+    v->ahi = -1;
+    if (type == VAL_DOUBLE) {
+        v->a = alloca_of(TY_INT, 4);
+        v->ahi = alloca_of(TY_INT, 4);
+    } else
+        v->a = alloca_of(type == VAL_SINGLE ? TY_FLOAT : TY_INT, 4);
+    return v;
+}
+
+/* the type a name has by its suffix (resolve_var_type, no DEFtype) */
+static int name_type(const char *name) {
+    size_t n = strlen(name);
+    switch (n ? name[n - 1] : 0) {
+    case '$': return VAL_STRING;
+    case '%': return VAL_INTEGER;
+    case '&': return VAL_LONG;
+    case '#': return VAL_DOUBLE;
+    default: return VAL_SINGLE;
+    }
+}
+
+/* a variable of a DEF FN's own: slots, outside the program's list */
+static var_t *var_param(const char *name, int type) {
+    var_t *v = malloc(sizeof(var_t));
+    if (!v) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
     strncpy(v->name, name, 63);
     v->name[63] = '\0';
     v->type = type;
@@ -327,6 +362,59 @@ static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
     for (int i = 0; i < 3; i++) a[i] = i < n && n <= 3 ? expr(ix[i]) : zero();
 }
 
+/* --- DEF FN, inlined where it is called --------------------------- */
+
+static stmt_t **bc_fns;
+static int bc_nfns, bc_capfns;
+static const char *bc_fn_open[16];     /* the DEF FNs being inlined, outermost first */
+static int bc_nfn_open;
+
+static stmt_t *def_fn_find(const char *name) {
+    for (int i = 0; i < bc_nfns; i++)
+        if (strcmp(bc_fns[i]->def_fn.name, name) == 0) return bc_fns[i];
+    return NULL;
+}
+
+/* FNname(args), as call_def_fn: each argument evaluated in the caller's
+ * scope and stored into its parameter (typed by its name), the body
+ * evaluated with the parameters in a scope of their own, the result made
+ * the type of the function's name.  The body is lowered here, at the
+ * call: every DEF FN is defined before the program runs (a use before
+ * the DEF is fine -- the user's ruling, QB refusing it). */
+static bv_t def_fn_call(expr_t *e, const char *name, int nargs, expr_t **args) {
+    stmt_t *d = def_fn_find(name);
+    var_t *params[8];
+    bv_t r;
+    int cb, saved;
+    if (!d) { bc_not_yet(e->line, "a DEF FN that is not defined"); return zero(); }
+    for (int i = 0; i < bc_nfn_open; i++)
+        if (strcmp(bc_fn_open[i], name) == 0) {
+            bc_not_yet(e->line, "a DEF FN that calls itself");
+            return zero();
+        }
+    if (nargs != d->def_fn.nparams || bc_nfn_open >= 16 || bc_nscope + nargs > 64) {
+        bc_not_yet(e->line, "this DEF FN call");
+        return zero();
+    }
+    for (int i = 0; i < nargs; i++) {
+        params[i] = var_param(d->def_fn.params[i], name_type(d->def_fn.params[i]));
+        var_store(params[i], expr(args[i]));
+    }
+    saved = bc_nscope;
+    for (int i = 0; i < nargs; i++) bc_scope[bc_nscope++] = params[i];
+    bc_fn_open[bc_nfn_open++] = name;
+    r = expr(d->def_fn.body);
+    bc_nfn_open--;
+    bc_nscope = saved;
+    cb = h_ncarg;
+    carg_bv(r);
+    carg(iconst(name_type(name)), 0);
+    r.lo = call_end(cb, 4, "bcrt_conv", &r.hi);
+    r.t = iconst(name_type(name));
+    if (name_type(name) == VAL_STRING) r.hi = iconst(0);
+    return r;
+}
+
 static bv_t array_read(expr_t *e) {
     bv_t a[3];
     int cb;
@@ -360,6 +448,8 @@ static bv_t expr(expr_t *e) {
     case EXPR_VARIABLE:
         if (is_builtin_call(e->var.name))       /* RND, TIMER... with no ( ) */
             return builtin_fn(e, e->var.name, 0, NULL);
+        if (strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name))
+            return def_fn_call(e, e->var.name, 0, NULL);  /* DEF FNM = 123: FNM calls it */
         return var_load(var_get(e->var.name, e->var.var_type, e->line));
     case EXPR_BINARY:
         return bin_call("bcrt_bin", e->binary.op, expr(e->binary.left), expr(e->binary.right));
@@ -375,7 +465,7 @@ static bv_t expr(expr_t *e) {
     case EXPR_CALL:
         if (is_builtin_call(e->call.name))
             return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
-        if (strncmp(e->call.name, "FN", 2) == 0) { bc_not_yet(e->line, "DEF FN"); break; }
+        if (strncmp(e->call.name, "FN", 2) == 0) return def_fn_call(e, e->call.name, e->call.nargs, e->call.args);
         return array_read(e);
     default:
         bc_not_yet(e->line, "this expression");
@@ -893,6 +983,8 @@ static void bc_stmt(stmt_t *s) {
     case STMT_GOSUB:
         gosub_to(label_blk(s->goto_stmt.label));
         break;
+    case STMT_DEF_FN:
+        break;                  /* (inlined where it is called) */
     case STMT_ON_GOTO:
         on_branch(s, 0);
         break;
@@ -1025,7 +1117,8 @@ static void bc_stmts(stmt_t *s) {
  * block, before anything runs -- wherever its first mention falls. */
 static void prescan_expr(expr_t *e, void *ctx) {
     (void)ctx;
-    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name))
+    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
+        !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)))
         var_get(e->var.name, e->var.var_type, e->line);
     if (e->type == EXPR_CALL && !builtin_exists(e->call.name)) shadow_add(e->call.name);
 }
@@ -1050,8 +1143,34 @@ static void preshadow(stmt_t *s) {
 }
 static void prescan_top(expr_t *e, void *ctx) { expr_walk(e, prescan_expr, ctx); }
 
+/* the DEF FNs, before anything else: a name that is one is no variable
+ * (DEF FNM = 123: FNM calls it), wherever its DEF is */
+static void find_fns(stmt_t *s) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_DEF_FN && !def_fn_find(s->def_fn.name)) {
+            if (bc_nfns == bc_capfns) {
+                bc_capfns = bc_capfns ? bc_capfns * 2 : 16;
+                bc_fns = realloc(bc_fns, (size_t)bc_capfns * sizeof(stmt_t *));
+                if (!bc_fns) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            }
+            bc_fns[bc_nfns++] = s;
+        }
+        switch (s->type) {
+        case STMT_FOR: find_fns(s->for_stmt.body); break;
+        case STMT_IF: find_fns(s->if_stmt.then_body); find_fns(s->if_stmt.else_body); break;
+        case STMT_WHILE: find_fns(s->while_stmt.body); break;
+        case STMT_DO_LOOP: find_fns(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) find_fns(c->body);
+            break;
+        default: break;
+        }
+    }
+}
+
 static void prescan(stmt_t *s) {
     for (; s; s = s->next) {
+        if (s->type == STMT_DEF_FN) continue;   /* (its parameters are no program variables) */
         stmt_exprs(s, prescan_top, NULL);
         switch (s->type) {
         case STMT_ASSIGN: var_get(s->assign.name, s->assign.var_type, s->line); break;
@@ -1092,7 +1211,11 @@ static void hl_func(Node *fn) {
     entry = new_blk();
     begin_blk(entry);
     bc_nshadow = 0;
+    bc_nfns = 0;
+    bc_nscope = 0;
+    bc_nfn_open = 0;
     preshadow(bc_program);
+    find_fns(bc_program);
     prescan(bc_program);
     for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
     call_void("bcrt_start");

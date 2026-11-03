@@ -3073,6 +3073,13 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LINE_INPUT_CONSOLE: return exec_line_input_console(env, s);
         case STMT_WRITE_CONSOLE: return exec_write_console(env, s);
         case STMT_DEF_FN: {
+            /* The scan registered it (a DEF FN is defined before the
+             * program runs: a use before the DEF is fine, as s32-bc has it
+             * -- the user's ruling, QuickBASIC refusing it).  Met again,
+             * nothing: it used to register once more each time it ran, a
+             * DEF in a loop filling the table. */
+            proc_entry_t *p = find_proc(s->def_fn.name);
+            if (p && p->def == s) return ERR_NONE;
             /* Register DEF FN in proc table (whether name(args) is an
              * array depends on it: a cached array is stale) */
             array_generation++;
@@ -3443,6 +3450,10 @@ static error_t scan_one_stmt(stmt_t *s) {
         ast_name_copy(label_table[label_count].name, s->label.name);
         label_table[label_count].data_offset = data_pool_count;
         label_count++;
+    }
+    if (s->type == STMT_DEF_FN && !find_proc(s->def_fn.name)) {
+        error_t perr = proc_register(s->def_fn.name, s);
+        if (perr != ERR_NONE) return perr;
     }
     if (s->type == STMT_DATA)
         for (int j = 0; j < s->data_stmt.nvalues; j++)
