@@ -137,7 +137,12 @@ $(OUT)/dbt_hooks.o: $(DBT_DIR)/hooks.c $(DBT_DIR)/hooks.h $(HK_SRC_BUILTINS) $(H
 	    '$(HK_TAG_BUILTINS)' '$(HK_TAG_COBKERN)' '../$(DBT_DIR)/hooks.c' > $(OUT)/dbt_hooks_tagged.c
 	$(OUT)/cc-x64 --hir -I ../cross-include -c $(OUT)/dbt_hooks_tagged.c -o $@
 
-$(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-x64
+# The headers too: the DBT's own, and the emulator's that dbt.c reads
+# (s32x_loader.h -- its mem_size ceiling once went unbuilt here).
+DBT_HDRS = $(wildcard $(DBT_DIR)/*.h) ../../tools/emulator/s32x_loader.h \
+           ../../tools/emulator/mmio_ring.h $(wildcard ../cross-include/*.h ../cross-include/*/*.h)
+
+$(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(DBT_HDRS) $(OUT)/cc-x64
 	$(OUT)/cc-x64 --hir -I ../cross-include -c $< -o $@
 
 $(OUT)/dbt-x64: $(DBT_OBJS) $(OUT)/crt0.o $(OUT)/libc_x64.a $(OUT)/ld-x64
