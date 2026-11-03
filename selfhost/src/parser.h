@@ -684,17 +684,21 @@ static int   ps_type_fpn;
  * parameter types).  Param types drive implicit argument conversion at
  * call sites (issue #6: `mul(k, 7)` with long long params passed the
  * int 7 as ONE register slot, leaving the pair's high word stale). */
-#define PS_MAX_FUNCS 16384   /* was 4096 */
+/* The functions declared so far, grown together (tables.h, kind
+ * TAB_PS_FUNCS).  A fixed 16384 of them dropped every declaration past
+ * the last without a word, and calls to those were "undeclared". */
+static int    ps_funcs_cap;
 #define PS_MAX_FPARAM 65536   /* was 16384 */
-static int   ps_fdefined[PS_MAX_FUNCS]; /* 1 once its body has been read */
-static char *ps_fname[PS_MAX_FUNCS];
-static int   ps_ftype[PS_MAX_FUNCS];
-static int   ps_fcty[PS_MAX_FUNCS];   /* the function's C type (ctype.h), docs/TYPES.md */
-static int   ps_fvar[PS_MAX_FUNCS];   /* 1 = variadic (affects f64 arg ABI) */
-static int   ps_fpbase[PS_MAX_FUNCS]; /* base into ps_fptypes, -1 = unknown */
-static int   ps_fpn[PS_MAX_FUNCS];    /* declared param count */
-static int   ps_fretfpbase[PS_MAX_FUNCS]; /* return type is a function pointer */
-static int   ps_fretfpn[PS_MAX_FUNCS];
+static int   *ps_fdefined; /* 1 once its body has been read */
+static char **ps_fname;
+static int   *ps_ftype;
+static int   *ps_fcty;   /* the function's C type (ctype.h), docs/TYPES.md */
+static int   *ps_fvar;   /* 1 = variadic (affects f64 arg ABI) */
+static int   *ps_fpbase; /* base into ps_fptypes, -1 = unknown */
+static int   *ps_fpn;    /* declared param count */
+static int   *ps_fretfpbase; /* return type is a function pointer */
+static int   *ps_fretfpn;
+
 static int   ps_fptypes[PS_MAX_FPARAM];
 static int   ps_fpctypes[PS_MAX_FPARAM]; /* ... their C types, unqualified (6.7.6.3p15) */
 static int   ps_fpret[PS_MAX_FPARAM];  /* return type of the fnptr signature at this base; 0 = TY_INT */
@@ -703,6 +707,23 @@ static int   ps_nfptypes;
 static int   ps_nfuncs;
 static int   ps_pending_retfpbase = -1;
 static int   ps_pending_retfpn;
+
+/* room for one more function */
+static void ps_funcs_room(void) {
+    if (ps_nfuncs < ps_funcs_cap) return;
+    if (ps_funcs_cap == 0) {
+        tab_add((char **)&ps_fdefined, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fname, (int)sizeof(char *), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_ftype, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fcty, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fvar, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fpbase, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fpn, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fretfpbase, (int)sizeof(int), TAB_PS_FUNCS, 0);
+        tab_add((char **)&ps_fretfpn, (int)sizeof(int), TAB_PS_FUNCS, 0);
+    }
+    tab_grow(TAB_PS_FUNCS, &ps_funcs_cap, 1024, ps_nfuncs + 1);
+}
 
 /* Forward declarations */
 static Node *parse_expr(void);
@@ -1220,7 +1241,7 @@ static void add_func_type(char *name, int ty, int *ptys, int *pctys, int np, int
         }
         i = i - 1;
     }
-    if (ps_nfuncs >= PS_MAX_FUNCS) return;
+    ps_funcs_room();
     ps_fname[ps_nfuncs] = strdup(name);
     ps_fdefined[ps_nfuncs] = 0;
     ps_ftype[ps_nfuncs] = ty;

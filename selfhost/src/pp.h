@@ -108,8 +108,25 @@ static void pp_error(char *msg) {
     exit(1);
 }
 
-#define PP_EXP_SZ 8192
-static char pp_exp[PP_EXP_SZ];
+/* One macro's replacement text as it is laid down, grown as needed
+ * (tables.h).  A fixed 8192 bytes dropped the rest of a longer one
+ * without a word: xBase's report.c then had "undeclared identifier
+ * 'expr_c'" where the cut fell. */
+static char *pp_exp;
+static int pp_exp_cap;
+
+/* room in pp_exp for a byte at len and the terminator after it */
+static void pp_exp_room(int len) {
+    if (len + 2 <= pp_exp_cap) return;
+    if (pp_exp_cap == 0) tab_add(&pp_exp, 1, TAB_PP_EXP, 0);
+    tab_grow(TAB_PP_EXP, &pp_exp_cap, 8192, len + 2);
+}
+
+/* end the text at len */
+static void pp_exp_end(int len) {
+    pp_exp_room(len);
+    pp_exp[len] = 0;
+}
 
 /* Static buffers for pp_define — kept out of stack to avoid
    exceeding the 12-bit addi immediate limit in tree-walk codegen */
@@ -729,7 +746,8 @@ static int pp_call_newlines(int from, int to) {
  * one: 6 by sqlite3_status64, hundreds by the end.  Returns the new
  * length. */
 static int pp_keep_newlines(int n, int len) {
-    while (n > 0 && len < PP_EXP_SZ - 1) {
+    while (n > 0) {
+        pp_exp_room(len);
         pp_exp[len] = 10;
         len = len + 1;
         n = n - 1;
@@ -738,11 +756,9 @@ static int pp_keep_newlines(int n, int len) {
 }
 
 static int pp_exp_putc(int len, int c) {
-    if (len < PP_EXP_SZ - 1) {
-        pp_exp[len] = c;
-        len = len + 1;
-    }
-    return len;
+    pp_exp_room(len);
+    pp_exp[len] = c;
+    return len + 1;
 }
 
 /* #param: lex_src[from..to) as a string literal, appended to pp_exp at
@@ -1413,7 +1429,7 @@ static int pp_expand_func(int di) {
     if (again) exp_len = pp_subst(di, rfrom, rto, pre_off, pre_len, need);
     pp_pre_top = base;
     exp_len = pp_keep_newlines(call_nl, exp_len);
-    pp_exp[exp_len] = 0;
+    pp_exp_end(exp_len);
     if (getenv("S12CC_PP_DUMP")) {   /* trace every function-like expansion */
         int q;
         fdputs("PP_EXPAND ", 2); fdputs(pp_dname[di], 2); fdputs(" ins_pos=", 2); fdputuint(2, (unsigned)ins_pos);
@@ -2527,7 +2543,7 @@ static long long pp_ev_call(int di) {
         i = i + 1;
     }
     k = pp_subst(di, rfrom, rto, pre_off, pre_len, need);
-    pp_exp[k] = 0;
+    pp_exp_end(k);
     if (k == 0) pp_error("macro in #if expands to nothing");
     text = strdup(pp_exp);
     k = 0;

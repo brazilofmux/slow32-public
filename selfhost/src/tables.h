@@ -20,7 +20,8 @@
 #define TAB_HIR_INST  1    /* hir.h: instruction-indexed, hir_inst_cap */
 #define TAB_HIR_PARG  2    /* hir.h: phi arguments, hir_parg_cap */
 #define TAB_HIR_EDGE  3    /* hir_regalloc.h: interference edges */
-#define TAB_KINDS     4
+#define TAB_PS_FUNCS  4    /* parser.h: the functions declared, ps_nfuncs */
+#define TAB_PP_EXP    5    /* pp.h: one macro's replacement text, pp_exp */
 
 #define TAB_TABLES 512
 static char **tab_ptr[TAB_TABLES];
@@ -33,6 +34,8 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_HIR_INST) return "inst";
     if (kind == TAB_HIR_PARG) return "parg";
     if (kind == TAB_HIR_EDGE) return "edge";
+    if (kind == TAB_PS_FUNCS) return "function";
+    if (kind == TAB_PP_EXP) return "macro expansion";
     return "?";
 }
 
