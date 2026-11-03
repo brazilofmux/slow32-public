@@ -53,16 +53,6 @@ static int hx_no_frame;             /* 1 if function needs no frame (no spills, 
 static int *hx_blk_off;  /* code offset of block start, -1=not yet */
 static int *hx_loop_head; /* 1 if block is a back-edge target (loop header) */
 
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int hx_tables_done;
-static void hx_tables(void) {
-    if (hx_tables_done) return;
-    hx_tables_done = 1;
-    hir_blk_table((char **)&hx_blk_off, (int)sizeof(int));
-    hir_blk_table((char **)&hx_loop_head, (int)sizeof(int));
-}
 static int hx_loop_align = 0;           /* loop-header alignment in bytes (S32_LOOP_ALIGN), 0=off */
 static int hx_loop_offset = 0;          /* extra NOP bytes after align, lands loop head at mod-align=offset (S32_LOOP_OFFSET) */
 
@@ -83,33 +73,56 @@ static int hx_njtent;
 
 /* ADDI folding: hx_addi_folded_flag[i]=1 if load/store i has a folded ADDI,
  * hx_addi_folded_disp[i] = the displacement to use in [base+disp] form. */
-static int hx_addi_folded_flag[HIR_MAX_INST];
-static int hx_addi_folded_disp[HIR_MAX_INST];
+static int *hx_addi_folded_flag;
+static int *hx_addi_folded_disp;
 /* Legacy name for ADDI emitter check (1 if this ADDI was folded) */
-static int hx_addi_folded[HIR_MAX_INST];
+static int *hx_addi_folded;
 
 /* SIB fold: LOAD/STORE with [base + index*scale] addressing.
  * For LOAD:  src1=base, src2=index (rewritten), scale in hx_sib_scale.
  * For STORE: src1=base, src2=value (unchanged), index in hx_sib_index.
  * NOTE: hx_sib_index[] is declared in hir_regalloc_x64.h (for liveness). */
-static int hx_sib_flag[HIR_MAX_INST];     /* 1 if this load/store uses SIB */
-static int hx_sib_scale[HIR_MAX_INST];    /* SIB scale: 1=*2, 2=*4, 3=*8 */
+static int *hx_sib_flag;     /* 1 if this load/store uses SIB */
+static int *hx_sib_scale;    /* SIB scale: 1=*2, 2=*4, 3=*8 */
 
 /* RMW fold: STORE addr, ADD(LOAD(addr), ICONST) → addl $imm, disp(%base) */
-static int hx_rmw_flag[HIR_MAX_INST];     /* 1 if this store is RMW-folded */
-static int hx_rmw_disp[HIR_MAX_INST];     /* displacement from base */
-static int hx_rmw_imm[HIR_MAX_INST];      /* immediate to add */
+static int *hx_rmw_flag;     /* 1 if this store is RMW-folded */
+static int *hx_rmw_disp;     /* displacement from base */
+static int *hx_rmw_imm;      /* immediate to add */
 
 /* ALU+SIB: ADD/AND/OR/XOR with SIB memory source operand.
  * src1 = register operand, src2 = SIB base.
  * Index stored in hx_alu_sib_idx[] (declared in hir_regalloc_x64.h). */
-static int hx_alu_sib_flag[HIR_MAX_INST];
-static int hx_alu_sib_scale[HIR_MAX_INST];
+static int *hx_alu_sib_flag;
+static int *hx_alu_sib_scale;
 
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
-static int hx_phi_insts[HIR_MAX_INST];
-static int hx_phi_vals[HIR_MAX_INST];
+static int *hx_phi_insts;
+static int *hx_phi_vals;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hx_tables_done;
+static void hx_tables(void) {
+    if (hx_tables_done) return;
+    hx_tables_done = 1;
+    hir_blk_table((char **)&hx_blk_off, (int)sizeof(int));
+    hir_blk_table((char **)&hx_loop_head, (int)sizeof(int));
+    hir_inst_table((char **)&hx_addi_folded_flag, (int)sizeof(int));
+    hir_inst_table((char **)&hx_addi_folded_disp, (int)sizeof(int));
+    hir_inst_table((char **)&hx_addi_folded, (int)sizeof(int));
+    hir_inst_table((char **)&hx_sib_flag, (int)sizeof(int));
+    hir_inst_table((char **)&hx_sib_scale, (int)sizeof(int));
+    hir_inst_table((char **)&hx_rmw_flag, (int)sizeof(int));
+    hir_inst_table((char **)&hx_rmw_disp, (int)sizeof(int));
+    hir_inst_table((char **)&hx_rmw_imm, (int)sizeof(int));
+    hir_inst_table((char **)&hx_alu_sib_flag, (int)sizeof(int));
+    hir_inst_table((char **)&hx_alu_sib_scale, (int)sizeof(int));
+    hir_inst_table((char **)&hx_phi_insts, (int)sizeof(int));
+    hir_inst_table((char **)&hx_phi_vals, (int)sizeof(int));
+}
 
 /* --- CX/DX save/restore state ---
  *
@@ -467,7 +480,7 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI) {
-            if (n >= HIR_MAX_INST) hx_die("too many PHI copies on edge", i);
+            if (n >= hir_inst_cap) hx_die("too many PHI copies on edge", i);
             v = ssa_phi_find_arg(i, from_blk);
             hx_phi_insts[n] = i;
             hx_phi_vals[n] = v;
@@ -2488,7 +2501,7 @@ static void hx_gen_func(Node *fn) {
     /* --- Run HIR pipeline --- */
     licm_stat_hoisted = 0;
     /* every block table this compiler has, before the first block */
-    ssa_tables(); licm_tables(); rx_tables(); hx_tables();
+    al_tables(); ssa_tables(); ho_tables(); licm_tables(); bx_tables(); rx_tables(); hx_tables();
     hl_func(fn);
     hir_ssa_construct();
     hir_opt();

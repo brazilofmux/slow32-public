@@ -81,7 +81,7 @@ static int ssa_late;     /* ssa_sroa_late is promoting: older phis stay */
 
 /* --- PHI optimization (linked lists per block) --- */
 static int *ssa_phi_head;
-static int ssa_phi_next[HIR_MAX_INST];
+static int *ssa_phi_next;
 
 /* hl_nparams defined in hir_lower.h (shared) */
 
@@ -122,33 +122,6 @@ static int *ssa_post;
 static int *ssa_tmp1;  /* cnt / wl */
 static int *ssa_tmp2;  /* has_phi */
 static int *ssa_tmp3;  /* in_wl */
-
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int ssa_tables_done;
-static void ssa_tables(void) {
-    if (ssa_tables_done) return;
-    ssa_tables_done = 1;
-    hir_blk_table((char **)&ssa_nsucc, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_soff, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_pbase, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_npred, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_rpo, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_rpo_ord, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_idom, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_dfo, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_dfc, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_dfst, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_phi_head, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_dtc_base, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_dtc_cnt, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_vis, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_post, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_tmp1, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_tmp2, (int)sizeof(int));
-    hir_blk_table((char **)&ssa_tmp3, (int)sizeof(int));
-}
 
 /* ------------------------------------------------------------ */
 
@@ -1134,12 +1107,13 @@ static void ssa_split_pair_allocas(void) {
             q = q + 1;
         }
 
-        if (!ok || hl_nalloca >= HL_MAX_ALLOCA || h_ninst >= HIR_MAX_INST) {
+        if (!ok || hl_nalloca >= HL_MAX_ALLOCA) {
             j = j + 1;
             continue;
         }
 
         /* Mint the hi-half alloca (same 8-byte slot, upper word). */
+        hir_inst_room(1);
         ah = h_ninst;
         h_kind[ah] = HI_ALLOCA;
         h_ty[ah] = TY_INT;
@@ -1213,7 +1187,36 @@ static int ssa_sr_fty[SSA_SR_MAXB];     /* access type of the field at this offs
 static int ssa_sr_cov[SSA_SR_MAXB];     /* 1 + offset of the field covering this byte */
 static int ssa_sr_fa[SSA_SR_MAXB];      /* the field's alloca */
 
-static char ssa_sr_flag[HIR_MAX_INST];  /* per alloca: 1 accessed, 2 refused */
+static char *ssa_sr_flag;  /* per alloca: 1 accessed, 2 refused */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ssa_tables_done;
+static void ssa_tables(void) {
+    if (ssa_tables_done) return;
+    ssa_tables_done = 1;
+    hir_blk_table((char **)&ssa_nsucc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_soff, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_pbase, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_npred, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo_ord, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_idom, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfst, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_phi_head, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_base, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_cnt, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_vis, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_post, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp1, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp2, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp3, (int)sizeof(int));
+    hir_inst_table((char **)&ssa_phi_next, (int)sizeof(int));
+    hir_inst_table((char **)&ssa_sr_flag, (int)sizeof(char));
+}
 
 /* One pass over the function to find the allocas worth checking one
  * at a time: those with a field access and no use that refuses them.
@@ -1362,6 +1365,7 @@ static void ssa_sr_split(int j, int n) {
             if (b == 0) {
                 f = a;
             } else {
+                hir_inst_room(1);
                 f = h_ninst;
                 h_kind[f] = HI_ALLOCA;
                 h_src1[f] = -1;
@@ -1430,7 +1434,6 @@ static int ssa_sroa_late(void) {
                     b = b + 1;
                 }
                 if (hl_nalloca + nf <= HL_MAX_ALLOCA &&
-                    h_ninst + nf < HIR_MAX_INST &&
                     ssa_npromo + nf <= SSA_MAX_PROMO)
                     ssa_sr_split(j, n);
             }

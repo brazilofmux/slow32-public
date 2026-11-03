@@ -15,6 +15,9 @@
 #define HL_MAX_ALLOCA 8192   /* was 2048 */
 /* inlining and unrolling stop growing a function past this many blocks */
 #define HL_BLOCK_BUDGET 16384
+/* ... and past this many instructions (the tables grow; these are the
+ * old ceilings, kept as budgets so a function that big is not made bigger) */
+#define HL_INST_BUDGET 262144
 static int hl_aoff[HL_MAX_ALLOCA];
 static int hl_aslot[HL_MAX_ALLOCA];  /* Node->slot_id; 0 = temp keyed by offset */
 static int hl_ainst[HL_MAX_ALLOCA];
@@ -1697,13 +1700,13 @@ static Node *hl_inl_candidate(Node *call) {
      * out and abort the build.  The old "already-huge callers get
      * nothing" /2 cutoff refused every splice into VdbeExec and left
      * residual jals that kept the out-of-line copy.  Limits have
-     * grown since (HIR_MAX_INST 262144); proportional headroom is
+     * grown since (HL_INST_BUDGET 262144); proportional headroom is
      * enough, and a missed splice here is a missed DCE. */
     if (hl_nalloca + 64 >= HL_MAX_ALLOCA) return NULL;
     /* Reserve generously: SSA phi insertion and the LICM split /
      * strength-reduction passes all APPEND to h_ninst after
      * lowering finishes, so the budget has to cover them too. */
-    if (h_ninst + sz * 16 + 4096 >= HIR_MAX_INST) return NULL;
+    if (h_ninst + sz * 16 + 4096 >= HL_INST_BUDGET) return NULL;
     /* Blocks too: every splice adds the callee's control flow plus
      * a continuation.  The tables grow (hir_blk_grow); this is a size
      * budget, the old ceiling's, so a function already that big is not
@@ -1824,7 +1827,7 @@ static int hl_unroll_trips(Node *n) {
     if (hl_unroll_blocked(n->body, v, 0)) return 0;
     sz = hl_inl_size(n->body, hl_unroll_budget + 1);
     if (sz * trips > hl_unroll_budget) return 0;
-    if (h_ninst + sz * trips * 16 + 4096 >= HIR_MAX_INST) return 0;
+    if (h_ninst + sz * trips * 16 + 4096 >= HL_INST_BUDGET) return 0;
     if (bb_nblk + (sz + 4) * trips + 64 >= HL_BLOCK_BUDGET) return 0;
     return trips;
 }

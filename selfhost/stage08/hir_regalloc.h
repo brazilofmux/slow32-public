@@ -66,30 +66,30 @@ static int ra_stat_r30;              /* values colored to r30 */
 /* Cross-call liveness tracking — must be declared extremely early because
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
-static int ra_crosses_call[HIR_MAX_INST];
-static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+static int *ra_crosses_call;
+static int *ra_mem_forced;  /* iterated-spill victims (gc_respill) */
 /* Step 5b.2: a LOAD/STORE whose address chain the emitter folds down
  * to a spilled base reads, in this block, the reload named here
  * instead (-1: the base itself).  ra_codegen_fold_base and the
  * emitter's two fold sites apply it. */
-static int rl_fold_sub[HIR_MAX_INST];
+static int *rl_fold_sub;
 /* Phi webs sharing one spill slot (ra_phi_webs): ra_web_of[A] = the
  * spilled phi P whose slot A takes, -1 for its own; ra_web_s/e[P] = the
  * slot range P's slot must also cover for its aliases. */
-static int ra_web_of[HIR_MAX_INST];
-static int ra_web_s[HIR_MAX_INST];
-static int ra_web_e[HIR_MAX_INST];
+static int *ra_web_of;
+static int *ra_web_s;
+static int *ra_web_e;
 static int ra_stat_phiweb;
 /* COPY insts emitted immediately before a call to split a live range
  * that is used as a call argument (or CALLP callee) and also lives
  * after the call.  Chained through ra_csplit_next. */
-static int ra_csplit_head[HIR_MAX_INST];
-static int ra_csplit_next[HIR_MAX_INST];
+static int *ra_csplit_head;
+static int *ra_csplit_next;
 static int ra_split_orig;
 static int ra_stat_csplit;
-static int ra_after_stamp[HIR_MAX_INST];
+static int *ra_after_stamp;
 static int ra_after_tick;
-static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
+static char *ra_is_csplit;   /* COPY dest of a call split: always callee-saved */
 static int *ra_dom_wl;      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
@@ -239,7 +239,7 @@ static int ra_param_preferred_color(int inst) {
 
 /* Preferred physical register for a value used as a call argument
  * (issue 67).  -1 if none.  Last call site wins. */
-static int ra_arg_pref_phys[HIR_MAX_INST];
+static int *ra_arg_pref_phys;
 static int ra_abi_map[256];
 
 static void ra_mark_arg_prefs(void) {
@@ -293,15 +293,15 @@ static int ra_argsite_preferred_color(int inst) {
 }
 
 /* --- Output arrays --- */
-static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
-static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
+static int *ra_reg;    /* physical register, -1 = spilled/remat */
+static int *ra_spill_off; /* spill slot (negative fp offset), 0 = none */
 
 /* --- Live interval arrays --- */
-static int ra_pos[HIR_MAX_INST];    /* linearized position */
-static int ra_iend[HIR_MAX_INST];   /* last use position (end of live interval) */
+static int *ra_pos;    /* linearized position */
+static int *ra_iend;   /* last use position (end of live interval) */
 
 /* --- Linearized order --- */
-static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
+static int *ra_order;  /* instruction indices in position order */
 static int ra_norder;
 
 /* --- Callee-save tracking --- */
@@ -335,7 +335,7 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
 
 static int gc_nnode;
 static int gc_inst[GC_MAX_NODE];
-static int gc_node[HIR_MAX_INST];
+static int *gc_node;
 
 static int gc_adj_head[GC_MAX_NODE];
 static int *gc_adj_peer;     /* gc_edge_cap entries, grown by gc_add_edge */
@@ -847,9 +847,9 @@ static void ra_compute_ends(void) {
  * after the phi's own, so the slot range is widened to cover each
  * predecessor's terminator.  That also keeps a phi apart from the
  * values still live at those terminators (the copies read them). */
-static int ra_shead[HIR_MAX_INST];      /* per start position: first value */
-static int ra_snext[HIR_MAX_INST];      /* next value with the same start */
-static int ra_slot_end[HIR_MAX_INST];   /* per slot: occupant's end position */
+static int *ra_shead;      /* per start position: first value */
+static int *ra_snext;      /* next value with the same start */
+static int *ra_slot_end;   /* per slot: occupant's end position */
 static int ra_stat_sslots;              /* cumulative slots after sharing */
 
 static int ra_spill_wants_slot(int i) {
@@ -1243,8 +1243,8 @@ static void gc_add_move(int a, int b) {
 
 /* Tentatively re-declared: defined with the pair machinery below,
  * needed by gc_build/gc_combine above it. */
-static int ra_pair_of[HIR_MAX_INST];
-static int ra_pair_lo[HIR_MAX_INST];
+static int *ra_pair_of;
+static int *ra_pair_lo;
 static int gc_pair_inst[GC_MAX_NODE];
 
 /* =================================================================
@@ -1299,8 +1299,8 @@ static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
 }
 static int lv_cap;                 /* words allocated in lv_in and lv_out each */
 static int lv_live_cap;            /* words allocated in lv_live */
-static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
-static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
+static int *lv_id;    /* inst -> dense id, -1 = untracked */
+static int *lv_rev;   /* dense id -> inst */
 static int lv_nid;
 static int lv_nw;                  /* words in use: (lv_nid+31)/32 */
 static int *lv_bstart;  /* ra_order index range per block */
@@ -2103,7 +2103,7 @@ static int gc_freeze(void) {
  * Each USE is weighted 1/10/100/1000 by its block's natural-loop
  * nesting depth (licm_depth, computed during LICM), and the def adds
  * its own weight (a spilled def pays its store where it is defined). */
-static int ra_wuses[HIR_MAX_INST];
+static int *ra_wuses;
 
 static int ra_depth_w(int b) {
     int d;
@@ -2564,8 +2564,8 @@ static int hcg_fp64_kind(char *nm);   /* defined in hir_codegen.h */
 
 static int ra_stat_pair_pref;
 static int ra_pair_share_fate = 1;
-static int ra_pair_of[HIR_MAX_INST];
-static int ra_pair_lo[HIR_MAX_INST];
+static int *ra_pair_of;
+static int *ra_pair_lo;
 
 static void ra_build_pairs(void) {
     int i;
@@ -3367,11 +3367,11 @@ static int ra_stat_reload_ins;
 static int ra_stat_reload_del;
 static int ra_new_split_copy(int src, int blk);     /* defined with the call splitter below */
 static void ra_mark_call_crossing(void);
-static int rl_stamp[HIR_MAX_INST];     /* segment tick of v's last read */
-static int rl_first[HIR_MAX_INST];     /* body instruction the first read hangs on */
-static int rl_first_u[HIR_MAX_INST];   /* the first reader itself */
-static char rl_first_fold[HIR_MAX_INST]; /* ... read v as a folded address base */
-static int rl_cur[HIR_MAX_INST];       /* reload serving v in this segment */
+static int *rl_stamp;     /* segment tick of v's last read */
+static int *rl_first;     /* body instruction the first read hangs on */
+static int *rl_first_u;   /* the first reader itself */
+static char *rl_first_fold; /* ... read v as a folded address base */
+static int *rl_cur;       /* reload serving v in this segment */
 static int rl_tick;
 
 /* Spilled after the last colouring, and a scalar a reload may stand for. */
@@ -3647,29 +3647,11 @@ static int ra_stat_region;
 static int gc_rs_nregion;
 static int ra_region_cand;              /* candidates seen (HIR_REGION_FN bisection) */
 static int gc_round_no;                 /* respill rounds, never reset: a stamp */
-static int ra_region_round[HIR_MAX_INST];   /* the round a value was last split in */
+static int *ra_region_round;   /* the round a value was last split in */
 static char *ra_in_region;
 static int *ra_jphi;      /* the current split's join phi in each block, -1 */
 static char *ra_idf_seen;
 
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int ra_tables_done;
-static void ra_tables(void) {
-    if (ra_tables_done) return;
-    ra_tables_done = 1;
-    hir_blk_table((char **)&ra_dom_wl, (int)sizeof(int));
-    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
-    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
-    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
-    hir_blk_table((char **)&lv_bstart, (int)sizeof(int));
-    hir_blk_table((char **)&lv_bend, (int)sizeof(int));
-    hir_blk_table((char **)&ra_bfreq, (int)sizeof(int));
-    hir_blk_table((char **)&ra_in_region, (int)sizeof(char));
-    hir_blk_table((char **)&ra_jphi, (int)sizeof(int));
-    hir_blk_table((char **)&ra_idf_seen, (int)sizeof(char));
-}
 static int ra_stat_join;                /* join phis placed (step 5b.4) */
 static void ra_csplit_on_inst(int i, int old, int nw);   /* with the call splitter below */
 static int ra_web_live_in(int b, int v);                 /* with the phi webs below */
@@ -4489,7 +4471,64 @@ static int gc_respill(void) {
  * assigning edge stores X into the slot, which is what the variable
  * always was.  P's slot range is widened to cover M's.  Pairs are left
  * alone.  (docs/plans/memory-model.md, step 5.) */
-static int ra_web_mark[HIR_MAX_INST];
+static int *ra_web_mark;
+
+/* the instructions live at a point of ra_mark_call_crossing's walk */
+static int *ra_act;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ra_tables_done;
+static void ra_tables(void) {
+    if (ra_tables_done) return;
+    ra_tables_done = 1;
+    hir_inst_table((char **)&ra_act, (int)sizeof(int));
+    hir_blk_table((char **)&ra_dom_wl, (int)sizeof(int));
+    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bstart, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bend, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bfreq, (int)sizeof(int));
+    hir_blk_table((char **)&ra_in_region, (int)sizeof(char));
+    hir_blk_table((char **)&ra_jphi, (int)sizeof(int));
+    hir_blk_table((char **)&ra_idf_seen, (int)sizeof(char));
+    hir_inst_table((char **)&ra_crosses_call, (int)sizeof(int));
+    hir_inst_table((char **)&ra_mem_forced, (int)sizeof(int));
+    hir_inst_table((char **)&rl_fold_sub, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_s, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_e, (int)sizeof(int));
+    hir_inst_table((char **)&ra_csplit_head, (int)sizeof(int));
+    hir_inst_table((char **)&ra_csplit_next, (int)sizeof(int));
+    hir_inst_table((char **)&ra_after_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&ra_is_csplit, (int)sizeof(char));
+    hir_inst_table((char **)&ra_arg_pref_phys, (int)sizeof(int));
+    hir_inst_table((char **)&ra_reg, (int)sizeof(int));
+    hir_inst_table((char **)&ra_spill_off, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pos, (int)sizeof(int));
+    hir_inst_table((char **)&ra_iend, (int)sizeof(int));
+    hir_inst_table((char **)&ra_order, (int)sizeof(int));
+    hir_inst_table((char **)&gc_node, (int)sizeof(int));
+    hir_inst_table((char **)&ra_shead, (int)sizeof(int));
+    hir_inst_table((char **)&ra_snext, (int)sizeof(int));
+    hir_inst_table((char **)&ra_slot_end, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_lo, (int)sizeof(int));
+    hir_inst_table((char **)&lv_id, (int)sizeof(int));
+    hir_inst_table((char **)&lv_rev, (int)sizeof(int));
+    hir_inst_table((char **)&ra_wuses, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_lo, (int)sizeof(int));
+    hir_inst_table((char **)&rl_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first_u, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first_fold, (int)sizeof(char));
+    hir_inst_table((char **)&rl_cur, (int)sizeof(int));
+    hir_inst_table((char **)&ra_region_round, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_mark, (int)sizeof(int));
+}
 
 static int ra_web_live_in(int b, int v) {
     if (b < 0 || b >= bb_nblk || lv_id[v] < 0) return 1;   /* unknown: say yes */
@@ -4682,7 +4721,6 @@ static void gc_alloc(void) {
 
 static void ra_mark_call_crossing(void) {
     int i, j, inst, k, p, nact;
-    int act[HIR_MAX_INST];   /* active instruction indices (the values themselves) */
 
     /* Clear */
     i = 0;
@@ -4698,10 +4736,10 @@ static void ra_mark_call_crossing(void) {
         /* Expire anything whose live range ended before this position */
         j = 0;
         while (j < nact) {
-            int v = act[j];
+            int v = ra_act[j];
             if (ra_iend[v] < p) {
                 nact = nact - 1;
-                act[j] = act[nact];
+                ra_act[j] = ra_act[nact];
             } else {
                 j = j + 1;
             }
@@ -4715,7 +4753,7 @@ static void ra_mark_call_crossing(void) {
 
             j = 0;
             while (j < nact) {
-                int v = act[j];
+                int v = ra_act[j];
                 if (v >= 0 && v < h_ninst) {
                     ra_crosses_call[v] = 1;
                 }
@@ -4730,8 +4768,8 @@ static void ra_mark_call_crossing(void) {
          * and they died at the first call (found via ssa_insert_phis's 32768
          * bound landing in r6). */
         if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
-            if (nact < HIR_MAX_INST) {
-                act[nact] = inst;
+            if (nact < hir_inst_cap) {
+                ra_act[nact] = inst;
                 nact = nact + 1;
             }
         }
@@ -4741,11 +4779,11 @@ static void ra_mark_call_crossing(void) {
 }
 
 static void ra_after_mark(int v) {
-    if (v >= 0 && v < HIR_MAX_INST) ra_after_stamp[v] = ra_after_tick;
+    if (v >= 0 && v < hir_inst_cap) ra_after_stamp[v] = ra_after_tick;
 }
 
 static int ra_after_has(int v) {
-    if (v < 0 || v >= HIR_MAX_INST) return 0;
+    if (v < 0 || v >= hir_inst_cap) return 0;
     return ra_after_stamp[v] == ra_after_tick;
 }
 
@@ -4857,7 +4895,7 @@ static void ra_mark_after_uses(int call) {
     ra_after_tick = ra_after_tick + 1;
     if (ra_after_tick <= 0) {
         i = 0;
-        while (i < HIR_MAX_INST) { ra_after_stamp[i] = 0; i = i + 1; }
+        while (i < hir_inst_cap) { ra_after_stamp[i] = 0; i = i + 1; }
         ra_after_tick = 1;
     }
     cb = h_blk[call];
@@ -4879,7 +4917,7 @@ static void ra_mark_after_uses(int call) {
 static int ra_new_split_copy(int src, int blk) {
     int cl;
     cl = h_ninst;
-    if (cl >= HIR_MAX_INST) return -1;
+    hir_inst_room(1);
     h_kind[cl] = HI_COPY;
     h_ty[cl] = h_ty[src];
     h_src1[cl] = src;
@@ -4993,8 +5031,9 @@ static int ra_split_one(int v, int call) {
      * pairing below is what finally replaces it), so re-entering here
      * would split v a second time, then w again, ... until
      * ra_new_split_copy runs the instruction table out.  A double
-     * passed to a call and used after it filled all HIR_MAX_INST
-     * slots -- 6 lines of C became 1.3M lines of asm, and sqlite's
+     * passed to a call and used after it filled all 262144 instruction
+     * slots (the fixed table then; it grows now, so a runaway would end
+     * in "out of memory") -- 6 lines of C became 1.3M lines of asm, and sqlite's
      * dekkerMul2/kahanBabuskaNeumaierStep/absFunc/strftimeFunc each
      * hit it (the assembler died on "Instruction buffer size
      * overflow"). */

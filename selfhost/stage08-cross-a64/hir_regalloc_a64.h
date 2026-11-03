@@ -36,8 +36,8 @@
  * liveness analysis can track extra operands once peepholes land).
  * Currently unused on AArch64 (no SIB equivalent yet) but the regalloc
  * source treats them as inputs. */
-static int hx_sib_index[HIR_MAX_INST];     /* SIB index for stores (unused) */
-static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB (unused) */
+static int *hx_sib_index;     /* SIB index for stores (unused) */
+static int *hx_alu_sib_idx;   /* SIB index for ALU+SIB (unused) */
 
 /* --- Configuration ---
  *
@@ -85,13 +85,13 @@ static int ra_a64_slot_v[RA_A64_REVERSE_SIZE];   /* V-reg → V-slot */
  * (size matches the gc_node[] index space — RA_CLASS_X for nodes that
  * produce ints/ptrs, RA_CLASS_V for nodes that produce float/double).
  * Cross-class interference edges are skipped during graph build. */
-static int gc_class[HIR_MAX_INST];
+static int *gc_class;
 
 /* Forward decl (defined below; used by gc_build before its definition). */
 static int ra_class_of(int inst);
 
 /* Call-crossing flag: 1 if value's live interval spans a CALL. */
-static int ra_crosses_call[HIR_MAX_INST];
+static int *ra_crosses_call;
 
 static void ra_init_a64_regs(void) {
     int i;
@@ -170,15 +170,15 @@ static void ra_init_a64_regs(void) {
 }
 
 /* --- Output arrays --- */
-static int ra_reg[HIR_MAX_INST];    /* a64 physical register, -1 = spilled/remat */
-static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
+static int *ra_reg;    /* a64 physical register, -1 = spilled/remat */
+static int *ra_spill_off; /* spill slot (negative fp offset), 0 = none */
 
 /* --- Live interval arrays --- */
-static int ra_pos[HIR_MAX_INST];    /* linearized position */
-static int ra_iend[HIR_MAX_INST];   /* last use position (end of live interval) */
+static int *ra_pos;    /* linearized position */
+static int *ra_iend;   /* last use position (end of live interval) */
 
 /* --- Linearized order --- */
-static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
+static int *ra_order;  /* instruction indices in position order */
 static int ra_norder;
 
 /* --- Graph-coloring register allocator (IRC) --- */
@@ -191,7 +191,7 @@ static int ra_norder;
 /* Node data */
 static int gc_nnode;                    /* number of nodes */
 static int gc_inst[GC_MAX_NODE];        /* node → HIR inst index */
-static int gc_node[HIR_MAX_INST];       /* HIR inst → node index (-1 = none) */
+static int *gc_node;       /* HIR inst → node index (-1 = none) */
 
 /* Adjacency lists (CSR-like linked list in flat edge pool) */
 static int gc_adj_head[GC_MAX_NODE];    /* first edge index for node, -1 = none */
@@ -388,18 +388,6 @@ static void ra_extend(int inst, int use_pos) {
 static int *ra_blk_last;
 static int *ra_bvis;
 static int *ra_bwl;
-
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int rx_tables_done;
-static void rx_tables(void) {
-    if (rx_tables_done) return;
-    rx_tables_done = 1;
-    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
-    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
-    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
-}
 
 static void ra_backprop(int val, int use_blk) {
     int def_blk;
@@ -998,8 +986,8 @@ static void gc_remove_edge(int u, int v) {
  * SIB-index slot).  PHI-arg uses are not counted — those become
  * implicit copies at the predecessor terminator after out-of-SSA, so
  * they're consistent with phi-result/phi-arg coalescing. */
-static int gc_has_nonphi_user[HIR_MAX_INST];
-static int gc_last_nonphi_use[HIR_MAX_INST]; /* max ra position of a non-PHI use, -1 if none */
+static int *gc_has_nonphi_user;
+static int *gc_last_nonphi_use; /* max ra position of a non-PHI use, -1 if none */
 
 static void gc_mark_use(int s, int pos) {
     gc_has_nonphi_user[s] = 1;
@@ -2180,9 +2168,9 @@ static void ra_mark_call_crossing(void) {
  * CMP + Jcc directly instead of SETcc + MOVZX + TEST + Jcc.
  * ================================================================= */
 
-static int hx_brc_fuse[HIR_MAX_INST];   /* BRC idx → fused comparison idx, -1 = none */
-static int hx_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
-static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
+static int *hx_brc_fuse;   /* BRC idx → fused comparison idx, -1 = none */
+static int *hx_cmp_fused;  /* 1 if comparison is fused into a BRC */
+static int *hx_cmp_kind;   /* saved comparison kind (before NOP) */
 
 /* BIC / ORN / EON peephole.  When set, the AND/OR/XOR at this index
  * had one operand of the form HI_BNOT(y) with single use; the codegen
@@ -2192,7 +2180,35 @@ static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
  *   - The HI_BNOT instruction is NOPed.
  *   - The binop's src2 is rewritten to y (BNOT's child).  If the
  *     BNOT was on src1, src1 and src2 are swapped first (commutative). */
-static int hx_bic_fuse[HIR_MAX_INST];   /* 1 = emit BIC/ORN/EON */
+static int *hx_bic_fuse;   /* 1 = emit BIC/ORN/EON */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int rx_tables_done;
+static void rx_tables(void) {
+    if (rx_tables_done) return;
+    rx_tables_done = 1;
+    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
+    hir_inst_table((char **)&hx_sib_index, (int)sizeof(int));
+    hir_inst_table((char **)&hx_alu_sib_idx, (int)sizeof(int));
+    hir_inst_table((char **)&gc_class, (int)sizeof(int));
+    hir_inst_table((char **)&ra_crosses_call, (int)sizeof(int));
+    hir_inst_table((char **)&ra_reg, (int)sizeof(int));
+    hir_inst_table((char **)&ra_spill_off, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pos, (int)sizeof(int));
+    hir_inst_table((char **)&ra_iend, (int)sizeof(int));
+    hir_inst_table((char **)&ra_order, (int)sizeof(int));
+    hir_inst_table((char **)&gc_node, (int)sizeof(int));
+    hir_inst_table((char **)&gc_has_nonphi_user, (int)sizeof(int));
+    hir_inst_table((char **)&gc_last_nonphi_use, (int)sizeof(int));
+    hir_inst_table((char **)&hx_brc_fuse, (int)sizeof(int));
+    hir_inst_table((char **)&hx_cmp_fused, (int)sizeof(int));
+    hir_inst_table((char **)&hx_cmp_kind, (int)sizeof(int));
+    hir_inst_table((char **)&hx_bic_fuse, (int)sizeof(int));
+}
 
 static int hx_is_cmp(int k) {
     if (k >= HI_SEQ && k <= HI_SGEU) return 1;

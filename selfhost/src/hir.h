@@ -132,20 +132,19 @@ static char *hl_cur_fn_dbg;
 char *getenv(const char *name);
 int atoi(const char *nptr);
 
-#define HIR_MAX_INST   262144   /* was 16384 */
 #define HIR_MAX_CARG   32768   /* was 4096 */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
 
 /* --- Instruction parallel arrays --- */
-static int   h_kind[HIR_MAX_INST];
-static int   h_ty[HIR_MAX_INST];
-static int   h_src1[HIR_MAX_INST];
-static int   h_src2[HIR_MAX_INST];
-static int   h_val[HIR_MAX_INST];
-static char *h_name[HIR_MAX_INST];
-static int   h_blk[HIR_MAX_INST];
+static int   *h_kind;
+static int   *h_ty;
+static int   *h_src1;
+static int   *h_src2;
+static int   *h_val;
+static char **h_name;
+static int   *h_blk;
 static int   h_ninst;
 
 /* Call arguments (flat array, indexed per-call) */
@@ -230,7 +229,7 @@ static int hl_pp_inst[66];       /* HI_PARAM inst id per flat phys slot;
                                     all PARAMs are emitted before any
                                     param-copy code so incoming registers
                                     stay pinned across earlier copies */
-static int   h_cbase[HIR_MAX_INST];
+static int   *h_cbase;
 static int   h_ncarg;
 
 /* Jump-table targets (flat pool; per-HI_JMPTAB-instruction slice).
@@ -239,8 +238,8 @@ static int   h_ncarg;
  * these are block numbers, not value instructions. */
 #define HIR_MAX_JT  32768   /* was 8192 */
 static int   hjt_target[HIR_MAX_JT];
-static int   hjt_base[HIR_MAX_INST];
-static int   hjt_span[HIR_MAX_INST];
+static int   *hjt_base;
+static int   *hjt_span;
 static int   hjt_n;
 
 /* Phi arguments (Phase B): hir_parg_cap entries, grown by
@@ -248,8 +247,8 @@ static int   hjt_n;
 static int  *h_pblk;
 static int  *h_pval;
 static int   hir_parg_cap;
-static int   h_pbase[HIR_MAX_INST];
-static int   h_pcnt[HIR_MAX_INST];
+static int   *h_pbase;
+static int   *h_pcnt;
 static int   h_nparg;
 
 /* Basic blocks */
@@ -263,17 +262,20 @@ static int   bb_nblk;
  * made, and a new block grows every one together, so none is ever
  * shorter than another (the fixed 16384 stopped stage08 on the C s32-sbc
  * writes for a BASIC program: "too many HIR blocks").  A table nobody
- * registered stays NULL: the first function compiled stops on it.  The
- * registry has room for instruction-indexed tables too (hir_tab_add's
- * inst), which stay fixed for now.  Two more kinds have their own
- * counts: the phi arguments (2, h_nparg) and the allocator's
- * interference edges (3, gc_nedge). */
+ * registered stays NULL: the first function compiled stops on it.
+ * Instruction-indexed tables (hir_inst_table) grow the same way, with
+ * hir_inst_cap entries, more than h_ninst: by a new instruction
+ * (hi_emit, or hir_inst_room where a pass writes the tables at h_ninst
+ * itself).  cc.s32x is linked with --heap-size max for them.  Two more kinds
+ * have their own counts: the phi arguments (2, h_nparg) and the
+ * allocator's interference edges (3, gc_nedge). */
 #define HIR_TABLES 512
 static char **hir_tab[HIR_TABLES];
 static int hir_tab_esz[HIR_TABLES];
 static int hir_tab_inst[HIR_TABLES];    /* 1: instruction-indexed */
 static int hir_ntab;
 static int hir_blk_cap;
+static int hir_inst_cap;
 static int hir_blk_based;      /* bb_start, bb_end registered */
 
 /* p's table from oldcap entries of esz bytes to cap, the new ones zero
@@ -301,23 +303,62 @@ static void hir_tab_add(char **p, int esz, int inst) {
     hir_tab_inst[hir_ntab] = inst;
     hir_ntab = hir_ntab + 1;
     if (!inst && hir_blk_cap > 0) *p = hir_tab_resize(*p, esz, 0, hir_blk_cap);
+    if (inst && hir_inst_cap > 0) *p = hir_tab_resize(*p, esz, 0, hir_inst_cap);
 }
 
 static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, 0); }
+static void hir_inst_table(char **p, int esz) { hir_tab_add(p, esz, 1); }
 
 /* every table of the kind to need entries at least, from *capp */
-static void hir_tab_grow(int inst, int *capp, int first, int need) {
-    int cap;
+/* every table of the kind from oldcap entries to cap; 0, all left at
+ * oldcap, when the heap has not that much (the ones already grown are
+ * shrunk back, which realloc always can) */
+static int hir_tab_try(int inst, int oldcap, int cap) {
     int i;
-    cap = *capp ? *capp : first;
-    while (cap < need) cap = cap * 2;
-    if (cap == *capp) return;
-    if (getenv("S12CC_TABDBG")) { fdputs(inst == 3 ? "grow edge " : inst == 2 ? "grow parg " : inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
+    int j;
+    char *q;
     i = 0;
     while (i < hir_ntab) {
-        if (hir_tab_inst[i] == inst)
-            *hir_tab[i] = hir_tab_resize(*hir_tab[i], hir_tab_esz[i], *capp, cap);
+        if (hir_tab_inst[i] == inst) {
+            q = (char *)realloc(*hir_tab[i], (unsigned long)cap * (unsigned long)hir_tab_esz[i]);
+            if (!q) {
+                j = 0;
+                while (j < i) {
+                    if (hir_tab_inst[j] == inst)
+                        *hir_tab[j] = (char *)realloc(*hir_tab[j], (unsigned long)oldcap * (unsigned long)hir_tab_esz[j]);
+                    j = j + 1;
+                }
+                return 0;
+            }
+            j = oldcap * hir_tab_esz[i];
+            while (j < cap * hir_tab_esz[i]) { q[j] = 0; j = j + 1; }
+            *hir_tab[i] = q;
+        }
         i = i + 1;
+    }
+    return 1;
+}
+
+/* every table of the kind to need entries at least, from *capp: half as
+ * much again each time (the instruction tables are ~300 bytes an
+ * instruction, so doubling past 262144 asks the heap for 160MB), and
+ * when that is more than the heap has, halfway back toward need, and
+ * so on to need exactly -- so a function the old fixed tables held is
+ * never refused for the step past it, and one near the heap's end
+ * still grows in steps, not an entry at a time */
+static void hir_tab_grow(int inst, int *capp, int first, int need) {
+    int cap;
+    cap = *capp ? *capp : first;
+    while (cap < need) cap = cap + cap / 2;
+    if (cap == *capp) return;
+    if (getenv("S12CC_TABDBG")) { fdputs(inst == 3 ? "grow edge " : inst == 2 ? "grow parg " : inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
+    while (!hir_tab_try(inst, *capp, cap)) {
+        if (cap == need) {
+            fdputs("s12cc: out of memory (HIR tables)\n", 2);
+            exit(1);
+        }
+        cap = need + (cap - need) / 2;
+        if (getenv("S12CC_TABDBG")) { fdputs("  (backing off to) ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }
     }
     *capp = cap;
 }
@@ -359,7 +400,7 @@ static int   hl_cur_blk;
  * allocator, and liveness is computed before the allocator's own
  * per-function reset (a stale flag from the previous function made
  * test_respill's blam read through another function's ADDI). */
-static char ra_remat_op[HIR_MAX_INST];
+static char *ra_remat_op;
 
 /* Memory model step 5b.2/5b.3: a COPY the allocator appended -- a
  * block reload of a spilled value (ra_insert_reloads), or the memory
@@ -367,13 +408,13 @@ static char ra_remat_op[HIR_MAX_INST];
  * OWN storage is where its readers find the value.  The address-fold
  * walks stop at one: a load folding through it must read its register
  * or slot, not the original's.  Read by the emitter, so declared here. */
-static char ra_is_reload[HIR_MAX_INST];
+static char *ra_is_reload;
 
 static void hir_reset(void) {
     {
         int hi_i;
         hi_i = 0;
-        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
+        while (hi_i < h_ninst) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
     }
     h_ninst = 0;
     h_ncarg = 0;
@@ -413,26 +454,34 @@ static void hl_switch_block(int blk) {
  * RETRACT it (at unit end) for any symbol the unit itself stores.
  * Nothing in a C-compiler frontend sets it, so the mechanism is inert
  * when ported. */
-static char h_ld_ro[HIR_MAX_INST];
+static char *h_ld_ro;
 /* volatile (docs/plans/memory-model.md, step 2a).  h_voladdr marks an
  * address value the lowering computed for a volatile-qualified lvalue;
  * an ADDI or COPY off one is one too.  A LOAD or STORE through such an
  * address is a volatile access, h_vol: never forwarded, never removed,
  * never hoisted, and nothing is known about memory across it. */
-static char h_voladdr[HIR_MAX_INST];
-static char h_vol[HIR_MAX_INST];
+static char *h_voladdr;
+static char *h_vol;
+
+static void hir_inst_base(void);
+
+/* every instruction table to need entries at least */
+static void hir_inst_grow(int need) {
+    hir_inst_base();
+    hir_tab_grow(1, &hir_inst_cap, 4096, need);
+}
+
+/* room for n more instructions at h_ninst (and one past, which a reader
+ * may look at), for the passes that write the tables at h_ninst
+ * themselves rather than through hi_emit */
+static void hir_inst_room(int n) {
+    if (h_ninst + n + 1 > hir_inst_cap) hir_inst_grow(h_ninst + n + 1);
+}
 
 static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
-    if (idx >= HIR_MAX_INST) {
-        fdputs("s12cc: too many HIR instructions (inl_depth=", 2);
-        fdputuint(2, (unsigned)hl_inl_depth_dbg);
-        fdputs(" fn=", 2);
-        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
-        fdputs(")\n", 2);
-        exit(1);
-    }
+    if (idx + 2 > hir_inst_cap) hir_inst_grow(idx + 2);
     h_ld_ro[idx] = 0;
     h_kind[idx] = kind;
     h_ty[idx] = ty;
@@ -492,7 +541,34 @@ static int hi_is_remat(int kind) {
  * lui+addi rematerialized at every use (two instructions per loop
  * iteration), the value gets a graph node, a color, and one
  * materialization at its def.  Reset per function by that pass. */
-static int h_no_remat[HIR_MAX_INST];
+static int *h_no_remat;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hir_inst_base_done;
+static void hir_inst_base(void) {
+    if (hir_inst_base_done) return;
+    hir_inst_base_done = 1;
+    hir_inst_table((char **)&h_kind, (int)sizeof(int));
+    hir_inst_table((char **)&h_ty, (int)sizeof(int));
+    hir_inst_table((char **)&h_src1, (int)sizeof(int));
+    hir_inst_table((char **)&h_src2, (int)sizeof(int));
+    hir_inst_table((char **)&h_val, (int)sizeof(int));
+    hir_inst_table((char **)&h_name, (int)sizeof(char *));
+    hir_inst_table((char **)&h_blk, (int)sizeof(int));
+    hir_inst_table((char **)&h_cbase, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_base, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_span, (int)sizeof(int));
+    hir_inst_table((char **)&h_pbase, (int)sizeof(int));
+    hir_inst_table((char **)&h_pcnt, (int)sizeof(int));
+    hir_inst_table((char **)&ra_remat_op, (int)sizeof(char));
+    hir_inst_table((char **)&ra_is_reload, (int)sizeof(char));
+    hir_inst_table((char **)&h_ld_ro, (int)sizeof(char));
+    hir_inst_table((char **)&h_voladdr, (int)sizeof(char));
+    hir_inst_table((char **)&h_vol, (int)sizeof(char));
+    hir_inst_table((char **)&h_no_remat, (int)sizeof(int));
+}
 
 /* Instruction-level remat query: kind says remat, override says
  * keep it in a register.  Use wherever an instruction (not just a

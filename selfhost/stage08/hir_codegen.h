@@ -403,7 +403,7 @@ static void hcg_la(int reg, char *sym) {
 }
 
 /* GitHub issue 72: return-only values computed straight into r1. */
-static char hcg_ret_direct[HIR_MAX_INST];
+static char *hcg_ret_direct;
 
 /* --- Materialize a HIR value into a specific register --- */
 
@@ -418,7 +418,7 @@ static void hcg_into(int reg, int inst) {
         return;
     }
 
-    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) {
+    if (inst < hir_inst_cap && hcg_ret_direct[inst]) {
         if (reg != 1) cg_rri("addi", reg, 1, 0);
         return;
     }
@@ -525,7 +525,7 @@ static void hcg_into(int reg, int inst) {
  * If inst is rematerializable or spilled, loads into scratch and returns scratch. */
 static int hcg_src(int inst, int scratch) {
     if (inst < 0) return 0;
-    if (inst < HIR_MAX_INST && hcg_ret_direct[inst]) return 1;
+    if (inst < hir_inst_cap && hcg_ret_direct[inst]) return 1;
     if (ra_reg[inst] >= 0) return ra_reg[inst];
     hcg_into(scratch, inst);
     return scratch;
@@ -626,35 +626,16 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
  * be an allocator preference the way issue 67's argument targeting was;
  * it is decided here, after allocation, and only where r1 is provably
  * untouched while the return-only web is live. */
-static char hcg_usecnt[HIR_MAX_INST];   /* saturates at 2; we only need "exactly 1" */
+static char *hcg_usecnt;   /* saturates at 2; we only need "exactly 1" */
 static int  hcg_stat_retpin;
 #define HCG_RP_MAX 512
 static int  hcg_rp_tick;
-static int  hcg_rp_stamp[HIR_MAX_INST];
+static int  *hcg_rp_stamp;
 static int  *hcg_rp_reach;
 static int  *hcg_rp_path;
 static int  hcg_rp_s[HCG_RP_MAX];
 static int  hcg_rp_ns;
 static int  *hcg_rp_wl;
-
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int hcg_tables_done;
-static void hcg_tables(void) {
-    if (hcg_tables_done) return;
-    hcg_tables_done = 1;
-    hir_blk_table((char **)&hcg_blk_lbl, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_fwd, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_next_emit, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_emit_ord, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_placed, (int)sizeof(char));
-    hir_blk_table((char **)&hcg_skip, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_blk_pos, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_rp_reach, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_rp_path, (int)sizeof(int));
-    hir_blk_table((char **)&hcg_rp_wl, (int)sizeof(int));
-}
 
 static void hcg_use_bump(int v) {
     if (v < 0 || v >= h_ninst) return;
@@ -665,7 +646,7 @@ static void hcg_use_bump(int v) {
  * chain's base, ra_codegen_fold_base): the inner one is still emitted,
  * into its own register, while the base must survive it -- so it never
  * joins a web pinned to r1 beside that base. */
-static char hcg_rp_inner[HIR_MAX_INST];
+static char *hcg_rp_inner;
 
 /* Every reader of a value, in the same shape as ra_csplit_on_inst:
  * src1, src2 (when it is a value reference), call arguments, phi args,
@@ -744,7 +725,7 @@ static int hcg_retpin_clobbers_r1(int e) {
     /* JMPTAB forms the target in r1.  Calls return in r1. */
     if (k == HI_CALL || k == HI_CALLP || k == HI_CALLHI || k == HI_JMPTAB) return 1;
     /* An earlier RET in this function already pinned this def to r1. */
-    if (e < HIR_MAX_INST && hcg_ret_direct[e]) return 1;
+    if (e < hir_inst_cap && hcg_ret_direct[e]) return 1;
     /* Fused BRC: the compare is NOPed (ra_reg < 0) and re-emitted as a
      * bcond.  src1 of the BRC is that NOP -- treating it as a scratch
      * operand refused afterloop/diamond.  The bcond stages one compare
@@ -884,8 +865,33 @@ static void hcg_rp_prune(int ret_inst) {
  * value was computed into r1 every pass (cfuzz seed 31379:
  * `v = (i << 13) >> 11` in a loop returned 8196 for 8).  Such a member
  * leaves the web; returns 1 if any did. */
-static int hcg_rp_rd[HIR_MAX_INST];
-static int hcg_rp_rdw[HIR_MAX_INST];
+static int *hcg_rp_rd;
+static int *hcg_rp_rdw;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hcg_tables_done;
+static void hcg_tables(void) {
+    if (hcg_tables_done) return;
+    hcg_tables_done = 1;
+    hir_blk_table((char **)&hcg_blk_lbl, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_fwd, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_next_emit, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_emit_ord, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_placed, (int)sizeof(char));
+    hir_blk_table((char **)&hcg_skip, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_blk_pos, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_reach, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_path, (int)sizeof(int));
+    hir_blk_table((char **)&hcg_rp_wl, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_ret_direct, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_usecnt, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_rp_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_rp_inner, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_rp_rd, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_rp_rdw, (int)sizeof(int));
+}
 static void hcg_rp_rd_one(int a, int writes) {
     if (a < 0 || a >= h_ninst || hcg_rp_stamp[a] != hcg_rp_tick) return;
     hcg_rp_rd[a] = hcg_rp_rd[a] + 1;
@@ -1119,7 +1125,7 @@ static int hcg_rp_block_clobbers(int b) {
     i = ssa_phi_head[b];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI && hcg_rp_stamp[i] != hcg_rp_tick &&
-            i < HIR_MAX_INST && hcg_ret_direct[i]) return 1;
+            i < hir_inst_cap && hcg_ret_direct[i]) return 1;
         i = ssa_phi_next[i];
     }
     i = licm_head[b];
@@ -1241,7 +1247,7 @@ static void hcg_mark_ret_direct(void) {
                 hcg_rp_tick = hcg_rp_tick + 1;
                 if (hcg_rp_tick == 0) {
                     i = 0;
-                    while (i < HIR_MAX_INST) { hcg_rp_stamp[i] = 0; i = i + 1; }
+                    while (i < hir_inst_cap) { hcg_rp_stamp[i] = 0; i = i + 1; }
                     i = 0;
                     while (i < hir_blk_cap) {
                         hcg_rp_reach[i] = 0;
@@ -1566,7 +1572,7 @@ static void hcg_move_vals(int *dst, int *vals, int n) {
         hcg_shuf_dst[i] = dst[i];
         hcg_shuf_val[i] = v;
         hcg_shuf_imm[i] = 0;
-        if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
+        if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) hcg_shuf_src[i] = 1;
         else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[i] = ra_reg[v];
         else hcg_shuf_src[i] = hcg_remat_reg_src(v, &hcg_shuf_imm[i]);
         hcg_shuf_done[i] = 0;
@@ -1592,7 +1598,7 @@ static void hcg_marshal_reg_args(int base, int nargs) {
             hcg_shuf_dst[n] = hcg_argmap[i];
             hcg_shuf_val[n] = v;
             hcg_shuf_imm[n] = 0;
-            if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
+            if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) hcg_shuf_src[n] = 1;
             else if (v >= 0 && ra_reg[v] >= 0) hcg_shuf_src[n] = ra_reg[v];
             else hcg_shuf_src[n] = hcg_remat_reg_src(v, &hcg_shuf_imm[n]);
             hcg_shuf_done[n] = 0;
@@ -1952,7 +1958,7 @@ static int hcg_phi_src_inst[SSA_MAX_PROMO];
  * PARAM edge copy-free -- r1 arrived holding remat scratch, and the
  * stage08-built disassembler printed every immediate as 1. */
 static int hcg_eff_reg(int v) {
-    if (v >= 0 && v < HIR_MAX_INST && hcg_ret_direct[v]) return 1;
+    if (v >= 0 && v < hir_inst_cap && hcg_ret_direct[v]) return 1;
     return ra_reg[v];
 }
 
@@ -4064,7 +4070,7 @@ static void hcg_inst(int idx) {
          * materialized straight into the destination: one ldw or addi,
          * not a reload into r1 and a move.  The step 5b.2 reload values
          * are exactly this COPY. */
-        if (ra_reg[s1] < 0 && !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+        if (ra_reg[s1] < 0 && !(s1 < hir_inst_cap && hcg_ret_direct[s1])) {
             hcg_into(rd, s1);
             hcg_maybe_spill(idx);
             return;
@@ -4072,8 +4078,8 @@ static void hcg_inst(int idx) {
         /* A memory destination from a register source is one store
          * (the step 5b.3 region copy at an arm's entry is this). */
         if (ra_reg[idx] < 0 && !hi_inst_remat(idx) && ra_spill_off[idx] != 0 &&
-            !(idx < HIR_MAX_INST && hcg_ret_direct[idx]) &&
-            !(s1 < HIR_MAX_INST && hcg_ret_direct[s1])) {
+            !(idx < hir_inst_cap && hcg_ret_direct[idx]) &&
+            !(s1 < hir_inst_cap && hcg_ret_direct[s1])) {
             off = hcg_slot_off(ra_spill_off[idx]);
             if (off >= -2048 && off <= 2047) {
                 hcg_stat_spillst = hcg_stat_spillst + 1;
@@ -4590,7 +4596,7 @@ static void hcg_func(Node *fn) {
 
     /* Lower AST to HIR */
     /* every block table this compiler has, before the first block */
-    ssa_tables(); licm_tables(); ra_tables(); hcg_tables();
+    al_tables(); ssa_tables(); ho_tables(); licm_tables(); bg_tables(); ra_tables(); hcg_tables();
     hl_func(fn);
 
     /* Run SSA construction */

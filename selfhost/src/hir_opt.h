@@ -10,8 +10,8 @@
  */
 
 /* Use count per instruction */
-static int ho_use[HIR_MAX_INST];
-static char ho_phi_vouched[HIR_MAX_INST];   /* ho_count_uses: this live phi has counted its args */
+static int *ho_use;
+static char *ho_phi_vouched;   /* ho_count_uses: this live phi has counted its args */
 
 /* Resolve COPY chains: follow src1 until non-COPY */
 static int ho_resolve(int inst) {
@@ -962,7 +962,7 @@ static int ho_dominates(int a, int b) {
 #define HO_CSE_MASK   2047
 
 static int ho_cse_head[HO_CSE_SLOTS];   /* slot -> first inst index, -1 if empty */
-static int ho_cse_next[HIR_MAX_INST];    /* inst -> next in chain, -1 if end */
+static int *ho_cse_next;    /* inst -> next in chain, -1 if end */
 static int ho_stat_cse;
 
 static int ho_cse_hash(int kind, int s1, int s2, int val) {
@@ -1631,7 +1631,7 @@ static int ho_promote_single_store_alloca(void) {
  * instruction kinds.
  * ---------------------------------------------------------------- */
 
-static unsigned int ho_kb[HIR_MAX_INST];
+static unsigned int *ho_kb;
 static int ho_stat_kb;
 
 static unsigned int ho_kb_of(int v) {
@@ -1817,7 +1817,8 @@ static int ho_known_bits(void) {
  * memory on purpose.
  * ---------------------------------------------------------------- */
 
-static char ho_ds_bad[HIR_MAX_INST];
+static char *ho_ds_bad;
+
 static int ho_stat_dslot;
 
 /* v is used; fine or not.  A root with a use that is not fine keeps
@@ -1955,4 +1956,20 @@ static void hir_opt(void) {
     }
 
     ho_stat_elim = ho_stat_elim + (before - after);
+}
+
+/* This module's tables, grown with the function's instructions
+ * (hir_tab_add, hir.h): registered once, before any block of the first
+ * function is made (ho_kb and ho_ds_bad are SLOW-32's alone). */
+static int ho_tables_done;
+static void ho_tables(void) {
+    if (ho_tables_done) return;
+    ho_tables_done = 1;
+    hir_inst_table((char **)&ho_use, (int)sizeof(int));
+    hir_inst_table((char **)&ho_phi_vouched, (int)sizeof(char));
+    hir_inst_table((char **)&ho_cse_next, (int)sizeof(int));
+#ifndef S12CC_X64_HOST
+    hir_inst_table((char **)&ho_kb, (int)sizeof(unsigned int));
+    hir_inst_table((char **)&ho_ds_bad, (int)sizeof(char));
+#endif
 }

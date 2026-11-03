@@ -56,12 +56,27 @@ static int bg_cost[BG_COST_SZ];
 static int bg_rule[BG_COST_SZ];
 
 /* Selection output */
-static int bg_sel[HIR_MAX_INST];
-static int bg_fold[HIR_MAX_INST];
-static int bg_uses[HIR_MAX_INST];
-static int bg_foff[HIR_MAX_INST];  /* precomputed x64 frame offset (via cg_x64_offset) */
-static int bg_ssym[HIR_MAX_INST];  /* base symbol inst for SADDR chain */
-static int bg_soff[HIR_MAX_INST];  /* accumulated offset for SADDR chain */
+static int *bg_sel;
+static int *bg_fold;
+static int *bg_uses;
+static int *bg_foff;  /* precomputed x64 frame offset (via cg_x64_offset) */
+static int *bg_ssym;  /* base symbol inst for SADDR chain */
+static int *bg_soff;  /* accumulated offset for SADDR chain */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int bx_tables_done;
+static void bx_tables(void) {
+    if (bx_tables_done) return;
+    bx_tables_done = 1;
+    hir_inst_table((char **)&bg_sel, (int)sizeof(int));
+    hir_inst_table((char **)&bg_fold, (int)sizeof(int));
+    hir_inst_table((char **)&bg_uses, (int)sizeof(int));
+    hir_inst_table((char **)&bg_foff, (int)sizeof(int));
+    hir_inst_table((char **)&bg_ssym, (int)sizeof(int));
+    hir_inst_table((char **)&bg_soff, (int)sizeof(int));
+}
 
 /* Stats */
 static int bg_stat_folded;

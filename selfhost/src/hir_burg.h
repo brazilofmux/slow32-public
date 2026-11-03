@@ -55,15 +55,15 @@ static int bg_cost[BG_COST_SZ];
 static int bg_rule[BG_COST_SZ];
 
 /* Selection output */
-static int bg_sel[HIR_MAX_INST];
+static int *bg_sel;
 
 /* Folding */
-static int bg_fold[HIR_MAX_INST];  /* 1 = folded into parent */
-static int bg_uses[HIR_MAX_INST];  /* use count per value */
-static int bg_mu[HIR_MAX_INST];    /* faddr load/store users (phase 3) */
-static int bg_foff[HIR_MAX_INST];  /* precomputed faddr offset */
-static int bg_ssym[HIR_MAX_INST];  /* base symbol inst for SADDR chain (-1=none) */
-static int bg_soff[HIR_MAX_INST];  /* accumulated offset for SADDR chain */
+static int *bg_fold;  /* 1 = folded into parent */
+static int *bg_uses;  /* use count per value */
+static int *bg_mu;    /* faddr load/store users (phase 3) */
+static int *bg_foff;  /* precomputed faddr offset */
+static int *bg_ssym;  /* base symbol inst for SADDR chain (-1=none) */
+static int *bg_soff;  /* accumulated offset for SADDR chain */
 
 /* Stats */
 static int bg_stat_folded;
@@ -84,8 +84,8 @@ static int bg_stat_iconst_imm_only;
 static int bg_stat_iconst_nonimm;
 static int bg_stat_iconst_unused;
 static int bg_stat_burg_skipped;
-static int bg_iconst_seen_use[HIR_MAX_INST];
-static int bg_iconst_seen_nonimm[HIR_MAX_INST];
+static int *bg_iconst_seen_use;
+static int *bg_iconst_seen_nonimm;
 static int bg_stat_iconst_use_op[BG_OP_SZ];
 static int bg_stat_iconst_nonimm_use_op[BG_OP_SZ];
 
@@ -598,8 +598,8 @@ static int bg_is_sym(int k) {
     return k == HI_GADDR || k == HI_SADDR || k == HI_FADDR;
 }
 
-static char bg_fdone[HIR_MAX_INST];   /* bg_foff_one: computed this function */
-static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
+static char *bg_fdone;   /* bg_foff_one: computed this function */
+static int  *bg_walk;    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
 
 /* Push onto bg_walk with a bound.  A node is marked done when it first
  * reaches the TOP, not when it is pushed, so a shared operand can sit on
@@ -608,7 +608,7 @@ static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not 
  * are shallow -- so this never fires on real code; it is here because an
  * unbounded write into a static array is how silent corruption starts. */
 static int bg_walk_push(int sp, int v) {
-    if (sp >= HIR_MAX_INST) {
+    if (sp >= hir_inst_cap) {
         fdputs("s12cc: burg walk stack overflow\n", 2);
         exit(1);
     }
@@ -689,7 +689,7 @@ static void bg_compute_foff(void) {
 
 /* --- Bottom-up labeling --- */
 
-static char bg_done[HIR_MAX_INST];   /* bg_label_one: labeled this function */
+static char *bg_done;   /* bg_label_one: labeled this function */
 
 /* Is src2 a value operand for this kind (a branch's src2 is a block)? */
 static int bg_src2_is_value(int k) {
@@ -1029,9 +1029,33 @@ static void hir_burg(void) {
  * so that regalloc can extend live ranges for fused comparison operands.
  * ============================================================================ */
 
-static int hcg_brc_fuse[HIR_MAX_INST];   /* BRC idx -> fused comparison idx, -1 = none */
-static int hcg_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
-static int hcg_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
+static int *hcg_brc_fuse;   /* BRC idx -> fused comparison idx, -1 = none */
+static int *hcg_cmp_fused;  /* 1 if comparison is fused into a BRC */
+static int *hcg_cmp_kind;   /* saved comparison kind (before NOP) */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int bg_tables_done;
+static void bg_tables(void) {
+    if (bg_tables_done) return;
+    bg_tables_done = 1;
+    hir_inst_table((char **)&bg_sel, (int)sizeof(int));
+    hir_inst_table((char **)&bg_fold, (int)sizeof(int));
+    hir_inst_table((char **)&bg_uses, (int)sizeof(int));
+    hir_inst_table((char **)&bg_mu, (int)sizeof(int));
+    hir_inst_table((char **)&bg_foff, (int)sizeof(int));
+    hir_inst_table((char **)&bg_ssym, (int)sizeof(int));
+    hir_inst_table((char **)&bg_soff, (int)sizeof(int));
+    hir_inst_table((char **)&bg_iconst_seen_use, (int)sizeof(int));
+    hir_inst_table((char **)&bg_iconst_seen_nonimm, (int)sizeof(int));
+    hir_inst_table((char **)&bg_fdone, (int)sizeof(char));
+    hir_inst_table((char **)&bg_walk, (int)sizeof(int));
+    hir_inst_table((char **)&bg_done, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_brc_fuse, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_cmp_fused, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_cmp_kind, (int)sizeof(int));
+}
 
 static int hcg_is_cmp(int k) {
     return (k >= HI_SEQ && k <= HI_SGEU);

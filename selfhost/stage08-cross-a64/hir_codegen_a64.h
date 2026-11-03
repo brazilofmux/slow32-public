@@ -33,7 +33,6 @@
 static void hir_burg(void);
 static void hir_licm(void);
 extern int licm_stat_hoisted;
-extern int licm_next[HIR_MAX_INST];
 /* hir_regalloc.h provides hir_regalloc(void). */
 static void hir_regalloc(void);
 
@@ -73,16 +72,6 @@ static int hx_va_named_stack;       /* named params that spilled past reg files 
 /* Block-level patching */
 static int *hx_blk_off;
 
-/* This module's block-indexed tables, grown with the function's
- * blocks (hir_blk_table, hir.h): registered once, before any
- * block of the first function is made. */
-static int hx_tables_done;
-static void hx_tables(void) {
-    if (hx_tables_done) return;
-    hx_tables_done = 1;
-    hir_blk_table((char **)&hx_blk_off, (int)sizeof(int));
-}
-
 /* Forward branches: site offset, target block.  When we lay down the
  * target's first instruction we walk the patch list. */
 #define HX_MAX_BPATCH 8192
@@ -107,8 +96,8 @@ static int hx_arg_reg[8];
 #define HX_SCRATCH_V2  A64_V31
 
 /* PHI move scheduling buffers (used by hx_phi_copies). */
-static int hx_phi_dst_inst[HIR_MAX_INST];   /* PHI inst */
-static int hx_phi_src_val[HIR_MAX_INST];    /* incoming value inst */
+static int *hx_phi_dst_inst;   /* PHI inst */
+static int *hx_phi_src_val;    /* incoming value inst */
 static int hx_phi_n;
 
 /* Indexed-addressing fold (computed by hx_fold_indexed_addr).
@@ -117,36 +106,69 @@ static int hx_phi_n;
  * we record the base inst, idx inst, and shift amount keyed on the
  * load/store inst.  The HI_ADD and HI_SLL feeding it get bg_fold[]=1
  * so their def sites emit nothing. */
-static int hx_ridx_base[HIR_MAX_INST];   /* base reg inst, -1 if not folded */
-static int hx_ridx_idx[HIR_MAX_INST];    /* index reg inst */
-static int hx_ridx_shift[HIR_MAX_INST];  /* shift amount (0, 2, or 3) */
+static int *hx_ridx_base;   /* base reg inst, -1 if not folded */
+static int *hx_ridx_idx;    /* index reg inst */
+static int *hx_ridx_shift;  /* shift amount (0, 2, or 3) */
 
 /* Offset-displacement fold: HI_LOAD/HI_STORE whose address is
  * HI_ADDI(reg_base, const) gets emitted as
  *     ldr/str Wt/Xt, [base, #disp]
  * and the HI_ADDI def is suppressed when all real ADDI uses fold this
  * way.  Mutually exclusive with indexed addressing on the same LOAD/STORE. */
-static int hx_off_base[HIR_MAX_INST];    /* base inst, -1 if not folded */
-static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
-static int hx_off_use[HIR_MAX_INST];     /* post-fusion use count */
-static int hx_off_fold_use[HIR_MAX_INST];/* candidate folded LOAD/STORE uses */
-static int hx_pre_off_base[HIR_MAX_INST];/* pre-RA single-use fold base */
-static int hx_pre_off_disp[HIR_MAX_INST];/* pre-RA single-use fold disp */
+static int *hx_off_base;    /* base inst, -1 if not folded */
+static int *hx_off_disp;    /* byte displacement */
+static int *hx_off_use;     /* post-fusion use count */
+static int *hx_off_fold_use;/* candidate folded LOAD/STORE uses */
+static int *hx_pre_off_base;/* pre-RA single-use fold base */
+static int *hx_pre_off_disp;/* pre-RA single-use fold disp */
 
 /* Tail-call elimination: hx_tce_call[c]==1 marks an HI_CALL that is the
  * last meaningful instruction in its block before HI_RET; emit `b target`
  * instead of `bl + epilogue + ret`.  hx_tce_ret[r]==1 marks the trailing
  * HI_RET so its emitter is skipped (the TCE call already branched away).
  * See hx_identify_tce. */
-static int hx_tce_call[HIR_MAX_INST];
-static int hx_tce_ret[HIR_MAX_INST];
+static int *hx_tce_call;
+static int *hx_tce_ret;
 
 /* LDP/STP lookahead pairing — see hx_find_load_partner / hx_find_store_partner.
  * When a HI_LOAD/HI_STORE that hits the offset-disp fold path finds a same-base
  * partner later in the same block, codegen emits LDP/STP at the first inst's
  * position and sets hx_skip_emit on the partner so the dispatch loop skips
  * it.  Set in hx_emit_inst's HI_LOAD/HI_STORE branches; cleared per-function. */
-static int hx_skip_emit[HIR_MAX_INST];
+static int *hx_skip_emit;
+
+/* the parallel phi move's per-phi state (instruction-indexed: there are
+ * no more phis on an edge than instructions) */
+static int *hx_pdone;
+static int *hx_psrc;
+static int *hx_pdst;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hx_tables_done;
+static void hx_tables(void) {
+    if (hx_tables_done) return;
+    hx_tables_done = 1;
+    hir_inst_table((char **)&hx_pdone, (int)sizeof(int));
+    hir_inst_table((char **)&hx_psrc, (int)sizeof(int));
+    hir_inst_table((char **)&hx_pdst, (int)sizeof(int));
+    hir_blk_table((char **)&hx_blk_off, (int)sizeof(int));
+    hir_inst_table((char **)&hx_phi_dst_inst, (int)sizeof(int));
+    hir_inst_table((char **)&hx_phi_src_val, (int)sizeof(int));
+    hir_inst_table((char **)&hx_ridx_base, (int)sizeof(int));
+    hir_inst_table((char **)&hx_ridx_idx, (int)sizeof(int));
+    hir_inst_table((char **)&hx_ridx_shift, (int)sizeof(int));
+    hir_inst_table((char **)&hx_off_base, (int)sizeof(int));
+    hir_inst_table((char **)&hx_off_disp, (int)sizeof(int));
+    hir_inst_table((char **)&hx_off_use, (int)sizeof(int));
+    hir_inst_table((char **)&hx_off_fold_use, (int)sizeof(int));
+    hir_inst_table((char **)&hx_pre_off_base, (int)sizeof(int));
+    hir_inst_table((char **)&hx_pre_off_disp, (int)sizeof(int));
+    hir_inst_table((char **)&hx_tce_call, (int)sizeof(int));
+    hir_inst_table((char **)&hx_tce_ret, (int)sizeof(int));
+    hir_inst_table((char **)&hx_skip_emit, (int)sizeof(int));
+}
 
 /* Right-end (exclusive) of the block currently being emitted.  Used by the
  * pair-search lookaheads to bound forward scans.  Set in the codegen
@@ -1377,32 +1399,29 @@ static void hx_phi_copies(int from_blk, int to_blk) {
      * hazard for that src — they can always emit safely (hx_mat loads
      * via SCRATCH1 or directly into dst_reg). */
     {
-        int done[HIR_MAX_INST];   /* per-phi bool, indexed by phi position */
-        int phi_src_reg[HIR_MAX_INST];
-        int phi_dst_reg[HIR_MAX_INST];
         int n_remaining;
         int progress;
         int p;
 
         i = 0;
         while (i < hx_phi_n) {
-            done[i] = 0;
+            hx_pdone[i] = 0;
             src = hx_phi_src_val[i];
             dst_inst = hx_phi_dst_inst[i];
-            phi_src_reg[i] = (ra_reg[src] >= 0) ? hx_slot_reg(ra_reg[src]) : -1;
-            phi_dst_reg[i] = hx_dst_reg(dst_inst);
+            hx_psrc[i] = (ra_reg[src] >= 0) ? hx_slot_reg(ra_reg[src]) : -1;
+            hx_pdst[i] = hx_dst_reg(dst_inst);
             /* No-op move (src and dst already share the register): mark
              * done immediately so it doesn't block others. */
-            if (phi_src_reg[i] >= 0 && phi_src_reg[i] == phi_dst_reg[i]) {
-                hx_spill(dst_inst, phi_dst_reg[i]);
-                done[i] = 1;
+            if (hx_psrc[i] >= 0 && hx_psrc[i] == hx_pdst[i]) {
+                hx_spill(dst_inst, hx_pdst[i]);
+                hx_pdone[i] = 1;
             }
             i = i + 1;
         }
 
         n_remaining = 0;
         i = 0;
-        while (i < hx_phi_n) { if (!done[i]) n_remaining = n_remaining + 1; i = i + 1; }
+        while (i < hx_phi_n) { if (!hx_pdone[i]) n_remaining = n_remaining + 1; i = i + 1; }
 
         progress = 1;
         while (n_remaining > 0 && progress) {
@@ -1410,13 +1429,13 @@ static void hx_phi_copies(int from_blk, int to_blk) {
             p = 0;
             while (p < hx_phi_n) {
                 int blocked;
-                if (done[p]) { p = p + 1; continue; }
-                /* phi_dst_reg[p] is safe to clobber iff no remaining phi
-                 * has phi_dst_reg[p] as its src_reg. */
+                if (hx_pdone[p]) { p = p + 1; continue; }
+                /* hx_pdst[p] is safe to clobber iff no remaining phi
+                 * has hx_pdst[p] as its src_reg. */
                 blocked = 0;
                 i = 0;
                 while (i < hx_phi_n) {
-                    if (!done[i] && i != p && phi_src_reg[i] == phi_dst_reg[p]) {
+                    if (!hx_pdone[i] && i != p && hx_psrc[i] == hx_pdst[p]) {
                         blocked = 1;
                         i = hx_phi_n;
                     } else {
@@ -1426,18 +1445,18 @@ static void hx_phi_copies(int from_blk, int to_blk) {
                 if (!blocked) {
                     src = hx_phi_src_val[p];
                     dst_inst = hx_phi_dst_inst[p];
-                    dst_reg = phi_dst_reg[p];
+                    dst_reg = hx_pdst[p];
                     wide = hx_is_wide(h_ty[dst_inst]);
-                    if (phi_src_reg[p] >= 0) {
+                    if (hx_psrc[p] >= 0) {
                         if (hx_is_v(dst_inst)) {
                             if (ty_is_double(h_ty[dst_inst]))
-                                a64_fmov_d_d(dst_reg, phi_src_reg[p]);
+                                a64_fmov_d_d(dst_reg, hx_psrc[p]);
                             else
-                                a64_fmov_s_s(dst_reg, phi_src_reg[p]);
+                                a64_fmov_s_s(dst_reg, hx_psrc[p]);
                         } else if (wide) {
-                            a64_mov_x(dst_reg, phi_src_reg[p]);
+                            a64_mov_x(dst_reg, hx_psrc[p]);
                         } else {
-                            a64_mov_w(dst_reg, phi_src_reg[p]);
+                            a64_mov_w(dst_reg, hx_psrc[p]);
                         }
                     } else {
                         /* Spilled / rematerialisable source: bring it
@@ -1445,7 +1464,7 @@ static void hx_phi_copies(int from_blk, int to_blk) {
                         hx_mat(src, dst_reg);
                     }
                     hx_spill(dst_inst, dst_reg);
-                    done[p] = 1;
+                    hx_pdone[p] = 1;
                     n_remaining = n_remaining - 1;
                     progress = 1;
                 }
@@ -1462,7 +1481,7 @@ static void hx_phi_copies(int from_blk, int to_blk) {
             new_n = 0;
             i = 0;
             while (i < hx_phi_n) {
-                if (!done[i]) {
+                if (!hx_pdone[i]) {
                     hx_phi_dst_inst[new_n] = hx_phi_dst_inst[i];
                     hx_phi_src_val[new_n]  = hx_phi_src_val[i];
                     new_n = new_n + 1;
@@ -3572,7 +3591,7 @@ static void hx_gen_func(Node *fn) {
     /* Run the HIR pipeline. */
     licm_stat_hoisted = 0;
     /* every block table this compiler has, before the first block */
-    ssa_tables(); licm_tables(); rx_tables(); hx_tables();
+    al_tables(); ssa_tables(); ho_tables(); licm_tables(); bx_tables(); rx_tables(); hx_tables();
     hl_func(fn);
     hir_ssa_construct();
     hir_opt();
