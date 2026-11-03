@@ -1134,3 +1134,119 @@ void stmt_append(stmt_t **head, stmt_t **tail, stmt_t *s) {
     while (s->next) s = s->next;
     *tail = s;
 }
+
+/* --- Walking expressions (strict.c and friends) --- */
+
+void expr_walk(expr_t *e, void (*fn)(expr_t *, void *), void *ctx) {
+    if (!e) return;
+    fn(e, ctx);
+    switch (e->type) {
+    case EXPR_UNARY:
+        expr_walk(e->unary.operand, fn, ctx);
+        break;
+    case EXPR_BINARY:
+        expr_walk(e->binary.left, fn, ctx);
+        expr_walk(e->binary.right, fn, ctx);
+        break;
+    case EXPR_COMPARE:
+        expr_walk(e->compare.left, fn, ctx);
+        expr_walk(e->compare.right, fn, ctx);
+        break;
+    case EXPR_CALL:
+        for (int i = 0; i < e->call.nargs; i++)
+            expr_walk(e->call.args[i], fn, ctx);
+        break;
+    default:
+        break;
+    }
+}
+
+static void exprs_n(expr_t **v, int n, void (*fn)(expr_t *, void *), void *ctx) {
+    if (!v) return;
+    for (int i = 0; i < n; i++)
+        if (v[i]) fn(v[i], ctx);
+}
+
+#define X(e) do { if (e) fn((e), ctx); } while (0)
+void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
+    switch (s->type) {
+    case STMT_PRINT:
+    case STMT_LPRINT:
+    case STMT_WRITE_CONSOLE:
+        for (int i = 0; i < s->print.nitems; i++) X(s->print.items[i].expr);
+        if (s->type != STMT_WRITE_CONSOLE) X(s->print.using_expr);
+        break;
+    case STMT_INPUT:
+    case STMT_LINE_INPUT_CONSOLE:
+        exprs_n(s->input.targets, s->input.nvars, fn, ctx);
+        break;
+    case STMT_LOCATE: X(s->locate_stmt.row); X(s->locate_stmt.col); break;
+    case STMT_COLOR: X(s->color_stmt.fg); X(s->color_stmt.bg); break;
+    case STMT_ASSIGN: X(s->assign.value); break;
+    case STMT_IF: X(s->if_stmt.condition); break;
+    case STMT_FOR: X(s->for_stmt.start); X(s->for_stmt.end); X(s->for_stmt.step); break;
+    case STMT_WHILE: X(s->while_stmt.condition); break;
+    case STMT_DO_LOOP: X(s->do_loop.pre_cond); X(s->do_loop.post_cond); break;
+    case STMT_SELECT:
+        X(s->select_stmt.test_expr);
+        for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next)
+            for (int i = 0; i < c->nmatches; i++) {
+                X(c->matches[i].expr1);
+                X(c->matches[i].expr2);
+            }
+        break;
+    case STMT_CALL: exprs_n(s->call_stmt.args, s->call_stmt.nargs, fn, ctx); break;
+    case STMT_CONST: X(s->const_stmt.value); break;
+    case STMT_DIM: exprs_n(s->dim_stmt.dims, s->dim_stmt.ndims, fn, ctx); break;
+    case STMT_ARRAY_ASSIGN:
+        exprs_n(s->array_assign.indices, s->array_assign.nindices, fn, ctx);
+        X(s->array_assign.value);
+        break;
+    case STMT_READ: exprs_n(s->read_stmt.targets, s->read_stmt.nvars, fn, ctx); break;
+    case STMT_SWAP: X(s->swap_stmt.lhs); X(s->swap_stmt.rhs); break;
+    case STMT_RANDOMIZE: X(s->randomize.seed); break;
+    case STMT_SLEEP: X(s->sleep_stmt.duration); break;
+    case STMT_OPEN: X(s->open_stmt.filename); X(s->open_stmt.handle_num); X(s->open_stmt.reclen); break;
+    case STMT_CLOSE: X(s->close_stmt.handle_num); break;
+    case STMT_PRINT_FILE:
+    case STMT_WRITE_FILE:
+        X(s->print_file.handle_num);
+        for (int i = 0; i < s->print_file.nitems; i++) X(s->print_file.items[i].expr);
+        X(s->print_file.using_expr);
+        break;
+    case STMT_INPUT_FILE:
+    case STMT_LINE_INPUT: X(s->input_file.handle_num); break;
+    case STMT_KILL: X(s->kill_stmt.filename); break;
+    case STMT_NAME: X(s->name_stmt.oldname); X(s->name_stmt.newname); break;
+    case STMT_GET:
+    case STMT_PUT: X(s->get_put_stmt.handle_num); X(s->get_put_stmt.position); break;
+    case STMT_SEEK: X(s->seek_stmt.seek_handle); X(s->seek_stmt.seek_position); break;
+    case STMT_FIELD_ASSIGN: X(s->field_assign.value); break;
+    case STMT_MID_ASSIGN: X(s->mid_assign.start); X(s->mid_assign.length); X(s->mid_assign.value); break;
+    case STMT_ERROR_RAISE: X(s->error_raise.errnum); break;
+    case STMT_ON_GOTO:
+    case STMT_ON_GOSUB: X(s->on_branch.index); break;
+    case STMT_SPLIT: X(s->split.str_expr); X(s->split.delim_expr); break;
+    case STMT_DEF_FN: X(s->def_fn.body); break;
+    case STMT_SHELL:
+    case STMT_CHDIR:
+    case STMT_MKDIR:
+    case STMT_RMDIR:
+    case STMT_SCREEN:
+    case STMT_DEF_SEG: X(s->shell_stmt.command); break;
+    case STMT_POKE: X(s->poke_stmt.addr); X(s->poke_stmt.value); break;
+    case STMT_LSET:
+    case STMT_RSET: X(s->lrset.value); break;
+    case STMT_WIDTH: X(s->width_stmt.columns); break;
+    case STMT_PSET:
+    case STMT_LINE_G:
+    case STMT_CIRCLE:
+    case STMT_PAINT:
+    case STMT_PALETTE:
+        X(s->gfx.x1); X(s->gfx.y1); X(s->gfx.x2); X(s->gfx.y2); X(s->gfx.color); X(s->gfx.aux);
+        break;
+    default:
+        break;
+    }
+}
+#undef X

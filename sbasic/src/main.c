@@ -1,3 +1,4 @@
+#include "strict.h"
 #include "lexer.h"
 #include "parser.h"
 #include "ast.h"
@@ -18,6 +19,15 @@
 static env_t *global_env = NULL;
 
 /* --- REPL commands --- */
+
+/* -check / -strict (strict.h): 0 neither, 1 report and stop, 2 run only if clean */
+static int strict_mode;
+static int strict_failed;
+
+static void strict_report(void *ctx, int line, const char *code, const char *detail) {
+    (void)ctx;
+    printf("line %d: %s: %s\n", line, code, detail);
+}
 
 static void cmd_run(void) {
     if (program_line_count() == 0) {
@@ -49,6 +59,23 @@ static void cmd_run(void) {
         stmt_free(program);
         free(text);
         return;
+    }
+
+    if (strict_mode) {
+        int info[STRICT_NINFO];
+        int n = strict_check(program, strict_report, NULL, info);
+        if (strict_mode == 1) {
+            printf("check: %d finding%s;", n, n == 1 ? "" : "s");
+            for (int i = 0; i < STRICT_NINFO; i++)
+                if (info[i]) printf(" %s=%d", strict_info_name(i), info[i]);
+            printf("\n");
+        }
+        if (n > 0) strict_failed = 1;
+        if (strict_mode == 1 || n > 0) {
+            stmt_free(program);
+            free(text);
+            return;
+        }
     }
 
     /* Execute */
@@ -246,14 +273,21 @@ static void run_file(const char *filename) {
 int main(int argc, char *argv[]) {
     global_env = env_create(NULL);
 
-    if (argc >= 2) {
+    int a = 1;
+    while (a < argc && argv[a][0] == '-' && argv[a][1]) {
+        if (strcmp(argv[a], "-check") == 0) strict_mode = 1;
+        else if (strcmp(argv[a], "-strict") == 0) strict_mode = 2;
+        else break;
+        a++;
+    }
+    if (a < argc) {
         /* Run file */
-        run_file(argv[1]);
+        run_file(argv[a]);
     } else {
         /* Interactive/pipe mode */
         load_and_run_stdin();
     }
 
     env_destroy(global_env);
-    return 0;
+    return strict_failed;
 }

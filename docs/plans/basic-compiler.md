@@ -151,3 +151,60 @@ the oracle.
 
 The interpreter is the oracle for the compiled program, and QBasic 1.1
 the oracle for both (`sbasic/tests/nbs.py`).
+
+## A compiler that decides up front (2026-11-03)
+
+s32-sbc compiles everything the interpreter runs, by carrying the
+interpreter's model into the compiled program: named environments, a
+run-time FOR stack, values that know their type, native code behind
+guards.  That bought 3.22x on the games and gets less with every step.
+The next compiler is meant to decide a program's shape before it runs,
+the way QuickBASIC's did, and to go to HIR directly -- a third user of
+stage08's backend, beside fortran/ and COBOL's islands -- with the
+string and formatting runtime from the C we have, so the output is the
+interpreter's to the byte.
+
+**Rulings (user, 2026-11-03).**  The interpreter and that compiler need
+not run the same programs: the interpreter stays friendly to the
+dialects that do not structure or type their code.  The weak form holds:
+the interpreter runs everything the compiler takes.  s32-sbc stays, for
+now; when the new compiler wins, the two are reconciled (a switch,
+auto-detection, a build target).  QuickBASIC is the rule of thumb: line
+numbers are labels (QB takes them, and ERL), not required, not refused.
+
+**The checker** (`sbasic/src/strict.c`; `sbasic -check prog.bas`, and
+`sbasic -strict prog.bas` runs a program only if it passes) is the
+compilable dialect's definition, shared so that auto-detection later is
+one call.  Its findings, which a compiler refuses:
+
+- `next-without-for`, `for-without-next`: a NEXT with no FOR open before
+  it in the text, a FOR that no NEXT closes;
+- `label-twice`, `label-undefined`;
+- `dim-twice` (an ERASE allows the next), `dim-after-use`;
+- `fn-twice`, `fn-before-def`.
+
+Everything else it counts as what a compiler can do from the text but
+pays for: GOSUB (a return stack), ON ERROR, RESUME, RESUME NEXT and ERL
+(resume points, the last numbered line), CLEAR, jumps into and out of
+a FOR, a NEXT closing a FOR from a block inside it (`IF ... THEN PRINT
+X$;: NEXT Z`, the "loop until" idiom), a NEXT skipping an inner FOR.
+
+**What the survey said** (`sbasic/tests/strict-survey.py`, 399 programs:
+the 97 games, NBS, fast/, sbasic/tests): 381 clean, 95%.  NBS's
+findings are its exception tests -- the programs written to be refused
+(P016's undefined label, P188's duplicate, P084's second DIM, P160's
+second DEF).  What is left in real programs is one shape: two FORs of
+one variable sharing a NEXT -- checkers.bas's `IF ... THEN FOR A=...`
+in two branches over one `NEXT A`, awari.bas's second `FOR I` reaching
+the first's `NEXT I` by GOTO -- and one DEF FN after its use
+(bullfght.bas).
+
+**What that means for the compiler.**  Classic BASIC is more static than
+it looks.  With FOR's state in slots of the loop variable's own -- the
+limit, the step, and which FOR began the loop -- every NEXT is resolved
+from the text: one FOR of its variable in reach, a direct jump to that
+FOR's body; more than one, a dispatch on the slot.  Jumping into a
+loop is then no different from staying in one.  So the two FOR/NEXT
+findings could become paid-for counts too, and the compilable dialect
+would be QuickBASIC's load-time checks and nothing more -- the user's
+call, before the compiler is written.

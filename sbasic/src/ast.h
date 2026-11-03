@@ -649,6 +649,14 @@ void case_clause_free(case_clause_t *c);
 /* Statement destructor (frees entire chain) */
 void stmt_free(stmt_t *s);
 
+/* A statement's own expressions, each passed to fn -- not those of the
+ * statement lists it holds (IF's branches, loop bodies, CASE bodies, a
+ * procedure's body), which the caller walks as it likes.  An INPUT or
+ * READ target that is an array element is passed as its lvalue. */
+void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx);
+/* e and every expression under it, e first */
+void expr_walk(expr_t *e, void (*fn)(expr_t *, void *), void *ctx);
+
 /* Stage 3 constructors */
 stmt_t *stmt_dim(const char *name, val_type_t type,
                  expr_t **dims, int ndims,
