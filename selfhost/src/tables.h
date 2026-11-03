@@ -22,6 +22,17 @@
 #define TAB_HIR_EDGE  3    /* hir_regalloc.h: interference edges */
 #define TAB_PS_FUNCS  4    /* parser.h: the functions declared, ps_nfuncs */
 #define TAB_PP_EXP    5    /* pp.h: one macro's replacement text, pp_exp */
+#define TAB_SSA_SUCC  6    /* hir_ssa.h: CFG successor lists */
+#define TAB_SSA_PRED  7    /* hir_ssa.h: CFG predecessor lists */
+#define TAB_SSA_DTC   8    /* hir_ssa.h: dominator-tree children */
+#define TAB_SSA_PLOG  9    /* hir_ssa.h: rename's push log */
+#define TAB_HIR_CARG 10    /* hir.h: call arguments, flat (h_carg, h_ncarg) */
+#define TAB_HL_ALLOCA 11   /* hir_lower.h: the function's allocas, hl_nalloca */
+#define TAB_HL_CASE  12    /* hir_lower.h: case labels of the open switches */
+#define TAB_HL_GOTO  13    /* hir_lower.h: goto labels' blocks, hl_ngoto */
+#define TAB_PS_LABELS 14   /* parser.h: a function's labels, ps_nlabels */
+#define TAB_SSA_PROMO 15   /* hir_ssa.h: the variables promoted, ssa_npromo */
+#define TAB_HCG_PHI  16    /* hir_codegen.h: one edge's phi copies */
 
 #define TAB_TABLES 512
 static char **tab_ptr[TAB_TABLES];
@@ -36,6 +47,17 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_HIR_EDGE) return "edge";
     if (kind == TAB_PS_FUNCS) return "function";
     if (kind == TAB_PP_EXP) return "macro expansion";
+    if (kind == TAB_SSA_SUCC) return "CFG successor";
+    if (kind == TAB_SSA_PRED) return "CFG predecessor";
+    if (kind == TAB_SSA_DTC) return "dominator tree";
+    if (kind == TAB_SSA_PLOG) return "SSA push log";
+    if (kind == TAB_HIR_CARG) return "call argument";
+    if (kind == TAB_HL_ALLOCA) return "alloca";
+    if (kind == TAB_HL_CASE) return "case label";
+    if (kind == TAB_HL_GOTO) return "goto label";
+    if (kind == TAB_PS_LABELS) return "label";
+    if (kind == TAB_SSA_PROMO) return "promoted variable";
+    if (kind == TAB_HCG_PHI) return "phi copy";
     return "?";
 }
 
@@ -119,4 +141,12 @@ static void tab_grow(int kind, int *capp, int first, int need) {
         if (getenv("S12CC_TABDBG")) { fdputs("  (backing off to) ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }
     }
     *capp = cap;
+}
+
+/* A kind with one table, *p, of esz-byte entries: room for need of them
+ * (registered at the first call; first entries the first time). */
+static void tab_room1(char **p, int esz, int kind, int *capp, int first, int need) {
+    if (need <= *capp) return;
+    if (*capp == 0) tab_add(p, esz, kind, 0);
+    tab_grow(kind, capp, first, need);
 }

@@ -899,6 +899,10 @@ static void hcg_rp_prune(int ret_inst) {
 static int *hcg_rp_rd;
 static int *hcg_rp_rdw;
 
+/* per-call ABI register map, by the call's flat argument slot: as many
+ * as the call-argument pool holds (tables.h, TAB_HIR_CARG) */
+static int *hcg_argmap;
+
 /* This module's tables, grown with the function's blocks and
  * instructions (hir_tab_add, hir.h): registered once, before any
  * block of the first function is made. */
@@ -906,6 +910,7 @@ static int hcg_tables_done;
 static void hcg_tables(void) {
     if (hcg_tables_done) return;
     hcg_tables_done = 1;
+    tab_add((char **)&hcg_argmap, (int)sizeof(int), TAB_HIR_CARG, hir_carg_cap);
     hir_blk_table((char **)&hcg_blk_lbl, (int)sizeof(int));
     hir_blk_table((char **)&hcg_fwd, (int)sizeof(int));
     hir_blk_table((char **)&hcg_next_emit, (int)sizeof(int));
@@ -1434,7 +1439,6 @@ static int hcg_params_emitted;
 static int hcg_pe_dst[8];
 static int hcg_pe_src[8];
 static int hcg_pe_active[8];
-static int hcg_argmap[HIR_MAX_CARG]; /* per-call ABI register map */
 
 /* --- Parallel-copy sequencer for outgoing register arguments (issue 67) ---
  *
@@ -1965,15 +1969,37 @@ static void hcg_store_off(int base, int vreg, int off, int ty) {
 
 /* --- Emit phi copies for a branch from_blk -> to_blk --- */
 
-static int hcg_phi_tmp[SSA_MAX_PROMO];
-static int hcg_phi_push_ix[SSA_MAX_PROMO];
-static int hcg_phi_is_const[SSA_MAX_PROMO];   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
-static int hcg_phi_imm[SSA_MAX_PROMO];        /* class 4: added to the source register */
-static int hcg_phi_const_val[SSA_MAX_PROMO];
-static int hcg_phi_src_reg[SSA_MAX_PROMO];
-static int hcg_phi_dst_reg[SSA_MAX_PROMO];
-static int hcg_phi_active[SSA_MAX_PROMO];
-static int hcg_phi_src_inst[SSA_MAX_PROMO];
+/* One edge's phi copies, grown (tables.h, TAB_HCG_PHI).  They were
+ * sized by the promoted variables, and the loop collecting a block's
+ * phis -- both SSA constructions' and the allocator's splits -- had no
+ * bound at all. */
+static int *hcg_phi_tmp;
+static int *hcg_phi_push_ix;
+static int *hcg_phi_is_const;   /* 0 reg, 1 const, 2 memory, 3 none, 4 remat of a reg base */
+static int *hcg_phi_imm;        /* class 4: added to the source register */
+static int *hcg_phi_const_val;
+static int *hcg_phi_src_reg;
+static int *hcg_phi_dst_reg;
+static int *hcg_phi_active;
+static int *hcg_phi_src_inst;
+static int hcg_phi_cap;
+
+/* room for phi copy n */
+static void hcg_phi_room(int n) {
+    if (n < hcg_phi_cap) return;
+    if (hcg_phi_cap == 0) {
+        tab_add((char **)&hcg_phi_tmp, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_push_ix, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_is_const, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_imm, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_const_val, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_src_reg, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_dst_reg, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_active, (int)sizeof(int), TAB_HCG_PHI, 0);
+        tab_add((char **)&hcg_phi_src_inst, (int)sizeof(int), TAB_HCG_PHI, 0);
+    }
+    tab_grow(TAB_HCG_PHI, &hcg_phi_cap, 256, n + 1);
+}
 
 /* DIVERGENCE (f77, port upstream candidate): is the (from -> to) edge
  * free of REAL phi copies?  The direct conditional-branch shapes used
@@ -2033,6 +2059,7 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
         if (h_kind[i] == HI_PHI) {
+            hcg_phi_room(n);
             hcg_phi_tmp[n] = i;
             n = n + 1;
         }

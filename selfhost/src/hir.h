@@ -132,7 +132,6 @@ static char *hl_cur_fn_dbg;
 char *getenv(const char *name);
 int atoi(const char *nptr);
 
-#define HIR_MAX_CARG   32768   /* was 4096 */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
@@ -147,8 +146,10 @@ static char **h_name;
 static int   *h_blk;
 static int   h_ninst;
 
-/* Call arguments (flat array, indexed per-call) */
-static int   h_carg[HIR_MAX_CARG];
+/* Call arguments (flat array, indexed per-call), grown with their tags
+ * (tables.h, TAB_HIR_CARG; hcg_argmap rides along) */
+static int   *h_carg;
+static int   hir_carg_cap;
 /* ABI tag per flat call-arg slot: 0 = 32-bit word (ints, i64 halves,
  * varargs doubles), 1 = f64 LO half, 2 = f64 HI half, 16+k = byval
  * struct pointer whose stack slot reserves k words.  Non-varargs
@@ -159,7 +160,7 @@ static int   h_carg[HIR_MAX_CARG];
  * clang callee expects them); everything else fills the lowest free
  * register. */
 #define HI_TAG_BYVAL 16
-static int   h_carg_tag[HIR_MAX_CARG];
+static int   *h_carg_tag;
 
 /* Assign physical argument locations for n flat slots with the given
  * tags (see h_carg_tag).  out[i] = register number 3..10, or -1 for a
@@ -286,6 +287,16 @@ static void hir_tab_grow(int inst, int *capp, int first, int need) {
     tab_grow(inst, capp, first, need);
 }
 
+/* room for n more call arguments */
+static void hir_carg_room(int n) {
+    if (h_ncarg + n <= hir_carg_cap) return;
+    if (hir_carg_cap == 0) {
+        tab_add((char **)&h_carg, (int)sizeof(int), TAB_HIR_CARG, 0);
+        tab_add((char **)&h_carg_tag, (int)sizeof(int), TAB_HIR_CARG, 0);
+    }
+    tab_grow(TAB_HIR_CARG, &hir_carg_cap, 4096, h_ncarg + n);
+}
+
 static void hir_blk_grow(int need) {
     if (!hir_blk_based) {
         hir_blk_based = 1;
@@ -344,7 +355,7 @@ static void hir_reset(void) {
     {
         int hi_i;
         hi_i = 0;
-        while (hi_i < HIR_MAX_CARG) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
+        while (hi_i < hir_carg_cap) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
     }
     h_nparg = 0;
     hjt_n = 0;

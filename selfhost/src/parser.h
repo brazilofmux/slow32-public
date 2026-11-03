@@ -646,12 +646,12 @@ static char *ps_girel_name[PS_MAX_INIT_RELOCS];
 static int ps_ngirelocs;
 
 /* goto/label table (per-function, reset at each function) */
-#define P_MAX_LABELS 4096   /* was 512 */
-static char *ps_lblname[P_MAX_LABELS];
-static int   ps_lbldef[P_MAX_LABELS];    /* 1 once `name:` has been read (goto alone does not) */
-static int   ps_lblvtop[P_MAX_LABELS];  /* the VLA object innermost in scope at it (ps_vd_top) */
-static int   ps_lblid[P_MAX_LABELS];
+static char **ps_lblname;     /* grown (tables.h, TAB_PS_LABELS) */
+static int   *ps_lbldef;    /* 1 once `name:` has been read (goto alone does not) */
+static int   *ps_lblvtop;  /* the VLA object innermost in scope at it (ps_vd_top) */
+static int   *ps_lblid;
 static int   ps_nlabels;
+static int   ps_labels_cap;
 
 /* Enum constant table */
 static char *ps_cname[PS_MAX_CONSTS];
@@ -1305,9 +1305,14 @@ static int find_or_add_label(char *name) {
         if (strcmp(name, ps_lblname[i]) == 0) return ps_lblid[i];
         i = i + 1;
     }
-    if (ps_nlabels >= P_MAX_LABELS) {
-        p_error("too many labels");
-        return 0;
+    if (ps_nlabels >= ps_labels_cap) {
+        if (ps_labels_cap == 0) {
+            tab_add((char **)&ps_lblname, (int)sizeof(char *), TAB_PS_LABELS, 0);
+            tab_add((char **)&ps_lbldef, (int)sizeof(int), TAB_PS_LABELS, 0);
+            tab_add((char **)&ps_lblvtop, (int)sizeof(int), TAB_PS_LABELS, 0);
+            tab_add((char **)&ps_lblid, (int)sizeof(int), TAB_PS_LABELS, 0);
+        }
+        tab_grow(TAB_PS_LABELS, &ps_labels_cap, 512, ps_nlabels + 1);
     }
     ps_lblname[ps_nlabels] = strdup(name);
     ps_lbldef[ps_nlabels] = 0;

@@ -12,16 +12,31 @@
  * the old ceiling immediately.)  hl_inl_candidate also refuses to
  * inline once capacity runs low, so exhausting this is a missed
  * optimisation rather than a failed compile. */
-#define HL_MAX_ALLOCA 8192   /* was 2048 */
 /* inlining and unrolling stop growing a function past this many blocks */
 #define HL_BLOCK_BUDGET 16384
 /* ... and past this many instructions (the tables grow; these are the
  * old ceilings, kept as budgets so a function that big is not made bigger) */
 #define HL_INST_BUDGET 262144
-static int hl_aoff[HL_MAX_ALLOCA];
-static int hl_aslot[HL_MAX_ALLOCA];  /* Node->slot_id; 0 = temp keyed by offset */
-static int hl_ainst[HL_MAX_ALLOCA];
+/* the function's allocas, grown (tables.h, TAB_HL_ALLOCA).  A fixed
+ * 8192 of them stopped salvoend's lowering, and a compiler temporary
+ * past them went unregistered -- the wrong-code case
+ * hl_emit_temp_alloca's comment describes. */
+static int *hl_aoff;
+static int *hl_aslot;  /* Node->slot_id; 0 = temp keyed by offset */
+static int *hl_ainst;
 static int hl_nalloca;
+static int hl_alloca_cap;
+
+/* room for n more allocas */
+static void hl_alloca_room(int n) {
+    if (hl_nalloca + n <= hl_alloca_cap) return;
+    if (hl_alloca_cap == 0) {
+        tab_add((char **)&hl_aoff, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_aslot, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_ainst, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+    }
+    tab_grow(TAB_HL_ALLOCA, &hl_alloca_cap, 1024, hl_nalloca + n);
+}
 
 /* Temp stack for merge values (&&, ||, ternary) */
 static int hl_temp_stack;
@@ -42,20 +57,37 @@ static int hl_inl_sw_base;
 
 /* --- Switch state --- */
 #define HL_MAX_SW_DEPTH 32   /* was 8 */
-#define HL_MAX_CASE 1024   /* was 256 */
-static int hl_sw_val[HL_MAX_CASE];
-static int hl_sw_valhi[HL_MAX_CASE];   /* a case value's HI word, for long long switches */
-static int hl_sw_blk[HL_MAX_CASE];
+/* the case labels of the switches open, outermost first, grown
+ * (TAB_HL_CASE; SQLite came within a quarter of the fixed 1024) */
+static int *hl_sw_val;
+static int *hl_sw_valhi;   /* a case value's HI word, for long long switches */
+static int *hl_sw_blk;
+static int hl_case_cap;
 static int hl_sw_base[HL_MAX_SW_DEPTH];
 static int hl_sw_count[HL_MAX_SW_DEPTH];
 static int hl_sw_def[HL_MAX_SW_DEPTH];
 static int hl_sw_cur[HL_MAX_SW_DEPTH];
 static int hl_sw_depth;
-static int hl_sw_ord[HL_MAX_CASE];
-static char hl_sw_ft[HL_MAX_CASE];     /* 1 if this case slot is a fall-through target */
-static int  hl_jt_tr_blk[HL_MAX_CASE]; /* trampoline block per unique fall-through dest */
-static int  hl_jt_tr_dst[HL_MAX_CASE];
+static int *hl_sw_ord;
+static char *hl_sw_ft;     /* 1 if this case slot is a fall-through target */
+static int  *hl_jt_tr_blk; /* trampoline block per unique fall-through dest */
+static int  *hl_jt_tr_dst;
 static int  hl_jt_ntr;
+
+/* room for case slot i */
+static void hl_case_room(int i) {
+    if (i < hl_case_cap) return;
+    if (hl_case_cap == 0) {
+        tab_add((char **)&hl_sw_val, (int)sizeof(int), TAB_HL_CASE, 0);
+        tab_add((char **)&hl_sw_valhi, (int)sizeof(int), TAB_HL_CASE, 0);
+        tab_add((char **)&hl_sw_blk, (int)sizeof(int), TAB_HL_CASE, 0);
+        tab_add((char **)&hl_sw_ord, (int)sizeof(int), TAB_HL_CASE, 0);
+        tab_add(&hl_sw_ft, 1, TAB_HL_CASE, 0);
+        tab_add((char **)&hl_jt_tr_blk, (int)sizeof(int), TAB_HL_CASE, 0);
+        tab_add((char **)&hl_jt_tr_dst, (int)sizeof(int), TAB_HL_CASE, 0);
+    }
+    tab_grow(TAB_HL_CASE, &hl_case_cap, 256, i + 1);
+}
 
 /* --- Jump-table lowering (issue #32) --- */
 /* Max span (case-value range hi-lo+1) we will materialise as a jump table.
@@ -65,11 +97,11 @@ static int  hl_jt_ntr;
 static int hl_jt_tgt[HL_JT_MAX_SPAN];   /* per-index target block (build buffer) */
 
 /* --- Goto label map --- */
-#define HL_MAX_GOTO 4096   /* was 512 */
-static int hl_goto_id[HL_MAX_GOTO];
-static int hl_goto_blk[HL_MAX_GOTO];
-static int hl_goto_def[HL_MAX_GOTO];  /* the label was lowered: a goto to one that never was is an error */
+static int *hl_goto_id;      /* grown (TAB_HL_GOTO) */
+static int *hl_goto_blk;
+static int *hl_goto_def;  /* the label was lowered: a goto to one that never was is an error */
 static int hl_ngoto;
+static int hl_goto_cap;
 
 /* --- 64-bit twin-value tracking --- */
 /* After hl_expr() for a TY_LLONG expression, hl_hi holds the hi word index.
@@ -212,10 +244,7 @@ static int hl_get_alloca_id(int offset, int ty, int slot_id) {
         if (hl_aslot[i] == slot_id && hl_aoff[i] == offset) return hl_ainst[i];
         i = i + 1;
     }
-    if (hl_nalloca >= HL_MAX_ALLOCA) {
-        fdputs("s12cc: too many allocas\n", 2);
-        exit(1);
-    }
+    hl_alloca_room(1);
     hl_aoff[hl_nalloca] = offset;
     hl_aslot[hl_nalloca] = slot_id;
     hl_ainst[hl_nalloca] = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
@@ -243,12 +272,11 @@ static int hl_alloc_temp(void) {
 static int hl_emit_temp_alloca(int ty, int offset) {
     int inst;
     inst = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
-    if (hl_nalloca < HL_MAX_ALLOCA) {
-        hl_aoff[hl_nalloca] = offset;
-        hl_aslot[hl_nalloca] = 0;
-        hl_ainst[hl_nalloca] = inst;
-        hl_nalloca = hl_nalloca + 1;
-    }
+    hl_alloca_room(1);
+    hl_aoff[hl_nalloca] = offset;
+    hl_aslot[hl_nalloca] = 0;
+    hl_ainst[hl_nalloca] = inst;
+    hl_nalloca = hl_nalloca + 1;
     return inst;
 }
 
@@ -270,9 +298,13 @@ static int hl_label_block(int label_id) {
         if (hl_goto_id[i] == label_id) return hl_goto_blk[i];
         i = i + 1;
     }
-    if (hl_ngoto >= HL_MAX_GOTO) {
-        fdputs("s12cc: too many goto labels\n", 2);
-        exit(1);
+    if (hl_ngoto >= hl_goto_cap) {
+        if (hl_goto_cap == 0) {
+            tab_add((char **)&hl_goto_id, (int)sizeof(int), TAB_HL_GOTO, 0);
+            tab_add((char **)&hl_goto_blk, (int)sizeof(int), TAB_HL_GOTO, 0);
+            tab_add((char **)&hl_goto_def, (int)sizeof(int), TAB_HL_GOTO, 0);
+        }
+        tab_grow(TAB_HL_GOTO, &hl_goto_cap, 512, hl_ngoto + 1);
     }
     hl_goto_id[hl_ngoto] = label_id;
     hl_goto_def[hl_ngoto] = 0;
@@ -701,15 +733,21 @@ static int hl_sw_emit_jumptable(int lv, int def_blk, int sw_b, int sw_n,
 #define HL_CVT_UNS 1
 #define HL_CVT_64  2
 
+/* append v to the flat call-argument pool -- every writer goes through
+ * here: most had no bound at all on the fixed 32768 */
+static void hl_carg_push(int v) {
+    hir_carg_room(1);
+    h_carg[h_ncarg] = v;
+    h_ncarg = h_ncarg + 1;
+}
+
 static int hl_cvt_call(char *fn, int a, int b, int nargs, int pair_result) {
     int cb;
     int r;
     cb = h_ncarg;
-    h_carg[h_ncarg] = a;
-    h_ncarg = h_ncarg + 1;
+    hl_carg_push(a);
     if (nargs == 2) {
-        h_carg[h_ncarg] = b;
-        h_ncarg = h_ncarg + 1;
+        hl_carg_push(b);
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, nargs, fn);
     h_cbase[r] = cb;
@@ -784,10 +822,10 @@ static int hl_fp_arith(int op, int a, int a_hi, int b, int b_hi, int ty) {
         int cb;
         int r;
         cb = h_ncarg;
-        h_carg[h_ncarg] = a;    h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = a_hi; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = b;    h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = b_hi; h_ncarg = h_ncarg + 1;
+        hl_carg_push(a);
+        hl_carg_push(a_hi);
+        hl_carg_push(b);
+        hl_carg_push(b_hi);
         if (k == HI_FADD) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
         else if (k == HI_FSUB) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
         else if (k == HI_FMUL) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_mul");
@@ -842,10 +880,8 @@ static int hl_udivmod32(int lv, int rv, int is_rem) {
         }
     }
     cb = h_ncarg;
-    h_carg[h_ncarg] = lv;
-    h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = rv;
-    h_ncarg = h_ncarg + 1;
+    hl_carg_push(lv);
+    hl_carg_push(rv);
     if (is_rem) {
         r = hi_emit(HI_CALL, TY_INT | TY_UNSIGNED, -1, -1, 2, "__umodsi3");
     } else {
@@ -1182,9 +1218,9 @@ static void hl_copy_block(int dst_addr, int src_addr, int sz) {
     int r;
     if (sz > HL_COPY_INLINE) {
         cb = h_ncarg;
-        h_carg[h_ncarg] = dst_addr; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = src_addr; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = hi_emit(HI_ICONST, TY_INT, -1, -1, sz, NULL); h_ncarg = h_ncarg + 1;
+        hl_carg_push(dst_addr);
+        hl_carg_push(src_addr);
+        hl_carg_push(hi_emit(HI_ICONST, TY_INT, -1, -1, sz, NULL));
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "memcpy");
         h_cbase[r] = cb;
         return;
@@ -1285,11 +1321,11 @@ static int hl_truthy(int ty, int lv) {
     if (ty_is_double(ty)) {
         d_hi = hl_hi;
         cb = h_ncarg;
-        h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+        hl_carg_push(lv);
+        hl_carg_push(d_hi);
         z = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
-        h_carg[h_ncarg] = z; h_ncarg = h_ncarg + 1;
-        h_carg[h_ncarg] = z; h_ncarg = h_ncarg + 1;
+        hl_carg_push(z);
+        hl_carg_push(z);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_eq");
         h_cbase[r] = cb;
         return hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
@@ -1439,10 +1475,10 @@ static int hl_ll_op(int op, int uns, int lv, int lv_hi, int rv, int rv_hi) {
     if (op == TK_STAR) return hl_ll_mul(lv, lv_hi, rv, rv_hi);
     /* div / rem via libcalls */
     cb = h_ncarg;
-    h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+    hl_carg_push(lv);
+    hl_carg_push(lv_hi);
+    hl_carg_push(rv);
+    hl_carg_push(rv_hi);
     if (op == TK_SLASH)
         r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, uns ? "__udivdi3" : "__divdi3");
     else if (op == TK_PERCENT)
@@ -1702,7 +1738,6 @@ static Node *hl_inl_candidate(Node *call) {
      * residual jals that kept the out-of-line copy.  Limits have
      * grown since (HL_INST_BUDGET 262144); proportional headroom is
      * enough, and a missed splice here is a missed DCE. */
-    if (hl_nalloca + 64 >= HL_MAX_ALLOCA) return NULL;
     /* Reserve generously: SSA phi insertion and the LICM split /
      * strength-reduction passes all APPEND to h_ninst after
      * lowering finishes, so the budget has to cover them too. */
@@ -2458,10 +2493,10 @@ static int hl_postincdec_f64(int addr, int old_lo, int inc) {
     one = hl_promote_to_f64(one, TY_INT);
     one_hi = hl_hi;
     cb = h_ncarg;
-    h_carg[h_ncarg] = old_lo;  h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = old_hi;  h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = one;     h_ncarg = h_ncarg + 1;
-    h_carg[h_ncarg] = one_hi;  h_ncarg = h_ncarg + 1;
+    hl_carg_push(old_lo);
+    hl_carg_push(old_hi);
+    hl_carg_push(one);
+    hl_carg_push(one_hi);
     if (inc)
         r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
     else
@@ -2620,8 +2655,7 @@ static int hl_expr_main(Node *n) {
             base = h_ncarg;
             i = 0;
             while (i < nargs) {
-                h_carg[h_ncarg] = av[i];
-                h_ncarg = h_ncarg + 1;
+                hl_carg_push(av[i]);
                 i = i + 1;
             }
             val = hi_emit(HI_A64_DBT_TRAMPOLINE, TY_INT, -1, -1, nargs, NULL);
@@ -2669,8 +2703,7 @@ static int hl_expr_main(Node *n) {
             base = h_ncarg;
             i = 0;
             while (i < nargs) {
-                h_carg[h_ncarg] = av[i];
-                h_ncarg = h_ncarg + 1;
+                hl_carg_push(av[i]);
                 i = i + 1;
             }
             val = hi_emit(HI_X64_DBT_TRAMPOLINE, TY_INT, -1, -1, nargs, NULL);
@@ -2841,8 +2874,8 @@ static int hl_expr_main(Node *n) {
                 int cb;
                 d_hi = hl_hi;
                 cb = h_ncarg;
-                h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+                hl_carg_push(lv);
+                hl_carg_push(d_hi);
                 lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_neg");
                 h_cbase[lv] = cb;
                 hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
@@ -3172,10 +3205,10 @@ static int hl_expr_main(Node *n) {
             if (n->op == TK_STAR) return hl_ll_mul(lv, lv_hi, rv, rv_hi);
             if (n->op == TK_SLASH) {
                 carg_base2 = h_ncarg;
-                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+                hl_carg_push(lv);
+                hl_carg_push(lv_hi);
+                hl_carg_push(rv);
+                hl_carg_push(rv_hi);
                 if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__udivdi3");
                 } else {
@@ -3187,10 +3220,10 @@ static int hl_expr_main(Node *n) {
             }
             if (n->op == TK_PERCENT) {
                 carg_base2 = h_ncarg;
-                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+                hl_carg_push(lv);
+                hl_carg_push(lv_hi);
+                hl_carg_push(rv);
+                hl_carg_push(rv_hi);
                 if (hl_cmp_ty(n) & TY_UNSIGNED) {
                     r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__umoddi3");
                 } else {
@@ -3402,10 +3435,10 @@ static int hl_expr_main(Node *n) {
                 if (n->op == TK_GT || n->op == TK_GE) {
                     /* Swap operands: GT→LT, GE→LE */
                     cb = h_ncarg;
-                    h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
-                    h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
-                    h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-                    h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+                    hl_carg_push(rv);
+                    hl_carg_push(rv_hi);
+                    hl_carg_push(lv);
+                    hl_carg_push(lv_hi);
                     if (n->op == TK_GT) {
                         r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_lt");
                     } else {
@@ -3415,10 +3448,10 @@ static int hl_expr_main(Node *n) {
                     return r;
                 }
                 cb = h_ncarg;
-                h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
-                h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+                hl_carg_push(lv);
+                hl_carg_push(lv_hi);
+                hl_carg_push(rv);
+                hl_carg_push(rv_hi);
                 if (n->op == TK_LT) {
                     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_lt");
                 } else if (n->op == TK_LE) {
@@ -3434,10 +3467,10 @@ static int hl_expr_main(Node *n) {
             }
             /* Arithmetic: result is double pair */
             cb = h_ncarg;
-            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+            hl_carg_push(lv);
+            hl_carg_push(lv_hi);
+            hl_carg_push(rv);
+            hl_carg_push(rv_hi);
             if (n->op == TK_PLUS)  r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
             else if (n->op == TK_MINUS) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
             else if (n->op == TK_STAR)  r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_mul");
@@ -3602,10 +3635,10 @@ static int hl_expr_main(Node *n) {
                 rv_hi = hl_hi;
             }
             cb = h_ncarg;
-            h_carg[h_ncarg] = old_val; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = old_hi;  h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+            hl_carg_push(old_val);
+            hl_carg_push(old_hi);
+            hl_carg_push(rv);
+            hl_carg_push(rv_hi);
             if (n->op == TK_PLUS)
                 r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
             else if (n->op == TK_MINUS)
@@ -3977,8 +4010,8 @@ static int hl_expr_main(Node *n) {
             int cb;
             d_hi = hl_hi;
             cb = h_ncarg;
-            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
-            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+            hl_carg_push(lv);
+            hl_carg_push(d_hi);
             lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoF");
             h_cbase[lv] = cb;
             return lv;
@@ -4188,7 +4221,7 @@ static int hl_expr_main(Node *n) {
         phys_count = 0;
         i = 0;
         while (i < nargs) {
-            if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+            hir_carg_room(1);
             h_carg[h_ncarg] = av[i];
             if (is64[i] >= HI_TAG_BYVAL) {
                 h_carg_tag[h_ncarg] = is64[i];
@@ -4198,7 +4231,7 @@ static int hl_expr_main(Node *n) {
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
             if (is64[i] == 1 || is64[i] == 2) {
-                if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+                hir_carg_room(1);
                 h_carg[h_ncarg] = av_hi[i];
                 h_carg_tag[h_ncarg] = (is64[i] == 2 && !callee_var) ? 2 : 0;
                 h_ncarg = h_ncarg + 1;
@@ -4219,6 +4252,7 @@ static int hl_expr_main(Node *n) {
              * first arg.  Tags must move with their values or a double's
              * pair tags land on the wrong flat slots and caller/callee
              * disagree on its register pair. */
+            hir_carg_room(1);
             i = h_ncarg;
             while (i > carg_base) {
                 h_carg[i] = h_carg[i - 1];
@@ -4298,7 +4332,7 @@ static int hl_expr_main(Node *n) {
         phys_count2 = 0;
         i = 0;
         while (i < nargs) {
-            if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+            hir_carg_room(1);
             h_carg[h_ncarg] = av[i];
             if (is64_2[i] >= HI_TAG_BYVAL) {
                 h_carg_tag[h_ncarg] = is64_2[i];
@@ -4308,7 +4342,7 @@ static int hl_expr_main(Node *n) {
             h_ncarg = h_ncarg + 1;
             phys_count2 = phys_count2 + 1;
             if (is64_2[i] == 1 || is64_2[i] == 2) {
-                if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+                hir_carg_room(1);
                 h_carg[h_ncarg] = av_hi2[i];
                 h_carg_tag[h_ncarg] = (is64_2[i] == 2 && !n->is_varargs) ? 2 : 0;
                 h_ncarg = h_ncarg + 1;
@@ -4348,14 +4382,8 @@ static void hl_sw_prescan(Node *cs, int sw_d, int sw_b) {
     while (cs) {
         if (cs->kind == ND_CASE) {
             sw_n = hl_sw_count[sw_d];
-            if (sw_b + sw_n >= HL_MAX_CASE) {
-                /* Recursing into nested statements found more labels than
-                 * the flat walk ever could, and this write had no bound:
-                 * past HL_MAX_CASE it ran off hl_sw_val/hl_sw_blk into
-                 * whatever follows them (GitHub issue 51). */
-                fdputs("s12cc: too many case labels in one switch\n", 2);
-                exit(1);
-            }
+            /* (GitHub issue 51: this write once had no bound at all) */
+            hl_case_room(sw_b + sw_n);
             hl_sw_val[sw_b + sw_n] = cs->val;
             hl_sw_valhi[sw_b + sw_n] = cs->val_hi;
             /* `case A: case B:` -- labels with no statement between them --

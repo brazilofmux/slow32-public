@@ -1442,10 +1442,71 @@ static int ho_block_dominates(int a, int b) {
     return 0;
 }
 
+/* Each alloca's references, ascending, threaded through ho_ps_next:
+ * the instructions with it as src1 or src2, a call argument or a phi
+ * argument.  Built once per run of the pass, so an alloca is judged by
+ * its own references, not a scan of the function -- a scan per alloca
+ * was most of compiling 9,000 inlined calls (allocas x instructions). */
+static int *ho_ps_head;
+static int *ho_ps_ent;
+static int *ho_ps_next;
+static int ho_ps_n;
+
+static void ho_ps_add(int a, int j) {
+    ho_ps_ent[ho_ps_n] = j;
+    ho_ps_next[ho_ps_n] = ho_ps_head[a];
+    ho_ps_head[a] = ho_ps_n;
+    ho_ps_n = ho_ps_n + 1;
+}
+
+static int ho_ps_is_alloca(int v) {
+    return v >= 0 && v < h_ninst && h_kind[v] == HI_ALLOCA;
+}
+
+/* the references of j to allocas, each alloca once */
+static void ho_ps_refs(int j, int count_only) {
+    int k;
+    int kk;
+    int v;
+    int last;
+    k = h_kind[j];
+    last = -1;
+    if (ho_ps_is_alloca(h_src1[j])) {
+        last = h_src1[j];
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(last, j);
+    }
+    if (ho_ps_is_alloca(h_src2[j]) && h_src2[j] != last) {
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(h_src2[j], j);
+    }
+    if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+        k == HI_X64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k)) {
+        kk = 0;
+        while (kk < h_val[j]) {
+            v = h_carg[h_cbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+    if (k == HI_PHI) {
+        kk = 0;
+        while (kk < h_pcnt[j]) {
+            v = h_pval[h_pbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+}
+
 static int ho_promote_single_store_alloca(void) {
     int changed;
     int i;
     int fn_has_call;
+    int e;
+    int nref;
 
     /* Conservative gate (precomputed once per function): when a function
      * contains any HI_CALL/HI_CALLP/DBT trampoline, we skip promoting
@@ -1468,6 +1529,32 @@ static int ho_promote_single_store_alloca(void) {
         i = i + 1;
     }
 
+    /* The reference lists: counted, then made from the last instruction
+     * back, so each list runs in ascending order.  Twice the room, for
+     * the loads a promotion turns into copies of another alloca. */
+    ho_ps_n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 1);
+        i = i + 1;
+    }
+    nref = ho_ps_n;
+    ho_ps_head = (int *)malloc((h_ninst + 1) * (int)sizeof(int));
+    ho_ps_ent = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    ho_ps_next = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    if (!ho_ps_head || !ho_ps_ent || !ho_ps_next) {
+        fdputs("s12cc: out of memory (alloca references)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < h_ninst) { ho_ps_head[i] = -1; i = i + 1; }
+    ho_ps_n = 0;
+    i = h_ninst - 1;
+    while (i >= 0) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 0);
+        i = i - 1;
+    }
+
     changed = 0;
     i = 0;
     while (i < h_ninst) {
@@ -1481,14 +1568,16 @@ static int ho_promote_single_store_alloca(void) {
             n_stores = 0;
             has_bad = 0;
 
-            /* Scan all instructions, classify any reference to alloca i. */
-            j = 0;
-            while (j < h_ninst) {
+            /* Classify each reference to alloca i, as it stands now. */
+            e = ho_ps_head[i];
+            while (e >= 0) {
                 int k;
                 int s1; int s2;
 
+                j = ho_ps_ent[e];
+                e = ho_ps_next[e];
                 k = h_kind[j];
-                if (k == HI_NOP) { j = j + 1; continue; }
+                if (k == HI_NOP) continue;
 
                 s1 = h_src1[j];
                 s2 = h_src2[j];
@@ -1549,7 +1638,6 @@ static int ho_promote_single_store_alloca(void) {
                         }
                     }
                 }
-                j = j + 1;
             }
 
             if (!has_bad && n_stores == 1) {
@@ -1562,8 +1650,10 @@ static int ho_promote_single_store_alloca(void) {
                 can_promote = 1;
 
                 /* Verify the STORE dominates every LOAD. */
-                j = 0;
-                while (j < h_ninst) {
+                e = ho_ps_head[i];
+                while (e >= 0) {
+                    j = ho_ps_ent[e];
+                    e = ho_ps_next[e];
                     if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
                         int load_blk;
                         load_blk = h_blk[j];
@@ -1575,7 +1665,6 @@ static int ho_promote_single_store_alloca(void) {
                             break;
                         }
                     }
-                    j = j + 1;
                 }
 
                 if (can_promote) {
@@ -1584,15 +1673,19 @@ static int ho_promote_single_store_alloca(void) {
                     if (fn_has_call && h_kind[store_val] == HI_PARAM) {
                         i = i + 1; continue;
                     }
-                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA. */
-                    j = 0;
-                    while (j < h_ninst) {
+                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA.
+                     * A copy of another alloca is a reference to it. */
+                    e = ho_ps_head[i];
+                    while (e >= 0) {
+                        j = ho_ps_ent[e];
+                        e = ho_ps_next[e];
                         if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
                             h_kind[j] = HI_COPY;
                             h_src1[j] = store_val;
                             h_src2[j] = -1;
+                            if (ho_ps_is_alloca(store_val) && ho_ps_n < 2 * nref + 1)
+                                ho_ps_add(store_val, j);
                         }
-                        j = j + 1;
                     }
                     h_kind[store_inst] = HI_NOP;
                     h_src1[store_inst] = -1;
@@ -1607,6 +1700,9 @@ static int ho_promote_single_store_alloca(void) {
         i = i + 1;
     }
 
+    free(ho_ps_head);
+    free(ho_ps_ent);
+    free(ho_ps_next);
     return changed;
 }
 
