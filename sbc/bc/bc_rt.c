@@ -135,3 +135,48 @@ void bcrt_print_lit(const char *s, int len) {
 void bcrt_print_comma(void) { print_comma(console_width); }
 
 void bcrt_print_nl(void) { print_text("\n"); }
+
+/* GOSUB and RETURN: the return points are the compiled program's own,
+ * numbered; the stack is the interpreter's depth (MAX_GOSUB_DEPTH) and
+ * errors */
+#define BCRT_GOSUB_DEPTH 256
+static int bcrt_gosubs[BCRT_GOSUB_DEPTH];
+static int bcrt_ngosub;
+
+void bcrt_gosub(int k) {
+    if (bcrt_ngosub >= BCRT_GOSUB_DEPTH) bcrt_fail(ERR_STACK_OVERFLOW);
+    bcrt_gosubs[bcrt_ngosub++] = k;
+}
+
+int bcrt_return(void) {
+    if (bcrt_ngosub <= 0) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
+    return bcrt_gosubs[--bcrt_ngosub];
+}
+
+/* a builtin function, as the interpreter's EXPR_CALL reaches it
+ * (builtin_call): numeric arguments, n of them, a number back */
+double bcrt_fn(const char *name, int n, double a, int at, double b, int bt, double c, int ct) {
+    value_t args[3], out;
+    error_t e;
+    args[0] = num(a, at);
+    args[1] = num(b, bt);
+    args[2] = num(c, ct);
+    e = builtin_call(name, args, n, &out);
+    if (e != ERR_NONE) bcrt_fail(e);
+    if (out.type == VAL_STRING) {       /* (s32-bc does not call these yet) */
+        val_clear(&out);
+        bcrt_fail(ERR_TYPE_MISMATCH);
+    }
+    return as_double(&out);
+}
+
+/* TAB(n) or SPC(n) as a PRINT item: the builtin's value, printed as one
+ * (print_value's tab_spc) */
+void bcrt_print_tab(const char *name, double a, int at) {
+    value_t arg = num(a, at), out;
+    error_t e = builtin_call(name, &arg, 1, &out);
+    if (e != ERR_NONE) bcrt_fail(e);
+    e = print_value(&out, 1, console_width);
+    val_clear(&out);
+    if (e != ERR_NONE) bcrt_fail(e);
+}

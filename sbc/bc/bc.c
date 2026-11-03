@@ -140,6 +140,36 @@ typedef struct {
     int a, ahi;                 /* its slots: one, or a double's two words */
 } var_t;
 
+/* names the program uses as arrays (DIM, A(...) = , a call to no
+ * builtin) or assigns: a builtin of that name is not called */
+static char (*bc_shadow)[64];
+static int bc_nshadow, bc_capshadow;
+
+static void shadow_add(const char *name) {
+    for (int i = 0; i < bc_nshadow; i++)
+        if (strcmp(bc_shadow[i], name) == 0) return;
+    if (bc_nshadow == bc_capshadow) {
+        bc_capshadow = bc_capshadow ? bc_capshadow * 2 : 32;
+        bc_shadow = realloc(bc_shadow, (size_t)bc_capshadow * sizeof(*bc_shadow));
+        if (!bc_shadow) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    strncpy(bc_shadow[bc_nshadow], name, 63);
+    bc_shadow[bc_nshadow][63] = '\0';
+    bc_nshadow++;
+}
+
+static int shadowed(const char *name) {
+    for (int i = 0; i < bc_nshadow; i++)
+        if (strcmp(bc_shadow[i], name) == 0) return 1;
+    return 0;
+}
+
+/* a builtin the interpreter would call for this name */
+static int is_builtin_call(const char *name) {
+    return builtin_exists(name) && !shadowed(name) &&
+           strcmp(name, "LBOUND") != 0 && strcmp(name, "UBOUND") != 0 && strcmp(name, "JOIN$") != 0;
+}
+
 static var_t *bc_vars;
 static int bc_nvars, bc_capvars;
 
@@ -225,6 +255,40 @@ static void var_zero(var_t *v) {
 
 static bv_t expr(expr_t *e);
 
+/* is e a string, by its form (a literal, a $ name, a $ function, or an
+ * operation on one) */
+static int is_str(expr_t *e) {
+    switch (e->type) {
+    case EXPR_LITERAL: return e->literal.type == VAL_STRING;
+    case EXPR_VARIABLE: return e->var.var_type == VAL_STRING;
+    case EXPR_CALL: { size_t n = strlen(e->call.name); return n > 0 && e->call.name[n - 1] == '$'; }
+    case EXPR_BINARY: return is_str(e->binary.left) || is_str(e->binary.right);
+    default: return 0;
+    }
+}
+
+static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
+    bv_t a[3], r;
+    int cb;
+    if (n > 3 || name[strlen(name) - 1] == '$' ||
+        strcmp(name, "TAB") == 0 || strcmp(name, "SPC") == 0) {    /* (in a PRINT list: bc_print) */
+        bc_not_yet(e->line, "string functions");
+        n = 0;
+    }
+    for (int i = 0; i < n; i++)
+        if (is_str(args[i])) { bc_not_yet(e->line, "string functions"); n = 0; break; }
+    for (int i = 0; i < 3; i++) {
+        if (i < n) a[i] = expr(args[i]);
+        else { a[i].lo = dconst(0, &a[i].hi); a[i].t = iconst(VAL_INTEGER); }
+    }
+    cb = h_ncarg;
+    carg(hi_emit(HI_SADDR, TY_INT, -1, -1, bc_intern_str((char *)name, (int)strlen(name)), NULL), 0);
+    carg(iconst(n), 0);
+    for (int i = 0; i < 3; i++) { carg(a[i].lo, 1); carg(a[i].hi, 2); carg(a[i].t, 0); }
+    r = bv_dcall("bcrt_fn", cb, 11);
+    return r;
+}
+
 static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
     int cb = h_ncarg;
     carg(iconst(op), 0);
@@ -249,10 +313,8 @@ static bv_t expr(expr_t *e) {
         return r;
     }
     case EXPR_VARIABLE:
-        if (builtin_exists(e->var.name)) {      /* RND, TIMER, INKEY$... with no ( ) */
-            bc_not_yet(e->line, "functions");
-            break;
-        }
+        if (is_builtin_call(e->var.name))       /* RND, TIMER... with no ( ) */
+            return builtin_fn(e, e->var.name, 0, NULL);
         return var_load(var_get(e->var.name, e->var.var_type, e->line));
     case EXPR_BINARY:
         return bin_call("bcrt_bin", e->binary.op, expr(e->binary.left), expr(e->binary.right));
@@ -266,7 +328,9 @@ static bv_t expr(expr_t *e) {
         return bv_dcall("bcrt_un", cb, 4);
     }
     case EXPR_CALL:
-        bc_not_yet(e->line, e->call.nargs ? "arrays and functions" : "functions");
+        if (is_builtin_call(e->call.name))
+            return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
+        bc_not_yet(e->line, strncmp(e->call.name, "FN", 2) == 0 ? "DEF FN" : "arrays");
         break;
     default:
         bc_not_yet(e->line, "this expression");
@@ -316,6 +380,49 @@ typedef struct {
 } for_t;
 
 static void bc_stmts(stmt_t *s);
+
+/* GOSUB's return points, and the block every RETURN goes to: it pops
+ * one (bcrt_return) and jumps through a table of them, made last, when
+ * all are known */
+static int *bc_rets;
+static int bc_nrets, bc_caprets;
+static int bc_ret_blk = -1;
+
+static void gosub_to(int blk) {
+    int cb, back;
+    if (bc_nrets == bc_caprets) {
+        bc_caprets = bc_caprets ? bc_caprets * 2 : 32;
+        bc_rets = realloc(bc_rets, (size_t)bc_caprets * sizeof(int));
+        if (!bc_rets) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    back = new_blk();
+    bc_rets[bc_nrets] = back;
+    cb = h_ncarg;
+    carg(iconst(bc_nrets), 0);
+    call_end(cb, 1, "bcrt_gosub", NULL);
+    bc_nrets++;
+    goto_blk(blk);
+    begin_blk(back);
+}
+
+static void ret_dispatch(void) {
+    int k, ok, bt, bd;
+    if (bc_ret_blk < 0) return;
+    begin_blk(bc_ret_blk);
+    k = call_end(h_ncarg, 0, "bcrt_return", NULL);
+    bt = new_blk();
+    bd = new_blk();
+    ok = hi_emit(HI_SLTU, TY_INT, k, iconst(bc_nrets), 0, NULL);
+    hi_emit(HI_BRC, TY_VOID, ok, bt, bd, NULL);
+    bc_live = 0;
+    begin_blk(bt);
+    if (bc_nrets > 0) hi_emit_jmptab(k, bd, bc_rets, bc_nrets);
+    else hi_emit(HI_BR, TY_VOID, -1, -1, bd, NULL);
+    bc_live = 0;
+    begin_blk(bd);              /* (only a number not pushed reaches here) */
+    hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
+    bc_live = 0;
+}
 
 /* what a statement s32-bc does not do yet is called, for the message */
 static const char *stmt_word(int t) {
@@ -373,7 +480,15 @@ static void bc_print(stmt_t *s) {
         print_item_t *it = &s->print.items[i];
         if (it->expr) {
             expr_t *e = it->expr;
-            if (e->type == EXPR_LITERAL && e->literal.type == VAL_STRING) {
+            if (e->type == EXPR_CALL && e->call.nargs == 1 && is_builtin_call(e->call.name) &&
+                (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0) &&
+                !is_str(e->call.args[0])) {
+                bv_t a = expr(e->call.args[0]);
+                int cb = h_ncarg;
+                carg(hi_emit(HI_SADDR, TY_INT, -1, -1, bc_intern_str(e->call.name, 3), NULL), 0);
+                carg(a.lo, 1); carg(a.hi, 2); carg(a.t, 0);
+                call_end(cb, 4, "bcrt_print_tab", NULL);
+            } else if (e->type == EXPR_LITERAL && e->literal.type == VAL_STRING) {
                 int idx = bc_intern_str(e->literal.sval->data, e->literal.sval->len);
                 int cb, p = hi_emit(HI_SADDR, TY_INT, -1, -1, idx, NULL);
                 cb = h_ncarg;
@@ -495,6 +610,13 @@ static void bc_stmt(stmt_t *s) {
     case STMT_GOTO:
         goto_blk(label_blk(s->goto_stmt.label));
         break;
+    case STMT_GOSUB:
+        gosub_to(label_blk(s->goto_stmt.label));
+        break;
+    case STMT_RETURN:
+        if (bc_ret_blk < 0) bc_ret_blk = new_blk();
+        goto_blk(bc_ret_blk);
+        break;
     case STMT_END:
         call_void("bcrt_end");
         goto_blk(new_blk());    /* (never taken: bcrt_end does not return) */
@@ -574,8 +696,28 @@ static void bc_stmts(stmt_t *s) {
  * block, before anything runs -- wherever its first mention falls. */
 static void prescan_expr(expr_t *e, void *ctx) {
     (void)ctx;
-    if (e->type == EXPR_VARIABLE && !builtin_exists(e->var.name))
+    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name))
         var_get(e->var.name, e->var.var_type, e->line);
+    if (e->type == EXPR_CALL && !builtin_exists(e->call.name)) shadow_add(e->call.name);
+}
+
+/* names used as arrays or assigned, before anything is lowered */
+static void preshadow(stmt_t *s) {
+    for (; s; s = s->next) {
+        switch (s->type) {
+        case STMT_ASSIGN: if (builtin_exists(s->assign.name)) shadow_add(s->assign.name); break;
+        case STMT_DIM: shadow_add(s->dim_stmt.name); break;
+        case STMT_ARRAY_ASSIGN: shadow_add(s->array_assign.name); break;
+        case STMT_FOR: preshadow(s->for_stmt.body); break;
+        case STMT_IF: preshadow(s->if_stmt.then_body); preshadow(s->if_stmt.else_body); break;
+        case STMT_WHILE: preshadow(s->while_stmt.body); break;
+        case STMT_DO_LOOP: preshadow(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) preshadow(c->body);
+            break;
+        default: break;
+        }
+    }
 }
 static void prescan_top(expr_t *e, void *ctx) { expr_walk(e, prescan_expr, ctx); }
 
@@ -616,8 +758,12 @@ static void hl_func(Node *fn) {
     bc_nvars = 0;
     bc_nlabels = 0;
     bc_nfors = 0;
+    bc_nrets = 0;
+    bc_ret_blk = -1;
     entry = new_blk();
     begin_blk(entry);
+    bc_nshadow = 0;
+    preshadow(bc_program);
     prescan(bc_program);
     for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
     call_void("bcrt_start");
@@ -625,6 +771,7 @@ static void hl_func(Node *fn) {
     if (bc_live) call_void("bcrt_end");
     if (bc_live) hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
+    ret_dispatch();
     fn->locals_size = bc_frame;
 }
 
