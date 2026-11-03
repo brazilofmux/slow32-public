@@ -117,9 +117,7 @@ static int pp_exp_cap;
 
 /* room in pp_exp for a byte at len and the terminator after it */
 static void pp_exp_room(int len) {
-    if (len + 2 <= pp_exp_cap) return;
-    if (pp_exp_cap == 0) tab_add(&pp_exp, 1, TAB_PP_EXP, 0);
-    tab_grow(TAB_PP_EXP, &pp_exp_cap, 8192, len + 2);
+    tab_room1(&pp_exp, 1, TAB_PP_EXP, &pp_exp_cap, 8192, len + 2);
 }
 
 /* end the text at len */
