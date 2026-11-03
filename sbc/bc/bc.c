@@ -319,6 +319,25 @@ static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
     return bv_call(name, cb, 7);
 }
 
+/* name(i[, j[, k]]): subscripts evaluated left to right, then the
+ * element (bcrt_aget: the array, or an implicit one, as an expression
+ * reads it) */
+static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
+    if (n > 3) bc_not_yet(line, "arrays of more than three dimensions");
+    for (int i = 0; i < 3; i++) a[i] = i < n && n <= 3 ? expr(ix[i]) : zero();
+}
+
+static bv_t array_read(expr_t *e) {
+    bv_t a[3];
+    int cb;
+    sub_args(e->line, e->call.nargs, e->call.args, a);
+    cb = h_ncarg;
+    carg(saddr(e->call.name, (int)strlen(e->call.name)), 0);
+    carg(iconst(e->call.nargs), 0);
+    for (int i = 0; i < 3; i++) carg_bv(a[i]);
+    return bv_call("bcrt_aget", cb, 11);
+}
+
 static bv_t expr(expr_t *e) {
     bv_t r;
     switch (e->type) {
@@ -356,8 +375,8 @@ static bv_t expr(expr_t *e) {
     case EXPR_CALL:
         if (is_builtin_call(e->call.name))
             return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
-        bc_not_yet(e->line, strncmp(e->call.name, "FN", 2) == 0 ? "DEF FN" : "arrays");
-        break;
+        if (strncmp(e->call.name, "FN", 2) == 0) { bc_not_yet(e->line, "DEF FN"); break; }
+        return array_read(e);
     default:
         bc_not_yet(e->line, "this expression");
         break;
@@ -607,6 +626,80 @@ static void bc_next(stmt_t *s) {
     }
 }
 
+/* DIM's with constant bounds are made before the program runs, in the
+ * order of the text, with the OPTION BASE of their place in it -- as
+ * QuickBASIC compiles them and the interpreter's scan makes them
+ * (scan_static_dim) */
+static stmt_t **bc_statics;
+static int bc_nstatics, bc_capstatics;
+
+static int is_static_dim(stmt_t *s) {
+    for (int i = 0; i < bc_nstatics; i++)
+        if (bc_statics[i] == s) return 1;
+    return 0;
+}
+
+static void bc_dim(stmt_t *s, int is_static, int base) {
+    bv_t a[3];
+    int cb;
+    if (s->dim_stmt.ndims > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); return; }
+    for (int i = 0; i < 3; i++) a[i] = i < s->dim_stmt.ndims ? expr(s->dim_stmt.dims[i]) : zero();
+    cb = h_ncarg;
+    carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
+    carg(iconst(s->dim_stmt.elem_type), 0);
+    carg(iconst(s->dim_stmt.ndims), 0);
+    carg(iconst(is_static), 0);
+    carg(iconst(base), 0);
+    carg(iconst(s->dim_stmt.is_redim), 0);
+    carg(iconst(s->dim_stmt.preserve), 0);
+    for (int i = 0; i < 3; i++) carg_bv(a[i]);
+    call_end(cb, 16, "bcrt_dim", NULL);
+}
+
+static int bc_base;             /* the OPTION BASE of the text, as it is read */
+
+static int static_names_has(const char *name) {
+    for (int i = 0; i < bc_nstatics; i++)
+        if (strcmp(bc_statics[i]->dim_stmt.name, name) == 0) return 1;
+    return 0;
+}
+
+static void hoist_dims(stmt_t *s) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_OPTION_BASE) bc_base = s->option_base.base;
+        if (s->type == STMT_DIM && !s->dim_stmt.is_redim && s->dim_stmt.ndims <= 3 &&
+            !static_names_has(s->dim_stmt.name)) {
+            int ok = 1;
+            for (int i = 0; i < s->dim_stmt.ndims && ok; i++) {
+                expr_t *d = s->dim_stmt.dims[i];
+                int upper;
+                if (!d || d->type != EXPR_LITERAL || d->literal.type == VAL_STRING ||
+                    val_to_integer(&d->literal, &upper) != ERR_NONE || upper - bc_base + 1 <= 0)
+                    ok = 0;
+            }
+            if (ok) {
+                if (bc_nstatics == bc_capstatics) {
+                    bc_capstatics = bc_capstatics ? bc_capstatics * 2 : 16;
+                    bc_statics = realloc(bc_statics, (size_t)bc_capstatics * sizeof(stmt_t *));
+                    if (!bc_statics) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+                }
+                bc_statics[bc_nstatics++] = s;
+                bc_dim(s, 1, bc_base);
+            }
+        }
+        switch (s->type) {
+        case STMT_FOR: hoist_dims(s->for_stmt.body); break;
+        case STMT_IF: hoist_dims(s->if_stmt.then_body); hoist_dims(s->if_stmt.else_body); break;
+        case STMT_WHILE: hoist_dims(s->while_stmt.body); break;
+        case STMT_DO_LOOP: hoist_dims(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) hoist_dims(c->body);
+            break;
+        default: break;
+        }
+    }
+}
+
 static void bc_stmt(stmt_t *s) {
     if (!bc_live && s->type != STMT_LABEL) dead_blk();
     switch (s->type) {
@@ -668,6 +761,35 @@ static void bc_stmt(stmt_t *s) {
     }
     case STMT_FOR:
         bc_for(s);
+        break;
+    case STMT_DIM:
+        bc_dim(s, is_static_dim(s), -1);
+        break;
+    case STMT_ARRAY_ASSIGN: {
+        bv_t a[3], x;
+        int cb;
+        sub_args(s->line, s->array_assign.nindices, s->array_assign.indices, a);
+        x = expr(s->array_assign.value);
+        cb = h_ncarg;
+        carg(saddr(s->array_assign.name, (int)strlen(s->array_assign.name)), 0);
+        carg(iconst(s->array_assign.nindices), 0);
+        for (int i = 0; i < 3; i++) carg_bv(a[i]);
+        carg_bv(x);
+        call_end(cb, 14, "bcrt_aset", NULL);
+        break;
+    }
+    case STMT_OPTION_BASE: {
+        int cb = h_ncarg;
+        carg(iconst(s->option_base.base), 0);
+        call_end(cb, 1, "bcrt_option_base", NULL);
+        break;
+    }
+    case STMT_ERASE:
+        for (int i = 0; i < s->erase_stmt.nnames; i++) {
+            int cb = h_ncarg;
+            carg(saddr(s->erase_stmt.names[i], (int)strlen(s->erase_stmt.names[i])), 0);
+            call_end(cb, 1, "bcrt_erase", NULL);
+        }
         break;
     case STMT_NEXT:
         bc_next(s);
@@ -785,6 +907,16 @@ static void hl_func(Node *fn) {
     prescan(bc_program);
     for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
     call_void("bcrt_start");
+    /* the static arrays, then the OPTION BASE the text ends with in
+     * force until an OPTION BASE runs (the interpreter's scan leaves it) */
+    bc_nstatics = 0;
+    bc_base = 0;
+    hoist_dims(bc_program);
+    {
+        int cb = h_ncarg;
+        carg(iconst(bc_base), 0);
+        call_end(cb, 1, "bcrt_option_base", NULL);
+    }
     bc_stmts(bc_program);
     if (bc_live) call_void("bcrt_end");
     if (bc_live) hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);

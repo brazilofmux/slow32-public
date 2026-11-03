@@ -2159,8 +2159,25 @@ static error_t exec_call_stmt(env_t *env, stmt_t *s) {
 
 /* --- Stage 3 statement handlers --- */
 
-static error_t exec_dim(env_t *env, stmt_t *s) {
+/* DIM or REDIM name(uppers...) with the given OPTION BASE: the
+ * interpreter's DIM, and compiled code's (s32-bc) */
+error_t eval_dim(const char *name, val_type_t type, int ndims, const int *uppers,
+                 int base, int is_redim, int preserve) {
     int sizes[MAX_ARRAY_DIMS];
+    for (int i = 0; i < ndims; i++) {
+        sizes[i] = uppers[i] - base + 1;
+        if (sizes[i] <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    if (is_redim)
+        return array_redim(name, type, sizes, ndims, base, preserve);
+    return array_dim(name, type, sizes, ndims, base);
+}
+
+int eval_option_base(void) { return option_base; }
+void eval_set_option_base(int base) { option_base = base; }
+
+static error_t exec_dim(env_t *env, stmt_t *s) {
+    int uppers[MAX_ARRAY_DIMS];
     /* a static array was made before the run; DIM is then a declaration
      * (unless ERASE took it away) */
     if (s->dim_stmt.is_static && array_find(s->dim_stmt.name))
@@ -2168,21 +2185,28 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
     for (int i = 0; i < s->dim_stmt.ndims; i++) {
         value_t dv;
         EVAL_CHECK(eval_expr(env, s->dim_stmt.dims[i], &dv));
-        int upper;
-        error_t err = val_to_integer(&dv, &upper);
+        error_t err = val_to_integer(&dv, &uppers[i]);
         val_clear(&dv);
         if (err != ERR_NONE) return err;
-        sizes[i] = upper - option_base + 1;
-        if (sizes[i] <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
+        /* (a bound below the base fails before the next is evaluated) */
+        if (uppers[i] - option_base + 1 <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
     }
+    return eval_dim(s->dim_stmt.name, s->dim_stmt.elem_type, s->dim_stmt.ndims, uppers,
+                    option_base, s->dim_stmt.is_redim, s->dim_stmt.preserve);
+}
 
-    if (s->dim_stmt.is_redim)
-        return array_redim(s->dim_stmt.name, s->dim_stmt.elem_type,
-                           sizes, s->dim_stmt.ndims, option_base,
-                           s->dim_stmt.preserve);
-    else
-        return array_dim(s->dim_stmt.name, s->dim_stmt.elem_type,
-                         sizes, s->dim_stmt.ndims, option_base);
+/* name(indices) read as an expression reads an array: the array, or an
+ * implicit one made (subscripts to 10), then the element -- for
+ * compiled code (s32-bc) */
+error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out) {
+    sb_array_t *arr = array_find(name);
+    value_t *elem;
+    if (!arr) arr = array_implicit(name, nidx);
+    if (!arr) return ERR_UNDEFINED_VAR;
+    if (nidx != arr->ndims) return ERR_WRONG_DIMS;
+    EVAL_CHECK(array_get(name, indices, nidx, &elem));
+    *out = val_copy(elem);
+    return ERR_NONE;
 }
 
 /* A(i, ...) = v, the subscripts and the value evaluated (an array not
@@ -3725,14 +3749,9 @@ error_t eval_program(env_t *env, stmt_t *program) {
     return eval_program_with(env, program, NULL);
 }
 
-error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
-    int i;
-    char base;
-    stack_base = &base;
-    if (!program) return ERR_NONE;
-
-    /* Initialize program state */
-    program_global_env = env;
+/* A program's state as it starts: the interpreter's, and compiled
+ * code's (s32-bc's runtime calls it) */
+void eval_reset(void) {
     option_base = 0;
     builtin_rnd_reset();
     array_clear_all();
@@ -3753,6 +3772,17 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     return_label[0] = '\0';
     trace_enabled = 0;
     option_explicit = 0;
+}
+
+error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
+    int i;
+    char base;
+    stack_base = &base;
+    if (!program) return ERR_NONE;
+
+    /* Initialize program state */
+    program_global_env = env;
+    eval_reset();
 
     error_t result = ERR_NONE;
 

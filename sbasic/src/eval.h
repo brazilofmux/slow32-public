@@ -92,6 +92,14 @@ error_t eval_compare(cmpop_t op, value_t *left, value_t *right, value_t *out);
 error_t eval_assign_check(env_t *env, const char *name);
 error_t eval_assign_store(env_t *env, const char *name, const value_t *v);
 error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v);
+/* for compiled code (s32-bc): DIM/REDIM, an array read as an expression
+ * reads it (implicit arrays made), OPTION BASE */
+error_t eval_dim(const char *name, val_type_t type, int ndims, const int *uppers,
+                 int base, int is_redim, int preserve);
+error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out);
+int eval_option_base(void);
+void eval_reset(void);   /* a program's state as it starts */
+void eval_set_option_base(int base);
 sb_array_t *eval_call_array(const char *name);
 /* a FUNCTION's call (out its value) or a SUB's (out NULL) with its
  * arguments evaluated, which it takes -- refs[i], when not NULL, the

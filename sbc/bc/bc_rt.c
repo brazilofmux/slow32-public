@@ -72,11 +72,7 @@ static pair_t give(const value_t *v) {
 
 /* as eval_program_with starts a program */
 void bcrt_start(void) {
-    builtin_rnd_reset();
-    fileio_init();
-    sb_term_init();
-    print_col = 0;
-    print_row = 1;
+    eval_reset();
 }
 
 void bcrt_end(void) {
@@ -229,3 +225,83 @@ int bcrt_return(void) {
     if (bcrt_ngosub <= 0) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
     return bcrt_gosubs[--bcrt_ngosub];
 }
+
+/* --- arrays: the interpreter's own (array.c), by name ----------------- */
+
+#include "array.h"
+
+/* subscripts, as an expression's are made integers (val_to_integer) */
+static void subs(int n, value_t *v, int *ix) {
+    for (int i = 0; i < n; i++) {
+        error_t e = val_to_integer(&v[i], &ix[i]);
+        if (e != ERR_NONE) {
+            for (int j = 0; j < 3; j++) val_clear(&v[j]);
+            bcrt_fail(e);
+        }
+    }
+}
+
+/* DIM / REDIM name(u0[, u1[, u2]]) AS type; base -1 is the OPTION BASE in
+ * force (eval_option_base), a static DIM made before the run passes the
+ * one of its place in the text.  A static DIM met when it runs is a
+ * declaration, unless ERASE took the array away (exec_dim). */
+void bcrt_dim(const char *name, int type, int n, int is_static, int base, int redim, int preserve,
+              int alo, int ahi, int at, int blo, int bhi, int bt, int clo, int chi, int ct) {
+    value_t v[3];
+    int u[3];
+    error_t e;
+    v[0] = take(alo, ahi, at);
+    v[1] = take(blo, bhi, bt);
+    v[2] = take(clo, chi, ct);
+    if (is_static && base < 0 && array_find(name)) {
+        for (int i = 0; i < 3; i++) val_clear(&v[i]);
+        return;
+    }
+    if (base < 0) base = eval_option_base();
+    for (int i = 0; i < n; i++) {
+        e = val_to_integer(&v[i], &u[i]);
+        if (e == ERR_NONE && u[i] - base + 1 <= 0) e = ERR_ILLEGAL_FUNCTION_CALL;
+        if (e != ERR_NONE) {
+            for (int j = 0; j < 3; j++) val_clear(&v[j]);
+            bcrt_fail(e);
+        }
+    }
+    for (int i = 0; i < 3; i++) val_clear(&v[i]);
+    e = eval_dim(name, (val_type_t)type, n, u, base, redim, preserve);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+pair_t bcrt_aget(const char *name, int n, int alo, int ahi, int at, int blo, int bhi, int bt,
+                 int clo, int chi, int ct) {
+    value_t v[3], out;
+    int ix[3];
+    error_t e;
+    v[0] = take(alo, ahi, at);
+    v[1] = take(blo, bhi, bt);
+    v[2] = take(clo, chi, ct);
+    subs(n, v, ix);
+    for (int i = 0; i < 3; i++) val_clear(&v[i]);
+    e = eval_array_get(name, n, ix, &out);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return give(&out);
+}
+
+void bcrt_aset(const char *name, int n, int alo, int ahi, int at, int blo, int bhi, int bt,
+               int clo, int chi, int ct, int xlo, int xhi, int xt) {
+    value_t v[3], x;
+    int ix[3];
+    error_t e;
+    v[0] = take(alo, ahi, at);
+    v[1] = take(blo, bhi, bt);
+    v[2] = take(clo, chi, ct);
+    x = take(xlo, xhi, xt);
+    subs(n, v, ix);
+    for (int i = 0; i < 3; i++) val_clear(&v[i]);
+    e = eval_array_store(name, n, ix, &x);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_option_base(int base) { eval_set_option_base(base); }
+
+void bcrt_erase(const char *name) { array_erase(name); }
