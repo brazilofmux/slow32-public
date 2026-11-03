@@ -1061,7 +1061,7 @@ static int lw_alloca(void)
 {
     lw_frame += 4;
     int a = hi_emit(HI_ALLOCA, TY_INT, -1, -1, -lw_frame, NULL);
-    if (hl_nalloca >= HL_MAX_ALLOCA) die_at(cur()->line, "internal: an island has too many items");
+    hl_alloca_room(1);
     hl_ainst[hl_nalloca] = a; hl_aoff[hl_nalloca] = -lw_frame; hl_aslot[hl_nalloca] = 0; hl_nalloca++;
     return a;
 }
@@ -1181,6 +1181,7 @@ static int lw_locale_word(void)
 static LV lw_call(const char *fn, int *args, int n)
 {
     int cb = h_ncarg;
+    hir_carg_room(n);   /* the pool grows (tables.h) */
     for (int i = 0; i < n; i++) h_carg[h_ncarg++] = args[i];
     LV r; r.lo = hi_emit(HI_CALL, TY_INT, -1, -1, n, (char *)fn);
     h_cbase[r.lo] = cb;
@@ -1298,6 +1299,7 @@ static LV lw_call64(const char *fn, LV a, LV b)
 {
     a = lw_widen(a); b = lw_widen(b);
     int cb = h_ncarg;
+    hir_carg_room(4);
     h_carg[h_ncarg++] = a.lo; h_carg[h_ncarg++] = a.hi; h_carg[h_ncarg++] = b.lo; h_carg[h_ncarg++] = b.hi;
     LV r; r.lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, (char *)fn);
     h_cbase[r.lo] = cb;

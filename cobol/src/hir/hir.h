@@ -1,5 +1,5 @@
-/* COPIED from selfhost/src/hir.h at 694d26f2 (re-sync 2026-10-27; the
- * previous vintage was 49712a93, 2026-10-03).
+/* COPIED from selfhost/src/hir.h at 4dc9b60a (re-sync 2026-11-03; the
+ * previous vintages were 694d26f2, 2026-10-27, and 49712a93, 2026-10-03).
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -16,7 +16,8 @@
  *     took 2048): loads known by location across blocks, intersection
  *     over predecessors; calls kill all but what ho_call_effect's named
  *     callees write.  An upstream candidate (the names would be the C
- *     library's).
+ *     library's).  Its per-block tables are block tables (registered in
+ *     ho_tables) since the 2026-11-03 re-sync: stage08's blocks grow.
  * Upstream since, so a re-sync carries nothing for them: HI_MULH and
  * HI_MULHU (bcc42652, selfhost ISSUES-79), SEQ/SNE against 0 alone,
  * ra_new_split_copy keeping bg_foff/bg_ssym/bg_soff (selfhost ISSUES-81). */
@@ -130,6 +131,13 @@
  * headers (cobol/src/hir), 2026-10-03. */
 #define HI_MULH     71
 #define HI_MULHU    72
+/* The stack pointer, read and set (ASM_S32_GETSP / ASM_S32_SETSP): a
+ * variable length array is allocated by moving sp down, and freed by
+ * setting it back.  GETSP is not pure -- never CSE'd or hoisted -- and
+ * SETSP, having no value, is kept by DCE as every value-less kind is.
+ * SLOW-32 only: the cross targets refuse VLAs. */
+#define HI_GETSP    73
+#define HI_SETSP    74
 /* a binary operation over two value operands (the ADD..SGEU range and
  * the two above); the passes that classified by the range ask this */
 static int hi_is_binop(int k) { return (k >= HI_ADD && k <= HI_SGEU) || k == HI_MULH || k == HI_MULHU; }
@@ -147,26 +155,24 @@ static char *hl_cur_fn_dbg;
 char *getenv(const char *name);
 int atoi(const char *nptr);
 
-#define HIR_MAX_INST   262144   /* was 16384 */
-#define HIR_MAX_BLOCK  16384   /* was 2048 */
-#define HIR_MAX_CARG   32768   /* was 4096 */
-#define HIR_MAX_PARG 2097152   /* was 32768, then 262144; SQLite's debug build (asserts add blocks) overflowed it */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
 
 /* --- Instruction parallel arrays --- */
-static int   h_kind[HIR_MAX_INST];
-static int   h_ty[HIR_MAX_INST];
-static int   h_src1[HIR_MAX_INST];
-static int   h_src2[HIR_MAX_INST];
-static int   h_val[HIR_MAX_INST];
-static char *h_name[HIR_MAX_INST];
-static int   h_blk[HIR_MAX_INST];
+static int   *h_kind;
+static int   *h_ty;
+static int   *h_src1;
+static int   *h_src2;
+static int   *h_val;
+static char **h_name;
+static int   *h_blk;
 static int   h_ninst;
 
-/* Call arguments (flat array, indexed per-call) */
-static int   h_carg[HIR_MAX_CARG];
+/* Call arguments (flat array, indexed per-call), grown with their tags
+ * (tables.h, TAB_HIR_CARG; hcg_argmap rides along) */
+static int   *h_carg;
+static int   hir_carg_cap;
 /* ABI tag per flat call-arg slot: 0 = 32-bit word (ints, i64 halves,
  * varargs doubles), 1 = f64 LO half, 2 = f64 HI half, 16+k = byval
  * struct pointer whose stack slot reserves k words.  Non-varargs
@@ -177,7 +183,7 @@ static int   h_carg[HIR_MAX_CARG];
  * clang callee expects them); everything else fills the lowest free
  * register. */
 #define HI_TAG_BYVAL 16
-static int   h_carg_tag[HIR_MAX_CARG];
+static int   *h_carg_tag;
 
 /* Assign physical argument locations for n flat slots with the given
  * tags (see h_carg_tag).  out[i] = register number 3..10, or -1 for a
@@ -236,18 +242,39 @@ static int hi_abi_assign(int *tags, int n, int *out) {
 /* Per-function incoming-parameter ABI map, filled by hl_func from the
  * parameter list and consumed by the register allocator (preferred
  abi colors) and the codegen entry sequence. */
-static int hl_param_tags[64];
-static int hl_param_map[64];     /* reg 3..10 or -1 = stack */
-static int hl_param_stkord[64];  /* for -1 slots: BYTE offset from the
+/* By flat incoming slot (a long long or double takes two, a struct
+ * return's hidden pointer one), grown (tables.h, TAB_HL_PARAM): a fixed
+ * 64 of them, written without a bound, were overrun by a function of
+ * 127 parameters (C11 5.2.4.1). */
+static int *hl_param_tags;
+static int *hl_param_map;        /* reg 3..10 or -1 = stack */
+static int *hl_param_stkord;     /* for -1 slots: BYTE offset from the
                                     incoming sp (byval slots reserve the
                                     struct's rounded size, so ordinals
                                     would lie) */
 static int hl_param_nflat;
-static int hl_pp_inst[66];       /* HI_PARAM inst id per flat phys slot;
+static int *hl_pp_inst;          /* HI_PARAM inst id per flat phys slot;
                                     all PARAMs are emitted before any
                                     param-copy code so incoming registers
                                     stay pinned across earlier copies */
-static int   h_cbase[HIR_MAX_INST];
+static int hl_param_cap;
+
+/* room for n flat slots, all zero up to n */
+static void hl_param_room(int n) {
+    int i;
+    if (n > hl_param_cap) {
+        if (hl_param_cap == 0) {
+            tab_add((char **)&hl_param_tags, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_map, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_param_stkord, (int)sizeof(int), TAB_HL_PARAM, 0);
+            tab_add((char **)&hl_pp_inst, (int)sizeof(int), TAB_HL_PARAM, 0);
+        }
+        tab_grow(TAB_HL_PARAM, &hl_param_cap, 66, n);
+    }
+    i = 0;
+    while (i < n) { hl_param_tags[i] = 0; i = i + 1; }
+}
+static int   *h_cbase;
 static int   h_ncarg;
 
 /* Jump-table targets (flat pool; per-HI_JMPTAB-instruction slice).
@@ -256,21 +283,83 @@ static int   h_ncarg;
  * these are block numbers, not value instructions. */
 #define HIR_MAX_JT  32768   /* was 8192 */
 static int   hjt_target[HIR_MAX_JT];
-static int   hjt_base[HIR_MAX_INST];
-static int   hjt_span[HIR_MAX_INST];
+static int   *hjt_base;
+static int   *hjt_span;
 static int   hjt_n;
 
-/* Phi arguments (Phase B) */
-static int   h_pblk[HIR_MAX_PARG];
-static int   h_pval[HIR_MAX_PARG];
-static int   h_pbase[HIR_MAX_INST];
-static int   h_pcnt[HIR_MAX_INST];
+/* Phi arguments (Phase B): hir_parg_cap entries, grown by
+ * hir_parg_room before a phi's arguments are laid down */
+static int  *h_pblk;
+static int  *h_pval;
+static int   hir_parg_cap;
+static int   *h_pbase;
+static int   *h_pcnt;
 static int   h_nparg;
 
 /* Basic blocks */
-static int   bb_start[HIR_MAX_BLOCK];
-static int   bb_end[HIR_MAX_BLOCK];
+static int  *bb_start;
+static int  *bb_end;
 static int   bb_nblk;
+
+/* The per-function tables grow with the function.  A block-indexed one
+ * holds hir_blk_cap entries, more than bb_nblk; a module registers its
+ * tables once (hir_blk_table) before the first function's blocks are
+ * made, and a new block grows every one together, so none is ever
+ * shorter than another (the fixed 16384 stopped stage08 on the C s32-sbc
+ * writes for a BASIC program: "too many HIR blocks").  A table nobody
+ * registered stays NULL: the first function compiled stops on it.
+ * Instruction-indexed tables (hir_inst_table) grow the same way, with
+ * hir_inst_cap entries, more than h_ninst: by a new instruction
+ * (hi_emit, or hir_inst_room where a pass writes the tables at h_ninst
+ * itself).  cc.s32x is linked with --heap-size max for them.  Two more kinds
+ * have their own counts: the phi arguments (2, h_nparg) and the
+ * allocator's interference edges (3, gc_nedge). */
+static int hir_blk_cap;
+static int hir_inst_cap;
+static int hir_blk_based;      /* bb_start, bb_end registered */
+
+/* the registry is tables.h's; these are its HIR kinds (0 block-indexed,
+ * 1 instruction-indexed, 2 phi arguments, 3 interference edges) */
+static void hir_tab_add(char **p, int esz, int inst) {
+    tab_add(p, esz, inst, inst == TAB_HIR_BLK ? hir_blk_cap : inst == TAB_HIR_INST ? hir_inst_cap : 0);
+}
+
+static void hir_blk_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_BLK); }
+static void hir_inst_table(char **p, int esz) { hir_tab_add(p, esz, TAB_HIR_INST); }
+
+static void hir_tab_grow(int inst, int *capp, int first, int need) {
+    tab_grow(inst, capp, first, need);
+}
+
+/* room for n more call arguments */
+static void hir_carg_room(int n) {
+    if (h_ncarg + n <= hir_carg_cap) return;
+    if (hir_carg_cap == 0) {
+        tab_add((char **)&h_carg, (int)sizeof(int), TAB_HIR_CARG, 0);
+        tab_add((char **)&h_carg_tag, (int)sizeof(int), TAB_HIR_CARG, 0);
+    }
+    tab_grow(TAB_HIR_CARG, &hir_carg_cap, 4096, h_ncarg + n);
+}
+
+static void hir_blk_grow(int need) {
+    if (!hir_blk_based) {
+        hir_blk_based = 1;
+        hir_blk_table((char **)&bb_start, (int)sizeof(int));
+        hir_blk_table((char **)&bb_end, (int)sizeof(int));
+    }
+    hir_tab_grow(0, &hir_blk_cap, 256, need);
+}
+
+/* room for n more phi arguments (the fixed 2M of them were 16MB of
+ * cc.s32x's address space whatever the function) */
+static void hir_parg_room(int n) {
+    if (h_nparg + n <= hir_parg_cap) return;
+    if (hir_parg_cap == 0) {
+        hir_tab_add((char **)&h_pblk, (int)sizeof(int), 2);
+        hir_tab_add((char **)&h_pval, (int)sizeof(int), 2);
+    }
+    hir_tab_grow(2, &hir_parg_cap, 4096, h_nparg + n);
+}
 
 /* Current block being built (used by lowering) */
 static int   hl_cur_blk;
@@ -289,7 +378,7 @@ static int   hl_cur_blk;
  * allocator, and liveness is computed before the allocator's own
  * per-function reset (a stale flag from the previous function made
  * test_respill's blam read through another function's ADDI). */
-static char ra_remat_op[HIR_MAX_INST];
+static char *ra_remat_op;
 
 /* Memory model step 5b.2/5b.3: a COPY the allocator appended -- a
  * block reload of a spilled value (ra_insert_reloads), or the memory
@@ -297,20 +386,20 @@ static char ra_remat_op[HIR_MAX_INST];
  * OWN storage is where its readers find the value.  The address-fold
  * walks stop at one: a load folding through it must read its register
  * or slot, not the original's.  Read by the emitter, so declared here. */
-static char ra_is_reload[HIR_MAX_INST];
+static char *ra_is_reload;
 
 static void hir_reset(void) {
     {
         int hi_i;
         hi_i = 0;
-        while (hi_i < h_ninst && hi_i < HIR_MAX_INST) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
+        while (hi_i < h_ninst) { ra_remat_op[hi_i] = 0; ra_is_reload[hi_i] = 0; hi_i = hi_i + 1; }
     }
     h_ninst = 0;
     h_ncarg = 0;
     {
         int hi_i;
         hi_i = 0;
-        while (hi_i < HIR_MAX_CARG) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
+        while (hi_i < hir_carg_cap) { h_carg_tag[hi_i] = 0; hi_i = hi_i + 1; }
     }
     h_nparg = 0;
     hjt_n = 0;
@@ -321,14 +410,8 @@ static void hir_reset(void) {
 static int hir_new_block(void) {
     int b;
     b = bb_nblk;
-    if (b >= HIR_MAX_BLOCK) {
-        fdputs("s12cc: too many HIR blocks (fn=", 2);
-        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
-        fdputs(" inl_depth=", 2);
-        fdputuint(2, (unsigned)hl_inl_depth_dbg);
-        fdputs(")\n", 2);
-        exit(1);
-    }
+    /* room for this block and one more (a reader may look one past) */
+    if (b + 2 > hir_blk_cap) hir_blk_grow(b + 2);
     bb_start[b] = -1;  /* set lazily when block becomes current */
     bb_end[b] = -1;
     bb_nblk = bb_nblk + 1;
@@ -349,26 +432,34 @@ static void hl_switch_block(int blk) {
  * RETRACT it (at unit end) for any symbol the unit itself stores.
  * Nothing in a C-compiler frontend sets it, so the mechanism is inert
  * when ported. */
-static char h_ld_ro[HIR_MAX_INST];
+static char *h_ld_ro;
 /* volatile (docs/plans/memory-model.md, step 2a).  h_voladdr marks an
  * address value the lowering computed for a volatile-qualified lvalue;
  * an ADDI or COPY off one is one too.  A LOAD or STORE through such an
  * address is a volatile access, h_vol: never forwarded, never removed,
  * never hoisted, and nothing is known about memory across it. */
-static char h_voladdr[HIR_MAX_INST];
-static char h_vol[HIR_MAX_INST];
+static char *h_voladdr;
+static char *h_vol;
+
+static void hir_inst_base(void);
+
+/* every instruction table to need entries at least */
+static void hir_inst_grow(int need) {
+    hir_inst_base();
+    hir_tab_grow(1, &hir_inst_cap, 4096, need);
+}
+
+/* room for n more instructions at h_ninst (and one past, which a reader
+ * may look at), for the passes that write the tables at h_ninst
+ * themselves rather than through hi_emit */
+static void hir_inst_room(int n) {
+    if (h_ninst + n + 1 > hir_inst_cap) hir_inst_grow(h_ninst + n + 1);
+}
 
 static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
-    if (idx >= HIR_MAX_INST) {
-        fdputs("s12cc: too many HIR instructions (inl_depth=", 2);
-        fdputuint(2, (unsigned)hl_inl_depth_dbg);
-        fdputs(" fn=", 2);
-        fdputs(hl_cur_fn_dbg ? hl_cur_fn_dbg : "?", 2);
-        fdputs(")\n", 2);
-        exit(1);
-    }
+    if (idx + 2 > hir_inst_cap) hir_inst_grow(idx + 2);
     h_ld_ro[idx] = 0;
     h_kind[idx] = kind;
     h_ty[idx] = ty;
@@ -408,6 +499,7 @@ static int hi_has_value(int kind) {
     if (kind == HI_X64_RDTSC) return 0;
     if (kind == HI_X64_DBT_TRAMPOLINE) return 0;
     if (kind == HI_JMPTAB) return 0;
+    if (kind == HI_SETSP) return 0;
     return 1;
 }
 
@@ -427,7 +519,34 @@ static int hi_is_remat(int kind) {
  * lui+addi rematerialized at every use (two instructions per loop
  * iteration), the value gets a graph node, a color, and one
  * materialization at its def.  Reset per function by that pass. */
-static int h_no_remat[HIR_MAX_INST];
+static int *h_no_remat;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int hir_inst_base_done;
+static void hir_inst_base(void) {
+    if (hir_inst_base_done) return;
+    hir_inst_base_done = 1;
+    hir_inst_table((char **)&h_kind, (int)sizeof(int));
+    hir_inst_table((char **)&h_ty, (int)sizeof(int));
+    hir_inst_table((char **)&h_src1, (int)sizeof(int));
+    hir_inst_table((char **)&h_src2, (int)sizeof(int));
+    hir_inst_table((char **)&h_val, (int)sizeof(int));
+    hir_inst_table((char **)&h_name, (int)sizeof(char *));
+    hir_inst_table((char **)&h_blk, (int)sizeof(int));
+    hir_inst_table((char **)&h_cbase, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_base, (int)sizeof(int));
+    hir_inst_table((char **)&hjt_span, (int)sizeof(int));
+    hir_inst_table((char **)&h_pbase, (int)sizeof(int));
+    hir_inst_table((char **)&h_pcnt, (int)sizeof(int));
+    hir_inst_table((char **)&ra_remat_op, (int)sizeof(char));
+    hir_inst_table((char **)&ra_is_reload, (int)sizeof(char));
+    hir_inst_table((char **)&h_ld_ro, (int)sizeof(char));
+    hir_inst_table((char **)&h_voladdr, (int)sizeof(char));
+    hir_inst_table((char **)&h_vol, (int)sizeof(char));
+    hir_inst_table((char **)&h_no_remat, (int)sizeof(int));
+}
 
 /* Instruction-level remat query: kind says remat, override says
  * keep it in a register.  Use wherever an instruction (not just a

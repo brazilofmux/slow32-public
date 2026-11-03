@@ -1,4 +1,4 @@
-/* COPIED from selfhost/src/hir_burg.h at 694d26f2.
+/* COPIED from selfhost/src/hir_burg.h at 4dc9b60a.
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -54,21 +54,35 @@ static int bg_nchain;
 /* Per-instruction labeling: 8192 * 5 = 40960 entries.
  * Covers functions up to 8192 HIR instructions.
  * Functions exceeding this skip BURG (codegen falls back). */
-#define BG_MAX_INST 262144   /* was 8192 */
-#define BG_COST_SZ (BG_MAX_INST * BG_NNT)   /* was 40960 = 8192 * 5, the old ceiling: a function past 8192 instructions indexed off both tables into their neighbours, and sqlite3VdbeExec got garbage costs, rules, folds and symbol names from it */
-static int bg_cost[BG_COST_SZ];
-static int bg_rule[BG_COST_SZ];
+/* BG_NNT entries an instruction, grown to the function (tables.h,
+ * TAB_BG_COST).  They were 262,144 instructions' worth, 10MB of BSS,
+ * and a function past that went without instruction selection; before
+ * that, 8192, and a function past it indexed off both tables into their
+ * neighbours -- sqlite3VdbeExec got garbage costs, rules, folds and
+ * symbol names from them. */
+static int *bg_cost;
+static int *bg_rule;
+static int bg_cost_cap;
+
+static void bg_cost_room(int need) {
+    if (need <= bg_cost_cap) return;
+    if (bg_cost_cap == 0) {
+        tab_add((char **)&bg_cost, (int)sizeof(int), TAB_BG_COST, 0);
+        tab_add((char **)&bg_rule, (int)sizeof(int), TAB_BG_COST, 0);
+    }
+    tab_grow(TAB_BG_COST, &bg_cost_cap, 40960, need);
+}
 
 /* Selection output */
-static int bg_sel[HIR_MAX_INST];
+static int *bg_sel;
 
 /* Folding */
-static int bg_fold[HIR_MAX_INST];  /* 1 = folded into parent */
-static int bg_uses[HIR_MAX_INST];  /* use count per value */
-static int bg_mu[HIR_MAX_INST];    /* faddr load/store users (phase 3) */
-static int bg_foff[HIR_MAX_INST];  /* precomputed faddr offset */
-static int bg_ssym[HIR_MAX_INST];  /* base symbol inst for SADDR chain (-1=none) */
-static int bg_soff[HIR_MAX_INST];  /* accumulated offset for SADDR chain */
+static int *bg_fold;  /* 1 = folded into parent */
+static int *bg_uses;  /* use count per value */
+static int *bg_mu;    /* faddr load/store users (phase 3) */
+static int *bg_foff;  /* precomputed faddr offset */
+static int *bg_ssym;  /* base symbol inst for SADDR chain (-1=none) */
+static int *bg_soff;  /* accumulated offset for SADDR chain */
 
 /* Stats */
 static int bg_stat_folded;
@@ -88,9 +102,9 @@ static int bg_stat_iconst_total;
 static int bg_stat_iconst_imm_only;
 static int bg_stat_iconst_nonimm;
 static int bg_stat_iconst_unused;
-static int bg_stat_burg_skipped;
-static int bg_iconst_seen_use[HIR_MAX_INST];
-static int bg_iconst_seen_nonimm[HIR_MAX_INST];
+static int bg_stat_burg_skipped;   /* 0: no function is too big for selection now (kept for the stats line) */
+static int *bg_iconst_seen_use;
+static int *bg_iconst_seen_nonimm;
 static int bg_stat_iconst_use_op[BG_OP_SZ];
 static int bg_stat_iconst_nonimm_use_op[BG_OP_SZ];
 
@@ -603,8 +617,8 @@ static int bg_is_sym(int k) {
     return k == HI_GADDR || k == HI_SADDR || k == HI_FADDR;
 }
 
-static char bg_fdone[HIR_MAX_INST];   /* bg_foff_one: computed this function */
-static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
+static char *bg_fdone;   /* bg_foff_one: computed this function */
+static int  *bg_walk;    /* explicit stack: operand chains are not host recursion (GitHub issue 56) */
 
 /* Push onto bg_walk with a bound.  A node is marked done when it first
  * reaches the TOP, not when it is pushed, so a shared operand can sit on
@@ -613,7 +627,7 @@ static int  bg_walk[HIR_MAX_INST];    /* explicit stack: operand chains are not 
  * are shallow -- so this never fires on real code; it is here because an
  * unbounded write into a static array is how silent corruption starts. */
 static int bg_walk_push(int sp, int v) {
-    if (sp >= HIR_MAX_INST) {
+    if (sp >= hir_inst_cap) {
         fdputs("s12cc: burg walk stack overflow\n", 2);
         exit(1);
     }
@@ -694,7 +708,7 @@ static void bg_compute_foff(void) {
 
 /* --- Bottom-up labeling --- */
 
-static char bg_done[HIR_MAX_INST];   /* bg_label_one: labeled this function */
+static char *bg_done;   /* bg_label_one: labeled this function */
 
 /* Is src2 a value operand for this kind (a branch's src2 is a block)? */
 static int bg_src2_is_value(int k) {
@@ -1007,18 +1021,7 @@ static void hir_burg(void) {
     /* Always precompute foff (needed by codegen even in fallback) */
     bg_compute_foff();
 
-    /* Skip BURG for functions with too many instructions */
-    if (h_ninst > BG_MAX_INST) {
-        /* Set bg_sel to -1: codegen falls back to h_kind dispatch */
-        i = 0;
-        while (i < h_ninst) {
-            bg_sel[i] = -1;
-            bg_fold[i] = 0;
-            i = i + 1;
-        }
-        bg_stat_burg_skipped = bg_stat_burg_skipped + 1;
-        return;
-    }
+    bg_cost_room(h_ninst * BG_NNT);
 
     bg_label();
     bg_count_uses();
@@ -1034,9 +1037,33 @@ static void hir_burg(void) {
  * so that regalloc can extend live ranges for fused comparison operands.
  * ============================================================================ */
 
-static int hcg_brc_fuse[HIR_MAX_INST];   /* BRC idx -> fused comparison idx, -1 = none */
-static int hcg_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
-static int hcg_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
+static int *hcg_brc_fuse;   /* BRC idx -> fused comparison idx, -1 = none */
+static int *hcg_cmp_fused;  /* 1 if comparison is fused into a BRC */
+static int *hcg_cmp_kind;   /* saved comparison kind (before NOP) */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int bg_tables_done;
+static void bg_tables(void) {
+    if (bg_tables_done) return;
+    bg_tables_done = 1;
+    hir_inst_table((char **)&bg_sel, (int)sizeof(int));
+    hir_inst_table((char **)&bg_fold, (int)sizeof(int));
+    hir_inst_table((char **)&bg_uses, (int)sizeof(int));
+    hir_inst_table((char **)&bg_mu, (int)sizeof(int));
+    hir_inst_table((char **)&bg_foff, (int)sizeof(int));
+    hir_inst_table((char **)&bg_ssym, (int)sizeof(int));
+    hir_inst_table((char **)&bg_soff, (int)sizeof(int));
+    hir_inst_table((char **)&bg_iconst_seen_use, (int)sizeof(int));
+    hir_inst_table((char **)&bg_iconst_seen_nonimm, (int)sizeof(int));
+    hir_inst_table((char **)&bg_fdone, (int)sizeof(char));
+    hir_inst_table((char **)&bg_walk, (int)sizeof(int));
+    hir_inst_table((char **)&bg_done, (int)sizeof(char));
+    hir_inst_table((char **)&hcg_brc_fuse, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_cmp_fused, (int)sizeof(int));
+    hir_inst_table((char **)&hcg_cmp_kind, (int)sizeof(int));
+}
 
 static int hcg_is_cmp(int k) {
     return (k >= HI_SEQ && k <= HI_SGEU);
@@ -1058,9 +1085,6 @@ static void hcg_identify_fusions(void) {
         hcg_cmp_fused[i] = 0;
         i = i + 1;
     }
-
-    /* bg_uses is only valid when BURG ran (not skipped) */
-    if (h_ninst > BG_MAX_INST) return;
 
     i = 0;
     while (i < h_ninst) {

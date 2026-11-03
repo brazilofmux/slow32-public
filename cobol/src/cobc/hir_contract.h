@@ -39,6 +39,11 @@
 
 static void fdputs(char *s, int fd) { if (write(fd, s, strlen(s)) < 0) {} }
 static void fdputc(int c, int fd) { char b = (char)c; if (write(fd, &b, 1) < 0) {} }
+static void fdputuint(int fd, unsigned int v);
+/* The backend's tables grow through the copied registry (hir/tables.h). */
+#include "../hir/tables.h"
+/* for C's recursive argument lists, which nothing here has */
+static int *(*hc_tab_iblk_grow)(int *, int, int, int, int) __attribute__((unused)) = tab_iblk_grow;
 static void fdputuint(int fd, unsigned int v)
 {
     char b[16]; int n = 0;
@@ -85,11 +90,24 @@ static int ty_size(int ty)
 
 /* --- 3. alloca registry scanned by the SSA promoter ----------------- */
 
-#define HL_MAX_ALLOCA 4096
-static int hl_ainst[HL_MAX_ALLOCA];  /* HIR index of each ALLOCA */
-static int hl_aoff[HL_MAX_ALLOCA];   /* frame offset of each ALLOCA */
-static int hl_aslot[HL_MAX_ALLOCA];  /* the declaration's slot id; 0 = a temporary (stage08's setjmp rule asks) */
+/* As selfhost/src/hir_lower.h has them, grown (tables.h, TAB_HL_ALLOCA):
+ * the SSA pass registers its own per-alloca table under the same kind. */
+static int *hl_aoff;    /* frame offset of each ALLOCA */
+static int *hl_aslot;   /* the declaration's slot id; 0 = a temporary (stage08's setjmp rule asks) */
+static int *hl_ainst;   /* HIR index of each ALLOCA */
 static int hl_nalloca;
+static int hl_alloca_cap;
+
+/* room for n more allocas (hir_lower.h's, verbatim) */
+static void hl_alloca_room(int n) {
+    if (hl_nalloca + n <= hl_alloca_cap) return;
+    if (hl_alloca_cap == 0) {
+        tab_add((char **)&hl_aoff, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_aslot, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_ainst, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+    }
+    tab_grow(TAB_HL_ALLOCA, &hl_alloca_cap, 1024, hl_nalloca + n);
+}
 static int hl_temp_stack;            /* bytes of compiler temporaries */
 static int hl_nparams;               /* flat incoming-parameter count */
 
@@ -107,6 +125,8 @@ static int   ps_ginit_hi[P_MAX_GLOBALS];
 static int   ps_gstr[P_MAX_GLOBALS];
 static int   ps_glocal[P_MAX_GLOBALS];
 static int   ps_gextern[P_MAX_GLOBALS];
+static int   ps_galign[P_MAX_GLOBALS];   /* C's _Alignas on a global: none */
+static int   ps_gconst[P_MAX_GLOBALS];   /* a const object, for .rodata: none */
 static int   ps_nglobals;
 
 static unsigned char ps_ginit_pool[PS_MAX_INIT_POOL];
@@ -132,6 +152,8 @@ static char lex_strpool[LEX_STRPOOL_MAX];
 static int  lex_str_off[LEX_MAX_STRINGS];
 static int  lex_str_len[LEX_MAX_STRINGS];
 static int  lex_str_count;
+static char lex_str_used[LEX_MAX_STRINGS];   /* the backend marks the ones it refers to (none here) */
+static int  lex_str_width[LEX_MAX_STRINGS];
 static int  lex_strpool_len __attribute__((unused));
 
 /* the backend's labels are the unit's labels */
@@ -145,6 +167,7 @@ typedef struct Node {
     int          nparams;      /* 0: an island takes nothing */
     int          is_varargs;   /* 0 */
     int          is_static;    /* 1: local to the unit's text */
+    int          bit_width;    /* on a function, C's strongest _Alignas over 4 among its locals: 0 */
     struct Node *next;
     struct Node *body;
 } Node;
@@ -153,6 +176,7 @@ static Node *hl_prog;
 static int hl_stat_inlined, hl_stat_inl_sel, hl_stat_inl_direct;
 static int hl_inline_max, hl_inl_move_max, hl_inl_huge;
 static int hl_inl_tiny, hl_unroll_budget;   /* the C inliner's tiny-body and unroll budgets: inert here */
+static int hl_peel_budget;                  /* the C peeler's (S12CC_PEEL), set by gen_program */
 static void hl_inl_prepare(Node *prog) { (void)prog; }
 
 static int s12cc_dump_intervals;     /* the backend's -dintervals; never set here */

@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_regalloc.h at 694d26f2 (see hir.h for the ruling). */
+/* COPIED from selfhost/stage08/hir_regalloc.h at 4dc9b60a (see hir.h for the ruling). */
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
@@ -71,31 +71,31 @@ static int ra_stat_r30;              /* values colored to r30 */
 /* Cross-call liveness tracking — must be declared extremely early because
  * ra_prefers_caller_for_inst() (and other early helpers) reference it in
  * this single translation unit. */
-static int ra_crosses_call[HIR_MAX_INST];
-static int ra_mem_forced[HIR_MAX_INST];  /* iterated-spill victims (gc_respill) */
+static int *ra_crosses_call;
+static int *ra_mem_forced;  /* iterated-spill victims (gc_respill) */
 /* Step 5b.2: a LOAD/STORE whose address chain the emitter folds down
  * to a spilled base reads, in this block, the reload named here
  * instead (-1: the base itself).  ra_codegen_fold_base and the
  * emitter's two fold sites apply it. */
-static int rl_fold_sub[HIR_MAX_INST];
+static int *rl_fold_sub;
 /* Phi webs sharing one spill slot (ra_phi_webs): ra_web_of[A] = the
  * spilled phi P whose slot A takes, -1 for its own; ra_web_s/e[P] = the
  * slot range P's slot must also cover for its aliases. */
-static int ra_web_of[HIR_MAX_INST];
-static int ra_web_s[HIR_MAX_INST];
-static int ra_web_e[HIR_MAX_INST];
+static int *ra_web_of;
+static int *ra_web_s;
+static int *ra_web_e;
 static int ra_stat_phiweb;
 /* COPY insts emitted immediately before a call to split a live range
  * that is used as a call argument (or CALLP callee) and also lives
  * after the call.  Chained through ra_csplit_next. */
-static int ra_csplit_head[HIR_MAX_INST];
-static int ra_csplit_next[HIR_MAX_INST];
+static int *ra_csplit_head;
+static int *ra_csplit_next;
 static int ra_split_orig;
 static int ra_stat_csplit;
-static int ra_after_stamp[HIR_MAX_INST];
+static int *ra_after_stamp;
 static int ra_after_tick;
-static char ra_is_csplit[HIR_MAX_INST];   /* COPY dest of a call split: always callee-saved */
-static int ra_dom_wl[HIR_MAX_BLOCK];      /* dom-tree walk for after-use rewire */
+static char *ra_is_csplit;   /* COPY dest of a call split: always callee-saved */
+static int *ra_dom_wl;      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
 
 /* Physical register table and classification (populated by ra_init_phys_regs).
@@ -244,7 +244,7 @@ static int ra_param_preferred_color(int inst) {
 
 /* Preferred physical register for a value used as a call argument
  * (issue 67).  -1 if none.  Last call site wins. */
-static int ra_arg_pref_phys[HIR_MAX_INST];
+static int *ra_arg_pref_phys;
 static int ra_abi_map[256];
 
 static void ra_mark_arg_prefs(void) {
@@ -298,15 +298,15 @@ static int ra_argsite_preferred_color(int inst) {
 }
 
 /* --- Output arrays --- */
-static int ra_reg[HIR_MAX_INST];    /* physical register, -1 = spilled/remat */
-static int ra_spill_off[HIR_MAX_INST]; /* spill slot (negative fp offset), 0 = none */
+static int *ra_reg;    /* physical register, -1 = spilled/remat */
+static int *ra_spill_off; /* spill slot (negative fp offset), 0 = none */
 
 /* --- Live interval arrays --- */
-static int ra_pos[HIR_MAX_INST];    /* linearized position */
-static int ra_iend[HIR_MAX_INST];   /* last use position (end of live interval) */
+static int *ra_pos;    /* linearized position */
+static int *ra_iend;   /* last use position (end of live interval) */
 
 /* --- Linearized order --- */
-static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
+static int *ra_order;  /* instruction indices in position order */
 static int ra_norder;
 
 /* --- Callee-save tracking --- */
@@ -335,23 +335,23 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * IRC data structures (Chunk 3 — dead code until wiring step)
  * ================================================================= */
 
-#define GC_MAX_NODE  65536   /* was 4096 */
-#define GC_MAX_EDGE  2097152   /* was 262144 */   /* lowered for selfhost toolchain (BSS + assembler limits) */
-#define GC_MAX_MOVE  65536   /* was 8192 */
+#define GC_ACT_MAX   128     /* values live at once, interval builder (gc_build) */
+#define GC_ROUNDS_INTERVALS 4  /* colouring rounds without exact liveness (gc_alloc_rounds) */
 
 static int gc_nnode;
-static int gc_inst[GC_MAX_NODE];
-static int gc_node[HIR_MAX_INST];
+static int *gc_inst;
+static int *gc_node;
 
-static int gc_adj_head[GC_MAX_NODE];
-static int gc_adj_peer[GC_MAX_EDGE];
-static int gc_adj_next[GC_MAX_EDGE];
+static int *gc_adj_head;
+static int *gc_adj_peer;     /* gc_edge_cap entries, grown by gc_add_edge */
+static int *gc_adj_next;
 static int gc_nedge;
+static int gc_edge_cap;
 
-static int gc_degree[GC_MAX_NODE];
+static int *gc_degree;
 
-static int gc_mv_a[GC_MAX_MOVE];
-static int gc_mv_b[GC_MAX_MOVE];
+static int *gc_mv_a;
+static int *gc_mv_b;
 static int gc_nmove;
 
 #define GC_MV_WORKLIST    0
@@ -359,13 +359,13 @@ static int gc_nmove;
 #define GC_MV_COALESCED   2
 #define GC_MV_FROZEN      3
 #define GC_MV_CONSTRAINED 4
-static int gc_mv_status[GC_MAX_MOVE];
+static int *gc_mv_status;
 
-#define GC_MAX_NMLIST 262144   /* was 16384 */   /* lowered for selfhost */
-static int gc_nmlist_mv[GC_MAX_NMLIST];
-static int gc_nmlist_next[GC_MAX_NMLIST];
-static int gc_nmlist_head[GC_MAX_NODE];
+static int *gc_nmlist_mv;
+static int *gc_nmlist_next;
+static int *gc_nmlist_head;
 static int gc_nnmlist;
+static int gc_nml_cap;
 
 #define GC_WL_SIMPLIFY  0
 #define GC_WL_FREEZE    1
@@ -373,18 +373,71 @@ static int gc_nnmlist;
 #define GC_WL_COALESCED 3
 #define GC_WL_SELECT    4
 #define GC_WL_COLORED   5
-static int gc_wl[GC_MAX_NODE];
+static int *gc_wl;
 
-static int gc_sel_stk[GC_MAX_NODE];
+static int *gc_sel_stk;
 static int gc_nsel;
 
-static int gc_alias[GC_MAX_NODE];
-static int gc_color[GC_MAX_NODE];
-static int gc_force_spill[GC_MAX_NODE];
+static int *gc_alias;
+static int *gc_color;
+static int *gc_force_spill;
+
+/* The tables indexed by node, by move, and the node-move lists grow
+ * (tables.h).  They were fixed: past 65,536 nodes a value got no node
+ * at all, and past the move tables a copy was not offered to the
+ * coalescer -- quietly worse code, never wrong. */
+static char *gc_mv_phi;    /* (gc_add_move_tag) */
+static int *gc_mv_blk;
+static int *gc_mv_pblk;
+static int *gc_pair_inst;
+static int *gc_nbr_mark;
+static int *gc_pin;
+static int *gc_rs_nfail;
+static char *gc_rs_taken;
+static int gc_node_cap;
+static int gc_move_cap;
+
+/* room for need nodes; a new node's pin is -1, none */
+static void gc_node_room(int need) {
+    int z;
+    if (need <= gc_node_cap) return;
+    z = gc_node_cap;
+    if (gc_node_cap == 0) {
+        tab_add((char **)&gc_inst, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_adj_head, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_degree, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_nmlist_head, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_wl, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_sel_stk, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_alias, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_color, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_force_spill, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_pair_inst, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_nbr_mark, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_pin, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_rs_nfail, (int)sizeof(int), TAB_GC_NODE, 0);
+        tab_add((char **)&gc_rs_taken, (int)sizeof(char), TAB_GC_NODE, 0);
+    }
+    tab_grow(TAB_GC_NODE, &gc_node_cap, 4096, need);
+    while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; }
+}
+
+static void gc_move_room(int need) {
+    if (need <= gc_move_cap) return;
+    if (gc_move_cap == 0) {
+        tab_add((char **)&gc_mv_a, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_b, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_status, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_phi, (int)sizeof(char), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_blk, (int)sizeof(int), TAB_GC_MOVE, 0);
+        tab_add((char **)&gc_mv_pblk, (int)sizeof(int), TAB_GC_MOVE, 0);
+    }
+    tab_grow(TAB_GC_MOVE, &gc_move_cap, 8192, need);
+}
 
 /* ra_crosses_call is the only live cross tracking for SLOW-32 (caller-saved classification).
  * The x64 clobber-position lists and ra_mark_clobbers were dead after the IRC port and have
- * been removed.  See gc_add_edge for the GC_MAX_EDGE overflow guard (force_spill). */
+ * been removed.  gc_add_edge grows the edge tables. */
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -524,9 +577,9 @@ static void ra_extend(int inst, int use_pos) {
  * intermediate block (and the use block and def block themselves).
  */
 
-static int ra_blk_last[HIR_MAX_BLOCK]; /* last position in each block */
-static int ra_bvis[HIR_MAX_BLOCK];     /* visited flags for BFS */
-static int ra_bwl[HIR_MAX_BLOCK];      /* BFS worklist */
+static int *ra_blk_last; /* last position in each block */
+static int *ra_bvis;     /* visited flags for BFS */
+static int *ra_bwl;      /* BFS worklist */
 
 static void ra_backprop(int val, int use_blk) {
     int def_blk;
@@ -574,7 +627,7 @@ static void ra_backprop(int val, int use_blk) {
                 ra_extend(val, ra_blk_last[p]);
                 if (!ra_bvis[p]) {
                     ra_bvis[p] = 1;
-                    if (p != def_blk && wt < HIR_MAX_BLOCK) {
+                    if (p != def_blk && wt < hir_blk_cap) {
                         /* Continue BFS past intermediate blocks, stop at def */
                         ra_bwl[wt] = p;
                         wt = wt + 1;
@@ -852,9 +905,9 @@ static void ra_compute_ends(void) {
  * after the phi's own, so the slot range is widened to cover each
  * predecessor's terminator.  That also keeps a phi apart from the
  * values still live at those terminators (the copies read them). */
-static int ra_shead[HIR_MAX_INST];      /* per start position: first value */
-static int ra_snext[HIR_MAX_INST];      /* next value with the same start */
-static int ra_slot_end[HIR_MAX_INST];   /* per slot: occupant's end position */
+static int *ra_shead;      /* per start position: first value */
+static int *ra_snext;      /* next value with the same start */
+static int *ra_slot_end;   /* per slot: occupant's end position */
 static int ra_stat_sslots;              /* cumulative slots after sharing */
 
 static int ra_spill_wants_slot(int i) {
@@ -1127,20 +1180,18 @@ static int gc_has_edge(int u, int v) {
     return 0;
 }
 
-static void gc_add_edge(int u, int v) {
+/* an edge known not to be there yet */
+static void gc_add_new_edge(int u, int v) {
     int e1, e2;
-    if (u == v) return;
-    if (gc_has_edge(u, v)) return;
-    if (gc_nedge + 2 > GC_MAX_EDGE) {
-        /* Can't record this interference — mark both nodes as force-spill
-         * so they get spill slots instead of potentially sharing a color
-         * with the unrecorded interferer.  Without this guard a silent drop
-         * here can cause multiple call arguments (or other live values) to
-         * be assigned the same physical register, leading to corruption
-         * before the call.  See b6f0832f (IRC graph-edge overflow fix). */
-        if (u >= 0 && u < GC_MAX_NODE) gc_force_spill[u] = 1;
-        if (v >= 0 && v < GC_MAX_NODE) gc_force_spill[v] = 1;
-        return;
+    if (gc_nedge + 2 > gc_edge_cap) {
+        /* the edges grow (registry kind 3); they were a fixed 2M, 16MB
+         * of cc.s32x whatever the function, and an edge past them made
+         * both nodes force-spill (b6f0832f) */
+        if (gc_edge_cap == 0) {
+            hir_tab_add((char **)&gc_adj_peer, (int)sizeof(int), 3);
+            hir_tab_add((char **)&gc_adj_next, (int)sizeof(int), 3);
+        }
+        hir_tab_grow(3, &gc_edge_cap, 65536, gc_nedge + 2);
     }
     e1 = gc_nedge;
     gc_adj_peer[e1] = v;
@@ -1158,9 +1209,21 @@ static void gc_add_edge(int u, int v) {
     gc_degree[v] = gc_degree[v] + 1;
 }
 
+static void gc_add_edge(int u, int v) {
+    if (u == v) return;
+    if (gc_has_edge(u, v)) return;
+    gc_add_new_edge(u, v);
+}
+
 static void gc_add_node_move(int node, int mv) {
     int idx;
-    if (gc_nnmlist >= GC_MAX_NMLIST) return;
+    if (gc_nnmlist + 1 > gc_nml_cap) {
+        if (gc_nml_cap == 0)
+            tab_add((char **)&gc_nmlist_mv, (int)sizeof(int), TAB_GC_NML, 0);
+        if (gc_nml_cap == 0)
+            tab_add((char **)&gc_nmlist_next, (int)sizeof(int), TAB_GC_NML, 0);
+        tab_grow(TAB_GC_NML, &gc_nml_cap, 16384, gc_nnmlist + 1);
+    }
     idx = gc_nnmlist;
     gc_nnmlist = gc_nnmlist + 1;
     gc_nmlist_mv[idx] = mv;
@@ -1183,7 +1246,7 @@ static int gc_move_related(int n) {
 static int gc_get_alias(int n) {
     int lim;
     lim = 0;
-    while (gc_alias[n] != n && lim < GC_MAX_NODE) {
+    while (gc_alias[n] != n && lim < gc_nnode) {
         n = gc_alias[n];
         lim = lim + 1;
     }
@@ -1225,13 +1288,12 @@ static int gc_k(int n) {
  * each iteration; a phi move may coalesce across the mismatch because
  * the merged node keeps the CROSSING side's palette (the swap in
  * gc_coalesce puts the crossing node in u before gc_combine(u, v)). */
-static char gc_mv_phi[GC_MAX_MOVE];
-static int gc_mv_blk[GC_MAX_MOVE];   /* a phi copy's predecessor block, where it runs */
-static int gc_mv_pblk[GC_MAX_MOVE];  /* and the phi's own block */
+/* gc_mv_phi; gc_mv_blk, a phi copy's predecessor block, where it runs;
+ * gc_mv_pblk, the phi's own block (with the move tables, above) */
 
 static void gc_add_move_tag(int a, int b, int is_phi) {
     int mv;
-    if (gc_nmove >= GC_MAX_MOVE) return;
+    gc_move_room(gc_nmove + 1);
     mv = gc_nmove;
     gc_mv_a[mv] = a;
     gc_mv_b[mv] = b;
@@ -1249,9 +1311,8 @@ static void gc_add_move(int a, int b) {
 
 /* Tentatively re-declared: defined with the pair machinery below,
  * needed by gc_build/gc_combine above it. */
-static int ra_pair_of[HIR_MAX_INST];
-static int ra_pair_lo[HIR_MAX_INST];
-static int gc_pair_inst[GC_MAX_NODE];
+static int *ra_pair_of;
+static int *ra_pair_lo;
 
 /* =================================================================
  * Per-block liveness (DIVERGENCE f77, port upstream candidate)
@@ -1273,17 +1334,8 @@ static int gc_pair_inst[GC_MAX_NODE];
  * stays for its other consumers (fusion extends, dumps) and as the
  * HIR_LINEAR_LIVE=1 fallback.
  *
- * Bitsets are indexed by a dense id assigned in ra_order; the arrays
- * are statically sized for the worst case (8MB bss) but only
- * bb_nblk x lv_nw words are ever touched.
+ * Bitsets are indexed by a dense id assigned in ra_order.
  * ================================================================= */
-/* GC_MAX_NODE / 32: ids beyond the node cap could never be coloured
- * anyway, so functions that large stay on intervals. */
-#define LV_W 128
-/* Flattened [HIR_MAX_BLOCK][LV_W]: the selfhost dialect has no 2D
- * static arrays, and the bound must be a literal (2048 * 128).  Kept
- * to 1MB apiece -- the selfhost assembler has a cumulative BSS
- * budget, and 4MB versions of these were what first blew it. */
 /* The live-in/out sets are bb_nblk rows of lv_w words, sized per
  * function and grown as needed (SQLite's sqlite3VdbeExec has tens of
  * thousands of values; 128 words per row was 4,096 and the row stride
@@ -1293,8 +1345,6 @@ static unsigned int *lv_out;
 static unsigned int *lv_live;
 static int lv_w;                   /* row stride in words, = lv_nw */
 #define LV_BUDGET_WORDS 2097152    /* 8MB per liveness set; past it, intervals */
-static unsigned int lv_pool_in[LV_BUDGET_WORDS];
-static unsigned int lv_pool_out[LV_BUDGET_WORDS];
 
 static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
     char b[12];
@@ -1307,12 +1357,12 @@ static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
 }
 static int lv_cap;                 /* words allocated in lv_in and lv_out each */
 static int lv_live_cap;            /* words allocated in lv_live */
-static int lv_id[HIR_MAX_INST];    /* inst -> dense id, -1 = untracked */
-static int lv_rev[HIR_MAX_INST];   /* dense id -> inst */
+static int *lv_id;    /* inst -> dense id, -1 = untracked */
+static int *lv_rev;   /* dense id -> inst */
 static int lv_nid;
 static int lv_nw;                  /* words in use: (lv_nid+31)/32 */
-static int lv_bstart[HIR_MAX_BLOCK];  /* ra_order index range per block */
-static int lv_bend[HIR_MAX_BLOCK];
+static int *lv_bstart;  /* ra_order index range per block */
+static int *lv_bend;
 static int lv_on;
 
 static int lv_tracked(int inst) {
@@ -1534,7 +1584,6 @@ static void lv_prepare(void) {
         }
         i = i + 1;
     }
-    if (lv_nid > GC_MAX_NODE) return;   /* stay on intervals */
     lv_nw = (lv_nid + 31) / 32;
     if (lv_nw == 0) lv_nw = 1;
     lv_w = lv_nw;
@@ -1542,12 +1591,29 @@ static void lv_prepare(void) {
      * asserts on wanted more than the heap holds.  Past the budget the
      * function stays on intervals, like one with too many nodes. */
     if (bb_nblk * lv_w > LV_BUDGET_WORDS) return;
-    /* Static, not heap: by code generation the whole file's syntax tree
-     * fills the heap (stage07's linker fixes it at 64MB), and SQLite's
-     * debug build could not get a 10MB pair from what was left. */
-    lv_in = lv_pool_in;
-    lv_out = lv_pool_out;
-    lv_cap = LV_BUDGET_WORDS;
+    /* The pair is the largest function's so far, kept for the next
+     * (they were static, 16MB of cc.s32x whatever the file, when
+     * stage07's linker held the heap to 64MB).  Nothing in them
+     * survives a function, so a bigger pair is fresh memory, not a
+     * copy; a heap that cannot give it leaves the function on
+     * intervals. */
+    if (bb_nblk * lv_w > lv_cap) {
+        if (lv_in) free(lv_in);
+        if (lv_out) free(lv_out);
+        lv_cap = 65536;
+        while (lv_cap < bb_nblk * lv_w) lv_cap = lv_cap * 2;
+        if (lv_cap > LV_BUDGET_WORDS) lv_cap = LV_BUDGET_WORDS;
+        lv_in = malloc((unsigned long)lv_cap * 4);
+        lv_out = malloc((unsigned long)lv_cap * 4);
+        if (!lv_in || !lv_out) {
+            if (lv_in) free(lv_in);
+            if (lv_out) free(lv_out);
+            lv_in = 0;
+            lv_out = 0;
+            lv_cap = 0;
+            return;
+        }
+    }
     if (lv_w > lv_live_cap) {
         if (lv_live) free(lv_live);
         lv_live_cap = lv_w + 256;
@@ -1706,7 +1772,7 @@ static void lv_build_edges(void) {
 
 static void gc_build(void) {
     int i, j, inst, k, n, ni, aj, nact, p;
-    int act[GC_MAX_NODE];
+    int act[GC_ACT_MAX + 1];
 
     gc_nnode = 0;
     gc_nedge = 0;
@@ -1717,7 +1783,8 @@ static void gc_build(void) {
     i = 0;
     while (i < h_ninst) { gc_node[i] = -1; i = i + 1; }
     i = 0;
-    while (i < GC_MAX_NODE) { gc_force_spill[i] = 0; i = i + 1; }
+    gc_node_room(ra_norder);
+    while (i < gc_node_cap) { gc_force_spill[i] = 0; i = i + 1; }
 
     i = 0;
     while (i < ra_norder) {
@@ -1725,7 +1792,7 @@ static void gc_build(void) {
         k = h_kind[inst];
         if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP &&
             !ra_mem_forced[inst]) {
-            if (gc_nnode < GC_MAX_NODE) {
+            {
                 n = gc_nnode;
                 gc_inst[n] = inst;
                 gc_node[inst] = n;
@@ -1795,6 +1862,32 @@ static void gc_build(void) {
          * register.  HI_COPY is the same case trivially.  We do NOT
          * suppress d<->s2 (mirrors the x64 rule; keeps the two files'
          * logic identical and avoids auditing every s2 emission). */
+        /* At most GC_ACT_MAX values live at once: past it the one that
+         * ends last goes to memory (linear scan's choice), so the graph
+         * has at most GC_ACT_MAX edges a node.  Only functions too big
+         * for exact liveness come here, and there every value spanning
+         * the linearized order interferes with all the rest: a BASIC
+         * dispatch function (salvoend at 128KB chunks, 26K blocks) built
+         * 48M edges, 780MB, before the heap gave out.  The fixed edge
+         * table this replaces force-spilled whichever two nodes
+         * overflowed it (b6f0832f). */
+        if (ni >= 0 && nact >= GC_ACT_MAX) {
+            int far;
+            far = 0;
+            j = 1;
+            while (j < nact) {
+                if (ra_iend[gc_inst[act[j]]] > ra_iend[gc_inst[act[far]]]) far = j;
+                j = j + 1;
+            }
+            if (ra_iend[gc_inst[act[far]]] > ra_iend[inst]) {
+                gc_force_spill[act[far]] = 1;
+                nact = nact - 1;
+                act[far] = act[nact];
+            } else {
+                gc_force_spill[ni] = 1;
+                ni = -1;
+            }
+        }
         if (ni >= 0) {
             int skip_node;
             skip_node = -1;
@@ -1903,14 +1996,30 @@ static int gc_simplify(void) {
     return 0;
 }
 
+/* u's neighbours, stamped for the coalescing tests: "t interferes
+ * with u" is then one load, not a walk of t's list (gc_has_edge) --
+ * edges are added both ways, so u on t's list is t on u's.  The walk
+ * per neighbour of v was nearly all of salvoend's 25 minutes. */
+static int gc_nbr_stamp;
+static void gc_mark_nbrs(int u) {
+    int e;
+    gc_nbr_stamp = gc_nbr_stamp + 1;
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        gc_nbr_mark[gc_adj_peer[e]] = gc_nbr_stamp;
+        e = gc_adj_next[e];
+    }
+}
+
 static int gc_george(int u, int v) {
     int e, t, kk;
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
             kk = gc_k(t);
-            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) return 0;
+            if (gc_degree[t] >= kk && gc_nbr_mark[t] != gc_nbr_stamp) return 0;
         }
         e = gc_adj_next[e];
     }
@@ -1931,11 +2040,12 @@ static int gc_briggs(int u, int v) {
         }
         e = gc_adj_next[e];
     }
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != u) {
-            if (gc_degree[t] >= kk && !gc_has_edge(t, u)) count = count + 1;
+            if (gc_degree[t] >= kk && gc_nbr_mark[t] != gc_nbr_stamp) count = count + 1;
         }
         e = gc_adj_next[e];
     }
@@ -1966,11 +2076,15 @@ static void gc_combine(int u, int v) {
      * side via the alias was sufficient.  The two-pass select that
      * colors PARAMs first (or any ordering change) surfaces the bug.
      * This fix (e4681a1d) was ported into the SLOW-32 selfhost IRC. */
+    gc_mark_nbrs(u);
     e = gc_adj_head[v];
     while (e >= 0) {
         t = gc_adj_peer[e];
         if (gc_wl[t] != GC_WL_COALESCED) {
-            gc_add_edge(t, u);
+            if (t != u && gc_nbr_mark[t] != gc_nbr_stamp) {
+                gc_add_new_edge(t, u);
+                gc_nbr_mark[t] = gc_nbr_stamp;
+            }
             if (gc_wl[t] != GC_WL_SELECT) gc_dec_degree(t);
         }
         e = gc_adj_next[e];
@@ -1981,6 +2095,21 @@ static void gc_combine(int u, int v) {
     }
 }
 
+static int ra_depth_w(int b);
+static int gc_aggr_phi;     /* phi copies in loops coalesce without the conservative tests (below) */
+static int gc_aggr_nphi;    /* ... when the phi's block carries at most this many (HIR_AGGR_NPHI, default 20) */
+static int gc_blk_nphi(int b) {
+    int q;
+    int n;
+    n = 0;
+    if (b < 0 || b >= bb_nblk) return 999;
+    q = ssa_phi_head[b];
+    while (q >= 0) {
+        if (h_kind[q] == HI_PHI) n = n + 1;
+        q = ssa_phi_next[q];
+    }
+    return n;
+}
 static int gc_coalesce(void) {
     int mv, u, v, tmp;
     mv = 0;
@@ -2028,7 +2157,9 @@ static int gc_coalesce(void) {
             gc_mv_status[mv] = GC_MV_CONSTRAINED;
             return 1;
         }
-        if (gc_george(u, v) || gc_briggs(u, v)) {
+        if (gc_george(u, v) || gc_briggs(u, v) ||
+            (gc_aggr_phi && gc_mv_phi[mv] && ra_depth_w(gc_mv_blk[mv]) >= 10 &&
+             gc_blk_nphi(gc_mv_pblk[mv]) <= gc_aggr_nphi)) {
             gc_mv_status[mv] = GC_MV_COALESCED;
             gc_combine(u, v);
             if (!gc_move_related(u) && gc_degree[u] < gc_k(u)) {
@@ -2077,7 +2208,7 @@ static int gc_freeze(void) {
  * Each USE is weighted 1/10/100/1000 by its block's natural-loop
  * nesting depth (licm_depth, computed during LICM), and the def adds
  * its own weight (a spilled def pays its store where it is defined). */
-static int ra_wuses[HIR_MAX_INST];
+static int *ra_wuses;
 
 static int ra_depth_w(int b) {
     int d;
@@ -2111,7 +2242,7 @@ static int ra_depth_w(int b) {
 #define RA_FREQ_SCALE 256
 #define RA_FREQ_LOOP 8
 #define RA_FREQ_CAP 4194304
-static int ra_bfreq[HIR_MAX_BLOCK];
+static int *ra_bfreq;
 static int ra_freq_on;                  /* HIR_RA_FREQ=1 */
 static int ra_is_loop_hdr(int b);       /* with the regional spill below */
 
@@ -2197,6 +2328,178 @@ static void ra_build_bfreq(void) {
     }
 }
 
+/* =================================================================
+ * Step 5b.6: block frequencies from a profile (HIR_PGO=<file>).
+ *
+ * The file is lines of `function block count`: the executions of the
+ * block's first instruction in a training run, from a build with
+ * HIR_PGO_LABELS=1 (a label per emitted block, nothing else changed),
+ * relinked with the labels global, `slow32 -p`, and the link map.
+ * Block numbers are the HIR's, fixed before allocation, so the profile
+ * fits a build that allocates differently.  A function with lines gets
+ * ra_bfreq from them, normalized to its hottest block (RA_PGO_HOT);
+ * a block with no line ran zero times and weighs 1.  A function with
+ * no lines never ran in training and keeps the default weights.
+ * ================================================================= */
+static char *ra_cur_fname;              /* set by the codegen before hir_regalloc() */
+#define RA_PGO_HOT 4096
+#define RA_PGO_SLOTS 16384
+static char *ra_pgo_buf;
+static int ra_pgo_loaded;
+static char *ra_pgo_name[RA_PGO_SLOTS];
+static int ra_pgo_lo[RA_PGO_SLOTS];
+static int ra_pgo_hi[RA_PGO_SLOTS];
+static int *ra_pgo_b;
+static int *ra_pgo_c;
+static int ra_pgo_n;
+static int ra_pgo_cost;                  /* HIR_PGO_COST, see gc_respill_scale */
+
+static unsigned ra_pgo_hash(char *s) {
+    unsigned h;
+    h = 5381;
+    while (*s) { h = h * 33 + (unsigned)(*s & 255); s = s + 1; }
+    return h;
+}
+
+static int ra_pgo_find(char *name) {
+    unsigned h;
+    int lim;
+    h = ra_pgo_hash(name) & (RA_PGO_SLOTS - 1);
+    lim = 0;
+    while (ra_pgo_name[h] && lim < RA_PGO_SLOTS) {
+        if (strcmp(ra_pgo_name[h], name) == 0) return (int)h;
+        h = (h + 1) & (RA_PGO_SLOTS - 1);
+        lim = lim + 1;
+    }
+    return -1;
+}
+
+static int ra_pgo_num(char **pp) {
+    char *p;
+    int v;
+    p = *pp;
+    v = 0;
+    while (*p == 32 || *p == 9) p = p + 1;
+    while (*p >= 48 && *p <= 57) {
+        if (v < 200000000) v = v * 10 + (*p - 48);
+        p = p + 1;
+    }
+    *pp = p;
+    return v;
+}
+
+static void ra_pgo_load(void) {
+    char *path;
+    int fd;
+    int cap;
+    int len;
+    int n;
+    int lines;
+    char *p;
+    char *name;
+    char *prev;
+    unsigned h;
+    int lim;
+    ra_pgo_loaded = 1;
+    path = getenv("HIR_PGO");
+    if (!path) return;
+    fd = open(path, 0);
+    if (fd < 0) {
+        fdputs("s12cc: HIR_PGO: cannot open ", 2);
+        fdputs(path, 2);
+        fdputc(10, 2);
+        return;
+    }
+    cap = 1 << 20;
+    ra_pgo_buf = malloc(cap + 1);
+    len = 0;
+    for (;;) {
+        if (len == cap) {
+            char *nb;
+            nb = malloc(cap * 2 + 1);
+            if (!nb) break;
+            memcpy(nb, ra_pgo_buf, len);
+            free(ra_pgo_buf);
+            ra_pgo_buf = nb;
+            cap = cap * 2;
+        }
+        n = read(fd, ra_pgo_buf + len, cap - len);
+        if (n <= 0) break;
+        len = len + n;
+    }
+    close(fd);
+    ra_pgo_buf[len] = 0;
+    lines = 1;
+    p = ra_pgo_buf;
+    while (*p) { if (*p == 10) lines = lines + 1; p = p + 1; }
+    ra_pgo_b = malloc(lines * 4);
+    ra_pgo_c = malloc(lines * 4);
+    ra_pgo_n = 0;
+    prev = 0;
+    h = 0;
+    p = ra_pgo_buf;
+    while (*p) {
+        while (*p == 32 || *p == 9 || *p == 10 || *p == 13) p = p + 1;
+        if (!*p) break;
+        name = p;
+        while (*p && *p != 32 && *p != 9 && *p != 10) p = p + 1;
+        if (*p == 10 || !*p) { if (*p) p = p + 1; continue; }   /* malformed: no numbers */
+        *p = 0;
+        p = p + 1;
+        if (!prev || strcmp(prev, name) != 0) {
+            if (prev) ra_pgo_hi[h] = ra_pgo_n;
+            h = ra_pgo_hash(name) & (RA_PGO_SLOTS - 1);
+            lim = 0;
+            while (ra_pgo_name[h] && lim < RA_PGO_SLOTS) { h = (h + 1) & (RA_PGO_SLOTS - 1); lim = lim + 1; }
+            if (lim >= RA_PGO_SLOTS) break;
+            ra_pgo_name[h] = name;
+            ra_pgo_lo[h] = ra_pgo_n;
+            prev = name;
+        }
+        ra_pgo_b[ra_pgo_n] = ra_pgo_num(&p);
+        ra_pgo_c[ra_pgo_n] = ra_pgo_num(&p);
+        ra_pgo_n = ra_pgo_n + 1;
+        while (*p && *p != 10) p = p + 1;
+    }
+    if (prev) ra_pgo_hi[h] = ra_pgo_n;
+}
+
+/* ra_bfreq for the function being allocated, from the profile.
+ * 1 if it has profile lines, 0 if not (the caller keeps the default). */
+static int ra_pgo_fill(void) {
+    int s;
+    int i;
+    int b;
+    int mx;
+    int q;
+    if (!ra_pgo_loaded) ra_pgo_load();
+    if (!ra_cur_fname || !ra_pgo_b) return 0;
+    s = ra_pgo_find(ra_cur_fname);
+    if (s < 0) return 0;
+    mx = 1;
+    i = ra_pgo_lo[s];
+    while (i < ra_pgo_hi[s]) { if (ra_pgo_c[i] > mx) mx = ra_pgo_c[i]; i = i + 1; }
+    q = (mx >> 12) + 1;           /* the hottest block -> about RA_PGO_HOT */
+    b = 0;
+    while (b < bb_nblk) { ra_bfreq[b] = 1; b = b + 1; }
+    i = ra_pgo_lo[s];
+    while (i < ra_pgo_hi[s]) {
+        b = ra_pgo_b[i];
+        if (b >= 0 && b < bb_nblk) ra_bfreq[b] = 1 + ra_pgo_c[i] / q;
+        i = i + 1;
+    }
+    if (getenv("HIR_RA_DEBUG")) {
+        fdputs("PGO fn=", 2);
+        fdputs(ra_cur_fname, 2);
+        fdputs(" blocks=", 2);
+        fdputuint(2, (unsigned)(ra_pgo_hi[s] - ra_pgo_lo[s]));
+        fdputs(" max=", 2);
+        fdputuint(2, (unsigned)mx);
+        fdputc(10, 2);
+    }
+    return 1;
+}
+
 static int ra_bfreq_w(int b) {
     if (b < 0 || b >= bb_nblk) return 1;
     /* =5: the depth weights themselves (every block in a loop counts
@@ -2214,6 +2517,7 @@ static int ra_bfreq_pess(int e) {
     int f;
     int g;
     f = ra_bfreq_w(e);
+    if (ra_freq_on == 6) return f;     /* a profile: the count is the count */
     if (e >= 0 && e < bb_nblk && ssa_idom[e] >= 0 && ssa_idom[e] != e) {
         g = ra_bfreq_w(ssa_idom[e]) / 2;
         if (g > f) f = g;
@@ -2365,8 +2669,8 @@ static int hcg_fp64_kind(char *nm);   /* defined in hir_codegen.h */
 
 static int ra_stat_pair_pref;
 static int ra_pair_share_fate = 1;
-static int ra_pair_of[HIR_MAX_INST];
-static int ra_pair_lo[HIR_MAX_INST];
+static int *ra_pair_of;
+static int *ra_pair_lo;
 
 static void ra_build_pairs(void) {
     int i;
@@ -2448,7 +2752,6 @@ static int ra_first_free_pairfriendly(int lo, int hi, int *used) {
  * -1 = unpinned.  A pin is honoured only if it is still conflict-free
  * for the pinned node's own neighbours, so it can never colour two
  * interfering values the same. */
-static int gc_pin[GC_MAX_NODE];
 
 /* DIVERGENCE (f77, port upstream): pair identity at NODE level.
  * ra_pair_of marks INSTRUCTIONS, but coalescing merges nodes -- a phi
@@ -2457,7 +2760,6 @@ static int gc_pin[GC_MAX_NODE];
  * lands on a node that is never selected and the pair misaligns into
  * scratch shuffles.  gc_pair_inst[n] is a pair-marked member
  * instruction of node n (or -1), propagated in gc_combine. */
-static int gc_pair_inst[GC_MAX_NODE];
 
 /* Claim an aligned register pair for `inst` and pin its partner to the
  * other half.  Returns this node's colour, or -1.
@@ -3135,8 +3437,6 @@ static void gc_writeback(void) {
  * BlaMka's hot pointers instead (+39%): a long range is not a cheap
  * one.  A failure next to a victim already chosen this round waits for
  * the next colouring. */
-static int gc_rs_nfail[GC_MAX_NODE];
-static char gc_rs_taken[GC_MAX_NODE];
 static int gc_rs_nremat;        /* remat victims made this round */
 static int ra_stat_remat;       /* ... and per function */
 static int ra_stat_unremat;     /* remat victims sent to memory with their operand */
@@ -3168,11 +3468,11 @@ static int ra_stat_reload_ins;
 static int ra_stat_reload_del;
 static int ra_new_split_copy(int src, int blk);     /* defined with the call splitter below */
 static void ra_mark_call_crossing(void);
-static int rl_stamp[HIR_MAX_INST];     /* segment tick of v's last read */
-static int rl_first[HIR_MAX_INST];     /* body instruction the first read hangs on */
-static int rl_first_u[HIR_MAX_INST];   /* the first reader itself */
-static char rl_first_fold[HIR_MAX_INST]; /* ... read v as a folded address base */
-static int rl_cur[HIR_MAX_INST];       /* reload serving v in this segment */
+static int *rl_stamp;     /* segment tick of v's last read */
+static int *rl_first;     /* body instruction the first read hangs on */
+static int *rl_first_u;   /* the first reader itself */
+static char *rl_first_fold; /* ... read v as a folded address base */
+static int *rl_cur;       /* reload serving v in this segment */
 static int rl_tick;
 
 /* Spilled after the last colouring, and a scalar a reload may stand for. */
@@ -3401,8 +3701,11 @@ static void ra_delete_reload(int r) {
     }
     cmp = ra_rl_fused_cmp(term);
     if (cmp >= 0) ra_rl_rewire_cmp(cmp, r, v);
-    /* the readers are v's again: v lives as far as the reload did
-     * (stage08, cfuzz seed 8710) */
+    /* The readers are v's again: v lives as far as the reload did.  Its
+     * interval was computed while the reload stood in for it and ended
+     * at the reload; spilled, v then shared its slot with a value born
+     * before the readers -- `a[i] ^= x` stored through an address whose
+     * slot already held x (cfuzz seed 8710; 5b.2, live since batch 42). */
     if (ra_pos[r] >= 0) ra_extend(v, ra_iend[r]);
     h_kind[r] = HI_NOP;
     ra_is_reload[r] = 0;
@@ -3444,12 +3747,12 @@ static void ra_delete_reload(int r) {
 static int ra_stat_region;
 static int gc_rs_nregion;
 static int ra_region_cand;              /* candidates seen (HIR_REGION_FN bisection) */
-static char *ra_cur_fname;              /* set by the codegen before hir_regalloc() */
 static int gc_round_no;                 /* respill rounds, never reset: a stamp */
-static int ra_region_round[HIR_MAX_INST];   /* the round a value was last split in */
-static char ra_in_region[HIR_MAX_BLOCK];
-static int ra_jphi[HIR_MAX_BLOCK];      /* the current split's join phi in each block, -1 */
-static char ra_idf_seen[HIR_MAX_BLOCK];
+static int *ra_region_round;   /* the round a value was last split in */
+static char *ra_in_region;
+static int *ra_jphi;      /* the current split's join phi in each block, -1 */
+static char *ra_idf_seen;
+
 static int ra_stat_join;                /* join phis placed (step 5b.4) */
 static void ra_csplit_on_inst(int i, int old, int nw);   /* with the call splitter below */
 static int ra_web_live_in(int b, int v);                 /* with the phi webs below */
@@ -3463,12 +3766,13 @@ static int ra_new_join_phi(int v, int f) {
     int np;
     int j;
     np = ssa_npred[f];
-    if (np < 1 || h_nparg + np > HIR_MAX_PARG) return -1;
+    if (np < 1) return -1;
     cl = ra_new_split_copy(v, f);
     if (cl < 0) return -1;
     h_kind[cl] = HI_PHI;
     h_src1[cl] = -1;
     ra_is_csplit[cl] = 0;
+    hir_parg_room(np);
     h_pbase[cl] = h_nparg;
     h_pcnt[cl] = np;
     j = 0;
@@ -3492,7 +3796,7 @@ static int ra_new_join_phi(int v, int f) {
 static int ra_region_reach(int b, int v, int d, int e, int m) {
     int lim;
     lim = 0;
-    while (b >= 0 && b < bb_nblk && lim < HIR_MAX_BLOCK) {
+    while (b >= 0 && b < bb_nblk && lim < hir_blk_cap) {
         if (b == e) return m;
         if (ra_jphi[b] >= 0) return ra_jphi[b];
         if (b == d) return v;
@@ -3523,7 +3827,7 @@ static int ra_region_of(int d, int bn) {
     if (d < 0 || bn < 0 || bn == d) return -1;
     e = bn;
     lim = 0;
-    while (lim < HIR_MAX_BLOCK) {
+    while (lim < hir_blk_cap) {
         if (ssa_idom[e] == d) return e;
         if (ssa_idom[e] < 0 || ssa_idom[e] == e) return -1;
         e = ssa_idom[e];
@@ -3546,7 +3850,7 @@ static int ra_region_every_iter(int e) {
     int lim;
     h = e;
     lim = 0;
-    while (h >= 0 && h < bb_nblk && lim < HIR_MAX_BLOCK) {
+    while (h >= 0 && h < bb_nblk && lim < hir_blk_cap) {
         if (licm_depth[h] == licm_depth[e] && ra_is_loop_hdr(h)) break;
         if (ssa_idom[h] == h || ssa_idom[h] < 0) return 1;   /* no loop found: say yes */
         h = ssa_idom[h];
@@ -3577,7 +3881,7 @@ static void ra_region_mark(int e) {
         if (b < 0 || b >= bb_nblk || ra_in_region[b]) continue;
         ra_in_region[b] = 1;
         i = 0;
-        while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+        while (i < ssa_dtc_cnt[b] && nwl < hir_blk_cap) {
             ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
             nwl = nwl + 1;
             i = i + 1;
@@ -3641,7 +3945,7 @@ static void ra_region_rewire_block(int b, int old, int nw) {
  * The variable then has two definitions, v at d and the region copy m
  * at e, and gets a phi wherever paths from the two meet -- the
  * iterated dominance frontier of e, pruned to the blocks v is live
- * into (ssa_df, built with the SSA and unchanged since: nothing after
+ * into (ssa_dfv, built with the SSA and unchanged since: nothing after
  * it alters the CFG).  A join's argument from a region exit is m (the
  * phi copy reloads it: the reload at the region exit, as a value);
  * from anywhere else, whatever definition reaches that predecessor.
@@ -3705,7 +4009,7 @@ static int ra_region_plan(int v, int bn, int forwhom, int *pe) {
     if (forwhom >= 0 && forwhom < h_ninst && lv_id[forwhom] >= 0) {
         int lim;
         lim = 0;
-        while (lim < HIR_MAX_BLOCK) {
+        while (lim < hir_blk_cap) {
             int ok;
             ok = 1;
             b = 0;
@@ -3787,7 +4091,7 @@ static int ra_region_commit(int v, int e, int forwhom) {
         x = ra_dom_wl[nwl];
         i = 0;
         while (i < ssa_dfc[x]) {
-            f = ssa_df[(x * SSA_DF_W) + i];
+            f = ssa_dfv[ssa_dfo[x] + i];
             i = i + 1;
             if (f < 0 || f >= bb_nblk || ra_idf_seen[f]) continue;
             ra_idf_seen[f] = 1;
@@ -3808,7 +4112,7 @@ static int ra_region_commit(int v, int e, int forwhom) {
             }
             ra_jphi[f] = jp;
             nj = nj + 1;
-            if (nwl < HIR_MAX_BLOCK) { ra_dom_wl[nwl] = f; nwl = nwl + 1; }
+            if (nwl < hir_blk_cap) { ra_dom_wl[nwl] = f; nwl = nwl + 1; }
         }
     }
     ra_is_csplit[m] = 0;
@@ -4056,6 +4360,17 @@ static int gc_respill_scale(int raw, int inst, int nfail) {
         span = (ra_iend[inst] - ra_pos[inst]) / 16 + 1;
     if (span > 8) span = 8;
     if (raw > 1000000) raw = 1000000;
+    /* Under a profile (step 5b.6) the cost is the weighted uses alone.
+     * With depth weights every value in a loop weighs about the same and
+     * the two divisors only break ties; with measured counts, a factor
+     * of 4096 apart, they made the hottest, longest-lived values look
+     * cheapest -- sqlite3VdbeExec's opcode pointer went to memory.
+     * HIR_PGO_COST=1 keeps the failing-neighbour divisor, =3 both, for
+     * measuring (the plan log has the numbers). */
+    if (ra_freq_on == 6 && ra_pgo_cost != 3) {
+        span = 1;
+        if (ra_pgo_cost != 1) nfail = 1;
+    }
     return (raw * 64) / (nfail * span);
 }
 
@@ -4168,7 +4483,7 @@ static int gc_respill(void) {
                     h_no_remat[inst] = 0;   /* back to remat, no slot */
                 } else if (ra_is_reload[inst]) {
                     ra_delete_reload(inst); /* readers back to the slot */
-                } else if (!ra_freq_on && getenv("HIR_REGION") &&
+                } else if (!ra_freq_on && getenv("HIR_REGION") && !getenv("HIR_PGO") &&
                            ra_region_split(inst, h_blk[gc_inst[n]], gc_inst[n])) {
                     /* in memory across the failing region only (step
                      * 5b.3/5b.4, opt-in: without the frequencies the
@@ -4257,7 +4572,64 @@ static int gc_respill(void) {
  * assigning edge stores X into the slot, which is what the variable
  * always was.  P's slot range is widened to cover M's.  Pairs are left
  * alone.  (docs/plans/memory-model.md, step 5.) */
-static int ra_web_mark[HIR_MAX_INST];
+static int *ra_web_mark;
+
+/* the instructions live at a point of ra_mark_call_crossing's walk */
+static int *ra_act;
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ra_tables_done;
+static void ra_tables(void) {
+    if (ra_tables_done) return;
+    ra_tables_done = 1;
+    hir_inst_table((char **)&ra_act, (int)sizeof(int));
+    hir_blk_table((char **)&ra_dom_wl, (int)sizeof(int));
+    hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bstart, (int)sizeof(int));
+    hir_blk_table((char **)&lv_bend, (int)sizeof(int));
+    hir_blk_table((char **)&ra_bfreq, (int)sizeof(int));
+    hir_blk_table((char **)&ra_in_region, (int)sizeof(char));
+    hir_blk_table((char **)&ra_jphi, (int)sizeof(int));
+    hir_blk_table((char **)&ra_idf_seen, (int)sizeof(char));
+    hir_inst_table((char **)&ra_crosses_call, (int)sizeof(int));
+    hir_inst_table((char **)&ra_mem_forced, (int)sizeof(int));
+    hir_inst_table((char **)&rl_fold_sub, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_s, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_e, (int)sizeof(int));
+    hir_inst_table((char **)&ra_csplit_head, (int)sizeof(int));
+    hir_inst_table((char **)&ra_csplit_next, (int)sizeof(int));
+    hir_inst_table((char **)&ra_after_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&ra_is_csplit, (int)sizeof(char));
+    hir_inst_table((char **)&ra_arg_pref_phys, (int)sizeof(int));
+    hir_inst_table((char **)&ra_reg, (int)sizeof(int));
+    hir_inst_table((char **)&ra_spill_off, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pos, (int)sizeof(int));
+    hir_inst_table((char **)&ra_iend, (int)sizeof(int));
+    hir_inst_table((char **)&ra_order, (int)sizeof(int));
+    hir_inst_table((char **)&gc_node, (int)sizeof(int));
+    hir_inst_table((char **)&ra_shead, (int)sizeof(int));
+    hir_inst_table((char **)&ra_snext, (int)sizeof(int));
+    hir_inst_table((char **)&ra_slot_end, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_lo, (int)sizeof(int));
+    hir_inst_table((char **)&lv_id, (int)sizeof(int));
+    hir_inst_table((char **)&lv_rev, (int)sizeof(int));
+    hir_inst_table((char **)&ra_wuses, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_of, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pair_lo, (int)sizeof(int));
+    hir_inst_table((char **)&rl_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first_u, (int)sizeof(int));
+    hir_inst_table((char **)&rl_first_fold, (int)sizeof(char));
+    hir_inst_table((char **)&rl_cur, (int)sizeof(int));
+    hir_inst_table((char **)&ra_region_round, (int)sizeof(int));
+    hir_inst_table((char **)&ra_web_mark, (int)sizeof(int));
+}
 
 static int ra_web_live_in(int b, int v) {
     if (b < 0 || b >= bb_nblk || lv_id[v] < 0) return 1;   /* unknown: say yes */
@@ -4417,12 +4789,19 @@ static void gc_alloc_rounds(void) {
     for (;;) {
         /* Node ids are reassigned every build; a pair pin left by the
          * previous round would point at an unrelated node. */
-        { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+        { int z; z = 0; while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; } }
         gc_build();
         gc_find_moves();
         gc_irc();
         gc_select();
-        if (iter >= 32) break;
+        /* A function too big for exact liveness (lv_on 0) has a graph
+         * from linearized intervals, where most of what a round spills
+         * is false interference, and each round costs the whole graph:
+         * salvoend at 128KB chunks, 65K nodes and 14M edges, took 15 s
+         * a round natively and ran its 32 respilling ~350 nodes each.
+         * A few rounds, then what is left uncoloured lives in memory,
+         * as it does past the 32. */
+        if (iter >= (lv_on ? 32 : GC_ROUNDS_INTERVALS)) break;
         if (gc_respill() == 0) break;
         if (gc_rs_nregion > 0) {
             /* Regional splits appended copies and moved reads: rebuild
@@ -4450,7 +4829,6 @@ static void gc_alloc(void) {
 
 static void ra_mark_call_crossing(void) {
     int i, j, inst, k, p, nact;
-    int act[HIR_MAX_INST];   /* active instruction indices (the values themselves) */
 
     /* Clear */
     i = 0;
@@ -4466,10 +4844,10 @@ static void ra_mark_call_crossing(void) {
         /* Expire anything whose live range ended before this position */
         j = 0;
         while (j < nact) {
-            int v = act[j];
+            int v = ra_act[j];
             if (ra_iend[v] < p) {
                 nact = nact - 1;
-                act[j] = act[nact];
+                ra_act[j] = ra_act[nact];
             } else {
                 j = j + 1;
             }
@@ -4483,7 +4861,7 @@ static void ra_mark_call_crossing(void) {
 
             j = 0;
             while (j < nact) {
-                int v = act[j];
+                int v = ra_act[j];
                 if (v >= 0 && v < h_ninst) {
                     ra_crosses_call[v] = 1;
                 }
@@ -4498,8 +4876,8 @@ static void ra_mark_call_crossing(void) {
          * and they died at the first call (found via ssa_insert_phis's 32768
          * bound landing in r6). */
         if (hi_has_value(k) && !hi_inst_remat(inst) && k != HI_NOP) {
-            if (nact < HIR_MAX_INST) {
-                act[nact] = inst;
+            if (nact < hir_inst_cap) {
+                ra_act[nact] = inst;
                 nact = nact + 1;
             }
         }
@@ -4509,11 +4887,11 @@ static void ra_mark_call_crossing(void) {
 }
 
 static void ra_after_mark(int v) {
-    if (v >= 0 && v < HIR_MAX_INST) ra_after_stamp[v] = ra_after_tick;
+    if (v >= 0 && v < hir_inst_cap) ra_after_stamp[v] = ra_after_tick;
 }
 
 static int ra_after_has(int v) {
-    if (v < 0 || v >= HIR_MAX_INST) return 0;
+    if (v < 0 || v >= hir_inst_cap) return 0;
     return ra_after_stamp[v] == ra_after_tick;
 }
 
@@ -4592,7 +4970,7 @@ static void ra_csplit_on_dom(int cb, int old, int nw) {
     int inst;
     nwl = 0;
     i = 0;
-    while (i < ssa_dtc_cnt[cb] && nwl < HIR_MAX_BLOCK) {
+    while (i < ssa_dtc_cnt[cb] && nwl < hir_blk_cap) {
         ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[cb] + i];
         nwl = nwl + 1;
         i = i + 1;
@@ -4608,7 +4986,7 @@ static void ra_csplit_on_dom(int cb, int old, int nw) {
             }
             ra_csplit_on_phis(b, cb, old, nw);
             i = 0;
-            while (i < ssa_dtc_cnt[b] && nwl < HIR_MAX_BLOCK) {
+            while (i < ssa_dtc_cnt[b] && nwl < hir_blk_cap) {
                 ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
                 nwl = nwl + 1;
                 i = i + 1;
@@ -4625,7 +5003,7 @@ static void ra_mark_after_uses(int call) {
     ra_after_tick = ra_after_tick + 1;
     if (ra_after_tick <= 0) {
         i = 0;
-        while (i < HIR_MAX_INST) { ra_after_stamp[i] = 0; i = i + 1; }
+        while (i < hir_inst_cap) { ra_after_stamp[i] = 0; i = i + 1; }
         ra_after_tick = 1;
     }
     cb = h_blk[call];
@@ -4647,7 +5025,7 @@ static void ra_mark_after_uses(int call) {
 static int ra_new_split_copy(int src, int blk) {
     int cl;
     cl = h_ninst;
-    if (cl >= HIR_MAX_INST) return -1;
+    hir_inst_room(1);
     h_kind[cl] = HI_COPY;
     h_ty[cl] = h_ty[src];
     h_src1[cl] = src;
@@ -4761,8 +5139,9 @@ static int ra_split_one(int v, int call) {
      * pairing below is what finally replaces it), so re-entering here
      * would split v a second time, then w again, ... until
      * ra_new_split_copy runs the instruction table out.  A double
-     * passed to a call and used after it filled all HIR_MAX_INST
-     * slots -- 6 lines of C became 1.3M lines of asm, and sqlite's
+     * passed to a call and used after it filled all 262144 instruction
+     * slots (the fixed table then; it grows now, so a runaway would end
+     * in "out of memory") -- 6 lines of C became 1.3M lines of asm, and sqlite's
      * dekkerMul2/kahanBabuskaNeumaierStep/absFunc/strftimeFunc each
      * hit it (the assembler died on "Instruction buffer size
      * overflow"). */
@@ -4820,7 +5199,7 @@ static void ra_split_at_calls(void) {
 static void hir_regalloc(void) {
     /* SLOW-32 IRC path (George-Appel Iterated Register Coalescing) */
     ra_init_phys_regs();   /* populates classification tables (safe, knob==0 today) */
-    { int z; z = 0; while (z < GC_MAX_NODE) { gc_pin[z] = -1; z = z + 1; } }
+    { int z; z = 0; while (z < gc_node_cap) { gc_pin[z] = -1; z = z + 1; } }
     /* Before anything asks ra_codegen_fold_base: the weighted uses,
      * intervals and liveness below all read rl_fold_sub, and a stale
      * entry (the previous function's, or 0 for the first) named an
@@ -4831,7 +5210,37 @@ static void hir_regalloc(void) {
     ra_build_pairs();      /* fp64 halves that want adjacent registers */
     ra_split_at_calls();   /* chop crossing webs so the pre-call half can use r3-r10 */
     ra_freq_on = getenv("HIR_RA_FREQ") ? atoi(getenv("HIR_RA_FREQ")) : 0;
-    if (ra_freq_on && ra_freq_on != 5) ra_build_bfreq();   /* step 5b.5: static block frequencies */
+    /* HIR_PGO=<file>: measured frequencies (step 5b.6, mode 6); a
+     * function the training run never entered keeps the defaults. */
+    if (getenv("HIR_PGO")) ra_freq_on = ra_pgo_fill() ? 6 : 0;
+    ra_pgo_cost = getenv("HIR_PGO_COST") ? atoi(getenv("HIR_PGO_COST")) : 0;
+    /* Aggressive phi coalescing: in a function with no calls, a phi copy
+     * in a loop coalesces without Briggs's and George's tests (default;
+     * HIR_AGGR_PHI=0 off, =2 in every function).  Those tests refuse
+     * under pressure, and a loop's back-edge copies are paid every pass:
+     * AES's peeled round loop carried its sixteen state bytes through 15
+     * moves a round.  Where calls cross the loop the merged ranges spill
+     * instead (SQLite heavy +2.0% with it everywhere; with the leaf rule,
+     * unchanged to 76 instructions), and so does a loop carrying more
+     * values than the registers hold: only a phi whose block has at most
+     * HIR_AGGR_NPHI phis (default 20) -- AES's round carries 17 or so,
+     * test_respill's BLAKE2b round 33 (16 words, as pairs). */
+    {
+        const char *ae;
+        int z;
+        ae = getenv("HIR_AGGR_NPHI");
+        gc_aggr_nphi = ae ? atoi(ae) : 20;
+        ae = getenv("HIR_AGGR_PHI");
+        gc_aggr_phi = ae ? atoi(ae) : 1;
+        if (gc_aggr_phi == 1) {
+            z = 0;
+            while (z < h_ninst) {
+                if (lv_is_callkind(h_kind[z])) { gc_aggr_phi = 0; break; }
+                z = z + 1;
+            }
+        }
+    }
+    if (ra_freq_on && ra_freq_on != 5 && ra_freq_on != 6) ra_build_bfreq();   /* step 5b.5: static block frequencies */
     ra_build_wuses();      /* weighted use counts for spill cost: loop depth, or the frequencies */
     ra_compute_pos();
     ra_compute_ends();

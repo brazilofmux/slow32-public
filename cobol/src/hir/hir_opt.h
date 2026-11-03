@@ -1,5 +1,4 @@
-/* COPIED from selfhost/src/hir_opt.h at 694d26f2.
- * Plus cc359989's two wrong-code fixes (return pinning beside an ADDI chain; phi args of a folded branch), ported 2026-10-27.
+/* COPIED from selfhost/src/hir_opt.h at 4dc9b60a.
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -16,8 +15,8 @@
  */
 
 /* Use count per instruction */
-static int ho_use[HIR_MAX_INST];
-static char ho_phi_vouched[HIR_MAX_INST];   /* ho_count_uses: this live phi has counted its args */
+static int *ho_use;
+static char *ho_phi_vouched;   /* ho_count_uses: this live phi has counted its args */
 
 /* Resolve COPY chains: follow src1 until non-COPY */
 static int ho_resolve(int inst) {
@@ -130,8 +129,7 @@ static int ho_copy_prop(void) {
  * phi never receives, and passes that read phi arguments without asking
  * which edges exist took it for one: after full unrolling, every copy's
  * `if (i != 7)` folded, and return pinning put the stale argument and
- * the value an emitter-folded ADDI chain reads in r1 together (stage08
- * cc359989, ported). */
+ * the value an emitter-folded ADDI chain reads in r1 together. */
 static void ho_phi_drop_pred(int b, int pred) {
     int i;
     int j;
@@ -548,8 +546,9 @@ static int ho_const_fold(void) {
             }
         }
         /* NOT(NOT(x)) -> COPY(x), when x is already 0 or 1 (a comparison
-         * or a NOT).  NOT is the logical !: !!x is x != 0, not x
-         * (stage08, cfuzz seed 500). */
+         * or a NOT).  NOT is the logical !: !!x is x != 0, not x -- the
+         * rule applied to any x, and `v = !p; v = !(unsigned)v;` gave p
+         * back (cfuzz seed 500). */
         if (k == HI_NOT && h_src1[i] >= 0 &&
             h_kind[h_src1[i]] == HI_NOT && h_src1[h_src1[i]] >= 0 &&
             (h_kind[h_src1[h_src1[i]]] == HI_NOT ||
@@ -643,7 +642,7 @@ static int ho_phi_sdom(int a, int b) {
     int depth;
     if (a == b || a < 0 || b < 0) return 0;
     depth = 0;
-    while (depth < HIR_MAX_BLOCK) {
+    while (depth < hir_blk_cap) {
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];
         if (b == a) return 1;
@@ -968,7 +967,7 @@ static int ho_dominates(int a, int b) {
 #define HO_CSE_MASK   2047
 
 static int ho_cse_head[HO_CSE_SLOTS];   /* slot -> first inst index, -1 if empty */
-static int ho_cse_next[HIR_MAX_INST];    /* inst -> next in chain, -1 if end */
+static int *ho_cse_next;    /* inst -> next in chain, -1 if end */
 static int ho_stat_cse;
 
 static int ho_cse_hash(int kind, int s1, int s2, int val) {
@@ -1474,12 +1473,14 @@ static int ho_acc_size(int ty) {
 }
 
 #define HA_W 32                       /* locations known per block, at most */
-static int  ha_base[HIR_MAX_BLOCK * HA_W];   /* an HI_ALLOCA, or the canonical HI_GADDR of the symbol */
-static int  ha_off[HIR_MAX_BLOCK * HA_W];
-static int  ha_sz[HIR_MAX_BLOCK * HA_W];
-static int  ha_ty[HIR_MAX_BLOCK * HA_W];
-static int  ha_val[HIR_MAX_BLOCK * HA_W];
-static int  ha_cnt[HIR_MAX_BLOCK];           /* OUT[b]: entries, or -1 = TOP (not yet computed) */
+/* per block, HA_W entries a row: block tables (hir_blk_table) whose
+ * element is the row, grown with the function's blocks (ho_tables) */
+static int  *ha_base;   /* an HI_ALLOCA, or the canonical HI_GADDR of the symbol */
+static int  *ha_off;
+static int  *ha_sz;
+static int  *ha_ty;
+static int  *ha_val;
+static int  *ha_cnt;    /* OUT[b]: entries, or -1 = TOP (not yet computed) */
 static int  ha_stat_avail;                   /* loads made copies */
 /* the working table: IN of the block being transferred */
 static int  hw_base[HA_W], hw_off[HA_W], hw_sz[HA_W], hw_ty[HA_W], hw_val[HA_W], hw_cnt;
@@ -1731,7 +1732,7 @@ static int ho_mem_avail(void) {
 static int ho_block_dominates(int a, int b) {
     int depth;
     depth = 0;
-    while (b >= 0 && depth < HIR_MAX_BLOCK) {
+    while (b >= 0 && depth < hir_blk_cap) {
         if (b == a) return 1;
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];
@@ -1740,10 +1741,71 @@ static int ho_block_dominates(int a, int b) {
     return 0;
 }
 
+/* Each alloca's references, ascending, threaded through ho_ps_next:
+ * the instructions with it as src1 or src2, a call argument or a phi
+ * argument.  Built once per run of the pass, so an alloca is judged by
+ * its own references, not a scan of the function -- a scan per alloca
+ * was most of compiling 9,000 inlined calls (allocas x instructions). */
+static int *ho_ps_head;
+static int *ho_ps_ent;
+static int *ho_ps_next;
+static int ho_ps_n;
+
+static void ho_ps_add(int a, int j) {
+    ho_ps_ent[ho_ps_n] = j;
+    ho_ps_next[ho_ps_n] = ho_ps_head[a];
+    ho_ps_head[a] = ho_ps_n;
+    ho_ps_n = ho_ps_n + 1;
+}
+
+static int ho_ps_is_alloca(int v) {
+    return v >= 0 && v < h_ninst && h_kind[v] == HI_ALLOCA;
+}
+
+/* the references of j to allocas, each alloca once */
+static void ho_ps_refs(int j, int count_only) {
+    int k;
+    int kk;
+    int v;
+    int last;
+    k = h_kind[j];
+    last = -1;
+    if (ho_ps_is_alloca(h_src1[j])) {
+        last = h_src1[j];
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(last, j);
+    }
+    if (ho_ps_is_alloca(h_src2[j]) && h_src2[j] != last) {
+        if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(h_src2[j], j);
+    }
+    if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
+        k == HI_X64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k)) {
+        kk = 0;
+        while (kk < h_val[j]) {
+            v = h_carg[h_cbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+    if (k == HI_PHI) {
+        kk = 0;
+        while (kk < h_pcnt[j]) {
+            v = h_pval[h_pbase[j] + kk];
+            if (ho_ps_is_alloca(v)) {
+                if (count_only) ho_ps_n = ho_ps_n + 1; else ho_ps_add(v, j);
+            }
+            kk = kk + 1;
+        }
+    }
+}
+
 static int ho_promote_single_store_alloca(void) {
     int changed;
     int i;
     int fn_has_call;
+    int e;
+    int nref;
 
     /* Conservative gate (precomputed once per function): when a function
      * contains any HI_CALL/HI_CALLP/DBT trampoline, we skip promoting
@@ -1766,6 +1828,32 @@ static int ho_promote_single_store_alloca(void) {
         i = i + 1;
     }
 
+    /* The reference lists: counted, then made from the last instruction
+     * back, so each list runs in ascending order.  Twice the room, for
+     * the loads a promotion turns into copies of another alloca. */
+    ho_ps_n = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 1);
+        i = i + 1;
+    }
+    nref = ho_ps_n;
+    ho_ps_head = (int *)malloc((h_ninst + 1) * (int)sizeof(int));
+    ho_ps_ent = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    ho_ps_next = (int *)malloc((2 * nref + 1) * (int)sizeof(int));
+    if (!ho_ps_head || !ho_ps_ent || !ho_ps_next) {
+        fdputs("s12cc: out of memory (alloca references)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < h_ninst) { ho_ps_head[i] = -1; i = i + 1; }
+    ho_ps_n = 0;
+    i = h_ninst - 1;
+    while (i >= 0) {
+        if (h_kind[i] != HI_NOP) ho_ps_refs(i, 0);
+        i = i - 1;
+    }
+
     changed = 0;
     i = 0;
     while (i < h_ninst) {
@@ -1779,14 +1867,16 @@ static int ho_promote_single_store_alloca(void) {
             n_stores = 0;
             has_bad = 0;
 
-            /* Scan all instructions, classify any reference to alloca i. */
-            j = 0;
-            while (j < h_ninst) {
+            /* Classify each reference to alloca i, as it stands now. */
+            e = ho_ps_head[i];
+            while (e >= 0) {
                 int k;
                 int s1; int s2;
 
+                j = ho_ps_ent[e];
+                e = ho_ps_next[e];
                 k = h_kind[j];
-                if (k == HI_NOP) { j = j + 1; continue; }
+                if (k == HI_NOP) continue;
 
                 s1 = h_src1[j];
                 s2 = h_src2[j];
@@ -1847,7 +1937,6 @@ static int ho_promote_single_store_alloca(void) {
                         }
                     }
                 }
-                j = j + 1;
             }
 
             if (!has_bad && n_stores == 1) {
@@ -1860,8 +1949,10 @@ static int ho_promote_single_store_alloca(void) {
                 can_promote = 1;
 
                 /* Verify the STORE dominates every LOAD. */
-                j = 0;
-                while (j < h_ninst) {
+                e = ho_ps_head[i];
+                while (e >= 0) {
+                    j = ho_ps_ent[e];
+                    e = ho_ps_next[e];
                     if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
                         int load_blk;
                         load_blk = h_blk[j];
@@ -1873,7 +1964,6 @@ static int ho_promote_single_store_alloca(void) {
                             break;
                         }
                     }
-                    j = j + 1;
                 }
 
                 if (can_promote) {
@@ -1882,15 +1972,19 @@ static int ho_promote_single_store_alloca(void) {
                     if (fn_has_call && h_kind[store_val] == HI_PARAM) {
                         i = i + 1; continue;
                     }
-                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA. */
-                    j = 0;
-                    while (j < h_ninst) {
+                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA.
+                     * A copy of another alloca is a reference to it. */
+                    e = ho_ps_head[i];
+                    while (e >= 0) {
+                        j = ho_ps_ent[e];
+                        e = ho_ps_next[e];
                         if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
                             h_kind[j] = HI_COPY;
                             h_src1[j] = store_val;
                             h_src2[j] = -1;
+                            if (ho_ps_is_alloca(store_val) && ho_ps_n < 2 * nref + 1)
+                                ho_ps_add(store_val, j);
                         }
-                        j = j + 1;
                     }
                     h_kind[store_inst] = HI_NOP;
                     h_src1[store_inst] = -1;
@@ -1905,6 +1999,9 @@ static int ho_promote_single_store_alloca(void) {
         i = i + 1;
     }
 
+    free(ho_ps_head);
+    free(ho_ps_ent);
+    free(ho_ps_next);
     return changed;
 }
 
@@ -1929,7 +2026,7 @@ static int ho_promote_single_store_alloca(void) {
  * instruction kinds.
  * ---------------------------------------------------------------- */
 
-static unsigned int ho_kb[HIR_MAX_INST];
+static unsigned int *ho_kb;
 static int ho_stat_kb;
 
 static unsigned int ho_kb_of(int v) {
@@ -2115,7 +2212,8 @@ static int ho_known_bits(void) {
  * memory on purpose.
  * ---------------------------------------------------------------- */
 
-static char ho_ds_bad[HIR_MAX_INST];
+static char *ho_ds_bad;
+
 static int ho_stat_dslot;
 
 /* v is used; fine or not.  A root with a use that is not fine keeps
@@ -2236,9 +2334,13 @@ static void hir_opt(void) {
         if (ho_mask & 512) changed = changed | ho_dce();
         iter = iter + 1;
     }
-    /* Stopped by the iteration cap with work left, a phi just turned
-     * COPY may still have readers, and a COPY on a phi list is never
-     * emitted (stage08, cfuzz seed 4267): one more copy propagation. */
+    /* Stopped by the iteration cap with work left, the last round's
+     * phi_simplify may have turned a phi into a COPY that nothing has
+     * been rewritten past yet -- and a COPY on a phi list is never
+     * emitted: its users read a register or slot nobody wrote.  A full
+     * unroll of ten copies of `v ^= (v ? 1 : p) - i` needed one round per
+     * copy (cfuzz seed 4267).  Hitting the cap may cost optimization,
+     * never correctness: one more copy propagation leaves no reader. */
     if (changed && (ho_mask & 1)) ho_copy_prop();
 
     /* Count live instructions after */
@@ -2250,4 +2352,27 @@ static void hir_opt(void) {
     }
 
     ho_stat_elim = ho_stat_elim + (before - after);
+}
+
+/* This module's tables, grown with the function's instructions
+ * (hir_tab_add, hir.h): registered once, before any block of the first
+ * function is made (ho_kb and ho_ds_bad are SLOW-32's alone). */
+static int ho_tables_done;
+static void ho_tables(void) {
+    if (ho_tables_done) return;
+    ho_tables_done = 1;
+    hir_inst_table((char **)&ho_use, (int)sizeof(int));
+    hir_inst_table((char **)&ho_phi_vouched, (int)sizeof(char));
+    hir_inst_table((char **)&ho_cse_next, (int)sizeof(int));
+    /* DIVERGENCE (cobol): ho_mem_avail's tables, a row of HA_W a block */
+    hir_blk_table((char **)&ha_base, (int)sizeof(int) * HA_W);
+    hir_blk_table((char **)&ha_off, (int)sizeof(int) * HA_W);
+    hir_blk_table((char **)&ha_sz, (int)sizeof(int) * HA_W);
+    hir_blk_table((char **)&ha_ty, (int)sizeof(int) * HA_W);
+    hir_blk_table((char **)&ha_val, (int)sizeof(int) * HA_W);
+    hir_blk_table((char **)&ha_cnt, (int)sizeof(int));
+#ifndef S12CC_X64_HOST
+    hir_inst_table((char **)&ho_kb, (int)sizeof(unsigned int));
+    hir_inst_table((char **)&ho_ds_bad, (int)sizeof(char));
+#endif
 }

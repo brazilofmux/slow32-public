@@ -1,4 +1,4 @@
-/* COPIED from selfhost/src/hir_ssa.h at 694d26f2.
+/* COPIED from selfhost/src/hir_ssa.h at 4dc9b60a.
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -21,44 +21,44 @@
  * count / HL_JT_MAX_SPAN).  4096 (the old 2-per-block bound) could be
  * exhausted by one large switch plus ordinary control flow, so allow ample
  * headroom; ssa_build_cfg still range-checks and aborts cleanly on overflow. */
-#define SSA_SUCC_SZ 131072   /* was 16384 */
-static int ssa_succ[SSA_SUCC_SZ];
-static int ssa_nsucc[HIR_MAX_BLOCK];
-static int ssa_soff[HIR_MAX_BLOCK];
+static int *ssa_succ;         /* grown (tables.h, TAB_SSA_SUCC) */
+static int ssa_succ_cap;
+static int *ssa_nsucc;
+static int *ssa_soff;
 
-#define SSA_MAX_PRED 65536   /* was 8192 */
-static int ssa_pred[SSA_MAX_PRED];
-static int ssa_pbase[HIR_MAX_BLOCK];
-static int ssa_npred[HIR_MAX_BLOCK];
+static int *ssa_pred;         /* grown (TAB_SSA_PRED) */
+static int ssa_pred_cap;
+static int *ssa_pbase;
+static int *ssa_npred;
 
 /* --- RPO --- */
-static int ssa_rpo[HIR_MAX_BLOCK];
-static int ssa_rpo_ord[HIR_MAX_BLOCK];
+static int *ssa_rpo;
+static int *ssa_rpo_ord;
 static int ssa_rpo_cnt;
 
 /* --- Dominators --- */
-static int ssa_idom[HIR_MAX_BLOCK];
+static int *ssa_idom;
 
-/* --- Dominance frontier (fixed width per block) --- */
-/* Per-block dominance-frontier width, and the flat array it indexes as
- * block * SSA_DF_W.  The two must be raised together: SSA_DF_SZ is
- * exactly HIR_MAX_BLOCK * SSA_DF_W, so bumping the width alone silently
- * shortens how many blocks are addressable.
- *
- * Raised 32 -> 64 because stage08 could no longer compile its own
- * source: some block in s12cc.c has a dominance frontier wider than 32,
- * and gen1 died with "too many dominance-frontier entries", failing the
- * (opt-in) fixed-point gate.  Dropping the entry instead would cost a
- * phi and silently produce a wrong reaching definition, so stopping is
- * right -- the ceiling just has to be big enough. */
-#define SSA_DF_W 64
-#define SSA_DF_SZ 1048576   /* HIR_MAX_BLOCK * SSA_DF_W; was 524288 at W=32 */
-static int ssa_df[SSA_DF_SZ];
-static int ssa_dfc[HIR_MAX_BLOCK];
+/* --- Dominance frontier --- */
+/* Block b's frontier is ssa_dfc[b] entries at ssa_dfv + ssa_dfo[b], in
+ * the order they are found.  The entries live in one array grown to fit
+ * (it was a fixed 64 per block, 4MB of it: "too many dominance-frontier
+ * entries" stopped stage08 on generated C -- s32-sbc's programs, whose
+ * dispatch loop gives blocks frontiers of hundreds -- and dropping an
+ * entry would cost a phi, a wrong reaching definition nothing notices).
+ * ssa_dfst stamps the blocks b has been added to, for the duplicates. */
+static int *ssa_dfv;
+static int ssa_dfvcap;
+static int *ssa_dfo;
+static int *ssa_dfc;
+static int *ssa_dfst;
 
 /* --- Promotable variables --- */
-#define SSA_MAX_PROMO 4096   /* was 256 */
-static int ssa_promo[SSA_MAX_PROMO];
+/* the promoted variables, grown (tables.h, TAB_SSA_PROMO, with
+ * ssa_vtop and placement's lists): 4096 of them were a silent cap --
+ * salvoend's dispatch function sat on it exactly */
+static int *ssa_promo;
+static int ssa_promo_cap;
 static int ssa_npromo;
 
 /* The function calls setjmp.  A longjmp brings control back to that
@@ -88,16 +88,16 @@ static int ssa_phi_base; /* h_ninst before phi insertion */
 static int ssa_late;     /* ssa_sroa_late is promoting: older phis stay */
 
 /* --- PHI optimization (linked lists per block) --- */
-static int ssa_phi_head[HIR_MAX_BLOCK];
-static int ssa_phi_next[HIR_MAX_INST];
+static int *ssa_phi_head;
+static int *ssa_phi_next;
 
 /* hl_nparams defined in hir_lower.h (shared) */
 
 /* --- Dom tree children (flat) --- */
-#define SSA_DTC_MAX 65536   /* was 8192 */
-static int ssa_dtc[SSA_DTC_MAX];
-static int ssa_dtc_base[HIR_MAX_BLOCK];
-static int ssa_dtc_cnt[HIR_MAX_BLOCK];
+static int *ssa_dtc;          /* grown (TAB_SSA_DTC) */
+static int ssa_dtc_cap;
+static int *ssa_dtc_base;
+static int *ssa_dtc_cnt;
 
 /* --- Rename: per-variable value stack --- */
 /* The stacks are threaded through the push log (from fort370, where
@@ -109,27 +109,69 @@ static int ssa_dtc_cnt[HIR_MAX_BLOCK];
  * on it.  This replaced a 1024-deep stack per variable -- 16MB of
  * table, and a depth ceiling raised from 64 to 256 to 1024 as
  * functions in tools/dbt hit it; what is left is the push log's. */
-static int ssa_vtop[SSA_MAX_PROMO];
+static int *ssa_vtop;
+#define SSA_DEMOTE_BLOCKS 16384   /* = HL_BLOCK_BUDGET: past it, ...      */
+#define SSA_DEMOTE_PHIS   64      /* ... a variable with more phis stays in memory */
+/* Pruned SSA (ssa_insert_phis): a variable gets a phi only where its
+ * stores' iterated frontier meets the blocks it is live into.  Minimal
+ * SSA placed one at every block of the frontier: in a BASIC program's
+ * 465KB dispatch function (salvoend at 128KB chunks: 26K blocks, ~4,000
+ * variables, nearly all locals of inlined helpers) that was ~320 phis a
+ * variable through the dispatch loop and the error exit, 13M phi
+ * arguments, all but a few dead.  Per variable, two lists threaded
+ * through ssa_ent_blk/ssa_ent_next: ssa_dhead[v], the blocks storing it;
+ * ssa_uhead[v], the blocks reading it before any store of their own
+ * (upward-exposed); ssa_khead[v], the blocks with a store ssa_rename
+ * will see (before the block's first terminator), which end liveness.
+ * ssa_vlast[v] is the block of v's last store in the scan; ssa_pidx
+ * maps an alloca to its index in ssa_promo (or -1), so neither
+ * placement nor ssa_rename searches ssa_promo per access. */
+static int *ssa_dhead;
+static int *ssa_uhead;
+static int *ssa_khead;
+static int *ssa_vlast;
+static int *ssa_alloca_ok;   /* ssa_find_promo's, per alloca (TAB_HL_ALLOCA) */
+
+/* room for n more promoted variables */
+static void ssa_promo_room(int n) {
+    if (ssa_npromo + n <= ssa_promo_cap) return;
+    if (ssa_promo_cap == 0) {
+        tab_add((char **)&ssa_promo, (int)sizeof(int), TAB_SSA_PROMO, 0);
+        tab_add((char **)&ssa_vtop, (int)sizeof(int), TAB_SSA_PROMO, 0);
+        tab_add((char **)&ssa_dhead, (int)sizeof(int), TAB_SSA_PROMO, 0);
+        tab_add((char **)&ssa_uhead, (int)sizeof(int), TAB_SSA_PROMO, 0);
+        tab_add((char **)&ssa_khead, (int)sizeof(int), TAB_SSA_PROMO, 0);
+        tab_add((char **)&ssa_vlast, (int)sizeof(int), TAB_SSA_PROMO, 0);
+    }
+    tab_grow(TAB_SSA_PROMO, &ssa_promo_cap, 1024, ssa_npromo + n);
+}
+static int *ssa_ent_blk;
+static int *ssa_ent_next;
+static int *ssa_pidx;
+static int ssa_npidx;     /* entries of ssa_pidx in use; 0 = none */
+static int *ssa_live;     /* per block: v + 1 when v is live into it */
+static int *ssa_lwl;      /* the liveness worklist */
 
 /* --- Rename: DFS stack --- */
-#define SSA_DFS 16384   /* was 2048 */
-static int ssa_rblk[SSA_DFS];
-static int ssa_rci[SSA_DFS];
-static int ssa_rmark[SSA_DFS];
+/* the depth-first stacks: a block is on one at most once, so they are
+ * block-indexed tables (hir_blk_table) and grow with the blocks */
+static int *ssa_rblk;
+static int *ssa_rci;
+static int *ssa_rmark;
 
 /* --- Rename: push log for backtracking --- */
-#define SSA_PLOG 65536   /* was 8192 */
-static int ssa_plog[SSA_PLOG];
-static int ssa_pval[SSA_PLOG];
-static int ssa_pprev[SSA_PLOG];
+static int *ssa_plog;         /* grown (TAB_SSA_PLOG) */
+static int *ssa_pval;
+static int *ssa_pprev;
+static int ssa_plog_cap;
 static int ssa_plog_n;
 
 /* --- Temp arrays (reused across passes) --- */
-static int ssa_vis[HIR_MAX_BLOCK];
-static int ssa_post[HIR_MAX_BLOCK];
-static int ssa_tmp1[HIR_MAX_BLOCK];  /* cnt / wl */
-static int ssa_tmp2[HIR_MAX_BLOCK];  /* has_phi */
-static int ssa_tmp3[HIR_MAX_BLOCK];  /* in_wl */
+static int *ssa_vis;
+static int *ssa_post;
+static int *ssa_tmp1;  /* cnt / wl */
+static int *ssa_tmp2;  /* has_phi */
+static int *ssa_tmp3;  /* in_wl */
 
 /* ------------------------------------------------------------ */
 
@@ -137,6 +179,7 @@ static int ssa_find_promo_idx(int inst) {
     int i;
     if (inst < 0) return -1;
     if (h_kind[inst] != HI_ALLOCA) return -1;
+    if (inst < ssa_npidx) return ssa_pidx[inst];
     i = 0;
     while (i < ssa_npromo) {
         if (ssa_promo[i] == inst) return i;
@@ -217,17 +260,11 @@ static void ssa_build_cfg(void) {
             }
             k = h_kind[term];
             if (k == HI_BR) {
-                if (cursor + 1 > SSA_SUCC_SZ) {
-                    fdputs("s12cc: too many CFG successor edges\n", 2);
-                    exit(1);
-                }
+                tab_room1((char **)&ssa_succ, (int)sizeof(int), TAB_SSA_SUCC, &ssa_succ_cap, 16384, cursor + 1);
                 ssa_succ[cursor] = h_val[term];
                 ssa_nsucc[b] = 1;
             } else if (k == HI_BRC) {
-                if (cursor + 2 > SSA_SUCC_SZ) {
-                    fdputs("s12cc: too many CFG successor edges\n", 2);
-                    exit(1);
-                }
+                tab_room1((char **)&ssa_succ, (int)sizeof(int), TAB_SSA_SUCC, &ssa_succ_cap, 16384, cursor + 2);
                 ssa_succ[cursor] = h_src2[term];
                 ssa_succ[cursor + 1] = h_val[term];
                 ssa_nsucc[b] = 2;
@@ -241,10 +278,7 @@ static void ssa_build_cfg(void) {
                 span = hjt_span[term];
                 n = 0;
                 /* default first */
-                if (cursor + 1 > SSA_SUCC_SZ) {
-                    fdputs("s12cc: too many CFG successor edges\n", 2);
-                    exit(1);
-                }
+                tab_room1((char **)&ssa_succ, (int)sizeof(int), TAB_SSA_SUCC, &ssa_succ_cap, 16384, cursor + 1);
                 ssa_succ[cursor] = h_val[term];
                 n = 1;
                 t = 0;
@@ -258,10 +292,7 @@ static void ssa_build_cfg(void) {
                         u = u + 1;
                     }
                     if (!seen) {
-                        if (cursor + n + 1 > SSA_SUCC_SZ) {
-                            fdputs("s12cc: too many CFG successor edges\n", 2);
-                            exit(1);
-                        }
+                        tab_room1((char **)&ssa_succ, (int)sizeof(int), TAB_SSA_SUCC, &ssa_succ_cap, 16384, cursor + n + 1);
                         ssa_succ[cursor + n] = tgt;
                         n = n + 1;
                     }
@@ -304,10 +335,7 @@ static void ssa_build_cfg(void) {
         ssa_npred[b] = 0;
         b = b + 1;
     }
-    if (total > SSA_MAX_PRED) {
-        fdputs("s12cc: too many CFG edges\n", 2);
-        exit(1);
-    }
+    tab_room1((char **)&ssa_pred, (int)sizeof(int), TAB_SSA_PRED, &ssa_pred_cap, 8192, total);
 
     /* Fill predecessors (with bounds validation) */
     b = 0;
@@ -359,7 +387,7 @@ static void ssa_compute_rpo(void) {
             if (!ssa_vis[s]) {
                 ssa_vis[s] = 1;
                 top = top + 1;
-                if (top >= SSA_DFS) {
+                if (top >= hir_blk_cap) {
                     fdputs("s12cc: RPO DFS stack overflow\n", 2);
                     exit(1);
                 }
@@ -452,21 +480,21 @@ static void ssa_compute_idom(void) {
 /* Step 4: Compute dominance frontiers                           */
 /* ------------------------------------------------------------ */
 
-static void ssa_compute_df(void) {
+/* One pass of the frontier walk (Cooper, Harvey, Kennedy): fill 0
+ * counts each block's entries into ssa_dfc, fill 1 stores them at
+ * ssa_dfo, in the same order. */
+static void ssa_df_walk(int fill) {
     int b;
     int j;
     int p;
     int runner;
-    int base;
-    int di;
-    int dup;
 
     b = 0;
     while (b < bb_nblk) {
         ssa_dfc[b] = 0;
+        ssa_dfst[b] = 0;
         b = b + 1;
     }
-
     b = 0;
     while (b < bb_nblk) {
         if (ssa_npred[b] < 2) { b = b + 1; continue; }
@@ -476,25 +504,10 @@ static void ssa_compute_df(void) {
             p = ssa_pred[ssa_pbase[b] + j];
             runner = p;
             while (runner >= 0 && runner != ssa_idom[b]) {
-                /* Add b to DF(runner), check dups */
-                base = runner * SSA_DF_W;
-                dup = 0;
-                di = 0;
-                while (di < ssa_dfc[runner]) {
-                    if (ssa_df[base + di] == b) { dup = 1; }
-                    di = di + 1;
-                }
-                if (!dup) {
-                    if (ssa_dfc[runner] >= SSA_DF_W) {
-                        /* Dropping the entry costs a phi, and a missing
-                         * phi is a wrong reaching definition that nothing
-                         * downstream can notice -- the one ceiling in this
-                         * file that used to fail silently (GitHub issue
-                         * 53).  Every other one stops here. */
-                        fdputs("s12cc: too many dominance-frontier entries\n", 2);
-                        exit(1);
-                    }
-                    ssa_df[base + ssa_dfc[runner]] = b;
+                /* b into DF(runner), once */
+                if (ssa_dfst[runner] != b + 1) {
+                    ssa_dfst[runner] = b + 1;
+                    if (fill) ssa_dfv[ssa_dfo[runner] + ssa_dfc[runner]] = b;
                     ssa_dfc[runner] = ssa_dfc[runner] + 1;
                 }
                 /* Stop at root (self-dominating entry node) */
@@ -505,6 +518,32 @@ static void ssa_compute_df(void) {
         }
         b = b + 1;
     }
+}
+
+static void ssa_compute_df(void) {
+    int b;
+    int total;
+
+    ssa_df_walk(0);
+    total = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        ssa_dfo[b] = total;
+        total = total + ssa_dfc[b];
+        b = b + 1;
+    }
+    if (total > ssa_dfvcap) {
+        int cap;
+        cap = ssa_dfvcap ? ssa_dfvcap : 4096;
+        while (cap < total) cap = cap * 2;
+        ssa_dfv = (int *)realloc(ssa_dfv, (unsigned long)cap * sizeof(int));
+        if (!ssa_dfv) {
+            fdputs("s12cc: out of memory (dominance frontiers)\n", 2);
+            exit(1);
+        }
+        ssa_dfvcap = cap;
+    }
+    ssa_df_walk(1);
 }
 
 /* ------------------------------------------------------------ */
@@ -518,11 +557,12 @@ static void ssa_find_promo(void) {
     int a;
     int n2;
     int bad;
-    int ok[HL_MAX_ALLOCA];
+    int *ok;
 
     /* The promo list is rebuilt at the end of this scan; clear it up
      * front so nothing consults the PREVIOUS function's entries. */
     ssa_npromo = 0;
+    ok = ssa_alloca_ok;
 
     /* Mark all allocas as potentially promotable */
     i = 0;
@@ -654,7 +694,8 @@ static void ssa_find_promo(void) {
     ssa_npromo = 0;
     i = 0;
     while (i < hl_nalloca) {
-        if (ok[i] && ssa_npromo < SSA_MAX_PROMO) {
+        if (ok[i]) {
+            ssa_promo_room(1);
             ssa_promo[ssa_npromo] = hl_ainst[i];
             ssa_npromo = ssa_npromo + 1;
         }
@@ -694,10 +735,7 @@ static void ssa_build_dtree(void) {
         total = total + ssa_tmp1[b];
         b = b + 1;
     }
-    if (total > SSA_DTC_MAX) {
-        fdputs("s12cc: too many domtree children\n", 2);
-        exit(1);
-    }
+    tab_room1((char **)&ssa_dtc, (int)sizeof(int), TAB_SSA_DTC, &ssa_dtc_cap, 8192, total);
 
     b = 1;
     while (b < bb_nblk) {
@@ -714,6 +752,13 @@ static void ssa_build_dtree(void) {
 /* Step 7: Insert phi nodes                                      */
 /* ------------------------------------------------------------ */
 
+static int ssa_ent_add(int n, int v, int b, int *head) {
+    ssa_ent_blk[n] = b;
+    ssa_ent_next[n] = head[v];
+    head[v] = n;
+    return n + 1;
+}
+
 static void ssa_insert_phis(void) {
     int v;
     int i;
@@ -725,63 +770,150 @@ static void ssa_insert_phis(void) {
     int j;
     int wh;
     int wt;
+    int k;
+    int n;
+    int e;
 
     ssa_phi_base = h_ninst;
+
+    /* the alloca -> variable map, and room for the lists: a store can
+     * be on two of them, a read on one */
+    ssa_pidx = (int *)malloc((ssa_phi_base + 1) * (int)sizeof(int));
+    n = 0;
+    i = 0;
+    while (i < ssa_phi_base) {
+        if (h_kind[i] == HI_LOAD || h_kind[i] == HI_STORE) n = n + 2;
+        i = i + 1;
+    }
+    ssa_ent_blk = (int *)malloc((n + 1) * (int)sizeof(int));
+    ssa_ent_next = (int *)malloc((n + 1) * (int)sizeof(int));
+    if (!ssa_pidx || !ssa_ent_blk || !ssa_ent_next) {
+        fdputs("s12cc: out of memory (SSA)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < ssa_phi_base) { ssa_pidx[i] = -1; i = i + 1; }
+    v = 0;
+    while (v < ssa_npromo) {
+        ssa_pidx[ssa_promo[v]] = v;
+        ssa_dhead[v] = -1;
+        ssa_uhead[v] = -1;
+        ssa_khead[v] = -1;
+        ssa_vlast[v] = -1;
+        v = v + 1;
+    }
+    ssa_npidx = ssa_phi_base;
+
+    /* The stores' blocks, from every store (as minimal SSA had them) */
+    e = 0;
+    i = 0;
+    while (i < ssa_phi_base) {
+        if (h_kind[i] == HI_STORE) {
+            v = ssa_find_promo_idx(h_src1[i]);
+            if (v >= 0) e = ssa_ent_add(e, v, h_blk[i], ssa_dhead);
+        }
+        i = i + 1;
+    }
+    /* The upward-exposed reads, from what ssa_rename will see: each
+     * block up to its first terminator */
+    b = 0;
+    while (b < bb_nblk) {
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k == HI_LOAD || k == HI_STORE) {
+                v = ssa_find_promo_idx(h_src1[i]);
+                if (v >= 0) {
+                    if (k == HI_STORE) {
+                        if (ssa_vlast[v] != b) e = ssa_ent_add(e, v, b, ssa_khead);
+                        ssa_vlast[v] = b;
+                    } else if (ssa_vlast[v] != b) e = ssa_ent_add(e, v, b, ssa_uhead);
+                }
+            }
+            i = i + 1;
+            if (hi_is_terminator(k)) break;
+        }
+        b = b + 1;
+    }
+
+    /* Stamps, so nothing is cleared per variable -- ssa_tmp2: v + 1,
+     * the block has v's phi (-(v + 1) while liveness runs: it stores v);
+     * ssa_tmp3: v + 1, it stores v or has its phi (on the worklist once);
+     * ssa_live: v + 1, v is live into it. */
+    b = 0;
+    while (b < bb_nblk) {
+        ssa_tmp2[b] = 0;
+        ssa_tmp3[b] = 0;
+        ssa_live[b] = 0;
+        b = b + 1;
+    }
 
     v = 0;
     while (v < ssa_npromo) {
         ty = h_ty[ssa_promo[v]];
+        /* never read before a store in the same block: no phi is used */
+        if (ssa_uhead[v] < 0) { v = v + 1; continue; }
 
-        /* ssa_tmp2 = has_phi, ssa_tmp3 = in_wl, ssa_tmp1 = wl */
-        b = 0;
-        while (b < bb_nblk) {
-            ssa_tmp2[b] = 0;
-            ssa_tmp3[b] = 0;
-            b = b + 1;
-        }
-
-        /* Worklist: blocks with stores to this var */
+        /* the worklist: the blocks storing v */
         wh = 0;
         wt = 0;
-        i = 0;
-        while (i < ssa_phi_base) {
-            if (h_kind[i] == HI_STORE && h_src1[i] == ssa_promo[v]) {
-                b = h_blk[i];
-                if (!ssa_tmp3[b]) {
-                    ssa_tmp3[b] = 1;
-                    ssa_tmp1[wt] = b;
-                    wt = wt + 1;
-                }
+        e = ssa_dhead[v];
+        while (e >= 0) {
+            b = ssa_ent_blk[e];
+            if (ssa_tmp3[b] != v + 1) {
+                ssa_tmp3[b] = v + 1;
+                ssa_tmp1[wt] = b;
+                wt = wt + 1;
             }
-            i = i + 1;
+            e = ssa_ent_next[e];
         }
 
+        /* v is live into the blocks that read it first, and from there
+         * back through each predecessor that does not store it */
+        e = ssa_khead[v];
+        while (e >= 0) { ssa_tmp2[ssa_ent_blk[e]] = -(v + 1); e = ssa_ent_next[e]; }
+        n = 0;
+        e = ssa_uhead[v];
+        while (e >= 0) {
+            b = ssa_ent_blk[e];
+            if (ssa_live[b] != v + 1) {
+                ssa_live[b] = v + 1;
+                ssa_lwl[n] = b;
+                n = n + 1;
+            }
+            e = ssa_ent_next[e];
+        }
+        k = 0;
+        while (k < n) {
+            b = ssa_lwl[k];
+            k = k + 1;
+            j = 0;
+            while (j < ssa_npred[b]) {
+                d = ssa_pred[ssa_pbase[b] + j];
+                if (ssa_live[d] != v + 1 && ssa_tmp2[d] != -(v + 1)) {
+                    ssa_live[d] = v + 1;
+                    ssa_lwl[n] = d;
+                    n = n + 1;
+                }
+                j = j + 1;
+            }
+        }
+
+        /* the iterated frontier, where v is live: the phi blocks, in
+         * the order found (ssa_lwl, free again once liveness is done) */
+        n = 0;
         while (wh < wt) {
             b = ssa_tmp1[wh];
             wh = wh + 1;
             di = 0;
             while (di < ssa_dfc[b]) {
-                d = ssa_df[b * SSA_DF_W + di];
-                if (!ssa_tmp2[d] && ssa_rpo[d] >= 0) {
-                    ssa_tmp2[d] = 1;
-                    /* Emit PHI, pre-allocate arg slots */
-                    phi = hi_emit(HI_PHI, ty, -1, -1, v, NULL);
-                    h_blk[phi] = d;
-                    h_pbase[phi] = h_nparg;
-                    h_pcnt[phi] = ssa_npred[d];
-                    j = 0;
-                    while (j < ssa_npred[d]) {
-                        if (h_nparg >= HIR_MAX_PARG) {
-                            fdputs("s12cc: too many phi args\n", 2);
-                            exit(1);
-                        }
-                        h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
-                        h_pval[h_nparg] = -1;
-                        h_nparg = h_nparg + 1;
-                        j = j + 1;
-                    }
-                    if (!ssa_tmp3[d]) {
-                        ssa_tmp3[d] = 1;
+                d = ssa_dfv[ssa_dfo[b] + di];
+                if (ssa_tmp2[d] != v + 1 && ssa_live[d] == v + 1 && ssa_rpo[d] >= 0) {
+                    ssa_tmp2[d] = v + 1;
+                    ssa_lwl[n] = d;
+                    n = n + 1;
+                    if (ssa_tmp3[d] != v + 1) {
+                        ssa_tmp3[d] = v + 1;
                         ssa_tmp1[wt] = d;
                         wt = wt + 1;
                     }
@@ -789,8 +921,43 @@ static void ssa_insert_phis(void) {
                 di = di + 1;
             }
         }
+
+        /* A variable live through a function far past the inliner's block
+         * budget, merging at hundreds of blocks, stays in memory: one
+         * load a read, one store a write.  Promoted, each of its phis
+         * spilled, and every edge into each copied it frame slot to frame
+         * slot -- salvoend at 128KB chunks: ~92 such variables (the
+         * dispatch loop's state), 32K phis, 269K copies through the stack,
+         * most of its 3M instructions.  No hand-written function in the
+         * gates comes near the block count. */
+        if (bb_nblk > SSA_DEMOTE_BLOCKS && n > SSA_DEMOTE_PHIS) {
+            ssa_pidx[ssa_promo[v]] = -1;
+            v = v + 1;
+            continue;
+        }
+
+        k = 0;
+        while (k < n) {
+            d = ssa_lwl[k];
+            k = k + 1;
+            /* Emit PHI, pre-allocate arg slots */
+            phi = hi_emit(HI_PHI, ty, -1, -1, v, NULL);
+            h_blk[phi] = d;
+            h_pbase[phi] = h_nparg;
+            h_pcnt[phi] = ssa_npred[d];
+            hir_parg_room(ssa_npred[d]);
+            j = 0;
+            while (j < ssa_npred[d]) {
+                h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
+                h_pval[h_nparg] = -1;
+                h_nparg = h_nparg + 1;
+                j = j + 1;
+            }
+        }
         v = v + 1;
     }
+    free(ssa_ent_blk);
+    free(ssa_ent_next);
 
     /* Build PHI lists per block for fast lookup in ssa_rename.  A late
      * pass (ssa_sroa_late) keeps the first construction's phis on the
@@ -813,9 +980,13 @@ static void ssa_insert_phis(void) {
 /* ------------------------------------------------------------ */
 
 static void ssa_vpush(int v, int val) {
-    if (ssa_plog_n >= SSA_PLOG) {
-        fdputs("s12cc: SSA push log overflow\n", 2);
-        exit(1);
+    if (ssa_plog_n >= ssa_plog_cap) {
+        if (ssa_plog_cap == 0) {
+            tab_add((char **)&ssa_plog, (int)sizeof(int), TAB_SSA_PLOG, 0);
+            tab_add((char **)&ssa_pval, (int)sizeof(int), TAB_SSA_PLOG, 0);
+            tab_add((char **)&ssa_pprev, (int)sizeof(int), TAB_SSA_PLOG, 0);
+        }
+        tab_grow(TAB_SSA_PLOG, &ssa_plog_cap, 8192, ssa_plog_n + 1);
     }
     ssa_plog[ssa_plog_n] = v;
     ssa_pval[ssa_plog_n] = val;
@@ -909,8 +1080,10 @@ static void ssa_rename(void) {
                     /* A phi from before SSA construction (i < ssa_phi_base:
                      * a ?: or && the lowering joined itself) has no variable
                      * behind it -- its h_val is not a promoted-variable index,
-                     * and looking it up read ssa_vtop out of bounds (stage08,
-                     * cfuzz seed 40). */
+                     * and looking it up read ssa_vtop out of bounds.  The
+                     * value was never used, but the read faulted the
+                     * compiler on SLOW-32 (cfuzz seed 40: a 64-bit ?: before
+                     * a switch). */
                     if (i < ssa_phi_base) { i = ssa_phi_next[i]; continue; }
                     phi_v = h_val[i];
                     val = ssa_vcur(phi_v);
@@ -934,7 +1107,7 @@ static void ssa_rename(void) {
                 child = ssa_dtc[ssa_dtc_base[b] + ci];
                 ssa_rci[top] = ci + 1;
                 top = top + 1;
-                if (top >= SSA_DFS) {
+                if (top >= hir_blk_cap) {
                     fdputs("s12cc: SSA DFS stack overflow\n", 2);
                     exit(1);
                 }
@@ -951,6 +1124,10 @@ static void ssa_rename(void) {
             }
         }
     }
+    /* the alloca map ssa_insert_phis made is for this construction only */
+    free(ssa_pidx);
+    ssa_pidx = NULL;
+    ssa_npidx = 0;
 }
 
 /* ------------------------------------------------------------ */
@@ -1105,12 +1282,14 @@ static void ssa_split_pair_allocas(void) {
             q = q + 1;
         }
 
-        if (!ok || hl_nalloca >= HL_MAX_ALLOCA || h_ninst >= HIR_MAX_INST) {
+        if (!ok) {
             j = j + 1;
             continue;
         }
+        hl_alloca_room(1);
 
         /* Mint the hi-half alloca (same 8-byte slot, upper word). */
+        hir_inst_room(1);
         ah = h_ninst;
         h_kind[ah] = HI_ALLOCA;
         h_ty[ah] = TY_INT;
@@ -1184,7 +1363,42 @@ static int ssa_sr_fty[SSA_SR_MAXB];     /* access type of the field at this offs
 static int ssa_sr_cov[SSA_SR_MAXB];     /* 1 + offset of the field covering this byte */
 static int ssa_sr_fa[SSA_SR_MAXB];      /* the field's alloca */
 
-static char ssa_sr_flag[HIR_MAX_INST];  /* per alloca: 1 accessed, 2 refused */
+static char *ssa_sr_flag;  /* per alloca: 1 accessed, 2 refused */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int ssa_tables_done;
+static void ssa_tables(void) {
+    if (ssa_tables_done) return;
+    ssa_tables_done = 1;
+    hir_blk_table((char **)&ssa_nsucc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_soff, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_pbase, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_npred, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rpo_ord, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_idom, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfo, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfc, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dfst, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_phi_head, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_base, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_dtc_cnt, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_vis, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_post, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp1, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp2, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_tmp3, (int)sizeof(int));
+    tab_add((char **)&ssa_alloca_ok, (int)sizeof(int), TAB_HL_ALLOCA, hl_alloca_cap);
+    hir_blk_table((char **)&ssa_rblk, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rci, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_rmark, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_live, (int)sizeof(int));
+    hir_blk_table((char **)&ssa_lwl, (int)sizeof(int));
+    hir_inst_table((char **)&ssa_phi_next, (int)sizeof(int));
+    hir_inst_table((char **)&ssa_sr_flag, (int)sizeof(char));
+}
 
 /* One pass over the function to find the allocas worth checking one
  * at a time: those with a field access and no use that refuses them.
@@ -1333,6 +1547,7 @@ static void ssa_sr_split(int j, int n) {
             if (b == 0) {
                 f = a;
             } else {
+                hir_inst_room(1);
                 f = h_ninst;
                 h_kind[f] = HI_ALLOCA;
                 h_src1[f] = -1;
@@ -1400,10 +1615,9 @@ static int ssa_sroa_late(void) {
                     if (ssa_sr_fty[b] != -1) nf = nf + 1;
                     b = b + 1;
                 }
-                if (hl_nalloca + nf <= HL_MAX_ALLOCA &&
-                    h_ninst + nf < HIR_MAX_INST &&
-                    ssa_npromo + nf <= SSA_MAX_PROMO)
-                    ssa_sr_split(j, n);
+                hl_alloca_room(nf);
+                ssa_promo_room(nf);
+                ssa_sr_split(j, n);
             }
         }
         j = j + 1;

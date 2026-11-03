@@ -1,4 +1,4 @@
-/* COPIED from selfhost/src/hir_licm.h at 694d26f2.
+/* COPIED from selfhost/src/hir_licm.h at 4dc9b60a.
  * cobol/ keeps its own copy by ruling (docs/plans/census.md): selfhost must be
  * free to evolve without breaking s32-cobc, and selfhost never depends on
  * anything built elsewhere in the tree.  Do NOT symlink this back.  Re-sync
@@ -22,7 +22,7 @@
  */
 
 /* --- Per-block hoisted instruction lists (append order: defs before uses) --- */
-static int licm_head[HIR_MAX_BLOCK];  /* first hoisted inst, -1 = none */
+static int *licm_head;  /* first hoisted inst, -1 = none */
 
 /* Loop-optimisation gate.  licm_split parks values in split_head[]
  * TOP-of-block lists and licm_strred/licm_fp64_consts append clones
@@ -31,25 +31,25 @@ static int licm_head[HIR_MAX_BLOCK];  /* first hoisted inst, -1 = none */
  * the passes run only where the target's driver turns them on
  * (hir_codegen.h sets it before calling hir_licm). */
 static int licm_loopopt;
-static int licm_tail[HIR_MAX_BLOCK];  /* last hoisted inst, for O(1) append */
-static int licm_next[HIR_MAX_INST];   /* next hoisted inst, -1 = end */
+static int *licm_tail;  /* last hoisted inst, for O(1) append */
+static int *licm_next;   /* next hoisted inst, -1 = end */
 
 /* --- Old-to-clone mapping --- */
-static int licm_map[HIR_MAX_INST];    /* old index -> clone index, -1 = not hoisted */
-static int licm_cpin[HIR_MAX_INST];   /* ICONST clone placed in a preheader by
+static int *licm_map;    /* old index -> clone index, -1 = not hoisted */
+static int *licm_cpin;   /* ICONST clone placed in a preheader by
                                        * licm_fp64_consts; codegen pins it
                                        * (h_no_remat) so it can keep a pair */
 
 /* Blocks belonging to ANY natural loop in this function — persists
  * after hir_licm (ssa_vis is per-loop scratch).  Consumed by
  * hcg_mark_loop_consts. */
-static int licm_in_any_loop[HIR_MAX_BLOCK];
+static int *licm_in_any_loop;
 /* DIVERGENCE (f77, port upstream): nesting depth per block -- each
  * natural-loop body found below increments its blocks, so an inner
  * loop's blocks count every enclosing loop.  Consumed by the spill
  * cost in hir_regalloc: a value used in an inner loop is far more
  * expensive to spill than its static use count says. */
-static int licm_depth[HIR_MAX_BLOCK];
+static int *licm_depth;
 
 /* --- Stats --- */
 static int licm_stat_hoisted;
@@ -77,12 +77,13 @@ static int licm_stat_hoisted;
  * the preheader, and no use anywhere else (a use neither clearly
  * before nor clearly after the loop disqualifies).  CALL/CALLHI
  * values are excluded (their result-pair linkage is positional). */
-static int split_head[HIR_MAX_BLOCK];
+static int *split_head;
+
 static int split_frame;
 static int licm_stat_split;
-static char sp_inbody[HIR_MAX_INST];
-static char sp_post[HIR_MAX_INST];
-static char sp_bad[HIR_MAX_INST];
+static char *sp_inbody;
+static char *sp_post;
+static char *sp_bad;
 
 /* --- Scratch for loop body --- */
 #define LICM_MAX_BODY 16384   /* was 2048 */
@@ -94,7 +95,7 @@ static int licm_body[LICM_MAX_BODY];
 static int licm_dominates(int a, int b) {
     int depth;
     depth = 0;
-    while (b >= 0 && depth < HIR_MAX_BLOCK) {
+    while (b >= 0 && depth < hir_blk_cap) {
         if (b == a) return 1;
         if (b == ssa_idom[b]) return 0;  /* root */
         b = ssa_idom[b];
@@ -117,7 +118,28 @@ static int licm_in_loop(int inst) {
  * - already marked as invariant (ho_use[inst] == 1) */
 static int licm_cur_header = -1;
 static int licm_cur_latch = -1;      /* back-edge source of the loop being hoisted */
-static int licm_ucnt[HIR_MAX_INST];  /* marked in-loop users, for the cheap-leaf rule */
+static int *licm_ucnt;  /* marked in-loop users, for the cheap-leaf rule */
+
+/* This module's tables, grown with the function's blocks and
+ * instructions (hir_tab_add, hir.h): registered once, before any
+ * block of the first function is made. */
+static int licm_tables_done;
+static void licm_tables(void) {
+    if (licm_tables_done) return;
+    licm_tables_done = 1;
+    hir_blk_table((char **)&licm_head, (int)sizeof(int));
+    hir_blk_table((char **)&licm_tail, (int)sizeof(int));
+    hir_blk_table((char **)&licm_in_any_loop, (int)sizeof(int));
+    hir_blk_table((char **)&licm_depth, (int)sizeof(int));
+    hir_blk_table((char **)&split_head, (int)sizeof(int));
+    hir_inst_table((char **)&licm_next, (int)sizeof(int));
+    hir_inst_table((char **)&licm_map, (int)sizeof(int));
+    hir_inst_table((char **)&licm_cpin, (int)sizeof(int));
+    hir_inst_table((char **)&sp_inbody, (int)sizeof(char));
+    hir_inst_table((char **)&sp_post, (int)sizeof(char));
+    hir_inst_table((char **)&sp_bad, (int)sizeof(char));
+    hir_inst_table((char **)&licm_ucnt, (int)sizeof(int));
+}
 
 static int licm_operand_ok(int inst) {
     if (inst < 0) return 1;
@@ -493,7 +515,7 @@ static int licm_clone(int orig) {
     int s2;
 
     cl = h_ninst;
-    if (cl >= HIR_MAX_INST) return -1;
+    hir_inst_room(1);
 
     h_kind[cl] = h_kind[orig];
     h_ty[cl] = h_ty[orig];
@@ -647,7 +669,7 @@ static void sp_use(int v, int ub, int pre, int header) {
 static int sp_new_inst(int kind, int ty, int s1, int s2, int val, int blk) {
     int cl;
     cl = h_ninst;
-    if (cl >= HIR_MAX_INST) return -1;
+    hir_inst_room(1);
     h_kind[cl] = kind;
     h_ty[cl] = ty;
     h_src1[cl] = s1;
@@ -738,8 +760,6 @@ static void licm_split(int header) {
             sp_inbody[v] || sp_bad[v] || !sp_post[v] ||
             h_blk[v] < 0 || h_blk[v] >= bb_nblk || ssa_vis[h_blk[v]] ||
             !licm_dominates(h_blk[v], header)) { v = v + 1; continue; }
-
-        if (h_ninst + 2 >= HIR_MAX_INST) return;
 
         split_frame = split_frame + 4;
         a_inst = sp_new_inst(HI_ALLOCA, TY_INT, -1, -1, 0 - split_frame, pre);
@@ -1095,8 +1115,8 @@ static int sr_derive_add(int r, int inv, int ty, int header, int latch, int pre)
     int nphi;
     int nnext;
     int q;
-    if (sr_niv >= SR_MAX_IV || h_ninst + 4 >= HIR_MAX_INST ||
-        h_nparg + 2 > HIR_MAX_PARG) return -1;
+    if (sr_niv >= SR_MAX_IV) return -1;
+    hir_parg_room(2);
     ninit = sr_new_op(HI_ADD, ty, sr_init[r], inv, pre);
     if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = ninit;
     else licm_head[pre] = ninit;
@@ -1164,7 +1184,7 @@ static void licm_strred(int header, int latch) {
                 stepv = -1;
                 if (h_kind[a_l] == HI_ADDI && h_src1[a_l] == phi) {
                     /* materialize the constant step as an ICONST */
-                    if (h_ninst < HIR_MAX_INST) {
+                    {
                         stepv = sp_new_inst(HI_ICONST, TY_INT, -1, -1,
                                             h_val[a_l], pre);
                     }
@@ -1299,7 +1319,7 @@ static void licm_strred(int header, int latch) {
             }
             if (r >= 0 && other >= 0 && sr_uses_local(i) &&
                 sr_count_refs(i) > 0 &&
-                sr_niv < SR_MAX_IV && h_ninst + 4 < HIR_MAX_INST) {
+                sr_niv < SR_MAX_IV) {
                 int ninit;
                 int nstep;
                 int nphi;
@@ -1321,7 +1341,7 @@ static void licm_strred(int header, int latch) {
                 }
                 /* the new phi, in the header's list */
                 nphi = sp_new_inst(HI_PHI, h_ty[i], -1, -1, 0, header);
-                if (h_nparg + 2 > HIR_MAX_PARG) return;
+                hir_parg_room(2);
                 h_pbase[nphi] = h_nparg;
                 h_pcnt[nphi] = 2;
                 {
