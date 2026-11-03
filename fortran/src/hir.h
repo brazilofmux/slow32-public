@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir.h at 701c4c3d (re-sync 2026-11-03; earlier
+/* COPIED from selfhost/stage08/hir.h at 4dc9b60a (re-sync 2026-11-03; earlier
  * 370629f9 on 2026-10-27, 30e16a57 on 2026-10-11, first copy 849dd791 on
  * 2026-08-31).
  * fortran/ is self-contained by ruling: selfhost must be free to evolve

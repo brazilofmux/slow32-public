@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_burg.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_burg.h at 4dc9b60a.  See note in hir.h. */
 /* hir_burg.h -- BURG-style instruction selection for s12cc
  *
  * Bottom-up rewrite grammar: table-driven pattern matcher.

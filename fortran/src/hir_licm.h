@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_licm.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_licm.h at 4dc9b60a.  See note in hir.h. */
 /* hir_licm.h -- Loop-Invariant Code Motion for s12cc
  *
  * Hoists pure computations out of loops.  Runs after hir_opt.h,

@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_regalloc.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_regalloc.h at 4dc9b60a.  See note in hir.h. */
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost

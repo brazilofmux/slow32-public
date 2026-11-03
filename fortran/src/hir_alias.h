@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_alias.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_alias.h at 4dc9b60a.  See note in hir.h. */
 /* hir_alias.h -- what an address names, and whether two accesses may
  * touch the same bytes.
  *

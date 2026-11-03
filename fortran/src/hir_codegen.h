@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_codegen.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_codegen.h at 4dc9b60a.  See note in hir.h. */
 /* hir_codegen.h -- HIR to SLOW-32 assembly for s12cc
  *
  * Phase 8: Linear scan register allocation (r11-r28, callee-saved).
@@ -10,7 +10,11 @@
 /* --- Output buffer --- */
 #define CG_MAX_OUT 262144    /* a window on the output file, flushed when full */
 
-static char cg_out[CG_MAX_OUT];
+/* With an output file (cg_fd) a CG_MAX_OUT window, flushed when full;
+ * without one -- a front end that takes the text from here, as COBOL's
+ * does a function at a time -- it grows (tables.h, TAB_CG_OUT). */
+static char *cg_out;
+static int  cg_out_cap;
 static int  cg_olen;
 static int  cg_fd = -1;
 static int  hcg_pgo_labels;   /* HIR_PGO_LABELS: per-block profile labels (step 5b.6) */
@@ -112,16 +116,12 @@ static int cg_pos(void) {
 }
 
 static void cg_c(int ch) {
-    if (cg_olen >= CG_MAX_OUT - 1) {
-        if (cg_fd >= 0) {
-            cg_flush();
-        } else {
-            /* Was a silent drop: the assembly came out truncated and the
-             * failure surfaced much later as a mangled .s.  Inlining made
-             * it reachable, but the landmine predates it. */
-            fdputs("s12cc: output buffer overflow (assembly too large)\n", 2);
-            exit(1);
-        }
+    if (cg_olen >= cg_out_cap - 1) {
+        /* (Full and without a file, it was a silent drop once -- the
+         * assembly came out truncated -- and then an error.) */
+        if (cg_fd >= 0 && cg_olen > 0) cg_flush();
+        if (cg_olen >= cg_out_cap - 1)
+            tab_room1(&cg_out, 1, TAB_CG_OUT, &cg_out_cap, CG_MAX_OUT, cg_olen + 2);
     }
     {
         cg_out[cg_olen] = ch;

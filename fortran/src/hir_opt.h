@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_opt.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_opt.h at 4dc9b60a.  See note in hir.h. */
 /* hir_opt.h -- SSA optimization passes for s12cc
  *
  * Runs after hir_ssa.h, before hir_codegen.h.

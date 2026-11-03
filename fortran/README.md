@@ -84,7 +84,7 @@ integer constants within a block, `ho_cse_key`, from fort370) closed
 when stage08 took the same rule; the 2026-10-27 re-sync (at `370629f9`)
 left the copied headers equal to stage08's past their banners, and
 `hir_alias.h` (the memory model's alias analysis) is copied with them.
-The 2026-11-03 re-sync (at `701c4c3d`) left them equal again: every
+The 2026-11-03 re-sync (at `4dc9b60a`: `701c4c3d` and the growable assembly buffer the COBOL re-sync needed) left them equal again: every
 Fortran-side change since was a stage08 wrong-code fix ported, and the
 three-way merge's eleven conflicts were all its wording or a table
 stage08 has since made to grow.

@@ -1,4 +1,4 @@
-/* COPIED from selfhost/src/tables.h at 701c4c3d.  See note in hir.h. */
+/* COPIED from selfhost/src/tables.h at 4dc9b60a.  See note in hir.h. */
 /* tables.h -- tables that grow
  *
  * A compiler with fixed tables stops at the first program bigger than
@@ -84,6 +84,7 @@
 #define TAB_BG_COST  61    /* hir_burg.h, instruction selection's costs and rules */
 #define TAB_CG_JT    62    /* hir_codegen.h, jump table */
 #define TAB_CG_JTENT 63    /* hir_codegen.h, jump-table entry */
+#define TAB_CG_OUT   64    /* hir_codegen.h, the assembly text (a window with a file) */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -160,6 +161,7 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_BG_COST) return "selection cost";
     if (kind == TAB_CG_JT) return "jump table";
     if (kind == TAB_CG_JTENT) return "jump-table entry";
+    if (kind == TAB_CG_OUT) return "assembly text";
     return "?";
 }
 
