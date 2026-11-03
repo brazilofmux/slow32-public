@@ -918,6 +918,13 @@ static void build_symbol_table(linker_state_t *ld) {
                             if (cs >= 0) esym->section_idx = cs;
                         }
                     }
+                } else if (esym->defined_in_file == -1 &&
+                           isym->binding != S32O_BIND_WEAK) {
+                    // A strong reference makes an undefined symbol strong:
+                    // weak only while every reference is (it took the
+                    // first reference's binding, so a weak one first let
+                    // a later strong reference resolve to 0 unreported).
+                    esym->is_weak = false;
                 }
             } else {
                 // New symbol

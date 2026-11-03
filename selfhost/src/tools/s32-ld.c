@@ -545,8 +545,19 @@ int gsym_upsert(char *name, int sec, int val, int bind) {
     return idx;
 }
 
-int gsym_add_undef(char *name) {
-    return gsym_upsert(name, 0, 0, BIND_GLOBAL);
+/* An undefined symbol stays weak only while every reference to it is
+ * weak, and then resolves to 0 (gsym_va_rel), as in ELF: the runtime's
+ * locale hooks (__s32_locale_strcoll and the rest, locale_impl.h) are
+ * weak references that code tests before calling. */
+int gsym_add_undef(char *name, int bind) {
+    int idx;
+    idx = gsym_find(name);
+    if (idx < 0) {
+        if (bind != BIND_WEAK) bind = BIND_GLOBAL;
+        return gsym_add_new(name, 0, 0, bind, 0);
+    }
+    if (gsym_def[idx] == 0 && bind != BIND_WEAK) gsym_bind[idx] = BIND_GLOBAL;
+    return idx;
 }
 
 /* === Section helpers === */
@@ -751,7 +762,7 @@ void merge_symbols() {
             if (sy_bind == BIND_LOCAL) {
                 gidx = -1;
             } else {
-                gidx = gsym_add_undef(name);
+                gidx = gsym_add_undef(name, sy_bind);
             }
         } else {
             /* Defined: get section type from section table */
@@ -806,6 +817,17 @@ void merge_relocs() {
         merge_type = stype;
         if (stype == 0x10 || stype == 0x11 || stype == 0x20) {
             merge_type = SEC_RODATA;
+        }
+        /* A section not laid out has nothing to relocate: .eh_frame,
+         * .eh_frame_hdr and .gcc_except_table (0x30-0x32), which clang
+         * emits for C too, are C++ exception machinery this linker does
+         * not build (tools/linker/s32-ld.c does).  Their relocations
+         * were applied into an empty section, "reloc target out of
+         * range", so no clang object linked here.  A program that needs
+         * them names __eh_frame_start, undefined here. */
+        if (!(merge_type == SEC_CODE || merge_type == SEC_DATA ||
+              merge_type == SEC_BSS || merge_type == SEC_RODATA)) {
+            nrelocs = 0;
         }
 
         r = 0;
@@ -1256,6 +1278,11 @@ int gsym_va_rel(int idx, int *out_va) {
     /* If symbol is defined, just return its VA */
     if (gsym_def[idx] != 0) {
         *out_va = gsym_va(idx);
+        return 1;
+    }
+    /* undefined and only ever referenced weakly: 0 */
+    if (gsym_bind[idx] == BIND_WEAK) {
+        *out_va = 0;
         return 1;
     }
 

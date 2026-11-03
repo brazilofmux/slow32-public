@@ -52,19 +52,29 @@ image() {
 }
 
 pass=0; fail=0
+# IMAGE=0: behaviour only.  Clang's objects carry .eh_frame, which the
+# host linker lays out among the read-only sections and the selfhost one
+# drops (it builds no C++ unwinding), so their addresses differ by design.
+IMAGE=1
+SELF_REJECT=SKIP   # FAIL where the selfhost linker must accept the input
 check() {
     local tag="$1"; shift
     if ! "$HOST_LD" -o "$W/h.s32x" "$@" >/dev/null 2>&1 || [ ! -s "$W/h.s32x" ]; then
         printf "  %-26s SKIP (host linker rejects)\n" "$tag"; return
     fi
     if ! timeout 600 "$EMU" "$SELF_LD" -o "$W/s.s32x" "$@" >/dev/null 2>&1 || [ ! -s "$W/s.s32x" ]; then
-        printf "  %-26s SKIP (selfhost linker rejects)\n" "$tag"; return
+        if [ "$SELF_REJECT" = FAIL ]; then
+            printf "  %-26s DIFFER (selfhost linker rejects)\n" "$tag"; fail=$((fail+1))
+        else
+            printf "  %-26s SKIP (selfhost linker rejects)\n" "$tag"
+        fi
+        return
     fi
     # Sorted: section-table ORDER is not semantic (each section carries
     # its own vaddr), and the two linkers emit them in different orders.
     image "$W/h.s32x" | sort > "$W/h.img"
     image "$W/s.s32x" | sort > "$W/s.img"
-    if ! diff -q "$W/h.img" "$W/s.img" >/dev/null; then
+    if [ "$IMAGE" = 1 ] && ! diff -q "$W/h.img" "$W/s.img" >/dev/null; then
         printf "  %-26s DIFFER (image layout)\n" "$tag"; fail=$((fail+1))
         diff "$W/h.img" "$W/s.img" | head -8 | sed 's/^/      /'
         return
@@ -79,12 +89,10 @@ check() {
     printf "  %-26s AGREE\n" "$tag"; pass=$((pass+1))
 }
 
-# Corpus: the SELFHOST world's objects, which is the set both linkers
-# accept.  The selfhost linker cannot link clang's runtime archives
-# ("reloc target out of range"), the same way the selfhost assembler
-# cannot assemble clang's output -- the two worlds meet at the object
-# level, not at the tool level.  The host linker does accept stage08
-# objects, so that is the overlap to test.
+# Corpus: the SELFHOST world's objects, image and behaviour, and then
+# clang's (below), behaviour only.  The selfhost linker used to refuse
+# clang's objects ("reloc target out of range": relocations into the
+# .eh_frame it does not lay out) and the runtime's weak references.
 LIBC_OBJS=""
 for o in "$L"/*.s32o; do
     case "$(basename "$o")" in crt0.s32o) ;; *) LIBC_OBJS="$LIBC_OBJS $o" ;; esac
@@ -105,6 +113,36 @@ if [ -f "$CC" ] && [ -f "$AS" ] && [ -f "$L/crt0.s32o" ]; then
         check "$tag" --mmio 64K "$L/crt0.s32o" "$W/t.s32o" $LIBC_OBJS
         n=$((n+1))
     done
+fi
+
+# Clang's world: regression objects with the runtime's archives, sizes
+# given (the two linkers' default stack differs, 64KB and 1MB); and a
+# weak reference left undefined, which must resolve to 0 -- the runtime's
+# locale hooks are such references, and this linker rejected them.
+IMAGE=0
+SELF_REJECT=FAIL
+RT="$ROOT/runtime"
+n=0
+for o in "$HERE"/results/feature-*/test.s32o; do
+    [ -f "$o" ] || continue
+    [ "$n" -ge 8 ] && break
+    check "clang:$(basename "$(dirname "$o")")" --mmio 64K --stack-size 64K --heap-size 1M \
+        "$RT/crt0.s32o" "$o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a"
+    n=$((n+1))
+done
+LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
+if [ -x "$LLVM_BIN/clang" ]; then
+    printf '%s\n' '#include <stdio.h>' \
+        'extern int absent(void) __attribute__((weak));' \
+        'int main(void) { printf("%s\n", absent ? "present" : "absent"); return absent ? 1 : 0; }' > "$W/weak.c"
+    if "$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -O2 -I"$RT/include" "$W/weak.c" -o "$W/weak.ll" 2>/dev/null &&
+       "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$W/weak.ll" -o "$W/weak.s" 2>/dev/null &&
+       "$ROOT/tools/assembler/slow32asm" "$W/weak.s" "$W/weak.s32o" >/dev/null 2>&1; then
+        check "clang:weak-undefined" --mmio 64K --stack-size 64K --heap-size 1M \
+            "$RT/crt0.s32o" "$W/weak.s32o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a"
+    else
+        printf "  %-26s SKIP (clang cannot build it)\n" "clang:weak-undefined"
+    fi
 fi
 
 echo ""
