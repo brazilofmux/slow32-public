@@ -33,8 +33,10 @@ too), macro parameters and arguments (32), function parameters (64,
 dropped without a word, so a full call was "too many arguments") and
 call arguments (32), grouping parentheses around a declarator (one
 level), and the self-hosted linker's global symbols (4096).  All 20
-pass; the tables grow (src/tables.h).  Not yet: grouping parentheses
-inside a function-pointer declarator, `int ((*g))(void)`.
+pass; the tables grow (src/tables.h).  Grouping parentheses inside a
+function-pointer declarator, `int ((*g))(void)`, followed on
+2026-11-03 (global, local, parameter and member declarators;
+stage08 test_fnptr_parens).
 
 **Progress.**  2026-10-28, selfhost ISSUES-100: W1, W3, W4 (except the
 2-D `2[m][1]`), W5, W7, W8, W9, W10 and W14's octal escapes fixed, and

@@ -503,6 +503,56 @@ static int ps_grouping_extra(void) {
     return n;
 }
 
+/* Grouping parentheses around a function-pointer declarator,
+ * int ((*g))(void) (6.7.6p6): the extra '(' are read here, and
+ * ps_fnptr_unparen blanks as many ')' after the declarator's own, in
+ * the raw text, as ps_try_grouping_paren does for a plain name. */
+static int ps_fnptr_parens(void) {
+    int k;
+    k = 0;
+    while (lex_tok == TK_LPAREN) {
+        k = k + 1;
+        next();
+    }
+    return k;
+}
+
+/* On the declarator's name: k ')' after the one that closes it go. */
+static void ps_fnptr_unparen(int k) {
+    char *q;
+    int depth;
+    if (k == 0) return;
+    q = lex_rp;
+    depth = 0;
+    while (*q) {
+        if (*q == 40 || *q == 91) depth = depth + 1;
+        else if (*q == 93) depth = depth - 1;
+        else if (*q == 41) {
+            if (depth == 0) break;
+            depth = depth - 1;
+        }
+        q = q + 1;
+    }
+    if (*q != 41) return;
+    q = q + 1;
+    while (*q && k > 0) {
+        if (*q == 41) { *q = 32; k = k - 1; }
+        else if (*q != 32 && *q != 9 && *q != 10 && *q != 13) break;
+        q = q + 1;
+    }
+    if (k > 0) p_error("expected ')' in function pointer declarator");
+}
+
+/* After a function-pointer declarator's '(': grouping parentheses,
+ * then the stars, as in a member or a parameter. */
+static void ps_fnptr_open(void) {
+    int k;
+    k = ps_fnptr_parens();
+    ps_skip_fnptr_stars();
+    if (lex_tok == TK_IDENT) ps_fnptr_unparen(k);
+    else if (k > 0) p_error("expected name in function pointer declarator");
+}
+
 static int ps_try_grouping_paren(void) {
     char *q;
     int depth;
@@ -2338,7 +2388,7 @@ static int parse_type(void) {
                     }
                     if (lex_tok == TK_LPAREN) {
                         next();
-                        ps_skip_fnptr_stars();   /* (**name)(...) */
+                        ps_fnptr_open();         /* ((*name)), (**name)(...) */
                         /* T (*(*name)(params))(params): a pointer to a
                          * function returning a function pointer (SQLite's
                          * sqlite3_vfs.xDlSym).  Both are opaque pointers
@@ -2674,7 +2724,7 @@ static int parse_type(void) {
                     }
                     if (lex_tok == TK_LPAREN) {
                         next();
-                        ps_skip_fnptr_stars();   /* (**name)(...) */
+                        ps_fnptr_open();         /* ((*name)), (**name)(...) */
                         /* T (*(*name)(params))(params): a pointer to a
                          * function returning a function pointer (SQLite's
                          * sqlite3_vfs.xDlSym).  Both are opaque pointers
@@ -9263,8 +9313,10 @@ static Node *parse_stmt(void) {
         if (lex_tok == TK_LPAREN) {
             int nstars;
             int has_params;
+            int fparens;
             next();
             if (ps_try_grouping_paren()) goto local_plain_name;
+            fparens = ps_fnptr_parens();     /* ((*name))(...) */
             nstars = 0;
             while (lex_tok == TK_STAR) {     /* (**name)(...) */
                 nstars = nstars + 1;
@@ -9274,6 +9326,7 @@ static Node *parse_stmt(void) {
                 p_error("expected identifier in fn ptr decl");
                 return nd_num(0);
             }
+            ps_fnptr_unparen(fparens);
             memcpy(nm, lex_str, lex_slen + 1);
             next();
             /* Array of function pointers: type (*name[N])(args)
@@ -10103,7 +10156,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
         if (lex_tok == TK_LPAREN) {
             int nested_fp;
             next();
-            ps_skip_fnptr_stars();   /* (**name)(...) */
+            ps_fnptr_open();         /* ((*name)), (**name)(...) */
             /* T (*(*name)(params))(params), as in a struct member: the
              * inner ( * name ) ( params ) here, the outer ) ( params ) below */
             nested_fp = 0;
@@ -10195,7 +10248,7 @@ static Node *ps_function_decl(char *nm, int ty, int ret_cty, int is_static, int 
                 int fp_ret_ty;
                 fp_ret_ty = pty;  /* T in T (*name)(params) */
                 next();
-                ps_skip_fnptr_stars();   /* (**name)(...) */
+                ps_fnptr_open();         /* ((*name)), (**name)(...) */
                 /* T (*(*name)(params))(params), as in a struct member: the
                  * inner ( * name ) ( params ) here, the outer ) ( params ) below */
                 nested_fp = 0;
@@ -10353,6 +10406,7 @@ static Node *parse_top_decl(void) {
     int fp_is_arr;
     int fp_count;
     int fp_nstars;
+    int fp_parens;
     int fp_has_params;
     int fn_ret_fnptr;
     Node *fn;
@@ -10491,6 +10545,7 @@ declarators:
     if (lex_tok == TK_LPAREN) {
         next();
         if (ps_try_grouping_paren()) goto plain_name;
+        fp_parens = ps_fnptr_parens();       /* ((*name))(...) */
         decl_const = 0;     /* (*name)(...), (*name[N]): left writable */
         fp_nstars = 0;
         while (lex_tok == TK_STAR) {         /* (**name)(...) */
@@ -10502,6 +10557,7 @@ declarators:
             p_error("expected name in fn ptr decl");
             return NULL;
         }
+        ps_fnptr_unparen(fp_parens);
         memcpy(nm, lex_str, lex_slen + 1);
         next();
         if (lex_tok == TK_LBRACK) {

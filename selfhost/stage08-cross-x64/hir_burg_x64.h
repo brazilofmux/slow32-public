@@ -50,10 +50,21 @@ static int bg_ccost[BG_MAX_CHAIN];
 static int bg_nchain;
 
 /* Per-instruction labeling */
-#define BG_MAX_INST 8192
-#define BG_COST_SZ 40960
-static int bg_cost[BG_COST_SZ];
-static int bg_rule[BG_COST_SZ];
+/* BG_NNT entries an instruction, grown to the function (tables.h,
+ * TAB_BG_COST).  8192 instructions' worth: a function past that went
+ * without instruction selection. */
+static int *bg_cost;
+static int *bg_rule;
+static int bg_cost_cap;
+
+static void bg_cost_room(int need) {
+    if (need <= bg_cost_cap) return;
+    if (bg_cost_cap == 0) {
+        tab_add((char **)&bg_cost, (int)sizeof(int), TAB_BG_COST, 0);
+        tab_add((char **)&bg_rule, (int)sizeof(int), TAB_BG_COST, 0);
+    }
+    tab_grow(TAB_BG_COST, &bg_cost_cap, 40960, need);
+}
 
 /* Selection output */
 static int *bg_sel;
@@ -80,7 +91,6 @@ static void bx_tables(void) {
 
 /* Stats */
 static int bg_stat_folded;
-static int bg_stat_burg_skipped;
 
 /* Init flag */
 static int bg_inited;
@@ -571,17 +581,7 @@ static void hir_burg(void) {
     /* Always precompute foff (before any NOP changes from folding) */
     bg_compute_foff();
 
-    /* Skip BURG for very large functions */
-    if (h_ninst > BG_MAX_INST) {
-        i = 0;
-        while (i < h_ninst) {
-            bg_sel[i] = -1;
-            bg_fold[i] = 0;
-            i = i + 1;
-        }
-        bg_stat_burg_skipped = bg_stat_burg_skipped + 1;
-        return;
-    }
+    bg_cost_room(h_ninst * BG_NNT);
 
     bg_label();
     bg_count_uses();

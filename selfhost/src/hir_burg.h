@@ -49,10 +49,24 @@ static int bg_nchain;
 /* Per-instruction labeling: 8192 * 5 = 40960 entries.
  * Covers functions up to 8192 HIR instructions.
  * Functions exceeding this skip BURG (codegen falls back). */
-#define BG_MAX_INST 262144   /* was 8192 */
-#define BG_COST_SZ (BG_MAX_INST * BG_NNT)   /* was 40960 = 8192 * 5, the old ceiling: a function past 8192 instructions indexed off both tables into their neighbours, and sqlite3VdbeExec got garbage costs, rules, folds and symbol names from it */
-static int bg_cost[BG_COST_SZ];
-static int bg_rule[BG_COST_SZ];
+/* BG_NNT entries an instruction, grown to the function (tables.h,
+ * TAB_BG_COST).  They were 262,144 instructions' worth, 10MB of BSS,
+ * and a function past that went without instruction selection; before
+ * that, 8192, and a function past it indexed off both tables into their
+ * neighbours -- sqlite3VdbeExec got garbage costs, rules, folds and
+ * symbol names from them. */
+static int *bg_cost;
+static int *bg_rule;
+static int bg_cost_cap;
+
+static void bg_cost_room(int need) {
+    if (need <= bg_cost_cap) return;
+    if (bg_cost_cap == 0) {
+        tab_add((char **)&bg_cost, (int)sizeof(int), TAB_BG_COST, 0);
+        tab_add((char **)&bg_rule, (int)sizeof(int), TAB_BG_COST, 0);
+    }
+    tab_grow(TAB_BG_COST, &bg_cost_cap, 40960, need);
+}
 
 /* Selection output */
 static int *bg_sel;
@@ -83,7 +97,7 @@ static int bg_stat_iconst_total;
 static int bg_stat_iconst_imm_only;
 static int bg_stat_iconst_nonimm;
 static int bg_stat_iconst_unused;
-static int bg_stat_burg_skipped;
+static int bg_stat_burg_skipped;   /* 0: no function is too big for selection now (kept for the stats line) */
 static int *bg_iconst_seen_use;
 static int *bg_iconst_seen_nonimm;
 static int bg_stat_iconst_use_op[BG_OP_SZ];
@@ -1002,18 +1016,7 @@ static void hir_burg(void) {
     /* Always precompute foff (needed by codegen even in fallback) */
     bg_compute_foff();
 
-    /* Skip BURG for functions with too many instructions */
-    if (h_ninst > BG_MAX_INST) {
-        /* Set bg_sel to -1: codegen falls back to h_kind dispatch */
-        i = 0;
-        while (i < h_ninst) {
-            bg_sel[i] = -1;
-            bg_fold[i] = 0;
-            i = i + 1;
-        }
-        bg_stat_burg_skipped = bg_stat_burg_skipped + 1;
-        return;
-    }
+    bg_cost_room(h_ninst * BG_NNT);
 
     bg_label();
     bg_count_uses();
@@ -1077,9 +1080,6 @@ static void hcg_identify_fusions(void) {
         hcg_cmp_fused[i] = 0;
         i = i + 1;
     }
-
-    /* bg_uses is only valid when BURG ran (not skipped) */
-    if (h_ninst > BG_MAX_INST) return;
 
     i = 0;
     while (i < h_ninst) {

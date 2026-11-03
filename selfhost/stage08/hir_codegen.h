@@ -326,14 +326,29 @@ static int *hcg_blk_pos; /* estimated byte offset, over-estimated */
  * unique block-label numbers (hcg_blk_lbl values), which stay valid after
  * the per-function hcg_blk_lbl[] array is overwritten because cg_lbl is
  * monotonic. */
-#define CG_MAX_JT      4096   /* was 512 */
-#define CG_MAX_JT_ENT  262144   /* was 32768 */
-static int cg_jt_id[CG_MAX_JT];      /* .LJT label number */
-static int cg_jt_base[CG_MAX_JT];    /* base into cg_jt_ent */
-static int cg_jt_span[CG_MAX_JT];    /* entry count */
-static int cg_jt_ent[CG_MAX_JT_ENT]; /* target block-label numbers */
+/* Grown (tables.h, TAB_CG_JT and TAB_CG_JTENT); 4096 tables and 262,144
+ * entries a translation unit stopped the compile. */
+static int *cg_jt_id;      /* .LJT label number */
+static int *cg_jt_base;    /* base into cg_jt_ent */
+static int *cg_jt_span;    /* entry count */
+static int *cg_jt_ent;     /* target block-label numbers */
 static int cg_njt;
 static int cg_njt_ent;
+static int cg_jt_cap;
+static int cg_jt_ent_cap;
+
+/* room for one more table of span entries */
+static void cg_jt_room(int span) {
+    if (cg_njt + 1 > cg_jt_cap) {
+        if (cg_jt_cap == 0) {
+            tab_add((char **)&cg_jt_id, (int)sizeof(int), TAB_CG_JT, 0);
+            tab_add((char **)&cg_jt_base, (int)sizeof(int), TAB_CG_JT, 0);
+            tab_add((char **)&cg_jt_span, (int)sizeof(int), TAB_CG_JT, 0);
+        }
+        tab_grow(TAB_CG_JT, &cg_jt_cap, 512, cg_njt + 1);
+    }
+    tab_room1((char **)&cg_jt_ent, (int)sizeof(int), TAB_CG_JTENT, &cg_jt_ent_cap, 32768, cg_njt_ent + span);
+}
 
 /* Immediate-selection telemetry */
 static int hcg_stat_imm_opp_add;
@@ -3938,10 +3953,7 @@ static void hcg_inst(int idx) {
         int t;
         base = hjt_base[idx];
         span = hjt_span[idx];
-        if (cg_njt >= CG_MAX_JT || cg_njt_ent + span > CG_MAX_JT_ENT) {
-            fdputs("s12cc: too many jump-table entries\n", 2);
-            exit(1);
-        }
+        cg_jt_room(span);
         jtid = cg_label();
         cg_jt_id[cg_njt] = jtid;
         cg_jt_base[cg_njt] = cg_njt_ent;

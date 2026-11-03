@@ -3604,15 +3604,10 @@ static void hx_gen_func(Node *fn) {
      * remat-skipped at the def site already (see hx_emit_inst top). */
     if (!bg_inited) { bg_init(); bg_build_index(); bg_inited = 1; }
     bg_compute_foff();
-    if (h_ninst <= BG_MAX_INST) {
-        bg_label();
-        bg_count_uses();
-        bg_select();
-    } else {
-        int i_;
-        i_ = 0;
-        while (i_ < h_ninst) { bg_sel[i_] = -1; bg_fold[i_] = 0; i_ = i_ + 1; }
-    }
+    bg_cost_room(h_ninst * BG_NNT);
+    bg_label();
+    bg_count_uses();
+    bg_select();
 
 
     /* Identify fusable BRCs.  ra_extend_fused_cmp() (called from

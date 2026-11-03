@@ -80,6 +80,9 @@
 #define TAB_LEX_SRC  58    /* c_lexer.rl, the translation unit's text (lex_src) */
 #define TAB_PP_PRE   59    /* pp.h, pre-expanded macro arguments */
 #define TAB_ST       60    /* ast.h, structure or union */
+#define TAB_BG_COST  61    /* hir_burg.h, instruction selection's costs and rules */
+#define TAB_CG_JT    62    /* hir_codegen.h, jump table */
+#define TAB_CG_JTENT 63    /* hir_codegen.h, jump-table entry */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -153,6 +156,9 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_LEX_SRC) return "source text";
     if (kind == TAB_PP_PRE) return "pre-expanded argument";
     if (kind == TAB_ST) return "structure";
+    if (kind == TAB_BG_COST) return "selection cost";
+    if (kind == TAB_CG_JT) return "jump table";
+    if (kind == TAB_CG_JTENT) return "jump-table entry";
     return "?";
 }
 
