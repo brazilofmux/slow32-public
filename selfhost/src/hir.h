@@ -134,7 +134,6 @@ int atoi(const char *nptr);
 
 #define HIR_MAX_INST   262144   /* was 16384 */
 #define HIR_MAX_CARG   32768   /* was 4096 */
-#define HIR_MAX_PARG 2097152   /* was 32768, then 262144; SQLite's debug build (asserts add blocks) overflowed it */
 
 /* --- Diagnostic flags --- */
 static int   s12cc_dump_intervals;  /* set by `-d` to dump per-fn live intervals */
@@ -244,9 +243,11 @@ static int   hjt_base[HIR_MAX_INST];
 static int   hjt_span[HIR_MAX_INST];
 static int   hjt_n;
 
-/* Phi arguments (Phase B) */
-static int   h_pblk[HIR_MAX_PARG];
-static int   h_pval[HIR_MAX_PARG];
+/* Phi arguments (Phase B): hir_parg_cap entries, grown by
+ * hir_parg_room before a phi's arguments are laid down */
+static int  *h_pblk;
+static int  *h_pval;
+static int   hir_parg_cap;
 static int   h_pbase[HIR_MAX_INST];
 static int   h_pcnt[HIR_MAX_INST];
 static int   h_nparg;
@@ -264,8 +265,9 @@ static int   bb_nblk;
  * writes for a BASIC program: "too many HIR blocks").  A table nobody
  * registered stays NULL: the first function compiled stops on it.  The
  * registry has room for instruction-indexed tables too (hir_tab_add's
- * inst), which stay fixed for now: cc.s32x's heap (stage07's linker
- * gives it 64MB) is smaller than they are. */
+ * inst), which stay fixed for now.  Two more kinds have their own
+ * counts: the phi arguments (2, h_nparg) and the allocator's
+ * interference edges (3, gc_nedge). */
 #define HIR_TABLES 512
 static char **hir_tab[HIR_TABLES];
 static int hir_tab_esz[HIR_TABLES];
@@ -310,7 +312,7 @@ static void hir_tab_grow(int inst, int *capp, int first, int need) {
     cap = *capp ? *capp : first;
     while (cap < need) cap = cap * 2;
     if (cap == *capp) return;
-    if (getenv("S12CC_TABDBG")) { fdputs(inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
+    if (getenv("S12CC_TABDBG")) { fdputs(inst == 3 ? "grow edge " : inst == 2 ? "grow parg " : inst ? "grow inst " : "grow blk ", 2); fdputuint(2, (unsigned)cap); fdputs("\n", 2); }   /* S12CC_TABDBG: each growth, on stderr */
     i = 0;
     while (i < hir_ntab) {
         if (hir_tab_inst[i] == inst)
@@ -327,6 +329,17 @@ static void hir_blk_grow(int need) {
         hir_blk_table((char **)&bb_end, (int)sizeof(int));
     }
     hir_tab_grow(0, &hir_blk_cap, 256, need);
+}
+
+/* room for n more phi arguments (the fixed 2M of them were 16MB of
+ * cc.s32x's address space whatever the function) */
+static void hir_parg_room(int n) {
+    if (h_nparg + n <= hir_parg_cap) return;
+    if (hir_parg_cap == 0) {
+        hir_tab_add((char **)&h_pblk, (int)sizeof(int), 2);
+        hir_tab_add((char **)&h_pval, (int)sizeof(int), 2);
+    }
+    hir_tab_grow(2, &hir_parg_cap, 4096, h_nparg + n);
 }
 
 /* Current block being built (used by lowering) */

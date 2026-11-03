@@ -1104,8 +1104,8 @@ static int sr_derive_add(int r, int inv, int ty, int header, int latch, int pre)
     int nphi;
     int nnext;
     int q;
-    if (sr_niv >= SR_MAX_IV || h_ninst + 4 >= HIR_MAX_INST ||
-        h_nparg + 2 > HIR_MAX_PARG) return -1;
+    if (sr_niv >= SR_MAX_IV || h_ninst + 4 >= HIR_MAX_INST) return -1;
+    hir_parg_room(2);
     ninit = sr_new_op(HI_ADD, ty, sr_init[r], inv, pre);
     if (licm_tail[pre] >= 0) licm_next[licm_tail[pre]] = ninit;
     else licm_head[pre] = ninit;
@@ -1330,7 +1330,7 @@ static void licm_strred(int header, int latch) {
                 }
                 /* the new phi, in the header's list */
                 nphi = sp_new_inst(HI_PHI, h_ty[i], -1, -1, 0, header);
-                if (h_nparg + 2 > HIR_MAX_PARG) return;
+                hir_parg_room(2);
                 h_pbase[nphi] = h_nparg;
                 h_pcnt[nphi] = 2;
                 {

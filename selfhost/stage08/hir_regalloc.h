@@ -331,7 +331,6 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * ================================================================= */
 
 #define GC_MAX_NODE  65536   /* was 4096 */
-#define GC_MAX_EDGE  2097152   /* was 262144 */   /* lowered for selfhost toolchain (BSS + assembler limits) */
 #define GC_MAX_MOVE  65536   /* was 8192 */
 
 static int gc_nnode;
@@ -339,9 +338,10 @@ static int gc_inst[GC_MAX_NODE];
 static int gc_node[HIR_MAX_INST];
 
 static int gc_adj_head[GC_MAX_NODE];
-static int gc_adj_peer[GC_MAX_EDGE];
-static int gc_adj_next[GC_MAX_EDGE];
+static int *gc_adj_peer;     /* gc_edge_cap entries, grown by gc_add_edge */
+static int *gc_adj_next;
 static int gc_nedge;
+static int gc_edge_cap;
 
 static int gc_degree[GC_MAX_NODE];
 
@@ -379,7 +379,7 @@ static int gc_force_spill[GC_MAX_NODE];
 
 /* ra_crosses_call is the only live cross tracking for SLOW-32 (caller-saved classification).
  * The x64 clobber-position lists and ra_mark_clobbers were dead after the IRC port and have
- * been removed.  See gc_add_edge for the GC_MAX_EDGE overflow guard (force_spill). */
+ * been removed.  gc_add_edge grows the edge tables. */
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -1126,16 +1126,15 @@ static void gc_add_edge(int u, int v) {
     int e1, e2;
     if (u == v) return;
     if (gc_has_edge(u, v)) return;
-    if (gc_nedge + 2 > GC_MAX_EDGE) {
-        /* Can't record this interference — mark both nodes as force-spill
-         * so they get spill slots instead of potentially sharing a color
-         * with the unrecorded interferer.  Without this guard a silent drop
-         * here can cause multiple call arguments (or other live values) to
-         * be assigned the same physical register, leading to corruption
-         * before the call.  See b6f0832f (IRC graph-edge overflow fix). */
-        if (u >= 0 && u < GC_MAX_NODE) gc_force_spill[u] = 1;
-        if (v >= 0 && v < GC_MAX_NODE) gc_force_spill[v] = 1;
-        return;
+    if (gc_nedge + 2 > gc_edge_cap) {
+        /* the edges grow (registry kind 3); they were a fixed 2M, 16MB
+         * of cc.s32x whatever the function, and an edge past them made
+         * both nodes force-spill (b6f0832f) */
+        if (gc_edge_cap == 0) {
+            hir_tab_add((char **)&gc_adj_peer, (int)sizeof(int), 3);
+            hir_tab_add((char **)&gc_adj_next, (int)sizeof(int), 3);
+        }
+        hir_tab_grow(3, &gc_edge_cap, 65536, gc_nedge + 2);
     }
     e1 = gc_nedge;
     gc_adj_peer[e1] = v;
@@ -1288,8 +1287,6 @@ static unsigned int *lv_out;
 static unsigned int *lv_live;
 static int lv_w;                   /* row stride in words, = lv_nw */
 #define LV_BUDGET_WORDS 2097152    /* 8MB per liveness set; past it, intervals */
-static unsigned int lv_pool_in[LV_BUDGET_WORDS];
-static unsigned int lv_pool_out[LV_BUDGET_WORDS];
 
 static void lv_putn(int n) {       /* decimal to stderr, for the diagnostic */
     char b[12];
@@ -1537,12 +1534,29 @@ static void lv_prepare(void) {
      * asserts on wanted more than the heap holds.  Past the budget the
      * function stays on intervals, like one with too many nodes. */
     if (bb_nblk * lv_w > LV_BUDGET_WORDS) return;
-    /* Static, not heap: by code generation the whole file's syntax tree
-     * fills the heap (stage07's linker fixes it at 64MB), and SQLite's
-     * debug build could not get a 10MB pair from what was left. */
-    lv_in = lv_pool_in;
-    lv_out = lv_pool_out;
-    lv_cap = LV_BUDGET_WORDS;
+    /* The pair is the largest function's so far, kept for the next
+     * (they were static, 16MB of cc.s32x whatever the file, when
+     * stage07's linker held the heap to 64MB).  Nothing in them
+     * survives a function, so a bigger pair is fresh memory, not a
+     * copy; a heap that cannot give it leaves the function on
+     * intervals. */
+    if (bb_nblk * lv_w > lv_cap) {
+        if (lv_in) free(lv_in);
+        if (lv_out) free(lv_out);
+        lv_cap = 65536;
+        while (lv_cap < bb_nblk * lv_w) lv_cap = lv_cap * 2;
+        if (lv_cap > LV_BUDGET_WORDS) lv_cap = LV_BUDGET_WORDS;
+        lv_in = malloc((unsigned long)lv_cap * 4);
+        lv_out = malloc((unsigned long)lv_cap * 4);
+        if (!lv_in || !lv_out) {
+            if (lv_in) free(lv_in);
+            if (lv_out) free(lv_out);
+            lv_in = 0;
+            lv_out = 0;
+            lv_cap = 0;
+            return;
+        }
+    }
     if (lv_w > lv_live_cap) {
         if (lv_live) free(lv_live);
         lv_live_cap = lv_w + 256;
@@ -3669,12 +3683,13 @@ static int ra_new_join_phi(int v, int f) {
     int np;
     int j;
     np = ssa_npred[f];
-    if (np < 1 || h_nparg + np > HIR_MAX_PARG) return -1;
+    if (np < 1) return -1;
     cl = ra_new_split_copy(v, f);
     if (cl < 0) return -1;
     h_kind[cl] = HI_PHI;
     h_src1[cl] = -1;
     ra_is_csplit[cl] = 0;
+    hir_parg_room(np);
     h_pbase[cl] = h_nparg;
     h_pcnt[cl] = np;
     j = 0;

@@ -623,8 +623,10 @@ static char  ps_sl_buf[256];          /* scratch buffer for name mangling */
 static int   ps_sl_count;             /* global static-local counter */
 
 /* Array/struct initializer bytes for globals */
-#define PS_MAX_INIT_POOL 4194304   /* was 262144 */  /* doom's tables.c initializes ~80KB of LUTs */
-static unsigned char ps_ginit_pool[PS_MAX_INIT_POOL];
+/* grown by ps_ginit_emit_byte (it was a fixed 4MB; doom's tables.c
+ * initializes ~80KB of LUTs) */
+static unsigned char *ps_ginit_pool;
+static int ps_ginit_pool_cap;
 static int ps_ginit_start[P_MAX_GLOBALS]; /* -1 = no init bytes */
 static int ps_ginit_count[P_MAX_GLOBALS]; /* byte count */
 static int ps_ginit_pool_len;
@@ -4926,7 +4928,15 @@ static int ps_ginit_cur_off(int gidx) {
 }
 
 static void ps_ginit_emit_byte(int v) {
-    if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) p_error("init pool overflow");
+    if (ps_ginit_pool_len >= ps_ginit_pool_cap) {
+        unsigned char *q;
+        int cap;
+        cap = ps_ginit_pool_cap ? ps_ginit_pool_cap * 2 : 65536;
+        q = (unsigned char *)realloc(ps_ginit_pool, (unsigned long)cap);
+        if (!q) p_error("out of memory (initializer bytes)");
+        ps_ginit_pool = q;
+        ps_ginit_pool_cap = cap;
+    }
     ps_ginit_pool[ps_ginit_pool_len] = v & 255;
     ps_ginit_pool_len = ps_ginit_pool_len + 1;
 }

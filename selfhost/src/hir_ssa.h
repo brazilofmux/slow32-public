@@ -799,12 +799,9 @@ static void ssa_insert_phis(void) {
                     h_blk[phi] = d;
                     h_pbase[phi] = h_nparg;
                     h_pcnt[phi] = ssa_npred[d];
+                    hir_parg_room(ssa_npred[d]);
                     j = 0;
                     while (j < ssa_npred[d]) {
-                        if (h_nparg >= HIR_MAX_PARG) {
-                            fdputs("s12cc: too many phi args\n", 2);
-                            exit(1);
-                        }
                         h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
                         h_pval[h_nparg] = -1;
                         h_nparg = h_nparg + 1;
