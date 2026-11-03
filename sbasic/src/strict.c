@@ -113,6 +113,9 @@ static void scan_expr(expr_t *e, void *vc) {
                 else snprintf(d, sizeof d, "%s with %d arguments, not %d to %d", e->call.name, e->call.nargs, mn, mx);
                 finding(c, e->line, "builtin-args", d);
             }
+        } else if (strcmp(e->call.name, "LBOUND") == 0 || strcmp(e->call.name, "UBOUND") == 0 ||
+                   strcmp(e->call.name, "JOIN$") == 0) {
+            /* the interpreter's own functions (eval.c), on an array named */
         } else if (e->call.nargs > 0 && !find(&c->procs, e->call.name)) {
             push(&c->u->uses, e->call.name, c->seq, e->line, 0);
             c->u->uses.v[c->u->uses.n - 1].n = e->call.nargs;
