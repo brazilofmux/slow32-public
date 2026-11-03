@@ -10,6 +10,9 @@ error_t builtin_call(const char *name, value_t *args, int nargs, value_t *out);
 
 /* Check if name is a known built-in function */
 int builtin_exists(const char *name);
+/* the arguments a builtin takes, *min to *max (-1: any number); 0 when
+ * name is no builtin */
+int builtin_arity(const char *name, int *min, int *max);
 
 /* CHR$, LEFT$, RIGHT$ and MID$ of their arguments converted (MID$
  * without a count: has_count 0) -- the compiler calls them directly */

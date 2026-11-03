@@ -211,17 +211,30 @@ an inner FOR are "NEXT without FOR" in both; jumps into and out of a
 loop are allowed.  So the compiler keeps a FOR's limit and step in
 slots of that FOR's own, and every NEXT is a direct jump.
 
-The findings now: `next-without-for`, `for-without-next`,
-`label-twice`, `label-undefined`, `dim-twice`, `dim-after-use`,
-`option-base` (twice, or after an array), `fn-twice`, `fn-undefined`.
+QuickBASIC is a full static compiler at load time -- it types every
+expression, counts every call's arguments, folds constants -- so "what
+QB loads" asks a good deal.  The checker's findings now:
+`next-without-for`, `for-without-next`, `label-twice`,
+`label-undefined`, `dim-twice`, `dim-after-use`, `dims-mismatch`
+(subscripts other than the DIM's or the first use's), `dim-bound` (a
+constant bound below OPTION BASE), `option-base` (twice, or after an
+array), `fn-twice`, `fn-undefined`, `fn-args`, `fn-in-block` (a DEF FN
+inside a block or a FOR), `builtin-args` (a builtin's argument count:
+`SIN(1,1)`, `INT()`, a bare `TAN`; the counts are the ones each builtin
+checks when it runs, now a column of builtin.c's table), `sub-undefined`
+and `sub-args` (QB's "Subprogram not defined", which is what
+sinewave.bas's `40 REMARKABLE PROGRAM BY DAVID AHL` is: GW reads a REM
+there, QB a call).
 
-`sbasic/tests/strict-qb.py DIR...` holds the checker to QBasic: over
-tests/strict/ (the shapes, one each), the 97 games, NBS and fast/, 352
-agree, 4 are the hoisted DEF FNs, and the checker refuses nothing QBasic
-loads.  QBasic refuses 11 more, all syntax the interpreter's parser
-takes and QB's does not: a builtin with the wrong argument count
-(NBS P143-P155), malformed quoted DATA (P099, P103, P194), and
-`40 REMARKABLE PROGRAM` read as a REM (sinewave.bas, GW's reading).
-That is the interpreter being the friendly one, as ruled; whether
-`-strict` should also refuse them -- an arity table for the builtins, a
-QB reading of REM -- is the next question.
+`sbasic/tests/strict-qb.py DIR...` holds the checker to QBasic.  It asks
+QB whether a program loads by running it with SYSTEM put first: a
+program that loads ends at once, one that does not shows its load-time
+error -- no keys (which pressed OK on that dialog in an earlier try), no
+telling a message at load from the same one at run time.  Over
+tests/strict/ (the shapes, one each), the 97 games, NBS and fast/: 349
+agree, 4 are the hoisted DEF FNs, and the checker refuses nothing QB
+loads.  QB refuses 14 the checker takes, three kinds left for the
+compiler's front end, which must do them anyway: types (a string where a
+number goes, 10 programs), a literal out of range (`3E-99999`, NBS
+P034), and syntax -- empty parentheses (`RND()`, `FNP()`) and two
+statements with no colon between them (P194).

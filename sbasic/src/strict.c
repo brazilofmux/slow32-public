@@ -10,7 +10,10 @@ typedef struct {
     char name[64];
     int seq;            /* the statement's place in the text */
     int line;
-    int kind;           /* jumps: 1 a GOTO-like transfer, 0 a reference only */
+    int kind;           /* jumps: 1 a GOTO-like transfer, 0 a reference only;
+                         * DEF FNs and procedures, their parameters; FN uses, the arguments;
+                         * DIMs, 1 after an ERASE */
+    int n;              /* arrays: the subscripts (DIM, use) */
 } ref_t;
 
 typedef struct { ref_t *v; int n, cap; } refs_t;
@@ -22,6 +25,7 @@ typedef struct {
     refs_t dims, uses;          /* arrays: DIMs, and uses */
     refs_t erased;              /* arrays ERASEd, which may be DIMmed again */
     refs_t options;             /* OPTION BASE statements */
+    int base;                   /* the OPTION BASE in force */
     range_t *fors; int nfors, capfors;
 } unit_t;
 
@@ -35,12 +39,13 @@ typedef struct {
     refs_t fndefs, fnuses;      /* DEF FN, program-wide */
     unit_t *u;                  /* the unit being walked */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
+    int depth;                  /* statement lists open inside the unit's own */
     int nst, capst;
 } check_t;
 
 static const char *info_names[STRICT_NINFO] = {
     "gosub", "on-error", "resume", "resume-next", "erl", "clear", "goto-out-of-for",
-    "goto-into-for", "fn-hoisted",
+    "goto-into-for", "fn-hoisted", "fn-args",
 };
 
 const char *strict_info_name(int i) { return i >= 0 && i < STRICT_NINFO ? info_names[i] : "?"; }
@@ -57,6 +62,7 @@ static void push(refs_t *r, const char *name, int seq, int line, int kind) {
     x->seq = seq;
     x->line = line;
     x->kind = kind;
+    x->n = 0;
 }
 
 static ref_t *find(refs_t *r, const char *name) {
@@ -88,12 +94,29 @@ static int is_fn_name(const char *n) { return n[0] == 'F' && n[1] == 'N' && n[2]
 static void scan_expr(expr_t *e, void *vc) {
     check_t *c = vc;
     if (e->type == EXPR_VARIABLE) {
+        int mn, mx;
         if (strcmp(e->var.name, "ERL") == 0) c->info[STRICT_ERL]++;
+        if (builtin_arity(e->var.name, &mn, &mx) && mn > 0) {   /* TAN for TAN(X): QB "Expected: (" */
+            char d[128];
+            snprintf(d, sizeof d, "%s without its arguments", e->var.name);
+            finding(c, e->line, "builtin-args", d);
+        }
         if (is_fn_name(e->var.name)) push(&c->fnuses, e->var.name, c->seq, e->line, 0);
     } else if (e->type == EXPR_CALL) {
-        if (is_fn_name(e->call.name)) push(&c->fnuses, e->call.name, c->seq, e->line, 0);
-        else if (e->call.nargs > 0 && !builtin_exists(e->call.name) && !find(&c->procs, e->call.name))
+        int mn, mx;
+        if (is_fn_name(e->call.name)) push(&c->fnuses, e->call.name, c->seq, e->line, e->call.nargs);
+        else if (builtin_arity(e->call.name, &mn, &mx)) {
+            if (e->call.nargs < mn || (mx >= 0 && e->call.nargs > mx)) {
+                char d[128];
+                if (mx < 0) snprintf(d, sizeof d, "%s with %d arguments, at least %d", e->call.name, e->call.nargs, mn);
+                else if (mn == mx) snprintf(d, sizeof d, "%s with %d arguments, not %d", e->call.name, e->call.nargs, mn);
+                else snprintf(d, sizeof d, "%s with %d arguments, not %d to %d", e->call.name, e->call.nargs, mn, mx);
+                finding(c, e->line, "builtin-args", d);
+            }
+        } else if (e->call.nargs > 0 && !find(&c->procs, e->call.name)) {
             push(&c->u->uses, e->call.name, c->seq, e->line, 0);
+            c->u->uses.v[c->u->uses.n - 1].n = e->call.nargs;
+        }
     }
 }
 
@@ -116,6 +139,7 @@ static void walk_unit(check_t *c, stmt_t *body);
 static void walk_list(check_t *c, stmt_t *s) {
     int base = c->nst;
     char d[128];
+    c->depth++;
     for (; s; s = s->next) {
         int seq = ++c->seq;
         stmt_exprs(s, scan_top, c);
@@ -194,16 +218,31 @@ static void walk_list(check_t *c, stmt_t *s) {
                 if (prev) {
                     snprintf(d, sizeof d, "DIM %s again (first at line %d)", s->dim_stmt.name, prev->line);
                     finding(c, s->line, "dim-twice", d);
-                } else              /* kind 1: after an ERASE, uses before it were the old array's */
+                } else {            /* kind 1: after an ERASE, uses before it were the old array's */
                     push(&c->u->dims, s->dim_stmt.name, seq, s->line,
                          find(&c->u->erased, s->dim_stmt.name) != NULL);
+                    c->u->dims.v[c->u->dims.n - 1].n = s->dim_stmt.ndims;
+                }
+                for (int i = 0; i < s->dim_stmt.ndims; i++) {
+                    expr_t *b = s->dim_stmt.dims[i];
+                    double v;
+                    if (b && b->type == EXPR_LITERAL && b->literal.type != VAL_STRING &&
+                        val_to_double(&b->literal, &v) == ERR_NONE && v < c->u->base) {
+                        snprintf(d, sizeof d, "DIM %s with an upper bound below OPTION BASE %d",
+                                 s->dim_stmt.name, c->u->base);
+                        finding(c, s->line, "dim-bound", d);
+                        break;
+                    }
+                }
             }
             break;
         case STMT_ARRAY_ASSIGN:
             push(&c->u->uses, s->array_assign.name, seq, s->line, 0);
+            c->u->uses.v[c->u->uses.n - 1].n = s->array_assign.nindices;
             break;
         case STMT_OPTION_BASE:
             push(&c->u->options, "OPTION BASE", seq, s->line, 0);
+            c->u->base = s->option_base.base;
             break;
         case STMT_ERASE:                /* an erased array may be DIMmed again */
             for (int i = 0; i < s->erase_stmt.nnames; i++) {
@@ -215,16 +254,32 @@ static void walk_list(check_t *c, stmt_t *s) {
             }
             break;
         case STMT_DEF_FN:
+            if (c->nst > 0 || c->depth > 0) {   /* QB: "DEF FN not allowed in control statements" */
+                snprintf(d, sizeof d, "DEF %s inside a %s", s->def_fn.name, c->nst > 0 ? "FOR" : "block");
+                finding(c, s->line, "fn-in-block", d);
+            }
             if (find(&c->fndefs, s->def_fn.name)) {
                 snprintf(d, sizeof d, "DEF %s again", s->def_fn.name);
                 finding(c, s->line, "fn-twice", d);
             } else
-                push(&c->fndefs, s->def_fn.name, seq, s->line, 0);
+                push(&c->fndefs, s->def_fn.name, seq, s->line, s->def_fn.nparams);
             break;
         case STMT_SUB_DEF:
         case STMT_FUNC_DEF:
             walk_unit(c, s->proc_def.body);
             break;
+        case STMT_CALL: {               /* CALL name, or name args alone */
+            ref_t *p = find(&c->procs, s->call_stmt.name);
+            if (!p) {
+                snprintf(d, sizeof d, "%s is no SUB of the program", s->call_stmt.name);
+                finding(c, s->line, "sub-undefined", d);
+            } else if (p->kind != s->call_stmt.nargs) {
+                snprintf(d, sizeof d, "%s with %d arguments, defined with %d",
+                         s->call_stmt.name, s->call_stmt.nargs, p->kind);
+                finding(c, s->line, "sub-args", d);
+            }
+            break;
+        }
         case STMT_IF:
             walk_list(c, s->if_stmt.then_body);
             walk_list(c, s->if_stmt.else_body);
@@ -249,6 +304,7 @@ static void walk_list(check_t *c, stmt_t *s) {
         finding(c, f->line, "for-without-next", d);
         add_for(c->u, f->seq, c->seq);      /* to the block's end, for goto-into-for */
     }
+    c->depth--;
 }
 
 static void free_unit(unit_t *u) {
@@ -260,9 +316,12 @@ static void free_unit(unit_t *u) {
 static void walk_unit(check_t *c, stmt_t *body) {
     unit_t u, *outer = c->u;
     char d[160];
+    int depth = c->depth;
     memset(&u, 0, sizeof u);
     c->u = &u;
+    c->depth = -1;                      /* the unit's own list is depth 0 */
     walk_list(c, body);
+    c->depth = depth;
     for (int i = 0; i < u.jumps.n; i++) {
         ref_t *j = &u.jumps.v[i];
         ref_t *l = find(&u.labels, j->name);
@@ -291,6 +350,20 @@ static void walk_unit(check_t *c, stmt_t *body) {
                 finding(c, dm->line, "dim-after-use", d);
                 break;
             }
+    }
+    /* an array's subscripts: as many as its DIM's, or as its first use's
+     * (QB: "Wrong number of dimensions"; NBS P074-P078) */
+    for (int k = 0; k < u.uses.n; k++) {
+        ref_t *use = &u.uses.v[k];
+        int want = -1, at = 0;
+        for (int i = 0; i < u.dims.n && want < 0; i++)
+            if (strcmp(u.dims.v[i].name, use->name) == 0) { want = u.dims.v[i].n; at = u.dims.v[i].line; }
+        for (int i = 0; i < k && want < 0; i++)
+            if (strcmp(u.uses.v[i].name, use->name) == 0) { want = u.uses.v[i].n; at = u.uses.v[i].line; }
+        if (want >= 0 && use->n != want) {
+            snprintf(d, sizeof d, "%s with %d subscripts, %d at line %d", use->name, use->n, want, at);
+            finding(c, use->line, "dims-mismatch", d);
+        }
     }
     /* OPTION BASE: once, and before any array is DIMmed or used (QB:
      * "Array already dimensioned"; NBS P080-P082) */
@@ -323,7 +396,7 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
     c.rctx = rctx;
     for (stmt_t *s = program; s; s = s->next)
         if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF)
-            push(&c.procs, s->proc_def.name, 0, s->line, 0);
+            push(&c.procs, s->proc_def.name, 0, s->line, s->proc_def.nparams);
     walk_unit(&c, program);
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
@@ -334,8 +407,14 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         if (!def) {
             snprintf(d, sizeof d, "%s is not defined", use->name);
             finding(&c, use->line, "fn-undefined", d);
-        } else if (use->seq <= def->seq)    /* before it, or in its own body */
-            c.info[STRICT_FN_HOISTED]++;
+        } else {
+            if (use->kind != def->kind) {   /* QB: "Argument-count mismatch" */
+                snprintf(d, sizeof d, "%s with %d arguments, defined with %d", use->name, use->kind, def->kind);
+                finding(&c, use->line, "fn-args", d);
+            }
+            if (use->seq <= def->seq)       /* before it, or in its own body */
+                c.info[STRICT_FN_HOISTED]++;
+        }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
     free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.st);

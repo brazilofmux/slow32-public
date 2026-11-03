@@ -12,9 +12,9 @@ the compiler takes.  For each .bas program in the directories given:
     DIFF-QB      only QBasic refuses it (at load)
     HOISTED      QBasic's "Function not defined", taken here on purpose
 
-QBasic runs through nbs.py (dos-monster, its cache); a program's .in or
-.input file is its keys, as there, so earlier surveys' runs are reused.
-"Refused at load" is read from the message: QB's load-time ones below.
+QBasic runs through nbs.py (dos-monster, its cache), each program with
+SYSTEM put first: one that loads ends at once, one that does not shows
+QBasic's load-time error.
 
     strict-qb.py DIR [DIR ...]     the disagreements, then the counts
 """
@@ -27,31 +27,15 @@ spec = importlib.util.spec_from_file_location('survey', os.path.join(HERE, 'stri
 survey = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(survey)
 
-LOAD_ERRORS = (
-    'NEXT without FOR', 'FOR without NEXT', 'Label not defined', 'Duplicate label',
-    'Duplicate definition', 'Array already dimensioned', 'Function not defined',
-    'Block IF without END IF', 'END IF without block IF', 'Syntax error', 'Expected',
-    'WEND without WHILE', 'WHILE without WEND', 'LOOP without DO', 'DO without LOOP',
-    'SELECT without END SELECT', 'CASE without SELECT', 'Subprogram not defined',
-)
-
-
-def qb_refuses(verdict):
-    if not isinstance(verdict, str) or not verdict.startswith('ERROR('):
-        return None
-    msg = verdict[6:-1]
-    for m in LOAD_ERRORS:
-        if msg.startswith(m):
-            return msg
+def qb_refuses(src, exe):
+    """QBasic's load-time error for src, or None when it loads: the program
+    run with SYSTEM put first, so a program that loads ends at once, and
+    one that does not shows the error dialog.  No keys, no output, and no
+    telling a load-time message from the same message at run time."""
+    v = nbs.run_qbasic(b'SYSTEM\r\n' + src, b'', exe)
+    if isinstance(v, str) and v.startswith('ERROR('):
+        return v[6:-1]
     return None
-
-
-def keys_for(path):
-    base = os.path.splitext(path)[0]
-    for ext in ('.in', '.input', '.IN', '.INPUT'):
-        if os.path.exists(base + ext):
-            return open(base + ext, 'rb').read()
-    return b''
 
 
 def main():
@@ -67,13 +51,7 @@ def main():
             if n is None:
                 counts['unparsed'] += 1
                 continue
-            src = open(path, 'rb').read()
-            v = nbs.run_qbasic(src, keys_for(path), exe)
-            if v == 'TIMEOUT':
-                # the keys can close a load-time error's dialog (its OK) and
-                # leave QBasic's editor; a load error comes before any input
-                v = nbs.run_qbasic(src, b'', exe)
-            qb = qb_refuses(v)
+            qb = qb_refuses(open(path, 'rb').read(), exe)
             if qb and qb.startswith('Function not defined') and info.get('fn-hoisted'):
                 counts['HOISTED'] += 1
                 continue
