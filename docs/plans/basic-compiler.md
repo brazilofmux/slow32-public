@@ -415,7 +415,7 @@ layout per mode, checked in QBasic's SCREEN 7 and 1 (its DOS emulator
 has no VGA; 13 and 12 are held to the layout as documented, and
 compiled to interpreted); HEX$ of a negative INTEGER its 16 bits on the
 way.  68 compile.  Seen and left: A! under DEFINT is SINGLE in QBasic
-(the lexer drops the !, so here it is A); SCREEN 0 after SCREEN 7 keeps
+(done since: DEFtype written into names); SCREEN 0 after SCREEN 7 keeps
 40 columns there.
 
 Then the small ones (3b4a1bee/5e9a060a): the loader's 2048-line limit
@@ -438,7 +438,8 @@ Bresenham offset does not fit the four lines measured; open.
 Then the parser's forms (677e1ae8: names with a dot, RUN, SUB ...
 STATIC, STATIC x AS type, one-line ELSEIF, label 1.1, SCREEN , , p, p)
 and GOSUB in procedures (s32-bc): 84 compile.  Then whole arrays as
-arguments (87 compile).  Left: DEFtype after a use (3), RUN in s32-bc (2), SCREEN()
+arguments (87 compile), DEFtype as the text's: the parser writes each
+name's suffix, the run-time DEFtype gone (89).  Left: DEFtype after a use (done), RUN in s32-bc (2), SCREEN()
 the function (2: needs a model of the text screen), DRAW, the machine's
 memory (CALL ABSOLUTE, BSAVE), a name's ! under DEFINT (mooncr), and two
 QB64 programs QBasic loads only because its _ continues a line.
