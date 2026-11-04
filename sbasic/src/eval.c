@@ -1842,12 +1842,13 @@ exp_part:
 static int format_using_str(const char *fmt, const char *str, int slen) {
     if (*fmt == '!') {
         /* First character only */
-        col_printf("%c", slen > 0 ? str[0] : ' ');
+        char one[2] = { slen > 0 ? str[0] : ' ', '\0' };
+        col_putn(one, 1);
         return 1;
     }
     if (*fmt == '&') {
         /* Entire string */
-        col_puts(str);
+        col_putn(str, slen);
         return 1;
     }
     if (*fmt == '\\') {
@@ -1858,7 +1859,11 @@ static int format_using_str(const char *fmt, const char *str, int slen) {
         if (*p == '\\') p++;
         /* Print string padded to width */
         int printed = 0;
-        for (int i = 0; i < width && i < slen; i++) { col_printf("%c", str[i]); printed++; }
+        for (int i = 0; i < width && i < slen; i++) {
+            char one[2] = { str[i], '\0' };
+            col_putn(one, 1);
+            printed++;
+        }
         for (int i = printed; i < width; i++) col_puts(" ");
         return (int)(p - fmt);
     }

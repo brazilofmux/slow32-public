@@ -1091,9 +1091,147 @@ static int builtin_native(const char *name, int n, bv_t *a, bv_t *r) {
     return 0;
 }
 
+/* --- strings whose type the program's text settles ------------------ */
+
+static int is_builtin_call(const char *name);
+static int is_plain_var(const expr_t *e);
+static int arr_type(const char *name);
+static int ld(int addr, int off);
+
+/* e is a string, whatever runs: a literal, a string variable, element or
+ * FUNCTION, a $ builtin, + of two such (0: not known here, the general
+ * way) */
+static int static_str(const expr_t *e) {
+    switch (e->type) {
+    case EXPR_LITERAL:
+        return e->literal.type == VAL_STRING;
+    case EXPR_VARIABLE:
+        if (is_function(e->var.name)) return name_type(proc_find(e->var.name)->def->proc_def.name) == VAL_STRING;
+        return is_plain_var(e) && name_type(e->var.name) == VAL_STRING && const_find(e->var.name) < 0;
+    case EXPR_BINARY:
+        return e->binary.op == OP_ADD && static_str(e->binary.left) && static_str(e->binary.right);
+    case EXPR_CALL: {
+        size_t l = strlen(e->call.name);
+        if (is_function(e->call.name)) return name_type(proc_find(e->call.name)->def->proc_def.name) == VAL_STRING;
+        if (is_builtin_call(e->call.name)) return l && e->call.name[l - 1] == '$';
+        if (strncmp(e->call.name, "FN", 2) == 0) return 0;
+        return e->call.nargs > 0 && arr_type(e->call.name) == VAL_STRING;
+    }
+    default:
+        return 0;
+    }
+}
+
+/* evaluating e runs none of the program's code, so it changes no variable
+ * (an error leaves the statement altogether) */
+static int pure_expr(const expr_t *e) {
+    switch (e->type) {
+    case EXPR_LITERAL:
+        return 1;
+    case EXPR_VARIABLE:
+        return is_plain_var(e);
+    case EXPR_UNARY:
+        return pure_expr(e->unary.operand);
+    case EXPR_BINARY:
+        return pure_expr(e->binary.left) && pure_expr(e->binary.right);
+    case EXPR_COMPARE:
+        return pure_expr(e->compare.left) && pure_expr(e->compare.right);
+    case EXPR_CALL:
+        if (is_function(e->call.name) || strncmp(e->call.name, "FN", 2) == 0) return 0;
+        for (int i = 0; i < e->call.nargs; i++)
+            if (!pure_expr(e->call.args[i])) return 0;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* a string operand's pointer: a literal's or (nothing evaluated after it
+ * that could change it: later_pure) a variable's is only borrowed (*own
+ * 0); anything else is a reference to let go of (*own 1) */
+static int str_operand(expr_t *e, int later_pure, int *own) {
+    if (e->type == EXPR_LITERAL) {
+        int cb = h_ncarg, id = bc_intern_str(e->literal.sval->data, e->literal.sval->len);
+        carg(iconst(id), 0);
+        carg(saddr(e->literal.sval->data, e->literal.sval->len), 0);
+        carg(iconst(e->literal.sval->len), 0);
+        *own = 0;
+        return call_end(cb, 3, "bcrt_lit", NULL);
+    }
+    if (later_pure && is_plain_var(e)) {
+        var_t *v = var_get(e->var.name, e->var.var_type, e->line);
+        if (v->type == VAL_STRING) {
+            *own = 0;
+            return hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+        }
+    }
+    *own = 1;
+    return expr(e).lo;
+}
+
+static void str_release(int p, int own) {
+    if (own) {
+        int cb = h_ncarg;
+        carg(p, 0);
+        call_end(cb, 1, "bcrt_unref", NULL);
+    }
+}
+
+/* LEN, ASC, LEFT$, RIGHT$, MID$ of a known string, CHR$: their typed
+ * entries, not builtin_call by name; every argument evaluated, then made
+ * integers in order (as fn_mid and the others do), as *r */
+static int builtin_str(const char *name, int n, expr_t **args, bv_t *r) {
+    bv_t a[2];
+    int cb, p, own, x[2], later = 1, res;
+    if (is(name, "CHR$") && n == 1) {
+        a[0] = expr(args[0]);
+        x[0] = coerce(a[0], VAL_LONG).lo;
+        cb = h_ncarg;
+        carg(x[0], 0);
+        *r = mk(call_end(cb, 1, "bcrt_chr", NULL), -1, -1, VAL_STRING);
+        return 1;
+    }
+    if (!(n >= 1 && static_str(args[0]) &&
+          (((is(name, "LEN") || is(name, "ASC")) && n == 1) ||
+           ((is(name, "LEFT$") || is(name, "RIGHT$")) && n == 2) ||
+           (is(name, "MID$") && (n == 2 || n == 3)))))
+        return 0;
+    for (int i = 1; i < n; i++) later = later && pure_expr(args[i]);
+    p = str_operand(args[0], later, &own);
+    for (int i = 1; i < n; i++) a[i - 1] = expr(args[i]);
+    for (int i = 1; i < n; i++) x[i - 1] = coerce(a[i - 1], VAL_LONG).lo;
+    if (is(name, "LEN")) {
+        res = ld(p, 4);                 /* (sb_string_t: its len) */
+        str_release(p, own);
+        *r = mk(res, -1, -1, VAL_INTEGER);
+        return 1;
+    }
+    cb = h_ncarg;
+    carg(p, 0);
+    if (is(name, "ASC")) {
+        res = call_end(cb, 1, "bcrt_asc", NULL);
+        str_release(p, own);
+        *r = mk(res, -1, -1, VAL_INTEGER);
+        return 1;
+    }
+    if (is(name, "MID$")) {
+        carg(x[0], 0);
+        carg(n == 3 ? x[1] : iconst(0), 0);
+        carg(iconst(n == 3), 0);
+        res = call_end(cb, 4, "bcrt_mid", NULL);
+    } else {
+        carg(x[0], 0);
+        res = call_end(cb, 2, is(name, "LEFT$") ? "bcrt_left" : "bcrt_right", NULL);
+    }
+    str_release(p, own);
+    *r = mk(res, -1, -1, VAL_STRING);
+    return 1;
+}
+
 static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
     bv_t a[3], r;
     int cb, ty;
+    if (builtin_str(name, n, args, &r)) return r;
     if (n > 3 || strcmp(name, "TAB") == 0 || strcmp(name, "SPC") == 0) {   /* (TAB, SPC in a PRINT list: bc_print) */
         bc_not_yet(e->line, n > 3 ? "a builtin of more than three arguments" : "TAB and SPC outside PRINT");
         n = 0;
@@ -1564,7 +1702,27 @@ static bv_t bound(expr_t *e) {
 }
 
 static int compare_expr(expr_t *e) {
-    bv_t a = expr(e->compare.left), b = expr(e->compare.right);
+    bv_t a, b;
+    if (static_str(e->compare.left) && static_str(e->compare.right)) {
+        int oa, ob, pa, pb, cb, r;
+        pa = str_operand(e->compare.left, pure_expr(e->compare.right), &oa);
+        pb = str_operand(e->compare.right, 1, &ob);
+        cb = h_ncarg;
+        carg(pa, 0); carg(pb, 0);
+        r = call_end(cb, 2, "bcrt_scmp", NULL);
+        str_release(pa, oa);
+        str_release(pb, ob);
+        switch (e->compare.op) {
+        case CMP_EQ: return bin(HI_SEQ, r, iconst(0));
+        case CMP_NE: return bin(HI_SNE, r, iconst(0));
+        case CMP_LT: return bin(HI_SLT, r, iconst(0));
+        case CMP_GT: return bin(HI_SGT, r, iconst(0));
+        case CMP_LE: return bin(HI_SLE, r, iconst(0));
+        default:     return bin(HI_SGE, r, iconst(0));
+        }
+    }
+    a = expr(e->compare.left);
+    b = expr(e->compare.right);
     return compare01(e->compare.op, a, b);
 }
 
@@ -1587,10 +1745,11 @@ static bv_t expr(expr_t *e) {
     switch (e->type) {
     case EXPR_LITERAL:
         if (e->literal.type == VAL_STRING) {
-            int cb = h_ncarg;
+            int cb = h_ncarg, id = bc_intern_str(e->literal.sval->data, e->literal.sval->len);
+            carg(iconst(id), 0);
             carg(saddr(e->literal.sval->data, e->literal.sval->len), 0);
             carg(iconst(e->literal.sval->len), 0);
-            return mk(call_end(cb, 2, "bcrt_str_lit", NULL), -1, -1, VAL_STRING);
+            return mk(call_end(cb, 3, "bcrt_lit_ref", NULL), -1, -1, VAL_STRING);
         }
         if (st_int(e->literal.type)) return kint(e->literal.ival, e->literal.type);
         return kdbl(e->literal.dval, e->literal.type);
@@ -1620,6 +1779,22 @@ static bv_t expr(expr_t *e) {
         }
     case EXPR_BINARY: {
         bv_t a, b;
+        if (e->binary.op == OP_ADD && static_str(e->binary.left) && static_str(e->binary.right)) {
+            int oa, ob, pa, pb, cb, r;
+            if (lazy_concat(e)) {       /* (s$ read after e, as QBasic reads it) */
+                pb = str_operand(e->binary.right, 1, &ob);
+                pa = str_operand(e->binary.left, 1, &oa);
+            } else {
+                pa = str_operand(e->binary.left, pure_expr(e->binary.right), &oa);
+                pb = str_operand(e->binary.right, 1, &ob);
+            }
+            cb = h_ncarg;
+            carg(pa, 0); carg(pb, 0);
+            r = call_end(cb, 2, "bcrt_cat", NULL);
+            str_release(pa, oa);
+            str_release(pb, ob);
+            return mk(r, -1, -1, VAL_STRING);
+        }
         if (lazy_concat(e)) {           /* (s$ read after e, as QBasic reads it) */
             b = expr(e->binary.right);
             a = expr(e->binary.left);

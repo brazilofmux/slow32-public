@@ -362,6 +362,89 @@ int bcrt_convi(int lo, int hi, int t, int to) {
     return slot.ival;
 }
 
+/* --- strings, their types known: pointers in, nothing taken (compiled
+ * code lets go of what it owns), a new reference out --------------- */
+
+int bcrt_scmp(int a, int b) {
+    return string_cmp((sb_string_t *)(intptr_t)a, (sb_string_t *)(intptr_t)b);
+}
+
+int bcrt_cat(int a, int b) {
+    value_t x, y, r;
+    error_t e;
+    x.type = y.type = VAL_STRING;
+    x.sval = (sb_string_t *)(intptr_t)a;
+    y.sval = (sb_string_t *)(intptr_t)b;
+    e = val_add(&x, &y, &r);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)r.sval;
+}
+
+static int str_result(error_t e, const value_t *r) {
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)r->sval;
+}
+
+int bcrt_mid(int s, int start, int count, int has) {
+    value_t r;
+    error_t e = sb_mid((sb_string_t *)(intptr_t)s, start, count, has, &r);
+    return str_result(e, &r);
+}
+
+int bcrt_left(int s, int n) {
+    value_t r;
+    error_t e = sb_left((sb_string_t *)(intptr_t)s, n, &r);
+    return str_result(e, &r);
+}
+
+int bcrt_right(int s, int n) {
+    value_t r;
+    error_t e = sb_right((sb_string_t *)(intptr_t)s, n, &r);
+    return str_result(e, &r);
+}
+
+int bcrt_chr(int code) {
+    value_t r;
+    error_t e = sb_chr(code, &r);
+    return str_result(e, &r);
+}
+
+int bcrt_asc(int s) {
+    sb_string_t *p = (sb_string_t *)(intptr_t)s;
+    if (p->len == 0) bcrt_fail(ERR_ILLEGAL_FUNCTION_CALL);
+    return (unsigned char)p->data[0];
+}
+
+/* a string literal, made once: the table's own reference stays, for good
+ * (the program's literals, by the compiler's number for each) */
+static sb_string_t **bcrt_lits;
+static int bcrt_nlits;
+
+int bcrt_lit(int id, const char *s, int len) {
+    if (id >= bcrt_nlits) {
+        int n = bcrt_nlits ? bcrt_nlits : 64;
+        sb_string_t **t;
+        while (n <= id) n *= 2;
+        t = realloc(bcrt_lits, (size_t)n * sizeof *t);
+        if (!t) bcrt_fail(ERR_OUT_OF_MEMORY);
+        memset(t + bcrt_nlits, 0, (size_t)(n - bcrt_nlits) * sizeof *t);
+        bcrt_lits = t;
+        bcrt_nlits = n;
+    }
+    if (!bcrt_lits[id]) {
+        value_t v = val_string(s, len);
+        bcrt_lits[id] = v.sval;
+    }
+    return (int)(intptr_t)bcrt_lits[id];
+}
+
+/* the same, as a reference of the caller's own */
+int bcrt_lit_ref(int id, const char *s, int len) {
+    int p = bcrt_lit(id, s, len);
+    string_ref((sb_string_t *)(intptr_t)p);
+    return p;
+}
+
 /* a comparison's truth, 0 or 1, where compiled code does not make it
  * itself (a string among them) */
 int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {

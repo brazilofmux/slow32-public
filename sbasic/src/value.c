@@ -514,13 +514,20 @@ error_t val_neg(const value_t *a, value_t *result) {
 
 /* --- Comparison --- */
 
+/* two strings' order, -1, 0 or 1: byte by byte, then the shorter first
+ * (CHR$(0) a byte like any other, as QBasic compares them) */
+int string_cmp(const sb_string_t *a, const sb_string_t *b) {
+    int n = a->len < b->len ? a->len : b->len;
+    int c = memcmp(a->data, b->data, (size_t)n);
+    if (c) return c < 0 ? -1 : 1;
+    return a->len < b->len ? -1 : a->len > b->len;
+}
+
 error_t val_compare(const value_t *a, const value_t *b, int *out) {
     if (a->type == VAL_RECORD || b->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
     if (a->type == VAL_STRING && b->type == VAL_STRING) {
-        *out = strcmp(a->sval->data, b->sval->data);
-        if (*out < 0) *out = -1;
-        if (*out > 0) *out = 1;
+        *out = string_cmp(a->sval, b->sval);
         return ERR_NONE;
     }
     if (a->type == VAL_STRING || b->type == VAL_STRING)

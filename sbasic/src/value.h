@@ -81,6 +81,7 @@ sb_string_t *string_empty(void);
 /* s's characters [start, start+n), in range: shared when it can be --
  * s itself when that is all of it */
 sb_string_t *string_sub(sb_string_t *s, int start, int n);
+int string_cmp(const sb_string_t *a, const sb_string_t *b);
 
 /* Record allocation / refcounting */
 sb_record_t *record_alloc(int type_idx, int nfields);

@@ -1158,7 +1158,7 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
             if (lt == N_STRING) {
                 /* as val_compare: strcmp's sign (one string is equal to
                  * itself -- often so, the short ones being shared) */
-                fprintf(out, "    int c%d = %s.sval == %s.sval ? 0 : strcmp(%s.sval->data, %s.sval->data); VAL_CLEAR(&%s); VAL_CLEAR(&%s);\n",
+                fprintf(out, "    int c%d = %s.sval == %s.sval ? 0 : string_cmp(%s.sval, %s.sval); VAL_CLEAR(&%s); VAL_CLEAR(&%s);\n",
                         id, a, b, a, b, a, b);
                 fprintf(out, "    long long %s = (c%d %s 0) ? -1 : 0;\n", name, id, ops[e->compare.op]);
                 return t;

@@ -458,15 +458,23 @@ static error_t fn_instr(value_t *args, int nargs, value_t *out) {
     }
     if (start < 1) return ERR_ILLEGAL_FUNCTION_CALL;
     start--;
-    if (start >= hlen || needle[0] == '\0') {
-        *out = val_integer(0);
-        return ERR_NONE;
+    {                                   /* (by length: CHR$(0) a byte like any other) */
+        int nlen = nargs == 2 ? args[1].sval->len : args[2].sval->len;
+        if (start >= hlen) {
+            *out = val_integer(0);
+            return ERR_NONE;
+        }
+        if (nlen == 0) {                /* (QBasic: "" is found where the search starts) */
+            *out = val_integer(start + 1);
+            return ERR_NONE;
+        }
+        for (int i = start; i + nlen <= hlen; i++)
+            if (haystack[i] == needle[0] && memcmp(haystack + i, needle, (size_t)nlen) == 0) {
+                *out = val_integer(i + 1);
+                return ERR_NONE;
+            }
     }
-    char *p = strstr(haystack + start, needle);
-    if (p)
-        *out = val_integer((int)(p - haystack) + 1);
-    else
-        *out = val_integer(0);
+    *out = val_integer(0);
     return ERR_NONE;
 }
 

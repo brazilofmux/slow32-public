@@ -23,6 +23,7 @@ typedef struct { char name[64]; char key[ARRAY_KEY_MAX]; } array_alias_t;
 typedef struct {
     unsigned id; int proc; array_mode_fn mode; void *ctx;
     array_alias_t *alias; int nalias;
+    int owns;           /* an array of this scope was made: pop has work */
 } array_scope_t;
 static array_scope_t *scopes;
 static int nscopes, cap_scopes;
@@ -83,6 +84,7 @@ error_t array_scope_push(int proc, array_mode_fn mode, void *ctx) {
     scopes[nscopes].ctx = ctx;
     scopes[nscopes].alias = NULL;
     scopes[nscopes].nalias = 0;
+    scopes[nscopes].owns = 0;
     nscopes++;
     array_generation++;
     return ERR_NONE;
@@ -90,17 +92,18 @@ error_t array_scope_push(int proc, array_mode_fn mode, void *ctx) {
 
 /* ... and returns: its own arrays erased */
 void array_scope_pop(void) {
-    char pre[16];
-    size_t n;
     if (!nscopes) return;
-    n = (size_t)snprintf(pre, sizeof pre, "%u:", scopes[nscopes - 1].id);
-    for (int i = 0; i < array_count; i++)
-        if (arrays[i]->active && strncmp(arrays[i]->name, pre, n) == 0) {
-            for (int j = 0; j < arrays[i]->total; j++)
-                val_clear(&arrays[i]->data[j]);
-            free(arrays[i]->data);
-            arrays[i]->active = 0;
-        }
+    if (scopes[nscopes - 1].owns) {     /* (most calls make no array: nothing to look for) */
+        char pre[16];
+        size_t n = (size_t)snprintf(pre, sizeof pre, "%u:", scopes[nscopes - 1].id);
+        for (int i = 0; i < array_count; i++)
+            if (arrays[i]->active && strncmp(arrays[i]->name, pre, n) == 0) {
+                for (int j = 0; j < arrays[i]->total; j++)
+                    val_clear(&arrays[i]->data[j]);
+                free(arrays[i]->data);
+                arrays[i]->active = 0;
+            }
+    }
     free(scopes[nscopes - 1].alias);
     nscopes--;
     array_generation++;
@@ -217,6 +220,13 @@ error_t array_dim(const char *name, val_type_t type,
     arr->data = calloc(total, sizeof(value_t));
     if (!arr->data) return ERR_OUT_OF_MEMORY;
     arr->active = 1;
+    {                                   /* (the scope it is of: "id:NAME") */
+        char *end;
+        unsigned long id = strtoul(arr->name, &end, 10);
+        if (end != arr->name && *end == ':')
+            for (int i = nscopes - 1; i >= 0; i--)
+                if (scopes[i].id == id) { scopes[i].owns = 1; break; }
+    }
 
     for (int i = 0; i < total; i++)
         arr->data[i] = val_default(type);
