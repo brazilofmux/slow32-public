@@ -45,9 +45,10 @@ static int bcrt_last;           /* the type of the last result */
  * stack: an item's evaluation may PRINT # too); PRINT's width is then 0
  * (print_items: no wrapping in a file) */
 static print_redirect_t bcrt_redirect[16];
+static int bcrt_redirect_w[16];         /* its width: a file's 0, the printer's 80 */
 static int bcrt_nredirect;
 
-static int bcrt_width_now(void) { return bcrt_nredirect ? 0 : console_width; }
+static int bcrt_width_now(void) { return bcrt_nredirect ? bcrt_redirect_w[bcrt_nredirect - 1] : console_width; }
 
 /* --- ON ERROR GOTO: the handler, entered from wherever the error is ---
  *
@@ -446,7 +447,14 @@ void bcrt_pfile_begin(int handle) {
     if (bcrt_nredirect == 16) bcrt_fail(ERR_STACK_OVERFLOW);
     e = eval_print_file_begin(handle, &bcrt_redirect[bcrt_nredirect]);
     if (e != ERR_NONE) bcrt_fail(e);
-    bcrt_nredirect++;
+    bcrt_redirect_w[bcrt_nredirect++] = 0;
+}
+
+/* LPRINT's output: the printer's (eval_lprint_begin), ended as PRINT #'s */
+void bcrt_lprint_begin(void) {
+    if (bcrt_nredirect == 16) bcrt_fail(ERR_STACK_OVERFLOW);
+    eval_lprint_begin(&bcrt_redirect[bcrt_nredirect]);
+    bcrt_redirect_w[bcrt_nredirect++] = 80;
 }
 
 void bcrt_pfile_end(void) { eval_print_file_end(&bcrt_redirect[--bcrt_nredirect]); }
@@ -538,6 +546,24 @@ void bcrt_name(int alo, int ahi, int at, int blo, int bhi, int bt) {
     val_clear(&a);
     val_clear(&b);
     if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* CHDIR, MKDIR, RMDIR (kind: the statement's number) */
+void bcrt_dir(int kind, int lo, int hi, int t) {
+    value_t p = take(lo, hi, t);
+    error_t e = eval_dir(kind, &p);
+    val_clear(&p);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_poke(int offset, int v) {
+    error_t e = eval_poke(offset, v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_def_seg(int seg) {
+    extern int def_seg;
+    def_seg = seg;
 }
 
 /* --- graphics: the interpreter's (eval_gfx, eval_screen) --------------- */

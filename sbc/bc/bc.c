@@ -2831,6 +2831,34 @@ static void bc_stmt(stmt_t *s) {
     case STMT_OPEN:
         bc_open(s);
         break;
+    case STMT_LPRINT: {         /* PRINT's lowering, to the printer */
+        prints_t p = { s->print.items, s->print.nitems, s->print.using_fmt, s->print.using_expr, s->line };
+        call_void("bcrt_lprint_begin");
+        bc_print_items(&p);
+        call_void("bcrt_pfile_end");
+        break;
+    }
+    case STMT_CHDIR: case STMT_MKDIR: case STMT_RMDIR: {
+        bv_t p = dynv(expr(s->shell_stmt.command));
+        int cb = h_ncarg;
+        carg(iconst(s->type), 0);
+        carg_bv(p);
+        call_end(cb, 4, "bcrt_dir", NULL);
+        break;
+    }
+    case STMT_POKE: {           /* both evaluated, then made integers */
+        bv_t a = expr(s->poke_stmt.addr), v = expr(s->poke_stmt.value);
+        int ai = coerce(a, VAL_LONG).lo, vi = coerce(v, VAL_LONG).lo, cb = h_ncarg;
+        carg(ai, 0); carg(vi, 0);
+        call_end(cb, 2, "bcrt_poke", NULL);
+        break;
+    }
+    case STMT_DEF_SEG: {
+        int seg = s->shell_stmt.command ? handle_of(s->shell_stmt.command) : iconst(0), cb = h_ncarg;
+        carg(seg, 0);
+        call_end(cb, 1, "bcrt_def_seg", NULL);
+        break;
+    }
     case STMT_SCREEN: {
         int m = handle_of(s->shell_stmt.command), cb = h_ncarg;
         carg(m, 0);
