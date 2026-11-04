@@ -114,6 +114,18 @@ static expr_t *parse_primary(parser_t *p) {
                 }
             }
             if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
+            /* an array of records' element's field: ident(subscripts).field */
+            if (lexer_check(&p->lex, TOK_DOT)) {
+                lexer_skip(&p->lex);
+                if (!lexer_check(&p->lex, TOK_IDENT)) {
+                    expr_free(call); parser_error(p, ERR_SYNTAX); return NULL;
+                }
+                token_t field = lexer_next(&p->lex);
+                expr_t *fe = expr_field_access(t.text, field.text, t.line);
+                if (!fe) { expr_free(call); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+                fe->field.elem = call;
+                return fe;
+            }
             return call;
         }
         /* Check for field access: ident.field */
@@ -537,7 +549,7 @@ static stmt_t *parse_print(parser_t *p) {
     return s;
 }
 
-/* A READ or INPUT target: a variable, or an array element */
+/* A READ or INPUT target: a variable, an array element, or a field */
 static int parse_target(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t *)) {
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable");
@@ -545,7 +557,7 @@ static int parse_target(parser_t *p, stmt_t *s, int (*add)(stmt_t *, expr_t *)) 
     }
     expr_t *e = parse_primary(p);
     if (!e) return 0;
-    if (e->type != EXPR_VARIABLE && e->type != EXPR_CALL) {
+    if (e->type != EXPR_VARIABLE && e->type != EXPR_CALL && e->type != EXPR_FIELD_ACCESS) {
         expr_free(e);
         parser_error_detail(p, ERR_SYNTAX, "Expected variable");
         return 0;
@@ -1265,6 +1277,23 @@ static stmt_t *parse_implicit_call(parser_t *p, const char *name, int line) {
 
 static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared, int line);
 
+/* after AS STRING: * n, a fixed-length string's length (a number, 1 to
+ * 32767); 0 when there is none, -1 (an error set) when it is wrong */
+static int parse_fixlen(parser_t *p) {
+    if (!lexer_match(&p->lex, TOK_STAR)) return 0;
+    expr_t *e = parse_expr(p);
+    int n = 0;
+    if (!e) return -1;
+    if (e->type != EXPR_LITERAL || e->literal.type == VAL_STRING ||
+        val_to_integer(&e->literal, &n) != ERR_NONE || n < 1 || n > 32767) {
+        expr_free(e);
+        parser_error_detail(p, ERR_SYNTAX, "Expected a length after STRING *");
+        return -1;
+    }
+    expr_free(e);
+    return n;
+}
+
 /* DIM a(...) [, b(...) ...]: one statement per name, chained */
 static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
     int line = lexer_peek(&p->lex)->line;
@@ -1325,12 +1354,10 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
             s->dim_scalar.scalar_type = st;
             s->dim_scalar.typed = 1;
             s->dim_scalar.shared = shared;
-            if (st == VAL_STRING) {
-                /* Accept STRING * n (fixed-length) syntax — treat as regular string */
-                if (lexer_match(&p->lex, TOK_STAR)) {
-                    expr_t *e = parse_expr(p);
-                    if (e) expr_free(e); /* ignore the length */
-                }
+            if (st == VAL_STRING &&
+                (s->dim_scalar.fixlen = parse_fixlen(p)) < 0) {
+                stmt_free(s);
+                return NULL;
             }
             return s;
         }
@@ -1374,7 +1401,9 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
     size_t nlen = strlen(name.text);
     int typed = nlen && strchr("$%&#!", name.text[nlen - 1]) != NULL;
 
-    /* Optional AS INTEGER/DOUBLE/STRING */
+    /* Optional AS INTEGER/DOUBLE/STRING, or AS a TYPE */
+    token_t tn;
+    int rec = 0, fixlen = 0;
     if (lexer_match(&p->lex, TOK_AS)) {
         typed = 1;
         if (!lexer_check(&p->lex, TOK_IDENT)) {
@@ -1382,15 +1411,20 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
             for (int i = 0; i < ndims; i++) expr_free(dims[i]);
             return NULL;
         }
-        token_t tn = lexer_next(&p->lex);
+        tn = lexer_next(&p->lex);
         if (!as_type(tn.text, &type)) {
-            parser_error(p, ERR_SYNTAX);
-            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            type = VAL_RECORD;              /* an array of records */
+            rec = 1;
+        } else if (type == VAL_STRING && (fixlen = parse_fixlen(p)) < 0) {
+            for (int i = 0; i < ndims; i++) { expr_free(dims[i]); expr_free(lower[i]); }
             return NULL;
         }
     }
 
     stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
+    if (s && rec)
+        ast_name_copy(s->dim_stmt.rec_type, tn.text);
+    if (s) s->dim_stmt.fixlen = fixlen;
     if (s) {
         for (int i = 0; i < ndims; i++) s->dim_stmt.lower[i] = lower[i];
         s->dim_stmt.typed = typed;
@@ -1772,7 +1806,12 @@ static stmt_t *parse_type_def(parser_t *p) {
         if (!as_type(tname.text, &ft)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
+        int fixlen = ft == VAL_STRING ? parse_fixlen(p) : 0;
+        if (fixlen < 0) { stmt_free(s); return NULL; }
+        int had = s->type_def.nfields;
         stmt_type_def_add_field(s, fname.text, ft);
+        if (s->type_def.nfields > had)
+            s->type_def.fields[had].fixlen = fixlen;
     }
     return s;
 }
@@ -1974,6 +2013,26 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
     if (!expect(p, TOK_RPAREN)) {
         for (int i = 0; i < nargs; i++) expr_free(args[i]);
         return NULL;
+    }
+
+    /* an element's field: name(subscripts).field = expr */
+    if (lexer_check(&p->lex, TOK_DOT)) {
+        lexer_skip(&p->lex);
+        expr_t *elem = expr_call(name, line);
+        if (!elem || nargs > 8 || !lexer_check(&p->lex, TOK_IDENT)) {
+            for (int i = 0; i < nargs; i++) expr_free(args[i]);
+            expr_free(elem);
+            parser_error(p, ERR_SYNTAX);
+            return NULL;
+        }
+        for (int i = 0; i < nargs; i++) expr_call_add_arg(elem, args[i]);
+        token_t field = lexer_next(&p->lex);
+        expr_t *val = NULL;
+        if (!expect(p, TOK_EQ) || !(val = parse_expr(p))) { expr_free(elem); return NULL; }
+        stmt_t *fs = stmt_field_assign(name, field.text, val, line);
+        if (fs) fs->field_assign.elem = elem;
+        else expr_free(elem);
+        return fs;
     }
 
     /* MID$ l-value assignment: MID$(var$, start [, length]) = expr */

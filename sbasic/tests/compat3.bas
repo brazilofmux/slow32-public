@@ -12,7 +12,7 @@ skip_handler:
 ON ERROR GOTO 0
 PRINT "After resume-label"
 
-' 2. Fixed-length string syntax (parsed, treated as regular string)
+' 2. Fixed-length string: padded to its length, as QBasic does
 DIM fixed AS STRING * 20
 fixed = "Hello"
 PRINT "Fixed:"; fixed

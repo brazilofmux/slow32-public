@@ -76,6 +76,8 @@ typedef struct expr {
         struct {
             char var_name[64];
             char field_name[64];
+            struct expr *elem;  /* var_name(subscripts).field: the element, an
+                                   EXPR_CALL; NULL for a record variable */
         } field;
     };
 } expr_t;
@@ -352,6 +354,8 @@ typedef struct stmt {
             int preserve;
             int typed;           /* a suffix or AS gave elem_type; else DEFtype's, when it runs */
             int shared;          /* DIM SHARED: the main program's, in every SUB */
+            char rec_type[64];   /* AS a TYPE: its name (elem_type VAL_RECORD); else "" */
+            int fixlen;          /* AS STRING * n: n; else 0 */
         } dim_stmt;
 
         /* STMT_ARRAY_ASSIGN */
@@ -474,6 +478,7 @@ typedef struct stmt {
             struct type_field {
                 char name[64];
                 val_type_t type;
+                int fixlen;     /* STRING * n: n; else 0 */
             } *fields;          /* nfields of them, allocated: a TYPE's
                                    fields would make every stmt_t 2K */
             int nfields;
@@ -491,6 +496,7 @@ typedef struct stmt {
             char var_name[64];
             char field_name[64];
             struct expr *value;
+            struct expr *elem;   /* as the field expression's */
         } field_assign;
 
         /* STMT_MID_ASSIGN: MID$(var$, start [, length]) = expr */
@@ -537,6 +543,7 @@ typedef struct stmt {
             val_type_t scalar_type;
             int typed;           /* AS or a suffix gave scalar_type; else DEFtype's */
             int shared;          /* DIM SHARED */
+            int fixlen;          /* AS STRING * n: n; else 0 */
         } dim_scalar;
 
         /* STMT_TRACE */

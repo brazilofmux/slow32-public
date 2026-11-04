@@ -97,6 +97,23 @@ error_t eval_array_store(const char *name, int nidx, int *indices, const value_t
  * reads it (implicit arrays made), OPTION BASE */
 error_t eval_dim(const char *name, val_type_t type, int ndims, const int *lowers,
                  const int *uppers, int is_redim, int preserve);
+/* array name's elements made records of type ti (n fields of the types given) */
+/* after a call given variable name by reference: a STRING * n cut or padded again */
+error_t eval_refix(env_t *env, const char *name);
+error_t eval_array_records(const char *name, int ti, int n, const val_type_t *types,
+                           const int *lens);
+/* array name's elements made STRING * n's */
+error_t eval_array_fixed(const char *name, int n);
+/* a record of TYPE ti, n fields of the types given (lens: a STRING * n's n) */
+sb_record_t *eval_record_make(int ti, int n, const val_type_t *types, const int *lens);
+/* record dst (a VAL_RECORD) given src's fields: of the same TYPE, else Type mismatch */
+error_t eval_record_copy(value_t *dst, const value_t *src);
+/* string v made a STRING * n's: cut, or padded with spaces */
+error_t eval_fix_string(value_t *v, int n);
+/* a STRING * n before anything is stored: n CHR$(0)s */
+value_t eval_fixed_value(int n);
+/* v stored in a slot of fixed length n (0: as eval_store) */
+error_t eval_store_fixed(value_t *slot, const value_t *v, int n);
 error_t eval_dim_range(int lower, int upper);
 error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out);
 error_t eval_array_for(const char *name, int nidx, sb_array_t **out);

@@ -16,6 +16,7 @@ typedef struct {
     int total;                   /* total number of elements */
     value_t *data;              /* flat row-major storage */
     int active;                  /* 1 if allocated */
+    int fixlen;                  /* AS STRING * n: n; else 0 */
 } sb_array_t;
 
 /* Bumped whenever an array is made, erased or re-dimensioned: a pointer

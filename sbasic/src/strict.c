@@ -111,7 +111,9 @@ static void scan_expr(expr_t *e, void *vc) {
         if (is_fn_name(e->var.name)) push(&c->fnuses, e->var.name, c->seq, e->line, 0);
         else if (!find(&c->u->vars, e->var.name)) push(&c->u->vars, e->var.name, c->seq, e->line, 0);
     } else if (e->type == EXPR_FIELD_ACCESS) {
-        if (!find(&c->u->vars, e->field.var_name)) push(&c->u->vars, e->field.var_name, c->seq, e->line, 0);
+        /* (an element's: the element, an EXPR_CALL, is walked as an array's use) */
+        if (!e->field.elem && !find(&c->u->vars, e->field.var_name))
+            push(&c->u->vars, e->field.var_name, c->seq, e->line, 0);
     } else if (e->type == EXPR_CALL) {
         int mn, mx;
         if (is_fn_name(e->call.name)) push(&c->fnuses, e->call.name, c->seq, e->line, e->call.nargs);
@@ -226,6 +228,15 @@ static void walk_list(check_t *c, stmt_t *s) {
                      s->type == STMT_SPLIT ? "SPLIT" : s->type == STMT_TRACE ? "TRACE" : "OPTION EXPLICIT");
             finding(c, s->line, "not-qb", d);
             break;
+        case STMT_TYPE_DEF:
+            /* QuickBASIC's TYPEs hold fixed-length strings only */
+            for (int i = 0; i < s->type_def.nfields; i++)
+                if (s->type_def.fields[i].type == VAL_STRING && !s->type_def.fields[i].fixlen) {
+                    snprintf(d, sizeof d, "TYPE %s's field %s a STRING without * its length",
+                             s->type_def.name, s->type_def.fields[i].name);
+                    finding(c, s->line, "not-qb", d);
+                }
+            break;
         case STMT_CONST: {
             const char *why = const_value(c, s->const_stmt.value);
             if (why) {
@@ -252,7 +263,7 @@ static void walk_list(check_t *c, stmt_t *s) {
             }
             break;
         case STMT_FIELD_ASSIGN:
-            var_use(c, s->field_assign.var_name, s->line);
+            if (!s->field_assign.elem) var_use(c, s->field_assign.var_name, s->line);
             break;
         case STMT_DIM_SCALAR:
             as_dim(c, s->dim_scalar.name, s->line);

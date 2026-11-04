@@ -74,6 +74,7 @@ typedef struct {
     char name[64];
     char field_names[32][64];
     val_type_t field_types[32];
+    int field_len[32];          /* a STRING * n field's n; else 0 */
     int nfields;
 } type_def_t;
 
@@ -185,9 +186,26 @@ static val_type_t dim_type(const stmt_t *s) {
 
 /* the type READ or INPUT reads for its target: an array element its
  * array's (made yet or not), a variable its own -- with DEFtype, as the
- * statement runs (DEFSTR S: READ S reads a string, as QuickBASIC does) */
-static val_type_t target_type(const char *name, int is_elem) {
-    sb_array_t *arr = is_elem ? array_find(name) : NULL;
+ * statement runs (DEFSTR S: READ S reads a string, as QuickBASIC does);
+ * a field its TYPE's for it (found with no subscript evaluated: they are
+ * when it is stored) */
+static int find_field_index(type_def_t *td, const char *name);
+static val_type_t target_type(env_t *env, const char *name, const expr_t *target) {
+    if (target && target->type == EXPR_FIELD_ACCESS) {
+        const value_t *r = NULL;
+        if (target->field.elem) {
+            sb_array_t *arr = array_find(target->field.var_name);
+            if (arr && arr->total > 0) r = &arr->data[0];
+        } else
+            r = env_lookup(env, target->field.var_name);
+        if (r && r->type == VAL_RECORD) {
+            type_def_t *td = &type_defs[r->rval->type_idx];
+            int fi = find_field_index(td, target->field.field_name);
+            if (fi >= 0) return td->field_types[fi];
+        }
+        return VAL_STRING;              /* (the store says what is wrong) */
+    }
+    sb_array_t *arr = target ? array_find(name) : NULL;
     return arr ? arr->elem_type : resolve_var_type(name);
 }
 
@@ -276,10 +294,125 @@ static int data_number(const char *t, double *out);
 /* A store: v made the type of the variable or element it goes into.
  * Every variable is created with its type (its suffix, DEFtype, DIM ...
  * AS), and so is every array element, so the slot's type is the rule. */
+/* a fixed-length string (STRING * n): what it holds before anything is
+ * stored, n CHR$(0)s, as QuickBASIC has it */
+static value_t fixed_value(int n) {
+    value_t v;
+    v.type = VAL_STRING;
+    v.sval = string_alloc(NULL, n > 0 ? n : 0);
+    if (v.sval) memset(v.sval->data, 0, n > 0 ? n : 0);
+    else v.sval = string_empty();
+    return v;
+}
+
+/* v, a string, made what a STRING * n keeps of it: cut to n characters,
+ * or padded to them with spaces */
+static error_t fix_string(value_t *v, int n) {
+    if (n <= 0 || v->type != VAL_STRING || v->sval->len == n) return ERR_NONE;
+    sb_string_t *s = string_alloc(NULL, n);
+    if (!s) return ERR_OUT_OF_MEMORY;
+    int keep = v->sval->len < n ? v->sval->len : n;
+    memcpy(s->data, v->sval->data, keep);
+    memset(s->data + keep, ' ', n - keep);
+    string_unref(v->sval);
+    v->sval = s;
+    return ERR_NONE;
+}
+
+/* store v into a slot of fixed length n (0: an ordinary one) */
+static error_t store_into(value_t *slot, const value_t *v);
+static error_t store_fixed(value_t *slot, const value_t *v, int n) {
+    value_t c;
+    error_t err;
+    if (n <= 0 || v->type != VAL_STRING) return store_into(slot, v);
+    c = val_copy(v);
+    err = fix_string(&c, n);
+    if (err == ERR_NONE) err = store_into(slot, &c);
+    val_clear(&c);
+    return err;
+}
+
+/* a record of type ti, its n fields of the types given, each 0 or empty
+ * (lens, if not NULL: a STRING * n field's n) */
+static sb_record_t *record_make(int ti, int n, const val_type_t *types, const int *lens) {
+    sb_record_t *rec = record_alloc(ti, n);
+    if (!rec) return NULL;
+    for (int i = 0; i < n; i++) {
+        val_clear(&rec->fields[i]);
+        rec->fields[i] = lens && lens[i] ? fixed_value(lens[i]) : val_default(types[i]);
+    }
+    return rec;
+}
+
+/* a record stored is copied, field by field, into the record the slot
+ * holds (QuickBASIC: b = a copies; b keeps its own storage, so a SUB
+ * given b by reference sees the new fields) -- of the same TYPE only */
+static error_t record_store(value_t *slot, const value_t *v) {
+    sb_record_t *d, *r;
+    if (slot->type != VAL_RECORD || v->type != VAL_RECORD)
+        return ERR_TYPE_MISMATCH;
+    d = slot->rval;
+    r = v->rval;
+    if (d == r) return ERR_NONE;
+    if (d->type_idx != r->type_idx || d->nfields != r->nfields)
+        return ERR_TYPE_MISMATCH;
+    for (int i = 0; i < r->nfields; i++)
+        val_assign(&d->fields[i], &r->fields[i]);
+    return ERR_NONE;
+}
+
+/* the elements of array name not yet records made records of type ti
+ * (a DIM AS a TYPE: each time it runs, so a static array, made before
+ * the run, gets its records when its DIM is met, and REDIM PRESERVE's
+ * new elements theirs) -- for compiled code too, whose TYPEs are its own */
+error_t eval_array_records(const char *name, int ti, int n, const val_type_t *types,
+                           const int *lens) {
+    sb_array_t *arr = array_find(name);
+    if (!arr) return ERR_INTERNAL;
+    arr->elem_type = VAL_RECORD;
+    for (int i = 0; i < arr->total; i++) {
+        if (arr->data[i].type == VAL_RECORD) continue;
+        sb_record_t *rec = record_make(ti, n, types, lens);
+        if (!rec) return ERR_OUT_OF_MEMORY;
+        val_clear(&arr->data[i]);
+        arr->data[i].type = VAL_RECORD;
+        arr->data[i].rval = rec;
+    }
+    return ERR_NONE;
+}
+
+static error_t field_slot(env_t *env, const char *var, const char *field,
+                          expr_t *elem, value_t **out, val_type_t *ftype, int *flen);
+
+/* array name a STRING * n's: each element not yet n characters (one new
+ * to the DIM, or REDIM PRESERVE) made n CHR$(0)s -- for compiled code too */
+error_t eval_array_fixed(const char *name, int n) {
+    sb_array_t *arr = array_find(name);
+    if (!arr) return ERR_INTERNAL;
+    arr->fixlen = n;
+    for (int i = 0; i < arr->total; i++) {
+        if (arr->data[i].type == VAL_STRING && arr->data[i].sval->len == n) continue;
+        val_clear(&arr->data[i]);
+        arr->data[i] = fixed_value(n);
+    }
+    return ERR_NONE;
+}
+
+/* for compiled code (s32-bc): the same records and fixed-length strings */
+sb_record_t *eval_record_make(int ti, int n, const val_type_t *types, const int *lens) {
+    return record_make(ti, n, types, lens);
+}
+error_t eval_record_copy(value_t *dst, const value_t *src) { return record_store(dst, src); }
+error_t eval_fix_string(value_t *v, int n) { return fix_string(v, n); }
+value_t eval_fixed_value(int n) { return fixed_value(n); }
+error_t eval_store_fixed(value_t *slot, const value_t *v, int n) { return store_fixed(slot, v, n); }
+
 static error_t store_into(value_t *slot, const value_t *v) {
     value_t c;
     error_t err;
     if (!slot) return ERR_OUT_OF_MEMORY;
+    if (slot->type == VAL_RECORD || v->type == VAL_RECORD)
+        return record_store(slot, v);
     /* the common cases, a number into its own kind of slot */
     if (slot->type == v->type) {
         if (VAL_IS_INT(v->type) || v->type == VAL_DOUBLE) {
@@ -303,12 +436,13 @@ static error_t store_into(value_t *slot, const value_t *v) {
 
 /* READ's and INPUT's store: to the variable, or to the array element the
  * target expression names */
+static int lvalue_fixlen(env_t *env, expr_t *e);
 static error_t store_target(env_t *env, expr_t *target, const char *name, value_t *v) {
     value_t *slot;
     if (!target)
-        return store_into(env_get(env, name), v);
+        return store_fixed(env_get(env, name), v, env_fixlen(env, name));
     EVAL_CHECK(resolve_lvalue(env, target, &slot));
-    return store_into(slot, v);
+    return store_fixed(slot, v, lvalue_fixlen(env, target));
 }
 
 static int find_label_data_offset(const char *name) {
@@ -504,6 +638,7 @@ typedef struct {
     value_t *ref;               /* a variable's value */
     const char *arr;            /* an element's array, by name ... */
     int nidx, idx[MAX_ARRAY_DIMS];
+    int fixlen;                 /* a STRING * n variable's n: cut to it after */
 } arg_ref_t;
 
 /* A parameter's type: its AS, or its name's -- under DEF*, as the
@@ -540,7 +675,7 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
     for (int i = 0; i < nargs; i++) {
         const char *pname = def->proc_def.params[i];
         if (refs && refs[i].ref) {
-            env_link(local, pname, refs[i].ref);
+            env_link(local, pname, refs[i].ref, 0);   /* (a fixed string grows in here: cut when the call returns) */
             continue;
         }
         if (!(refs && refs[i].arr)) {
@@ -565,15 +700,15 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
     /* SHARED variables: the global ones, linked */
     for (int i = 0; i < proc->nshared; i++) {
         if (is_array_entry(proc->shared_names[i])) continue;    /* (A(): array.c's) */
-        value_t *gv = env_get(program_global_env, proc->shared_names[i]);
-        if (gv) env_link(local, proc->shared_names[i], gv);
+        var_entry_t *ge = env_entry(program_global_env, proc->shared_names[i]);
+        if (ge) env_link(local, proc->shared_names[i], ge->link ? ge->link : &ge->value, ge->fixlen);
     }
     /* DIM SHARED's variables: the main program's, everywhere -- but a
      * parameter of the name is the parameter */
     for (int i = 0; i < ndim_shared; i++) {
         if (is_array_entry(dim_shared[i]) || env_lookup(local, dim_shared[i])) continue;
-        value_t *gv = env_get(program_global_env, dim_shared[i]);
-        if (gv) env_link(local, dim_shared[i], gv);
+        var_entry_t *ge = env_entry(program_global_env, dim_shared[i]);
+        if (ge) env_link(local, dim_shared[i], ge->link ? ge->link : &ge->value, ge->fixlen);
     }
 
     /* STATIC variables: linked to the procedure's persistent env */
@@ -583,8 +718,8 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
         for (int i = 0; i < proc->nstatic; i++) {
             /* env_get auto-creates with default on first access */
             if (is_array_entry(proc->static_names[i])) continue;
-            value_t *sv = env_get(proc->static_env, proc->static_names[i]);
-            if (sv) env_link(local, proc->static_names[i], sv);
+            var_entry_t *se = env_entry(proc->static_env, proc->static_names[i]);
+            if (se) env_link(local, proc->static_names[i], se->link ? se->link : &se->value, se->fixlen);
         }
     }
 
@@ -610,14 +745,19 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
         }
     }
 
-    /* elements passed by reference: their values back */
+    /* elements passed by reference: their values back (and a fixed-length
+     * string variable's cut or padded to its length, as QBasic does) */
     for (int i = 0; refs && i < nargs; i++) {
+        if (refs[i].ref && refs[i].fixlen) {
+            error_t e2 = fix_string(refs[i].ref, refs[i].fixlen);
+            if (err == ERR_NONE) err = e2;
+        }
         if (!refs[i].arr) continue;
         value_t *pv = env_lookup(local, def->proc_def.params[i]), *slot;
         sb_array_t *arr = array_find(refs[i].arr);
         if (pv && arr && arr->ndims == refs[i].nidx &&
             array_get(refs[i].arr, (int *)refs[i].idx, refs[i].nidx, &slot) == ERR_NONE) {
-            error_t e2 = store_into(slot, pv);
+            error_t e2 = store_fixed(slot, pv, arr->fixlen);
             if (err == ERR_NONE) err = e2;
         }
     }
@@ -646,6 +786,7 @@ static error_t arg_by_ref(env_t *env, expr_t *e, val_type_t pt, arg_ref_t *r, va
         }
         if (slot->type != pt) return ERR_PARAM_MISMATCH;
         r->ref = slot;
+        if (pt == VAL_STRING) r->fixlen = env_fixlen(env, name);
         return ERR_NONE;
     }
     if (e->type == EXPR_CALL) {
@@ -704,6 +845,15 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
 
 /* A variable argument of compiled code: its value if it is passed by
  * reference (as arg_by_ref decides), NULL if by value */
+/* after a call that was passed variable name by reference: a STRING * n
+ * made n characters again (call_proc_values' own, for compiled calls) */
+error_t eval_refix(env_t *env, const char *name) {
+    var_entry_t *e;
+    int n = env_fixlen(env, name);
+    if (!n || !(e = env_entry(env, name))) return ERR_NONE;
+    return fix_string(e->link ? e->link : &e->value, n);
+}
+
 value_t *eval_arg_ref(env_t *env, const char *name) {
     value_t *slot = eval_var_slot(env, name);
     if (slot) return slot;
@@ -842,9 +992,10 @@ value_t *eval_var_slot(env_t *env, const char *name) {
 }
 
 /* The value X = e stores into, after eval_assign_check passed: NULL
- * when it is not one to keep (a CONST) */
+ * when it is not one to keep (a CONST), or not one to store into as it
+ * is (a STRING * n: eval_assign_store cuts or pads) */
 value_t *eval_assign_slot(env_t *env, const char *name) {
-    if (env_is_const(env, name))
+    if (env_is_const(env, name) || env_fixlen(env, name))
         return NULL;
     return env_get(env, name);
 }
@@ -1116,12 +1267,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
         }
 
         case EXPR_FIELD_ACCESS: {
-            value_t *v = env_get(env, e->field.var_name);
-            if (!v || v->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
-            type_def_t *td = &type_defs[v->rval->type_idx];
-            int fi = find_field_index(td, e->field.field_name);
-            if (fi < 0) return ERR_UNDEFINED_FIELD;
-            *out = val_copy(&v->rval->fields[fi]);
+            value_t *f;
+            EVAL_CHECK(field_slot(env, e->field.var_name, e->field.field_name,
+                                  e->field.elem, &f, NULL, NULL));
+            *out = val_copy(f);
             return ERR_NONE;
         }
     }
@@ -1875,7 +2024,7 @@ static error_t exec_input(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->input.varnames[i]))
             return ERR_CONST_REASSIGN;
     for (int i = 0; i < n; i++) {
-        types[i] = target_type(s->input.varnames[i], s->input.targets[i] != NULL);
+        types[i] = target_type(env, s->input.varnames[i], s->input.targets[i]);
         if (s->input.targets[i] == NULL) {
             value_t *cur = env_get(env, s->input.varnames[i]);
             if (cur) types[i] = cur->type == VAL_STRING ? VAL_STRING : VAL_DOUBLE;
@@ -2104,25 +2253,56 @@ static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
             array_implicit(e->call.name, e->call.nargs);
         return array_get(e->call.name, indices, e->call.nargs, out);
     }
-    case EXPR_FIELD_ACCESS: {
-        value_t *v = env_get(env, e->field.var_name);
-        if (!v || v->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
-        type_def_t *td = &type_defs[v->rval->type_idx];
-        int fi = find_field_index(td, e->field.field_name);
-        if (fi < 0) return ERR_UNDEFINED_FIELD;
-        *out = &v->rval->fields[fi];
-        return ERR_NONE;
-    }
+    case EXPR_FIELD_ACCESS:
+        return field_slot(env, e->field.var_name, e->field.field_name,
+                          e->field.elem, out, NULL, NULL);
     default:
         return ERR_TYPE_MISMATCH;
     }
+}
+
+/* var.field, or var(subscripts).field (elem, the element): the field's
+ * storage, and its type */
+static error_t field_slot(env_t *env, const char *var, const char *field,
+                          expr_t *elem, value_t **out, val_type_t *ftype, int *flen) {
+    value_t *v;
+    if (elem) EVAL_CHECK(resolve_lvalue(env, elem, &v));
+    else v = env_get(env, var);
+    if (!v || v->type != VAL_RECORD) return elem ? ERR_TYPE_MISMATCH : ERR_UNDEFINED_VAR;
+    type_def_t *td = &type_defs[v->rval->type_idx];
+    int fi = find_field_index(td, field);
+    if (fi < 0) return ERR_UNDEFINED_FIELD;
+    *out = &v->rval->fields[fi];
+    if (ftype) *ftype = td->field_types[fi];
+    if (flen) *flen = td->field_len[fi];
+    return ERR_NONE;
+}
+
+/* the fixed length of the storage lvalue e names (a STRING * n variable,
+ * element or field), else 0 */
+static int lvalue_fixlen(env_t *env, expr_t *e) {
+    if (e->type == EXPR_VARIABLE)
+        return env_fixlen(env, e->var.name);
+    if (e->type == EXPR_CALL) {
+        sb_array_t *arr = array_find(e->call.name);
+        return arr ? arr->fixlen : 0;
+    }
+    if (e->type == EXPR_FIELD_ACCESS) {
+        value_t *f;
+        int n = 0;
+        if (field_slot(env, e->field.var_name, e->field.field_name, e->field.elem,
+                       &f, NULL, &n) != ERR_NONE)
+            return 0;
+        return n;
+    }
+    return 0;
 }
 
 /* Check if an lvalue expression refers to a CONST variable */
 static int lvalue_is_const(env_t *env, expr_t *e) {
     if (e->type == EXPR_VARIABLE)
         return env_is_const(env, e->var.name);
-    if (e->type == EXPR_FIELD_ACCESS)
+    if (e->type == EXPR_FIELD_ACCESS && !e->field.elem)
         return env_is_const(env, e->field.var_name);
     return 0;
 }
@@ -2138,7 +2318,9 @@ error_t eval_assign_check(env_t *env, const char *name) {
 }
 
 error_t eval_assign_store(env_t *env, const char *name, const value_t *v) {
-    return store_into(env_get(env, name), v);
+    var_entry_t *e = env_entry(env, name);
+    if (!e) return ERR_OUT_OF_MEMORY;
+    return store_fixed(e->link ? e->link : &e->value, v, e->fixlen);
 }
 
 static error_t exec_assign(env_t *env, stmt_t *s) {
@@ -2390,16 +2572,25 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
     int lowers[MAX_ARRAY_DIMS], uppers[MAX_ARRAY_DIMS];
     /* a static array was made before the run; DIM is then a declaration
      * (unless ERASE took it away) */
-    if (s->dim_stmt.is_static && array_find(s->dim_stmt.name))
-        return ERR_NONE;
-    for (int i = 0; i < s->dim_stmt.ndims; i++) {
-        lowers[i] = option_base;
-        if (s->dim_stmt.lower[i]) EVAL_CHECK(eval_int_of(env, s->dim_stmt.lower[i], &lowers[i]));
-        EVAL_CHECK(eval_int_of(env, s->dim_stmt.dims[i], &uppers[i]));
-        EVAL_CHECK(eval_dim_range(lowers[i], uppers[i]));
+    if (!(s->dim_stmt.is_static && array_find(s->dim_stmt.name))) {
+        for (int i = 0; i < s->dim_stmt.ndims; i++) {
+            lowers[i] = option_base;
+            if (s->dim_stmt.lower[i]) EVAL_CHECK(eval_int_of(env, s->dim_stmt.lower[i], &lowers[i]));
+            EVAL_CHECK(eval_int_of(env, s->dim_stmt.dims[i], &uppers[i]));
+            EVAL_CHECK(eval_dim_range(lowers[i], uppers[i]));
+        }
+        EVAL_CHECK(eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, lowers, uppers,
+                            s->dim_stmt.is_redim, s->dim_stmt.preserve));
     }
-    return eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, lowers, uppers,
-                    s->dim_stmt.is_redim, s->dim_stmt.preserve);
+    if (s->dim_stmt.rec_type[0]) {
+        int ti = find_type_def(s->dim_stmt.rec_type);
+        if (ti < 0) return ERR_UNDEFINED_TYPE;
+        return eval_array_records(s->dim_stmt.name, ti, type_defs[ti].nfields,
+                                  type_defs[ti].field_types, type_defs[ti].field_len);
+    }
+    if (s->dim_stmt.fixlen)
+        return eval_array_fixed(s->dim_stmt.name, s->dim_stmt.fixlen);
+    return ERR_NONE;
 }
 
 /* name(indices) read as an expression reads an array: the array, or an
@@ -2460,7 +2651,7 @@ error_t eval_array_store(const char *name, int nidx, int *indices, const value_t
     value_t *slot;
     EVAL_CHECK(eval_array_for(name, nidx, &arr));
     EVAL_CHECK(array_get(name, indices, nidx, &slot));
-    return store_into(slot, v);
+    return store_fixed(slot, v, arr->fixlen);
 }
 
 /* The array an expression name(args) reads, when that is what it does
@@ -2483,19 +2674,23 @@ error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out) {
     return ERR_NONE;
 }
 
+/* A(i, ...) = e: e first, then the subscripts (QBasic's order: a(f) = g
+ * calls g, then f) */
 static error_t exec_array_assign(env_t *env, stmt_t *s) {
     int indices[MAX_ARRAY_DIMS];
+    value_t v;
+    error_t err;
+    EVAL_CHECK(eval_expr(env, s->array_assign.value, &v));
     for (int i = 0; i < s->array_assign.nindices; i++) {
         value_t iv;
-        EVAL_CHECK(eval_expr(env, s->array_assign.indices[i], &iv));
-        error_t err = val_to_integer(&iv, &indices[i]);
-        val_clear(&iv);
-        if (err != ERR_NONE) return err;
+        err = eval_expr(env, s->array_assign.indices[i], &iv);
+        if (err == ERR_NONE) {
+            err = val_to_integer(&iv, &indices[i]);
+            val_clear(&iv);
+        }
+        if (err != ERR_NONE) { val_clear(&v); return err; }
     }
-
-    value_t v;
-    EVAL_CHECK(eval_expr(env, s->array_assign.value, &v));
-    error_t err = eval_array_store(s->array_assign.name, s->array_assign.nindices, indices, &v);
+    err = eval_array_store(s->array_assign.name, s->array_assign.nindices, indices, &v);
     val_clear(&v);
     return err;
 }
@@ -2562,8 +2757,8 @@ static error_t exec_read(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->read_stmt.varnames[i]))
             return ERR_CONST_REASSIGN;
         value_t v;
-        EVAL_CHECK(eval_read_value(target_type(s->read_stmt.varnames[i],
-                                               s->read_stmt.targets[i] != NULL), &v));
+        EVAL_CHECK(eval_read_value(target_type(env, s->read_stmt.varnames[i],
+                                               s->read_stmt.targets[i]), &v));
 
         error_t err = store_target(env, s->read_stmt.targets[i], s->read_stmt.varnames[i], &v);
         val_clear(&v);
@@ -2737,7 +2932,7 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->input_file.varnames[i]))
             return ERR_CONST_REASSIGN;
         value_t val;
-        EVAL_CHECK(eval_input_field(fp, target_type(s->input_file.varnames[i], s->input_file.targets[i] != NULL),
+        EVAL_CHECK(eval_input_field(fp, target_type(env, s->input_file.varnames[i], s->input_file.targets[i]),
                                     &val));
         err = store_target(env, s->input_file.targets[i], s->input_file.varnames[i], &val);
         val_clear(&val);
@@ -3157,6 +3352,7 @@ static error_t exec_type_def(stmt_t *s) {
         strncpy(type_defs[idx].field_names[i],
                 s->type_def.fields[i].name, 63);
         type_defs[idx].field_types[i] = s->type_def.fields[i].type;
+        type_defs[idx].field_len[i] = s->type_def.fields[i].fixlen;
     }
     return ERR_NONE;
 }
@@ -3169,12 +3365,8 @@ static error_t exec_dim_as_type(env_t *env, stmt_t *s) {
     value_t *have = env_lookup(env, s->dim_as_type.name);
     if (have && have->type == VAL_RECORD) return ERR_NONE;
     type_def_t *td = &type_defs[ti];
-    sb_record_t *rec = record_alloc(ti, td->nfields);
+    sb_record_t *rec = record_make(ti, td->nfields, td->field_types, td->field_len);
     if (!rec) return ERR_OUT_OF_MEMORY;
-    for (int i = 0; i < td->nfields; i++) {
-        val_clear(&rec->fields[i]);
-        rec->fields[i] = val_default(td->field_types[i]);
-    }
     value_t val;
     val.type = VAL_RECORD;
     val.rval = rec;
@@ -3184,23 +3376,21 @@ static error_t exec_dim_as_type(env_t *env, stmt_t *s) {
 }
 
 static error_t exec_field_assign(env_t *env, stmt_t *s) {
-    if (env_is_const(env, s->field_assign.var_name))
+    if (!s->field_assign.elem && env_is_const(env, s->field_assign.var_name))
         return ERR_CONST_REASSIGN;
-    value_t *inst = env_get(env, s->field_assign.var_name);
-    if (!inst || inst->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
-    type_def_t *td = &type_defs[inst->rval->type_idx];
-    int fi = find_field_index(td, s->field_assign.field_name);
-    if (fi < 0) return ERR_UNDEFINED_FIELD;
+    value_t *f;
+    val_type_t ft;
+    int fl;
+    /* the value first, then the target's subscripts (QBasic's order) */
     value_t v;
     EVAL_CHECK(eval_expr(env, s->field_assign.value, &v));
-    /* Coerce to field type */
-    {
-        error_t err = val_coerce(&v, td->field_types[fi]);
-        if (err != ERR_NONE) { val_clear(&v); return err; }
-    }
-    val_assign(&inst->rval->fields[fi], &v);
+    error_t err = field_slot(env, s->field_assign.var_name, s->field_assign.field_name,
+                             s->field_assign.elem, &f, &ft, &fl);
+    if (err == ERR_NONE) err = val_coerce(&v, ft);
+    if (err == ERR_NONE) err = fix_string(&v, fl);
+    if (err == ERR_NONE) val_assign(f, &v);
     val_clear(&v);
-    return ERR_NONE;
+    return err;
 }
 
 /* --- MID$ l-value assignment --- */
@@ -3370,7 +3560,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             value_t tmp = *v1;
             *v1 = *v2;
             *v2 = tmp;
-            return ERR_NONE;
+            /* (a fixed-length string gets the other's value cut or padded) */
+            EVAL_CHECK(fix_string(v1, lvalue_fixlen(env, s->swap_stmt.lhs)));
+            return fix_string(v2, lvalue_fixlen(env, s->swap_stmt.rhs));
         }
 
         case STMT_RANDOMIZE: {
@@ -3609,10 +3801,15 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             /* Declare scalar variable with default value -- once: DIM is
              * a declaration (QuickBASIC: one in a loop does not reset it) */
             if (env_lookup(env, s->dim_scalar.name)) return ERR_NONE;
-            value_t def = val_default(s->dim_scalar.typed ? s->dim_scalar.scalar_type
+            value_t def = s->dim_scalar.fixlen ? fixed_value(s->dim_scalar.fixlen)
+                        : val_default(s->dim_scalar.typed ? s->dim_scalar.scalar_type
                                                           : resolve_var_type(s->dim_scalar.name));
             env_set(env, s->dim_scalar.name, &def);
             val_clear(&def);
+            if (s->dim_scalar.fixlen) {
+                var_entry_t *e = env_entry(env, s->dim_scalar.name);
+                if (e) e->fixlen = s->dim_scalar.fixlen;
+            }
             return ERR_NONE;
         }
 

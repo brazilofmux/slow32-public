@@ -9,6 +9,7 @@ typedef struct var_entry {
     char name[64];
     value_t value;
     int is_const;           /* 1 if CONST variable */
+    int fixlen;             /* AS STRING * n: n (every store cut or padded to it); else 0 */
     value_t *link;          /* non-NULL → reads/writes go through this pointer (SHARED) */
     struct var_entry *next;
 } var_entry_t;
@@ -71,6 +72,12 @@ void env_set_const(env_t *env, const char *name, const value_t *val);
 int env_is_const(env_t *env, const char *name);
 
 /* Link a local variable to an external value (for SHARED) */
-void env_link(env_t *env, const char *name, value_t *target);
+void env_link(env_t *env, const char *name, value_t *target, int fixlen);
+
+/* name's entry, in the scope chain, made in env if it is in none */
+var_entry_t *env_entry(env_t *env, const char *name);
+
+/* a fixed-length string variable's length (DIM x AS STRING * n), else 0 */
+int env_fixlen(env_t *env, const char *name);
 
 #endif

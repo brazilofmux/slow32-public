@@ -118,6 +118,7 @@ static var_entry_t *create_entry(env_t *env, const char *name) {
     memcpy(e->name, name, len);
     e->name[len] = '\0';
     e->is_const = 0;
+    e->fixlen = 0;
     e->link = NULL;
     len = (int)strlen(name);
     /* Default value based on suffix, or DEFTYPE for bare names */
@@ -215,11 +216,28 @@ int env_is_const(env_t *env, const char *name) {
     return 0;
 }
 
-void env_link(env_t *env, const char *name, value_t *target) {
+void env_link(env_t *env, const char *name, value_t *target, int fixlen) {
     var_entry_t *e = find_entry(env, name);
     if (!e) e = create_entry(env, name);
     if (e) {
         val_clear(&e->value);
         e->link = target;
+        e->fixlen = fixlen;
     }
+}
+
+var_entry_t *env_entry(env_t *env, const char *name) {
+    for (env_t *scope = env; scope; scope = scope->parent) {
+        var_entry_t *e = find_entry(scope, name);
+        if (e) return e;
+    }
+    return create_entry(env, name);
+}
+
+int env_fixlen(env_t *env, const char *name) {
+    for (env_t *scope = env; scope; scope = scope->parent) {
+        var_entry_t *e = find_entry(scope, name);
+        if (e) return e->fixlen;
+    }
+    return 0;
 }

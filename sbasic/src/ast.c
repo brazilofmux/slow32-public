@@ -96,7 +96,9 @@ void expr_free(expr_t *e) {
             val_clear(&e->literal);
             break;
         case EXPR_VARIABLE:
+            break;
         case EXPR_FIELD_ACCESS:
+            next = e->field.elem;
             break;
         case EXPR_UNARY:
             next = e->unary.operand;  /* iterate instead of recurse */
@@ -186,15 +188,17 @@ static val_type_t suffix_type(const char *name) {
     return VAL_SINGLE;
 }
 
-/* a READ or INPUT target: a variable, or an array element, whose
- * expression is kept (and owned) for the subscripts */
+/* a READ or INPUT target: a variable, an array element, or a field (of
+ * a record, or of an element), whose expression is kept (and owned) for
+ * the subscripts and the field */
 static int add_target(stmt_t *s, expr_t *e,
                       int (*add)(stmt_t *, const char *, val_type_t),
                       expr_t **(*targets)(stmt_t *), int *nvars) {
-    const char *name = e->type == EXPR_VARIABLE ? e->var.name : e->call.name;
+    const char *name = e->type == EXPR_VARIABLE ? e->var.name :
+                       e->type == EXPR_FIELD_ACCESS ? e->field.var_name : e->call.name;
     if (add(s, name, e->type == EXPR_VARIABLE ? e->var.var_type : suffix_type(name)) < 0)
         return -1;
-    if (e->type == EXPR_CALL)
+    if (e->type != EXPR_VARIABLE)
         targets(s)[*nvars - 1] = e;
     else
         expr_free(e);
@@ -658,6 +662,7 @@ void stmt_free(stmt_t *s) {
                 break;
             case STMT_FIELD_ASSIGN:
                 expr_free(s->field_assign.value);
+                expr_free(s->field_assign.elem);
                 break;
             case STMT_MID_ASSIGN:
                 expr_free(s->mid_assign.start);
@@ -1031,6 +1036,7 @@ void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type) {
     s->type_def.fields = f;
     ast_name_copy(f[n].name, name);
     f[n].type = type;
+    f[n].fixlen = 0;
     s->type_def.nfields = n + 1;
 }
 
@@ -1173,6 +1179,9 @@ void expr_walk(expr_t *e, void (*fn)(expr_t *, void *), void *ctx) {
         for (int i = 0; i < e->call.nargs; i++)
             expr_walk(e->call.args[i], fn, ctx);
         break;
+    case EXPR_FIELD_ACCESS:
+        expr_walk(e->field.elem, fn, ctx);
+        break;
     default:
         break;
     }
@@ -1246,7 +1255,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_GET:
     case STMT_PUT: X(s->get_put_stmt.handle_num); X(s->get_put_stmt.position); break;
     case STMT_SEEK: X(s->seek_stmt.seek_handle); X(s->seek_stmt.seek_position); break;
-    case STMT_FIELD_ASSIGN: X(s->field_assign.value); break;
+    case STMT_FIELD_ASSIGN: X(s->field_assign.elem); X(s->field_assign.value); break;
     case STMT_MID_ASSIGN: X(s->mid_assign.start); X(s->mid_assign.length); X(s->mid_assign.value); break;
     case STMT_ERROR_RAISE: X(s->error_raise.errnum); break;
     case STMT_ON_GOTO:
