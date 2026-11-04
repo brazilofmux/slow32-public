@@ -36,6 +36,12 @@ static const char *array_key(const char *name, char *buf, size_t cap) {
     return array_key_mode(name, t->mode ? t->mode(name, t->ctx) : ARRAY_MODULE, buf, cap);
 }
 
+int array_is_static(const char *name) {
+    if (strchr(name, ':')) return name[0] == 's';
+    if (!nscopes || !scopes[nscopes - 1].mode) return 0;
+    return scopes[nscopes - 1].mode(name, scopes[nscopes - 1].ctx) == ARRAY_STATIC;
+}
+
 /* a procedure's activation begins (proc: which, for its STATICs; mode
  * says how its names are scoped, NULL for names given as keys) */
 error_t array_scope_push(int proc, array_mode_fn mode, void *ctx) {

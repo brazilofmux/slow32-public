@@ -58,6 +58,7 @@ typedef enum {
     ERR_FUNC_NOT_DEFINED,
     ERR_PARAM_MISMATCH,
     ERR_ADVANCED,            /* QB's "Advanced feature unavailable": BSAVE, BLOAD, CALL ABSOLUTE */
+    ERR_RUN,                 /* flow control: RUN, the program again */
     ERR_COUNT
 } error_t;
 

@@ -125,11 +125,8 @@ static const keyword_t keywords[] = {
     { "CIRCLE", TOK_CIRCLE },
     { "PAINT",  TOK_PAINT },
     { "RUN",    TOK_RUN },
-    { "LIST",   TOK_LIST },
-    { "NEW",    TOK_NEW },
-    { "LOAD",   TOK_LOAD },
-    { "SAVE",   TOK_SAVE },
-    { "BYE",    TOK_BYE },
+    /* (LIST, NEW, LOAD, SAVE, BYE: the REPL's, read as its text -- a
+     * program may name a SUB so) */
     { NULL, 0 }
 };
 
@@ -439,7 +436,10 @@ static void scan_token_raw(lexer_t *lex, token_t *tok) {
     if (lx_isalpha(c) || c == '_') {
         int len = 0;
         char upper[256];
-        while (lx_isalnum(peek_char(lex)) || peek_char(lex) == '_') {
+        /* (a dot inside a name is part of it: QuickBASIC's TWO.PI#, a
+         * record's field the parser's to tell) */
+        while (lx_isalnum(peek_char(lex)) || peek_char(lex) == '_' ||
+               (peek_char(lex) == '.' && (lx_isalnum(lex->src[lex->pos + 1]) || lex->src[lex->pos + 1] == '_'))) {
             char ch = next_char(lex);
             if (len < 255) {
                 tok->text[len] = ch;

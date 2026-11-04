@@ -124,6 +124,7 @@ static int is_trappable_error(error_t err) {
     switch (err) {
     case ERR_NONE:
     case ERR_EXIT:
+    case ERR_RUN:
     case ERR_BREAK:
     case ERR_EXIT_FOR:
     case ERR_EXIT_WHILE:
@@ -620,6 +621,16 @@ static int proc_array_mode(const char *name, void *ctx) {
     return ARRAY_LOCAL;
 }
 
+/* STATIC name AS type in procedure def's body: the type, else -1 */
+static int static_astype(const stmt_t *def, const char *name) {
+    for (const stmt_t *s = def->proc_def.body; s; s = s->next)
+        if (s->type == STMT_STATIC)
+            for (int i = 0; i < s->shared.nvars && i < 16; i++)
+                if (s->shared.astype[i] && strcmp(s->shared.varnames[i], name) == 0)
+                    return s->shared.astype[i] - 1;
+    return -1;
+}
+
 /* the first call's work for every call: lower the body, collect its
  * SHARED and STATIC names, find its C */
 static error_t proc_prepare(proc_entry_t *proc) {
@@ -748,7 +759,12 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
         for (int i = 0; i < proc->nstatic; i++) {
             /* env_get auto-creates with default on first access */
             if (is_array_entry(proc->static_names[i])) continue;
+            int fresh = !env_lookup(proc->static_env, proc->static_names[i]);
             var_entry_t *se = env_entry(proc->static_env, proc->static_names[i]);
+            if (se && fresh) {          /* STATIC x AS type: made that type */
+                int t = static_astype(def, proc->static_names[i]);
+                if (t >= 0) { val_clear(&se->value); se->value = val_default((val_type_t)t); }
+            }
             if (se) env_link(local, proc->static_names[i], se->link ? se->link : &se->value, se->fixlen);
         }
     }
@@ -2796,6 +2812,16 @@ error_t eval_dim(const char *name, val_type_t type, int ndims, const int *lowers
     }
     if (is_redim)
         return array_redim(name, type, sizes, ndims, lowers, preserve);
+    {   /* a procedure's STATIC array DIMmed again with the same bounds: a
+         * declaration (QuickBASIC makes one of constant bounds at load) */
+        sb_array_t *a = array_find(name);
+        if (a && array_is_static(name) && a->ndims == ndims) {
+            int same = 1;
+            for (int i = 0; i < ndims; i++)
+                if (a->dims[i] != sizes[i] || a->lbound[i] != lowers[i]) same = 0;
+            if (same) return ERR_NONE;
+        }
+    }
     return array_dim(name, type, sizes, ndims, lowers);
 }
 
@@ -3802,6 +3828,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_READ:         return exec_read(env, s);
         case STMT_RESTORE:      return exec_restore(s);
         case STMT_END:          return ERR_EXIT;
+        case STMT_RUN:          return ERR_RUN;
         case STMT_REM:          return ERR_NONE;
         case STMT_LABEL:        return ERR_NONE;
         case STMT_DECLARE:      return ERR_NONE;
@@ -3962,6 +3989,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_SCREEN: {
             int mode;
+            if (!s->shell_stmt.command) return ERR_NONE;    /* (SCREEN , , 3, 2: pages only) */
             EVAL_CHECK(gfx_eval_int(env, s->shell_stmt.command, &mode));
             return eval_screen(mode);
         }
@@ -4627,6 +4655,7 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     char base;
     stack_base = &base;
     if (!program) return ERR_NONE;
+again:                                  /* (RUN: all of it again, the variables cleared) */
 
     /* Initialize program state */
     program_global_env = env;
@@ -4672,6 +4701,10 @@ cleanup:
             env_destroy(proc_table[i].static_env);
             proc_table[i].static_env = NULL;
         }
+    }
+    if (result == ERR_RUN) {
+        env_clear(env);
+        goto again;
     }
     sb_term_shutdown();
     return result;

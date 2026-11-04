@@ -57,6 +57,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Function not defined",
     "Parameter type mismatch",
     "Advanced feature unavailable",
+    "RUN",
 };
 
 int error_qb_code(error_t err) {

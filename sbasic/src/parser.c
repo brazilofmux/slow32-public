@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "fileio.h"
+#include "builtin.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -20,6 +21,28 @@ static void parser_error(parser_t *p, error_t err) {
 
 /* a line number as a label's name (snprintf "%d", which a program's
  * every GOTO and numbered line paid for) */
+/* a name a DIM ... AS TYPE made a record */
+static void record_note(parser_t *p, const char *name) {
+    for (int i = 0; i < p->nrecords; i++)
+        if (strcmp(p->records[i], name) == 0) return;
+    if (p->nrecords < 256) ast_name_copy(p->records[p->nrecords++], name);
+}
+
+/* rec.field, read as one name: a record's field when rec is one (then
+ * rec and field set), else 0 -- the name is a name */
+static int record_split(parser_t *p, const char *name, char *rec, char *field) {
+    const char *dot = strchr(name, '.');
+    if (!dot || dot == name || (size_t)(dot - name) > 63) return 0;
+    memcpy(rec, name, (size_t)(dot - name));
+    rec[dot - name] = '\0';
+    for (int i = 0; i < p->nrecords; i++)
+        if (strcmp(p->records[i], rec) == 0) {
+            ast_name_copy(field, dot + 1);
+            return 1;
+        }
+    return 0;
+}
+
 static void int_label(char *buf, int n) {
     char tmp[12];
     int i = 0;
@@ -127,6 +150,11 @@ static expr_t *parse_primary(parser_t *p) {
                 return fe;
             }
             return call;
+        }
+        {                               /* rec.field, read as one name */
+            char rec[64], field[64];
+            if (record_split(p, t.text, rec, field))
+                return expr_field_access(rec, field, t.line);
         }
         /* Check for field access: ident.field */
         if (lexer_check(&p->lex, TOK_DOT)) {
@@ -856,6 +884,9 @@ static stmt_t *parse_if_branch(parser_t *p) {
     return head;
 }
 
+static stmt_t *parse_block_else(parser_t *p);
+static stmt_t *parse_elseif(parser_t *p);
+
 static stmt_t *parse_if(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex);
@@ -879,15 +910,36 @@ static stmt_t *parse_if(parser_t *p) {
 
     /* Block form */
     stmt_t *then_body = parse_block(p, BLK_END_IF | BLK_ELSE);
-    stmt_t *else_body = NULL;
-    if (lexer_check(&p->lex, TOK_ELSEIF)) {
-        /* ELSEIF becomes a nested IF in the else branch */
-        else_body = parse_if(p);  /* parse_if consumes ELSEIF like IF */
-    } else if (lexer_check(&p->lex, TOK_ELSE)) {
-        lexer_skip(&p->lex);
-        else_body = parse_block(p, BLK_END_IF);
+    return stmt_if(cond, then_body, parse_block_else(p), line);
+}
+
+/* a block IF's ELSEIF ... or ELSE ...: its else branch (NULL at END IF) */
+static stmt_t *parse_block_else(parser_t *p) {
+    if (lexer_check(&p->lex, TOK_ELSEIF))
+        return parse_elseif(p);         /* a nested IF in the else branch */
+    if (lexer_match(&p->lex, TOK_ELSE))
+        return parse_block(p, BLK_END_IF);
+    return NULL;
+}
+
+/* ELSEIF c THEN [statements on its line] then the block's lines (the
+ * statements after THEN its first, QuickBASIC lets them be there) */
+static stmt_t *parse_elseif(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_skip(&p->lex);
+    expr_t *cond = parse_expr(p);
+    if (!cond) return NULL;
+    if (!expect(p, TOK_THEN)) { expr_free(cond); return NULL; }
+    stmt_t *head = NULL, *tail = NULL;
+    if (!lexer_check(&p->lex, TOK_EOL) && !lexer_check(&p->lex, TOK_EOF)) {
+        head = parse_if_branch(p);
+        if (p->error != ERR_NONE) { expr_free(cond); stmt_free(head); return NULL; }
+        for (tail = head; tail && tail->next; tail = tail->next) ;
     }
-    return stmt_if(cond, then_body, else_body, line);
+    stmt_t *rest = parse_block(p, BLK_END_IF | BLK_ELSE);
+    if (p->error != ERR_NONE) { expr_free(cond); stmt_free(head); return NULL; }
+    if (tail) tail->next = rest; else head = rest;
+    return stmt_if(cond, head, parse_block_else(p), line);
 }
 
 static stmt_t *parse_for(parser_t *p) {
@@ -1195,7 +1247,7 @@ static int parse_params(parser_t *p, stmt_t *s) {
             val_type_t ptype = var_type_from_name(param.text);
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
-                as_type(tn.text, &ptype);
+                if (!as_type(tn.text, &ptype)) record_note(p, param.text);   /* (a record, by reference) */
             }
             stmt_proc_add_param(s, param.text, ptype);
         } while (lexer_match(&p->lex, TOK_COMMA));
@@ -1214,6 +1266,7 @@ static stmt_t *parse_sub(parser_t *p) {
     stmt_t *s = stmt_proc_def(STMT_SUB_DEF, name.text, line);
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
+    s->proc_def.is_static = lexer_match(&p->lex, TOK_STATIC);
 
     stmt_t *body = parse_block(p, BLK_END_SUB);
     stmt_proc_set_body(s, body);
@@ -1232,6 +1285,7 @@ static stmt_t *parse_function(parser_t *p) {
     s->proc_def.return_type = var_type_from_name(name.text);
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
+    s->proc_def.is_static = lexer_match(&p->lex, TOK_STATIC);
 
     stmt_t *body = parse_block(p, BLK_END_FUNC);
     stmt_proc_set_body(s, body);
@@ -1390,6 +1444,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
         }
         stmt_t *rs = stmt_dim_as_type(name.text, tname.text, line);
         if (rs) rs->dim_as_type.shared = shared;
+        record_note(p, name.text);
         return rs;
     }
 
@@ -2170,6 +2225,13 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
  * parse_paren_dispatch, so name(args) with no = comes back as a call.
  * NULL, with no error set, when none of the three follows. */
 static stmt_t *parse_assignment(parser_t *p, token_t *var) {
+    char rec[64], field[64];
+    if (lexer_check(&p->lex, TOK_EQ) && record_split(p, var->text, rec, field)) {
+        lexer_skip(&p->lex);
+        expr_t *val = parse_expr(p);
+        if (!val) return NULL;
+        return stmt_field_assign(rec, field, val, var->line);
+    }
     if (lexer_check(&p->lex, TOK_EQ))
         return parse_assign(p, var->text);
     if (lexer_check(&p->lex, TOK_DOT)) {
@@ -2219,6 +2281,14 @@ static stmt_t *parse_stmt(parser_t *p) {
     if (p->error != ERR_NONE) return NULL;
     token_t *tok = lexer_peek(&p->lex);
 
+    /* 1.1 first on its line: a label (QuickBASIC's line numbers may have dots) */
+    if (tok->type == TOK_DOUBLE_LIT && tok->first && strchr(tok->text, '.') &&
+        !strpbrk(tok->text, "EeDd")) {
+        int line = tok->line;
+        stmt_t *ls = stmt_label(tok->text, line);
+        lexer_skip(&p->lex);
+        return ls;
+    }
     /* Line number at start of statement → label only (body parsed by caller) */
     if (tok->type == TOK_INTEGER_LIT) {
         char label_name[64];
@@ -2258,6 +2328,16 @@ static stmt_t *parse_stmt(parser_t *p) {
                     parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
                 }
                 if (!list_name(p, s, stmt_static_add)) { stmt_free(s); return NULL; }
+                if (lexer_match(&p->lex, TOK_AS)) {     /* STATIC x AS type */
+                    token_t tn = lexer_next(&p->lex);
+                    val_type_t st;
+                    if (tn.type != TOK_IDENT || !as_type(tn.text, &st)) {
+                        parser_error_detail(p, ERR_SYNTAX, "STATIC x AS a TYPE");
+                        stmt_free(s); return NULL;
+                    }
+                    if (s->shared.nvars > 0 && s->shared.nvars <= 16)
+                        s->shared.astype[s->shared.nvars - 1] = (unsigned char)(st + 1);
+                }
             } while (lexer_match(&p->lex, TOK_COMMA));
             return s;
         }
@@ -2474,8 +2554,9 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_SCREEN: {
             int line = tok->line;
             lexer_skip(&p->lex);
-            expr_t *mode = parse_expr(p);
-            if (!mode) return NULL;
+            /* SCREEN [mode][, ...]: the mode left out keeps the one in force */
+            expr_t *mode = NULL;
+            if (!lexer_check(&p->lex, TOK_COMMA) && !(mode = parse_expr(p))) return NULL;
             /* burst/apage/vpage arguments: parse and ignore */
             while (lexer_match(&p->lex, TOK_COMMA)) {
                 if (at_stmt_end(p) || lexer_check(&p->lex, TOK_COMMA)) continue;
@@ -2485,6 +2566,8 @@ static stmt_t *parse_stmt(parser_t *p) {
             }
             stmt_t *s = stmt_alloc(STMT_SCREEN, line);
             if (!s) { expr_free(mode); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            /* (every argument left out: QBasic's "Expected: expression"; one
+             * here keeps the mode) */
             s->shell_stmt.command = mode;
             return s;
         }
@@ -2694,11 +2777,24 @@ static stmt_t *parse_stmt(parser_t *p) {
             return stmt_alloc(STMT_NOOP, line);
         }
 
+        case TOK_RUN: {                 /* RUN: the program again (QuickBASIC) */
+            int line = tok->line;
+            lexer_skip(&p->lex);
+            if (!at_stmt_end(p)) {
+                parser_error_detail(p, ERR_SYNTAX, "RUN with a line or a file");
+                return NULL;
+            }
+            return stmt_alloc(STMT_RUN, line);
+        }
+
         case TOK_GOTO: {
             int line = tok->line;
             lexer_skip(&p->lex);
             char label_name[64];
-            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {      /* GOTO 1.1 */
+                token_t num = lexer_next(&p->lex);
+                ast_name_copy(label_name, num.text);
+            } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
                 int_label(label_name, num.ival);
             } else if (lexer_check(&p->lex, TOK_IDENT)) {
@@ -2715,7 +2811,10 @@ static stmt_t *parse_stmt(parser_t *p) {
             int line = tok->line;
             lexer_skip(&p->lex);
             char label_name[64];
-            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
+                token_t num = lexer_next(&p->lex);
+                ast_name_copy(label_name, num.text);
+            } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t num = lexer_next(&p->lex);
                 int_label(label_name, num.ival);
             } else if (lexer_check(&p->lex, TOK_IDENT)) {
@@ -2826,6 +2925,109 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error = ERR_NONE;
     p->error_line = 0;
     p->error_detail[0] = '\0';
+    p->nrecords = 0;
+}
+
+/* --- SUB ... STATIC: every variable of its own kept, as a STATIC list
+ * of them at its start says (the program read, its procedures known) --- */
+
+typedef struct { const stmt_t *prog, *def; stmt_t *list; } statics_t;
+
+static int is_proc_name(const stmt_t *prog, const char *name) {
+    char bare[64];
+    for (const stmt_t *s = prog; s; s = s->next)
+        if ((s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) &&
+            (strcmp(s->proc_def.name, name) == 0 ||
+             (ast_name_bare(s->proc_def.name, bare) && strcmp(bare, name) == 0)))
+            return 1;
+    return 0;
+}
+
+/* name (NAME() for an array) to the procedure's STATIC list, unless it is
+ * not one of its own variables */
+static void statics_add(statics_t *st, const char *name, int array) {
+    const stmt_t *def = st->def;
+    char bare[64], a[68];
+    if (!array) {
+        if (builtin_exists(name) || strncmp(name, "FN", 2) == 0 || is_proc_name(st->prog, name) ||
+            strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0) return;
+        if (ast_name_bare(def->proc_def.name, bare) && strcmp(bare, name) == 0) return;
+    }
+    if (strcmp(def->proc_def.name, name) == 0) return;
+    for (int i = 0; i < def->proc_def.nparams; i++)
+        if (strcmp(def->proc_def.params[i], name) == 0) return;
+    snprintf(a, sizeof a, array ? "%s()" : "%s", name);
+    for (const stmt_t *s = def->proc_def.body; s; s = s->next)
+        if (s->type == STMT_SHARED || s->type == STMT_STATIC || s->type == STMT_CONST)
+            for (int i = 0; i < (s->type == STMT_CONST ? 1 : s->shared.nvars); i++)
+                if (strcmp(s->type == STMT_CONST ? s->const_stmt.name : s->shared.varnames[i], a) == 0) return;
+    for (const stmt_t *s = st->prog; s; s = s->next)   /* (the module's CONSTs and DIM SHAREDs) */
+        if ((s->type == STMT_CONST && strcmp(s->const_stmt.name, a) == 0) ||
+            (s->type == STMT_DIM && s->dim_stmt.shared && array && strcmp(s->dim_stmt.name, name) == 0) ||
+            (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared && strcmp(s->dim_scalar.name, a) == 0) ||
+            (s->type == STMT_DIM_AS_TYPE && s->dim_as_type.shared && strcmp(s->dim_as_type.name, a) == 0))
+            return;
+    for (stmt_t *l = st->list; l; l = l->next)
+        for (int i = 0; i < l->shared.nvars; i++)
+            if (strcmp(l->shared.varnames[i], a) == 0) return;
+    if (!st->list || st->list->shared.nvars == 16) {
+        stmt_t *l = stmt_static_decl(def->line);
+        if (!l) return;
+        l->next = st->list;
+        st->list = l;
+    }
+    stmt_static_add(st->list, a);
+}
+
+static void statics_expr(expr_t *e, void *ctx) {
+    if (e->type == EXPR_VARIABLE) statics_add(ctx, e->var.name, 0);
+    if (e->type == EXPR_FIELD_ACCESS && !e->field.elem) statics_add(ctx, e->field.var_name, 0);
+}
+static void statics_top(expr_t *e, void *ctx) { expr_walk(e, statics_expr, ctx); }
+
+static void statics_walk(statics_t *st, stmt_t *s) {
+    for (; s; s = s->next) {
+        stmt_exprs(s, statics_top, st);
+        switch (s->type) {
+            case STMT_ASSIGN: statics_add(st, s->assign.name, 0); break;
+            case STMT_FOR: statics_add(st, s->for_stmt.var_name, 0); statics_walk(st, s->for_stmt.body); break;
+            case STMT_INPUT: case STMT_LINE_INPUT_CONSOLE:
+                for (int i = 0; i < s->input.nvars; i++)
+                    if (!s->input.targets[i]) statics_add(st, s->input.varnames[i], 0);
+                break;
+            case STMT_READ:
+                for (int i = 0; i < s->read_stmt.nvars; i++)
+                    if (!s->read_stmt.targets[i]) statics_add(st, s->read_stmt.varnames[i], 0);
+                break;
+            case STMT_INPUT_FILE: case STMT_LINE_INPUT:
+                for (int i = 0; i < s->input_file.nvars; i++)
+                    if (!s->input_file.targets[i]) statics_add(st, s->input_file.varnames[i], 0);
+                break;
+            case STMT_DIM_SCALAR: statics_add(st, s->dim_scalar.name, 0); break;
+            case STMT_DIM: if (!s->dim_stmt.shared) statics_add(st, s->dim_stmt.name, 1); break;
+            case STMT_IF: statics_walk(st, s->if_stmt.then_body); statics_walk(st, s->if_stmt.else_body); break;
+            case STMT_WHILE: statics_walk(st, s->while_stmt.body); break;
+            case STMT_DO_LOOP: statics_walk(st, s->do_loop.body); break;
+            case STMT_SELECT:
+                for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) statics_walk(st, c->body);
+                break;
+            default: break;
+        }
+    }
+}
+
+static void static_procs(stmt_t *prog) {
+    for (stmt_t *s = prog; s; s = s->next) {
+        if ((s->type != STMT_SUB_DEF && s->type != STMT_FUNC_DEF) || !s->proc_def.is_static) continue;
+        statics_t st = { prog, s, NULL };
+        statics_walk(&st, s->proc_def.body);
+        if (st.list) {
+            stmt_t *l = st.list;
+            while (l->next) l = l->next;
+            l->next = s->proc_def.body;
+            s->proc_def.body = st.list;
+        }
+    }
 }
 
 stmt_t *parser_parse(parser_t *p) {
@@ -2845,6 +3047,7 @@ stmt_t *parser_parse(parser_t *p) {
         }
         stmt_append(&head, &tail, s);
     }
+    static_procs(head);
     return head;
 }
 

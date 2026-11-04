@@ -179,6 +179,7 @@ typedef enum {
     STMT_VIEW,          /* VIEW [SCREEN] (x1, y1)-(x2, y2)[, color[, border]]: gfx;
                            has_from: the points given, box: SCREEN, aux: border */
     STMT_WINDOW,        /* WINDOW [SCREEN] (x1, y1)-(x2, y2): gfx, as VIEW's */
+    STMT_RUN,           /* RUN: the program again from its start */
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -312,6 +313,7 @@ typedef struct stmt {
             val_type_t param_types[16];
             int nparams;
             unsigned param_arrays;  /* bit i: parameter i is an array, name() */
+            int is_static;          /* SUB/FUNCTION ... STATIC: its variables kept */
             val_type_t return_type; /* FUNC_DEF only */
             struct stmt *body;
         } proc_def;
@@ -346,6 +348,7 @@ typedef struct stmt {
         struct {
             char (*varnames)[64];   /* 16, made at the first */
             int nvars;
+            unsigned char astype[16];   /* STATIC x AS type: type + 1; 0: by its name */
         } shared;
 
         /* STMT_DIM / STMT_REDIM */

@@ -737,6 +737,7 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->width_stmt.rows);
                 break;
             case STMT_NOOP:
+            case STMT_RUN:
             case STMT_CLEAR:
                 break;
             case STMT_PSET:

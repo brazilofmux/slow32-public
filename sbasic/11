@@ -1,0 +1,28 @@
+' QuickBASIC's forms, as QBasic 1.1 runs them: names with a dot (a
+' variable, a label, a SUB) beside a record's fields, SUBs named as the
+' interpreter's commands (SAVE, NEW) and a label NEW, SUB and FUNCTION
+' ... STATIC, STATIC x AS INTEGER, a one-line ELSEIF, the label 1.1,
+' SCREEN with its mode left out, and RUN (the second run sees a file)
+DECLARE SUB summer.day ()
+DECLARE SUB save (t)
+DECLARE SUB tally ()
+DECLARE FUNCTION nextid% ()
+TYPE spot
+x AS INTEGER
+y AS INTEGER
+END TYPE
+DIM SHARED t.count
+DIM here AS spot
+OPEN "QBF3.TMP" FOR APPEND AS #1: PRINT #1, "x": CLOSE #1
+OPEN "QBF3.TMP" FOR INPUT AS #1
+runs = 0
+DO WHILE NOT EOF(1): LINE INPUT #1, l$: runs = runs + 1: LOOP
+CLOSE #1
+IF runs = 1 THEN PRINT "first run": RUN
+KILL "QBF3.TMP"
+PRINT "run"; runs
+here.x = 4: here.y = here.x * 2
+t.count = 3: half.way = 2.5
+PRINT here.x; here.y; t.count; half.way
+CALL summer.day
+GOSUB load.sprites

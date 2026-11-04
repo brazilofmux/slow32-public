@@ -29,6 +29,8 @@ extern unsigned array_generation;
 enum { ARRAY_MODULE, ARRAY_LOCAL, ARRAY_STATIC };
 typedef int (*array_mode_fn)(const char *name, void *ctx);
 error_t array_scope_push(int proc, array_mode_fn mode, void *ctx);
+/* name (or a key) is a procedure's STATIC array */
+int array_is_static(const char *name);
 void array_scope_pop(void);
 /* name's key in the current scope by mode (for names compiled code scopes) */
 const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);

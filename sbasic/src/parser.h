@@ -10,6 +10,11 @@ typedef struct {
     error_t error;
     int error_line;
     char error_detail[128];
+    /* the names DIM ... AS a TYPE (or a parameter AS one) made records so
+     * far: rec.field is a field of one; any other name with a dot is a
+     * name (QuickBASIC's, TWO.PI#, SUB summer.day) */
+    char records[256][64];
+    int nrecords;
 } parser_t;
 
 /* Initialize parser */
