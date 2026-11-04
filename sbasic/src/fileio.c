@@ -82,10 +82,21 @@ int fileio_is_open(int handle, file_mode_t required_mode) {
     return handles[handle].mode == required_mode;
 }
 
+/* EOF(n): true when the next read would find nothing (QuickBASIC's: a
+ * loop WHILE NOT EOF reads the last line and stops), so a file that is
+ * read is looked ahead in by a character */
 int fileio_eof(int handle) {
     if (handle < 1 || handle > MAX_FILE_HANDLES) return -1;
     if (!handles[handle].in_use || !handles[handle].fp) return -1;
-    return feof(handles[handle].fp) ? -1 : 0;
+    FILE *fp = handles[handle].fp;
+    file_mode_t m = handles[handle].mode;
+    if (m == FMODE_INPUT || m == FMODE_BINARY || m == FMODE_RANDOM) {
+        int c = fgetc(fp);
+        if (c == EOF) return -1;
+        ungetc(c, fp);
+        return 0;
+    }
+    return feof(fp) ? -1 : 0;
 }
 
 int fileio_freefile(void) {

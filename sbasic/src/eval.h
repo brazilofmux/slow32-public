@@ -1,6 +1,7 @@
 #ifndef SBASIC_EVAL_H
 #define SBASIC_EVAL_H
 
+#include <stdio.h>
 #include "ast.h"
 #include "env.h"
 #include "error.h"
@@ -123,6 +124,17 @@ typedef struct {
 void using_begin(using_t *u, const char *fmt, int nitems, const unsigned char *has_expr);
 int using_next(using_t *u);
 void using_put(using_t *u, const value_t *v);
+typedef struct { int *col; FILE *fp; } print_redirect_t;
+error_t eval_print_file_begin(int handle, print_redirect_t *saved);
+void eval_print_file_end(const print_redirect_t *saved);
+void eval_write_file_value(FILE *fp, const value_t *v);
+error_t eval_input_field(FILE *fp, val_type_t t, value_t *out);
+error_t eval_line_input_file(FILE *fp, value_t *out);
+error_t eval_getput_file(int handle, FILE **fp);
+error_t eval_file_pos(int handle, FILE *fp, int pos);
+error_t eval_get_value(FILE *fp, val_type_t vt, int len, value_t *out);
+error_t eval_put_value(FILE *fp, const value_t *v);
+error_t eval_lrset(int curlen, const value_t *nv, int left, value_t *out);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
 error_t eval_input_line(const char *prompt, int no_question, int same_line,

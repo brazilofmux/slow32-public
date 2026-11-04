@@ -2576,6 +2576,24 @@ static error_t exec_close(env_t *env, stmt_t *s) {
     return fileio_close(handle);
 }
 
+/* PRINT #handle's output: to the file, with its own column, until
+ * eval_print_file_end puts back what was -- for compiled code too */
+error_t eval_print_file_begin(int handle, print_redirect_t *saved) {
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+    int *file_col = fileio_get_col_ptr(handle);
+    saved->col = active_print_col;
+    saved->fp = col_output_fp;
+    if (file_col) active_print_col = file_col;
+    col_output_fp = fp;
+    return ERR_NONE;
+}
+
+void eval_print_file_end(const print_redirect_t *saved) {
+    col_output_fp = saved->fp;
+    active_print_col = saved->col;
+}
+
 static error_t exec_print_file(env_t *env, stmt_t *s) {
     value_t hv;
     EVAL_CHECK(eval_expr(env, s->print_file.handle_num, &hv));
@@ -2583,15 +2601,10 @@ static error_t exec_print_file(env_t *env, stmt_t *s) {
     error_t err = val_to_integer(&hv, &handle);
     val_clear(&hv);
     if (err != ERR_NONE) return err;
-    FILE *fp = fileio_get(handle);
-    if (!fp) return ERR_FILE_NOT_OPEN;
-
-    /* the file's own column counter */
-    int *file_col = fileio_get_col_ptr(handle);
-    int *saved_col = active_print_col;
-    FILE *saved_fp = col_output_fp;
-    if (file_col) active_print_col = file_col;
-    col_output_fp = fp;
+    print_redirect_t saved;
+    EVAL_CHECK(eval_print_file_begin(handle, &saved));
+    FILE *saved_fp = saved.fp;
+    int *saved_col = saved.col;
     if (s->print_file.using_fmt || s->print_file.using_expr) {
         const char *fmt;
         char fmt_buf[1024];
@@ -2633,24 +2646,29 @@ static error_t exec_write_file(env_t *env, stmt_t *s) {
         if (item->expr) {
             value_t v;
             EVAL_CHECK(eval_expr(env, item->expr, &v));
-            switch (v.type) {
-                case VAL_INTEGER:
-                case VAL_LONG: fprintf(fp, "%d", v.ival); break;
-                case VAL_DOUBLE:
-                case VAL_SINGLE: {
-                    char buf[64];
-                    val_format_number(&v, buf, sizeof(buf));
-                    fputs(buf, fp);
-                    break;
-                }
-                case VAL_STRING: fprintf(fp, "\"%s\"", v.sval->data); break;
-                case VAL_RECORD: break;
-            }
+            eval_write_file_value(fp, &v);
             val_clear(&v);
         }
     }
     fprintf(fp, "\n");
     return ERR_NONE;
+}
+
+/* a WRITE # item's value, as it writes it -- for compiled code too */
+void eval_write_file_value(FILE *fp, const value_t *v) {
+    switch (v->type) {
+        case VAL_INTEGER:
+        case VAL_LONG: fprintf(fp, "%d", v->ival); break;
+        case VAL_DOUBLE:
+        case VAL_SINGLE: {
+            char buf[64];
+            val_format_number(v, buf, sizeof(buf));
+            fputs(buf, fp);
+            break;
+        }
+        case VAL_STRING: fprintf(fp, "\"%s\"", v->sval->data); break;
+        case VAL_RECORD: break;
+    }
 }
 
 static error_t exec_input_file(env_t *env, stmt_t *s) {
@@ -2666,39 +2684,44 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
     for (int i = 0; i < s->input_file.nvars; i++) {
         if (env_is_const(env, s->input_file.varnames[i]))
             return ERR_CONST_REASSIGN;
-        /* Read value from file: skip whitespace, read until comma or newline */
-        char buf[1024];
-        int pos = 0;
-        int ch;
-        /* Skip leading whitespace */
-        while ((ch = fgetc(fp)) != -1 && (ch == ' ' || ch == '\t'));
-        if (ch == -1) return ERR_INPUT_PAST_END;
-
-        int quoted = 0;
-        if (ch == '"') { quoted = 1; }
-        else if (ch != ',' && ch != '\n' && ch != '\r') {
-            buf[pos++] = (char)ch;
-        }
-
-        if (quoted) {
-            while ((ch = fgetc(fp)) != -1 && ch != '"' && pos < 1023)
-                buf[pos++] = (char)ch;
-            if (ch == '"') { /* skip closing quote */
-                ch = fgetc(fp); /* eat comma or newline after quote */
-            }
-        } else {
-            while ((ch = fgetc(fp)) != -1 && ch != ',' && ch != '\n' && ch != '\r' && pos < 1023)
-                buf[pos++] = (char)ch;
-        }
-        buf[pos] = '\0';
-
-        /* Assign to variable */
-        val_type_t vtype = target_type(s->input_file.varnames[i], 0);
-        value_t val = vtype == VAL_STRING ? val_string_cstr(buf) : val_double(atof(buf));
+        value_t val;
+        EVAL_CHECK(eval_input_field(fp, target_type(s->input_file.varnames[i], 0), &val));
         err = store_into(env_get(env, s->input_file.varnames[i]), &val);
         val_clear(&val);
         if (err != ERR_NONE) return err;
     }
+    return ERR_NONE;
+}
+
+/* INPUT #'s next field, a string or (otherwise) a number, for a target
+ * of type t -- for compiled code too */
+error_t eval_input_field(FILE *fp, val_type_t t, value_t *out) {
+    /* Read value from file: skip whitespace, read until comma or newline */
+    char buf[1024];
+    int pos = 0;
+    int ch;
+    /* Skip leading whitespace */
+    while ((ch = fgetc(fp)) != -1 && (ch == ' ' || ch == '\t'));
+    if (ch == -1) return ERR_INPUT_PAST_END;
+
+    int quoted = 0;
+    if (ch == '"') { quoted = 1; }
+    else if (ch != ',' && ch != '\n' && ch != '\r') {
+        buf[pos++] = (char)ch;
+    }
+
+    if (quoted) {
+        while ((ch = fgetc(fp)) != -1 && ch != '"' && pos < 1023)
+            buf[pos++] = (char)ch;
+        if (ch == '"') { /* skip closing quote */
+            ch = fgetc(fp); /* eat comma or newline after quote */
+        }
+    } else {
+        while ((ch = fgetc(fp)) != -1 && ch != ',' && ch != '\n' && ch != '\r' && pos < 1023)
+            buf[pos++] = (char)ch;
+    }
+    buf[pos] = '\0';
+    *out = t == VAL_STRING ? val_string_cstr(buf) : val_double(atof(buf));
     return ERR_NONE;
 }
 
@@ -2712,6 +2735,21 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
     FILE *fp = fileio_get(handle);
     if (!fp) return ERR_FILE_NOT_OPEN;
 
+    value_t val;
+    EVAL_CHECK(eval_line_input_file(fp, &val));
+    if (s->input_file.nvars > 0) {
+        if (env_is_const(env, s->input_file.varnames[0])) {
+            val_clear(&val);
+            return ERR_CONST_REASSIGN;
+        }
+        env_set(env, s->input_file.varnames[0], &val);
+    }
+    val_clear(&val);
+    return ERR_NONE;
+}
+
+/* LINE INPUT #'s line -- for compiled code too */
+error_t eval_line_input_file(FILE *fp, value_t *out) {
     char buf[1024];
     int pos = 0;
     int ch;
@@ -2719,14 +2757,7 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
         buf[pos++] = (char)ch;
     buf[pos] = '\0';
     if (pos == 0 && ch == -1) return ERR_INPUT_PAST_END;
-
-    if (s->input_file.nvars > 0) {
-        if (env_is_const(env, s->input_file.varnames[0]))
-            return ERR_CONST_REASSIGN;
-        value_t val = val_string_cstr(buf);
-        env_set(env, s->input_file.varnames[0], &val);
-        val_clear(&val);
-    }
+    *out = val_string_cstr(buf);
     return ERR_NONE;
 }
 
@@ -2864,11 +2895,8 @@ static error_t exec_get(env_t *env, stmt_t *s) {
     val_clear(&hv);
     if (err != ERR_NONE) return err;
 
-    FILE *fp = fileio_get(handle);
-    if (!fp) return ERR_FILE_NOT_OPEN;
-    file_mode_t mode = fileio_get_mode(handle);
-    if (mode != FMODE_BINARY && mode != FMODE_RANDOM)
-        return ERR_ILLEGAL_FUNCTION_CALL;
+    FILE *fp;
+    EVAL_CHECK(eval_getput_file(handle, &fp));
 
     /* Seek to position if given */
     if (s->get_put_stmt.position) {
@@ -2878,18 +2906,20 @@ static error_t exec_get(env_t *env, stmt_t *s) {
         err = val_to_integer(&pv, &pos);
         val_clear(&pv);
         if (err != ERR_NONE) return err;
-        if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
-        if (mode == FMODE_RANDOM) {
-            int reclen = fileio_get_reclen(handle);
-            if (reclen <= 0) reclen = 128;
-            fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
-        } else {
-            fseek(fp, (long)(pos - 1), SEEK_SET);
-        }
+        EVAL_CHECK(eval_file_pos(handle, fp, pos));
     }
 
     /* Read based on variable type */
-    val_type_t vt = s->get_put_stmt.vartype;
+    value_t result, *sv = env_get(env, s->get_put_stmt.varname);
+    EVAL_CHECK(eval_get_value(fp, s->get_put_stmt.vartype,
+                              sv && sv->type == VAL_STRING ? sv->sval->len : 0, &result));
+    env_set(env, s->get_put_stmt.varname, &result);
+    val_clear(&result);
+    return ERR_NONE;
+}
+
+/* GET's value of type vt (a string's len bytes, at least 1) */
+error_t eval_get_value(FILE *fp, val_type_t vt, int len, value_t *out) {
     value_t result;
     if (vt == VAL_INTEGER) {
         short sval = 0;                 /* QB: an INTEGER is 2 bytes */
@@ -2909,9 +2939,6 @@ static error_t exec_get(env_t *env, stmt_t *s) {
         result = val_single(fval);
     } else if (vt == VAL_STRING) {
         /* String GET: read LEN(var$) bytes */
-        value_t *sv = env_get(env, s->get_put_stmt.varname);
-        int len = 0;
-        if (sv && sv->type == VAL_STRING) len = sv->sval->len;
         if (len <= 0) len = 1;
         char *buf = malloc(len + 1);
         if (!buf) return ERR_OUT_OF_MEMORY;
@@ -2922,8 +2949,7 @@ static error_t exec_get(env_t *env, stmt_t *s) {
     } else {
         return ERR_TYPE_MISMATCH;
     }
-    env_set(env, s->get_put_stmt.varname, &result);
-    val_clear(&result);
+    *out = result;
     return ERR_NONE;
 }
 
@@ -2935,11 +2961,8 @@ static error_t exec_put(env_t *env, stmt_t *s) {
     val_clear(&hv);
     if (err != ERR_NONE) return err;
 
-    FILE *fp = fileio_get(handle);
-    if (!fp) return ERR_FILE_NOT_OPEN;
-    file_mode_t mode = fileio_get_mode(handle);
-    if (mode != FMODE_BINARY && mode != FMODE_RANDOM)
-        return ERR_ILLEGAL_FUNCTION_CALL;
+    FILE *fp;
+    EVAL_CHECK(eval_getput_file(handle, &fp));
 
     /* Seek to position if given */
     if (s->get_put_stmt.position) {
@@ -2949,20 +2972,17 @@ static error_t exec_put(env_t *env, stmt_t *s) {
         err = val_to_integer(&pv, &pos);
         val_clear(&pv);
         if (err != ERR_NONE) return err;
-        if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
-        if (mode == FMODE_RANDOM) {
-            int reclen = fileio_get_reclen(handle);
-            if (reclen <= 0) reclen = 128;
-            fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
-        } else {
-            fseek(fp, (long)(pos - 1), SEEK_SET);
-        }
+        EVAL_CHECK(eval_file_pos(handle, fp, pos));
     }
 
     /* Write based on variable type */
     value_t *v = env_get(env, s->get_put_stmt.varname);
     if (!v) return ERR_UNDEFINED_VAR;
+    return eval_put_value(fp, v);
+}
 
+/* PUT's value, as its type writes it */
+error_t eval_put_value(FILE *fp, const value_t *v) {
     if (v->type == VAL_INTEGER) {
         short sval = (short)v->ival;
         fwrite(&sval, 2, 1, fp);
@@ -3002,10 +3022,40 @@ static error_t exec_seek(env_t *env, stmt_t *s) {
     err = val_to_integer(&pv, &pos);
     val_clear(&pv);
     if (err != ERR_NONE) return err;
-    if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    return eval_file_pos(handle, fp, pos);
+}
 
+/* LSET (left) or RSET: nv, padded or cut to curlen -- for compiled code too */
+error_t eval_lrset(int curlen, const value_t *nv, int left, value_t *out) {
+    if (nv->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    const char *src = nv->sval ? nv->sval->data : "";
+    int srclen = nv->sval ? nv->sval->len : 0;
+    char *buf = malloc(curlen + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
+    memset(buf, ' ', curlen);
+    buf[curlen] = '\0';
+    int copylen = srclen < curlen ? srclen : curlen;
+    if (left) memcpy(buf, src, copylen);
+    else memcpy(buf + curlen - copylen, src, copylen);
+    *out = val_string(buf, curlen);
+    free(buf);
+    return ERR_NONE;
+}
+
+/* GET's and PUT's file: open, and BINARY or RANDOM -- for compiled code too */
+error_t eval_getput_file(int handle, FILE **fp) {
+    *fp = fileio_get(handle);
+    if (!*fp) return ERR_FILE_NOT_OPEN;
     file_mode_t mode = fileio_get_mode(handle);
-    if (mode == FMODE_RANDOM) {
+    if (mode != FMODE_BINARY && mode != FMODE_RANDOM)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    return ERR_NONE;
+}
+
+/* the file at position pos (from 1): a byte, or a RANDOM file's record */
+error_t eval_file_pos(int handle, FILE *fp, int pos) {
+    if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (fileio_get_mode(handle) == FMODE_RANDOM) {
         int reclen = fileio_get_reclen(handle);
         if (reclen <= 0) reclen = 128;
         fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
@@ -3373,24 +3423,11 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             if (!cur || cur->type != VAL_STRING) return ERR_TYPE_MISMATCH;
             int curlen = cur->sval ? cur->sval->len : 0;
             if (curlen == 0) return ERR_NONE; /* zero-length: nothing to do */
-            value_t nv;
+            value_t nv, result;
             EVAL_CHECK(eval_expr(env, s->lrset.value, &nv));
-            if (nv.type != VAL_STRING) { val_clear(&nv); return ERR_TYPE_MISMATCH; }
-            const char *src = nv.sval ? nv.sval->data : "";
-            int srclen = nv.sval ? nv.sval->len : 0;
-            char *buf = malloc(curlen + 1);
-            if (!buf) { val_clear(&nv); return ERR_OUT_OF_MEMORY; }
-            memset(buf, ' ', curlen);
-            buf[curlen] = '\0';
-            int copylen = srclen < curlen ? srclen : curlen;
-            if (s->type == STMT_LSET) {
-                memcpy(buf, src, copylen);
-            } else {
-                memcpy(buf + curlen - copylen, src, copylen);
-            }
+            error_t err = eval_lrset(curlen, &nv, s->type == STMT_LSET, &result);
             val_clear(&nv);
-            value_t result = val_string(buf, curlen);
-            free(buf);
+            if (err != ERR_NONE) return err;
             env_set(env, s->lrset.varname, &result);
             val_clear(&result);
             return ERR_NONE;
