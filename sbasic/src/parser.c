@@ -1290,6 +1290,44 @@ static stmt_t *parse_shared(parser_t *p) {
     return s;
 }
 
+static int as_type(const char *name, val_type_t *t);
+static int parse_fixlen(parser_t *p);
+
+/* COMMON SHARED's a() [AS type], into s (a SHARED list): its type kept
+ * for its DIM (p->commons) when AS gives one */
+static int common_array(parser_t *p, stmt_t *s) {
+    token_t t = lexer_next(&p->lex);
+    char a[68];
+    int depth = 0;
+    expect(p, TOK_LPAREN);              /* (a number of dimensions, in some BASICs: passed over) */
+    while (!lexer_check(&p->lex, TOK_EOF) && !(depth == 0 && lexer_check(&p->lex, TOK_RPAREN))) {
+        if (lexer_check(&p->lex, TOK_LPAREN)) depth++;
+        if (lexer_check(&p->lex, TOK_RPAREN)) depth--;
+        lexer_skip(&p->lex);
+    }
+    if (!expect(p, TOK_RPAREN)) return 0;
+    if (lexer_match(&p->lex, TOK_AS)) {
+        token_t tn;
+        val_type_t ty;
+        int fixlen = 0;
+        if (!lexer_check(&p->lex, TOK_IDENT)) { parser_error(p, ERR_SYNTAX); return 0; }
+        tn = lexer_next(&p->lex);
+        plain_note(p, t.text);
+        if (!as_type(tn.text, &ty)) ty = VAL_RECORD;
+        else if (ty == VAL_STRING && (fixlen = parse_fixlen(p)) < 0) return 0;
+        if (p->ncommons < 64) {
+            ast_name_copy(p->commons[p->ncommons].name, t.text);
+            p->commons[p->ncommons].type = ty;
+            ast_name_copy(p->commons[p->ncommons].rec, ty == VAL_RECORD ? tn.text : "");
+            p->commons[p->ncommons++].fixlen = fixlen;
+        }
+    } else
+        canon_tok(p, &t);
+    snprintf(a, sizeof a, "%s()", t.text);
+    stmt_shared_add(s, a);
+    return 1;
+}
+
 /* a SHARED or STATIC list's name: NAME, or an array's NAME() */
 static int list_name(parser_t *p, stmt_t *s, void (*add)(stmt_t *, const char *)) {
     token_t t = lexer_next(&p->lex);
@@ -1591,7 +1629,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     /* Optional AS INTEGER/DOUBLE/STRING, or AS a TYPE */
     token_t tn;
-    int rec = 0, fixlen = 0, typed_as = 0;
+    int rec = 0, fixlen = 0, typed_as = 0, as_missing = 0;
     if (lexer_match(&p->lex, TOK_AS)) {
         typed_as = 1;
         typed = 1;
@@ -1613,6 +1651,23 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
     if (!typed_as) canon_tok(p, &name);    /* (DIM a(n) AS type: a as written) */
     else plain_note(p, name.text);
     if (!typed_as) type = var_type_from_name(name.text);
+    /* COMMON SHARED a() AS type: a REDIM without AS takes its type; a
+     * DIM must say AS again (QBasic: "AS clause required"), the same type
+     * ("Duplicate definition" else) -- the checker's, as_missing 1 or 2 */
+    for (int i = 0; i < p->ncommons; i++)
+        if (strcmp(p->commons[i].name, name.text) == 0) {
+            if (typed_as) {
+                if ((int)type != p->commons[i].type || fixlen != p->commons[i].fixlen ||
+                    (rec && strcmp(tn.text, p->commons[i].rec) != 0))
+                    as_missing = 2;
+                continue;
+            }
+            type = (val_type_t)p->commons[i].type;
+            typed = 1;
+            fixlen = p->commons[i].fixlen;
+            if (type == VAL_RECORD) { rec = 1; ast_name_copy(tn.text, p->commons[i].rec); }
+            if (!is_redim) as_missing = 1;
+        }
     stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
     if (s && rec)
         ast_name_copy(s->dim_stmt.rec_type, tn.text);
@@ -1621,6 +1676,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
         for (int i = 0; i < ndims; i++) s->dim_stmt.lower[i] = lower[i];
         s->dim_stmt.typed = typed;
         s->dim_stmt.shared = shared;
+        s->dim_stmt.as_missing = as_missing;
     }
     return s;
 }
@@ -2839,7 +2895,7 @@ static stmt_t *parse_stmt(parser_t *p) {
              * SHARED's (a scalar, x AS type) -- an array, a(), is passed
              * over still: it is the DIM that makes it */
             int line = tok->line, shared;
-            stmt_t *head = NULL, *tail = NULL;
+            stmt_t *head = NULL, *tail = NULL, *arrays = NULL;
             lexer_skip(&p->lex);
             shared = lexer_match(&p->lex, TOK_SHARED);
             while (!at_stmt_end(p)) {
@@ -2852,10 +2908,21 @@ static stmt_t *parse_stmt(parser_t *p) {
                     p->lex = at;
                     if (!array) {
                         stmt_t *d = parse_dim_one(p, 0, 0, 1, line);
-                        if (!d) { stmt_free(head); return NULL; }
+                        if (!d) { stmt_free(head); stmt_free(arrays); return NULL; }
                         stmt_append(&head, &tail, d);
                         continue;
                     }
+                    /* an array, a(): the main program's in every SUB and
+                     * FUNCTION, as SHARED a() says in one -- a SHARED at
+                     * the module's level, which QBasic has no other way
+                     * to write; its DIM comes after */
+                    if (!arrays && !(arrays = stmt_shared(line))) {
+                        stmt_free(head);
+                        parser_error(p, ERR_OUT_OF_MEMORY);
+                        return NULL;
+                    }
+                    if (!common_array(p, arrays)) { stmt_free(head); stmt_free(arrays); return NULL; }
+                    continue;
                 }
                 /* Consume var name and optional type/array syntax */
                 if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
@@ -2876,6 +2943,7 @@ static stmt_t *parse_stmt(parser_t *p) {
                     }
                 } else break;
             }
+            if (arrays) stmt_append(&head, &tail, arrays);
             return head ? head : stmt_alloc(STMT_NOOP, line);
         }
 
@@ -3072,6 +3140,7 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error_line = 0;
     p->error_detail[0] = '\0';
     p->nrecords = 0;
+    p->ncommons = 0;
     for (int i = 0; i < 26; i++) p->deftype[i] = VAL_SINGLE;
     p->plain = NULL;
     p->nplain = p->capplain = 0;

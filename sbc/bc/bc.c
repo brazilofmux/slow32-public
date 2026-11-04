@@ -249,9 +249,16 @@ static stmt_t **bc_dimshared;
 static int bc_ndimshared;
 
 static int dimshared_array(const char *name) {
-    for (int i = 0; i < bc_ndimshared; i++)
-        if (bc_dimshared[i]->type == STMT_DIM && strcmp(bc_dimshared[i]->dim_stmt.name, name) == 0)
+    char a[68];
+    snprintf(a, sizeof a, "%s()", name);
+    for (int i = 0; i < bc_ndimshared; i++) {
+        const stmt_t *d = bc_dimshared[i];
+        if (d->type == STMT_DIM && strcmp(d->dim_stmt.name, name) == 0)
             return 1;
+        if (d->type == STMT_SHARED)     /* (COMMON SHARED a(): the module's SHARED) */
+            for (int j = 0; j < d->shared.nvars; j++)
+                if (strcmp(d->shared.varnames[j], a) == 0) return 1;
+    }
     return 0;
 }
 
@@ -4147,7 +4154,7 @@ static void program_prepare(void) {
     bc_nmodconsts = bc_nconsts;
     bc_ndimshared = 0;
     for (stmt_t *s = bc_program; s; s = s->next)
-        if ((s->type == STMT_DIM && s->dim_stmt.shared) ||
+        if ((s->type == STMT_DIM && s->dim_stmt.shared) || s->type == STMT_SHARED ||
             (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared) ||
             (s->type == STMT_DIM_AS_TYPE && s->dim_as_type.shared)) {
             bc_dimshared = realloc(bc_dimshared, (size_t)(bc_ndimshared + 1) * sizeof(stmt_t *));

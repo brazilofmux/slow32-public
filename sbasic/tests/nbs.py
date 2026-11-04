@@ -106,6 +106,8 @@ def for_qbasic(src):
 
 # what may stand before a program's first executable statement in QBasic:
 # DECLARE, COMMON, DEFtype, $ metacommands, comments, blank lines
+TYPE_RE = re.compile(rb"^\s*(\d+\s+)?TYPE\s+\w", re.I)
+END_TYPE_RE = re.compile(rb"^\s*(\d+\s+)?END\s+TYPE\b", re.I)
 PROLOGUE_RE = re.compile(rb"^\s*(\d+\s+)?(DECLARE\b|COMMON\b|DEF(INT|LNG|SNG|DBL|STR)\b|REM\b|'|$)", re.I)
 
 
@@ -116,8 +118,15 @@ def load_probe(src):
     the error: "COMMON and DECLARE must precede executable statements".)"""
     lines = src.replace(b'\r\n', b'\n').split(b'\n')
     k = 0
-    while k < len(lines) and PROLOGUE_RE.match(lines[k]):
-        k += 1
+    while k < len(lines):
+        if TYPE_RE.match(lines[k]):     # (a TYPE block is no statement either)
+            while k < len(lines) and not END_TYPE_RE.match(lines[k]):
+                k += 1
+            k += 1
+        elif PROLOGUE_RE.match(lines[k]):
+            k += 1
+        else:
+            break
     return b'\r\n'.join(lines[:k] + [b'SYSTEM'] + lines[k:])
 
 

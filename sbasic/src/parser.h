@@ -15,6 +15,10 @@ typedef struct {
      * name (QuickBASIC's, TWO.PI#, SUB summer.day) */
     char records[256][64];
     int nrecords;
+    /* COMMON SHARED a() AS type: each such array's type, for its DIM or
+     * REDIM later without AS (QBasic types it by the COMMON) */
+    struct { char name[64]; int type; char rec[64]; int fixlen; } commons[64];
+    int ncommons;
     /* QuickBASIC's DEFtype is the text's: a name with no suffix takes the
      * suffix of the DEFtype in force where it is written (x under DEFINT
      * is x%, and x! another variable) -- the parser writes it so; the

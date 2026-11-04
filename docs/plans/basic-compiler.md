@@ -520,8 +520,21 @@ SUB's changes); ERR is 0 after any RESUME, ERL stays; ON ERROR GOTO
 another label in the handler keeps it handling, GOTO 0 there stops the
 program with the error; out of stack in a procedure is not trapped; an
 untrapped ERROR n prints its error's message (it printed "ON ERROR
-GOTO"), "Unprintable error" for a number with none.  Open: COMMON
-SHARED a() (an array) is still passed over.
+GOTO"), "Unprintable error" for a number with none.
+
+Then COMMON SHARED's arrays (commonarr.bas): a(), b() AS INTEGER, a
+record's, STRING * n's -- each the main program's in every procedure
+once its DIM (after) makes it, through REDIM in a SUB and ERASE.  The
+parser makes them a SHARED list at the module's level (QBasic has no
+other way to write one), which the interpreter's scan, s32-bc's
+dimshared_array and the checker take as DIM SHARED's; a COMMON's AS
+type is its REDIM's without AS, and a DIM must say AS again ("AS clause
+required"; another type "Duplicate definition" -- as-required and
+common-type, the checker's).  On the way, CHR$(0) as QBasic has it:
+PRINT showed nothing from it on (C strings); on the screen it is a
+blank (SCREEN() reads 32), to a file the byte, and INPUT # and LINE
+INPUT # pass it over.  And nbs.load_probe passes TYPE blocks too
+before its SYSTEM, which had made every COMMON after a TYPE a refusal.
 
 Then the last of the order QBasic evaluates in (concatorder.bas): in
 s$ + e, a variable-length string variable s$ is read as the two are

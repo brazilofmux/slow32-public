@@ -369,6 +369,8 @@ typedef struct stmt {
             int shared;          /* DIM SHARED: the main program's, in every SUB */
             char rec_type[64];   /* AS a TYPE: its name (elem_type VAL_RECORD); else "" */
             int fixlen;          /* AS STRING * n: n; else 0 */
+            int as_missing;      /* COMMON SHARED a() AS type, then this DIM: 1 without AS ("AS
+                                  * clause required"), 2 another type ("Duplicate definition") */
         } dim_stmt;
 
         /* STMT_ARRAY_ASSIGN */

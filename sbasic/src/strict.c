@@ -379,6 +379,11 @@ static void walk_list(check_t *c, stmt_t *s) {
             c->info[STRICT_CLEAR]++;
             break;
         case STMT_DIM:
+            if (s->dim_stmt.as_missing) {   /* QB: "AS clause required", "Duplicate definition" */
+                snprintf(d, sizeof d, "%s, typed AS in COMMON, DIMmed %s", s->dim_stmt.name,
+                         s->dim_stmt.as_missing == 1 ? "without AS" : "AS another type");
+                finding(c, s->line, s->dim_stmt.as_missing == 1 ? "as-required" : "common-type", d);
+            }
             if (s->dim_stmt.is_redim) push(&c->u->redims, s->dim_stmt.name, seq, s->line, 0);
             if (!s->dim_stmt.is_redim) {
                 ref_t *prev = find(&c->u->dims, s->dim_stmt.name);
@@ -641,6 +646,14 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
     for (stmt_t *s = program; s; s = s->next) {
         if (s->type == STMT_DIM && s->dim_stmt.shared)
             push(&c.dimshared, s->dim_stmt.name, 0, s->line, 0);
+        if (s->type == STMT_SHARED)     /* (the module's own: COMMON SHARED a()) */
+            for (int i = 0; i < s->shared.nvars; i++) {
+                char nm[68];
+                size_t n = strlen(s->shared.varnames[i]);
+                if (n <= 2 || strcmp(s->shared.varnames[i] + n - 2, "()") != 0) continue;
+                snprintf(nm, sizeof nm, "%.*s", (int)(n - 2), s->shared.varnames[i]);
+                push(&c.dimshared, nm, 0, s->line, 0);
+            }
         if (s->type == STMT_CONST)
             push(&c.modconsts, s->const_stmt.name, 0, s->line, 0);
     }

@@ -1527,6 +1527,30 @@ static void col_puts(const char *s) {
     update_col(active_print_col, s);
 }
 
+/* a string's len bytes, CHR$(0) among them as QBasic writes it: on the
+ * screen a blank (a space, as SCREEN() reads it back), to a file the
+ * byte itself */
+static void col_putn(const char *s, int len) {
+    if (!memchr(s, 0, (size_t)len)) { col_puts(s); return; }
+    if (on_screen()) {
+        char buf[257];
+        while (len > 0) {
+            int n = len > 256 ? 256 : len;
+            for (int i = 0; i < n; i++) buf[i] = s[i] ? s[i] : ' ';
+            buf[n] = '\0';
+            screen_puts(buf);
+            s += n;
+            len -= n;
+        }
+        return;
+    }
+    fwrite(s, 1, (size_t)len, col_output_fp ? col_output_fp : stdout);
+    for (int i = 0; i < len; i++) {
+        char one[2] = { s[i] ? s[i] : ' ', '\0' };
+        update_col(active_print_col, one);
+    }
+}
+
 /* Printf wrapper that tracks print_col */
 static void col_printf(const char *fmt, ...) {
     char buf[1024];
@@ -1959,7 +1983,7 @@ error_t print_value(const value_t *v, int tab_spc, int width) {
         case VAL_STRING:
             if (!tab_spc)
                 print_fit(v->sval->len, width);
-            col_puts(v->sval->data);
+            col_putn(v->sval->data, v->sval->len);
             break;
         case VAL_RECORD:
             break;
@@ -3411,7 +3435,11 @@ void eval_write_file_value(FILE *fp, const value_t *v) {
             fputs(buf, fp);
             break;
         }
-        case VAL_STRING: fprintf(fp, "\"%s\"", v->sval->data); break;
+        case VAL_STRING:                /* (its bytes, CHR$(0) too) */
+            fputc('"', fp);
+            fwrite(v->sval->data, 1, (size_t)v->sval->len, fp);
+            fputc('"', fp);
+            break;
         case VAL_RECORD: break;
     }
 }
@@ -3439,6 +3467,14 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
+/* a file's next character, CHR$(0)s passed over: INPUT # and LINE
+ * INPUT # do not keep them (QBasic) */
+static int getc_nonul(FILE *fp) {
+    int c;
+    do c = fgetc(fp); while (c == 0);
+    return c;
+}
+
 /* INPUT #'s next field, a string or (otherwise) a number, for a target
  * of type t -- for compiled code too */
 error_t eval_input_field(FILE *fp, val_type_t t, value_t *out) {
@@ -3447,7 +3483,7 @@ error_t eval_input_field(FILE *fp, val_type_t t, value_t *out) {
     int pos = 0;
     int ch;
     /* Skip leading whitespace */
-    while ((ch = fgetc(fp)) != -1 && (ch == ' ' || ch == '\t'));
+    while ((ch = getc_nonul(fp)) != -1 && (ch == ' ' || ch == '\t'));
     if (ch == -1) return ERR_INPUT_PAST_END;
 
     int quoted = 0;
@@ -3457,13 +3493,13 @@ error_t eval_input_field(FILE *fp, val_type_t t, value_t *out) {
     }
 
     if (quoted) {
-        while ((ch = fgetc(fp)) != -1 && ch != '"' && pos < 1023)
+        while ((ch = getc_nonul(fp)) != -1 && ch != '"' && pos < 1023)
             buf[pos++] = (char)ch;
         if (ch == '"') { /* skip closing quote */
-            ch = fgetc(fp); /* eat comma or newline after quote */
+            ch = getc_nonul(fp); /* eat comma or newline after quote */
         }
     } else {
-        while ((ch = fgetc(fp)) != -1 && ch != ',' && ch != '\n' && ch != '\r' && pos < 1023)
+        while ((ch = getc_nonul(fp)) != -1 && ch != ',' && ch != '\n' && ch != '\r' && pos < 1023)
             buf[pos++] = (char)ch;
     }
     buf[pos] = '\0';
@@ -3504,7 +3540,7 @@ error_t eval_line_input_file(FILE *fp, value_t *out) {
     char buf[1024];
     int pos = 0;
     int ch;
-    while ((ch = fgetc(fp)) != -1 && ch != '\n' && pos < 1023)
+    while ((ch = getc_nonul(fp)) != -1 && ch != '\n' && pos < 1023)
         buf[pos++] = (char)ch;
     buf[pos] = '\0';
     if (pos == 0 && ch == -1) return ERR_INPUT_PAST_END;
@@ -3588,7 +3624,7 @@ void eval_write_value(const value_t *v) {
         }
         case VAL_STRING:
             col_puts("\"");
-            col_puts(v->sval ? v->sval->data : "");
+            if (v->sval) col_putn(v->sval->data, v->sval->len);
             col_puts("\"");
             break;
         case VAL_RECORD: break;
@@ -4537,6 +4573,14 @@ static error_t scan_one_stmt(stmt_t *s) {
         dim_shared_add(s->dim_scalar.name, 0);
     if (s->type == STMT_DIM_AS_TYPE && s->dim_as_type.shared)
         dim_shared_add(s->dim_as_type.name, 0);
+    if (s->type == STMT_SHARED)         /* (the module's own: COMMON SHARED a()) */
+        for (int i = 0; i < s->shared.nvars; i++) {
+            char nm[68];
+            size_t n = strlen(s->shared.varnames[i]);
+            snprintf(nm, sizeof nm, "%s", s->shared.varnames[i]);
+            if (n > 2 && strcmp(nm + n - 2, "()") == 0) nm[n - 2] = '\0';
+            dim_shared_add(nm, n > 2 && strcmp(s->shared.varnames[i] + n - 2, "()") == 0);
+        }
     if (s->type == STMT_CONST)          /* (a module CONST: every procedure's; the scan is the main program's) */
         dim_shared_add(s->const_stmt.name, 0);
     if (s->type == STMT_LABEL) {
