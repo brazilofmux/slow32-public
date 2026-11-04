@@ -1324,9 +1324,12 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
 
     /* Default type from name suffix */
     val_type_t type = var_type_from_name(name.text);
+    size_t nlen = strlen(name.text);
+    int typed = nlen && strchr("$%&#!", name.text[nlen - 1]) != NULL;
 
     /* Optional AS INTEGER/DOUBLE/STRING */
     if (lexer_match(&p->lex, TOK_AS)) {
+        typed = 1;
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX);
             for (int i = 0; i < ndims; i++) expr_free(dims[i]);
@@ -1340,7 +1343,9 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
         }
     }
 
-    return stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
+    stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
+    if (s) s->dim_stmt.typed = typed;
+    return s;
 }
 
 static stmt_t *parse_erase(parser_t *p) {

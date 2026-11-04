@@ -348,6 +348,7 @@ typedef struct stmt {
             int is_redim;
             int is_static;       /* constant bounds: made before the run (QuickBASIC's static arrays) */
             int preserve;
+            int typed;           /* a suffix or AS gave elem_type; else DEFtype's, when it runs */
         } dim_stmt;
 
         /* STMT_ARRAY_ASSIGN */

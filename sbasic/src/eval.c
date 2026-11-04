@@ -157,6 +157,37 @@ static void deftype_init(void) {
     env_deftype_hook = deftype_lookup;
 }
 
+static val_type_t resolve_var_type(const char *name);
+
+/* letter's type for names without a suffix: compiled code (s32-bc) sets
+ * the program's as it starts */
+void eval_deftype(char letter, val_type_t t) {
+    if (letter >= 'A' && letter <= 'Z') deftype_map[letter - 'A'] = t;
+}
+
+static void exec_deftype(const stmt_t *s) {
+    char from = s->deftype.from;
+    char to = s->deftype.to;
+    if (from >= 'A' && from <= 'Z' && to >= 'A' && to <= 'Z') {
+        for (char c = from; c <= to; c++)
+            deftype_map[c - 'A'] = s->deftype.def_type;
+    }
+}
+
+/* A DIM's elements: its suffix's or AS type, else DEFtype's as it runs
+ * (QuickBASIC: DEFINT A-Z: DIM A(10) is an INTEGER array) */
+static val_type_t dim_type(const stmt_t *s) {
+    return s->dim_stmt.typed ? s->dim_stmt.elem_type : resolve_var_type(s->dim_stmt.name);
+}
+
+/* the type READ or INPUT reads for its target: an array element its
+ * array's (made yet or not), a variable its own -- with DEFtype, as the
+ * statement runs (DEFSTR S: READ S reads a string, as QuickBASIC does) */
+static val_type_t target_type(const char *name, int is_elem) {
+    sb_array_t *arr = is_elem ? array_find(name) : NULL;
+    return arr ? arr->elem_type : resolve_var_type(name);
+}
+
 /* Resolve the effective type for a variable name.
    Explicit suffixes ($, %, #) take priority; bare names use deftype_map. */
 static val_type_t resolve_var_type(const char *name) {
@@ -344,7 +375,9 @@ static error_t call_def_fn(env_t *env, stmt_t *def, expr_t **args, int nargs, va
         err = eval_expr(fn_env, def->def_fn.body, out);
     env_destroy(fn_env);
     if (err == ERR_NONE) {
-        err = val_coerce(out, resolve_var_type(def->def_fn.name));
+        /* (FNname's type is name's: DEFSTR S makes FNS a string, as in
+         * QuickBASIC, and DEFINT F leaves it be) */
+        err = val_coerce(out, resolve_var_type(def->def_fn.name + 2));
         if (err != ERR_NONE) val_clear(out);
     }
     return err;
@@ -1739,7 +1772,7 @@ static error_t exec_input(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->input.varnames[i]))
             return ERR_CONST_REASSIGN;
     for (int i = 0; i < n; i++) {
-        types[i] = s->input.vartypes[i];
+        types[i] = target_type(s->input.varnames[i], s->input.targets[i] != NULL);
         if (s->input.targets[i] == NULL) {
             value_t *cur = env_get(env, s->input.varnames[i]);
             if (cur) types[i] = cur->type == VAL_STRING ? VAL_STRING : VAL_DOUBLE;
@@ -2205,7 +2238,7 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
         /* (a bound below the base fails before the next is evaluated) */
         if (uppers[i] - option_base + 1 <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
     }
-    return eval_dim(s->dim_stmt.name, s->dim_stmt.elem_type, s->dim_stmt.ndims, uppers,
+    return eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, uppers,
                     option_base, s->dim_stmt.is_redim, s->dim_stmt.preserve);
 }
 
@@ -2359,7 +2392,8 @@ static error_t exec_read(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->read_stmt.varnames[i]))
             return ERR_CONST_REASSIGN;
         value_t v;
-        EVAL_CHECK(eval_read_value(s->read_stmt.vartypes[i], &v));
+        EVAL_CHECK(eval_read_value(target_type(s->read_stmt.varnames[i],
+                                               s->read_stmt.targets[i] != NULL), &v));
 
         error_t err = store_target(env, s->read_stmt.targets[i], s->read_stmt.varnames[i], &v);
         val_clear(&v);
@@ -2541,7 +2575,7 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
         buf[pos] = '\0';
 
         /* Assign to variable */
-        val_type_t vtype = s->input_file.vartypes[i];
+        val_type_t vtype = target_type(s->input_file.varnames[i], 0);
         value_t val = vtype == VAL_STRING ? val_string_cstr(buf) : val_double(atof(buf));
         err = store_into(env_get(env, s->input_file.varnames[i]), &val);
         val_clear(&val);
@@ -3281,15 +3315,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_ON_ERROR_GOTO;
         }
 
-        case STMT_DEFTYPE: {
-            char from = s->deftype.from;
-            char to = s->deftype.to;
-            if (from >= 'A' && from <= 'Z' && to >= 'A' && to <= 'Z') {
-                for (char c = from; c <= to; c++)
-                    deftype_map[c - 'A'] = s->deftype.def_type;
-            }
+        case STMT_DEFTYPE:
+            exec_deftype(s);
             return ERR_NONE;
-        }
 
         case STMT_ON_GOTO: {
             value_t v;
@@ -3441,7 +3469,7 @@ static void scan_static_dim(stmt_t *s) {
         if (sizes[i] <= 0) return;
     }
     if (array_find(s->dim_stmt.name)) return;
-    if (array_dim(s->dim_stmt.name, s->dim_stmt.elem_type, sizes,
+    if (array_dim(s->dim_stmt.name, dim_type(s), sizes,
                   s->dim_stmt.ndims, option_base) == ERR_NONE)
         s->dim_stmt.is_static = 1;
 }
@@ -3449,6 +3477,8 @@ static void scan_static_dim(stmt_t *s) {
 static error_t scan_one_stmt(stmt_t *s) {
     if (s->type == STMT_OPTION_BASE)
         option_base = s->option_base.base;
+    if (s->type == STMT_DEFTYPE)        /* (in the text's order, as QuickBASIC reads them, for static DIMs) */
+        exec_deftype(s);
     if (s->type == STMT_DIM)
         scan_static_dim(s);
     if (s->type == STMT_LABEL) {
@@ -3842,6 +3872,7 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     label_count = 0;
 
     result = scan_stmt_list(program);
+    deftype_init();             /* (the scan's DEFtypes were for its static DIMs: the run makes its own) */
     if (result != ERR_NONE)
         goto cleanup;
 

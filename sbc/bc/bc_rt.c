@@ -167,6 +167,9 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
     return r.ival != 0;
 }
 
+/* a letter's DEFtype, set as the program starts (after bcrt_start) */
+void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
+
 void bcrt_randomize(int has_seed, double seed) {
     error_t e = eval_randomize(has_seed, seed);
     if (e != ERR_NONE) bcrt_fail(e);

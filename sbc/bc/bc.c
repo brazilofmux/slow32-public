@@ -319,11 +319,14 @@ static var_t *var_find(const char *name) {
     return NULL;
 }
 
+static int name_type(const char *name);
+
 /* made in the entry block, 0 (a string, empty) there, as every BASIC
  * variable starts */
 static var_t *var_get(const char *name, int type, int line) {
     var_t *v = var_find(name);
     if (v) return v;
+    type = name_type(name);     /* (the parser's is the suffix's only) */
     if (type != VAL_INTEGER && type != VAL_LONG && type != VAL_SINGLE &&
         type != VAL_DOUBLE && type != VAL_STRING) {
         bc_not_yet(line, "a variable of this type");
@@ -347,16 +350,33 @@ static var_t *var_get(const char *name, int type, int line) {
     return v;
 }
 
-/* the type a name has by its suffix (resolve_var_type, no DEFtype) */
+/* DEFINT and its kind, each letter's type for a name without a suffix;
+ * set before anything is lowered (deftypes) */
+static int bc_deftype[26];
+
+/* the type a name has, by its suffix or its letter (resolve_var_type) */
 static int name_type(const char *name) {
     size_t n = strlen(name);
+    int c = name[0] & ~0x20;
     switch (n ? name[n - 1] : 0) {
     case '$': return VAL_STRING;
     case '%': return VAL_INTEGER;
     case '&': return VAL_LONG;
     case '#': return VAL_DOUBLE;
-    default: return VAL_SINGLE;
+    default: return c >= 'A' && c <= 'Z' ? bc_deftype[c - 'A'] : VAL_SINGLE;
     }
+}
+
+/* each array's element type, where a DIM gives it (AS, or the DIM's
+ * DEFtype); else its name's */
+typedef struct { char name[64]; int type; } atype_t;
+static atype_t *bc_atypes;
+static int bc_natypes, bc_capatypes;
+
+static int arr_type(const char *name) {
+    for (int i = 0; i < bc_natypes; i++)
+        if (strcmp(bc_atypes[i].name, name) == 0) return bc_atypes[i].type;
+    return name_type(name);
 }
 
 /* a variable of a DEF FN's own: slots, outside the program's list */
@@ -753,7 +773,7 @@ static int array_elem(int line, const char *name, int n, bv_t *sub) {
     carg(saddr(name, (int)strlen(name)), 0);
     carg(iconst(n), 0);
     carg(iconst(id), 0);
-    carg(iconst(name_type(name)), 0);
+    carg(iconst(arr_type(name)), 0);
     call_end(cb, 4, "bcrt_alook", NULL);
     goto_blk(fast);
     begin_blk(fast);
@@ -771,7 +791,7 @@ static int array_elem(int line, const char *name, int n, bv_t *sub) {
 
 /* name(sub...) = x: the element found, then x made its type (store_into) */
 static void array_store(int line, const char *name, int n, bv_t *sub, bv_t x) {
-    int ty = name_type(name), ea = array_elem(line, name, n, sub);
+    int ty = arr_type(name), ea = array_elem(line, name, n, sub);
     x = coerce(x, ty);
     if (ty == VAL_STRING) {
         int old = ld(ea, 4), cb;
@@ -967,12 +987,12 @@ static bv_t def_fn_call(expr_t *e, const char *name, int nargs, expr_t **args) {
     r = expr(d->def_fn.body);
     bc_nfn_open--;
     bc_nscope = saved;
-    return coerce(r, name_type(name));
+    return coerce(r, name_type(name + 2));   /* (FNname: name's letter, as call_def_fn) */
 }
 
 static bv_t array_read(expr_t *e) {
     bv_t a[3];
-    int ty = name_type(e->call.name), ea;
+    int ty = arr_type(e->call.name), ea;
     sub_args(e->line, e->call.nargs, e->call.args, a);
     ea = array_elem(e->line, e->call.name, e->call.nargs, a);
     if (ty == VAL_STRING) {
@@ -1405,7 +1425,7 @@ static void bc_dim(stmt_t *s, int is_static, int base) {
     for (int i = 0; i < 3; i++) a[i] = dynv(a[i]);
     cb = h_ncarg;
     carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
-    carg(iconst(s->dim_stmt.elem_type), 0);
+    carg(iconst(arr_type(s->dim_stmt.name)), 0);
     carg(iconst(s->dim_stmt.ndims), 0);
     carg(iconst(is_static), 0);
     carg(iconst(base), 0);
@@ -1544,7 +1564,7 @@ static void bc_input(stmt_t *s) {
     int n = s->input.nvars, cb;
     if (n > 64) { bc_not_yet(s->line, "an INPUT of more than 64"); return; }
     for (int i = 0; i < n; i++) {
-        int t = s->input.vartypes[i];
+        int t = arr_type(s->input.varnames[i]);         /* (target_type) */
         if (!s->input.targets[i])       /* a variable: a string's, or a number (exec_input) */
             t = var_get(s->input.varnames[i], s->input.vartypes[i], s->line)->type == VAL_STRING
                 ? VAL_STRING : VAL_DOUBLE;
@@ -1571,7 +1591,8 @@ static void bc_read(stmt_t *s) {
     for (int i = 0; i < s->read_stmt.nvars; i++) {
         bv_t x;
         int cb = h_ncarg;
-        carg(iconst(s->read_stmt.vartypes[i]), 0);
+        carg(iconst(s->read_stmt.targets[i] ? arr_type(s->read_stmt.varnames[i])
+                                            : name_type(s->read_stmt.varnames[i])), 0);
         x = bv_call("bcrt_read", cb, 1);
         store_target(s->line, s->read_stmt.varnames[i], s->read_stmt.vartypes[i],
                      s->read_stmt.targets[i], x);
@@ -1583,6 +1604,7 @@ static void bc_stmt(stmt_t *s) {
     switch (s->type) {
     case STMT_REM:
     case STMT_NOOP:
+    case STMT_DEFTYPE:          /* (deftypes: before anything is lowered) */
         break;
     case STMT_LABEL: {
         int b = label_blk(s->label.name);
@@ -1770,6 +1792,91 @@ static void preshadow(stmt_t *s) {
 }
 static void prescan_top(expr_t *e, void *ctx) { expr_walk(e, prescan_expr, ctx); }
 
+/* DEFINT and its kind, in the text's order, before anything else.  The
+ * interpreter types a variable when it is first made, with the DEFtypes
+ * run by then; QuickBASIC by the DEFtypes before it in the text.  They
+ * agree when each DEFtype is in no block and comes before every name of
+ * its letters -- what is compiled; the rest is "not yet". */
+static unsigned char bc_letter_used[26];
+
+static void dt_use(const char *name) {
+    size_t n = strlen(name);
+    int c = name[0] & ~0x20;
+    if (!n || strchr("$%&#", name[n - 1]) || builtin_exists(name)) return;
+    if (c >= 'A' && c <= 'Z') bc_letter_used[c - 'A'] = 1;
+}
+
+static void dt_expr(expr_t *e, void *ctx) {
+    (void)ctx;
+    if (e->type == EXPR_VARIABLE) dt_use(e->var.name);
+    if (e->type == EXPR_CALL) dt_use(e->call.name);
+}
+
+static void dt_top(expr_t *e, void *ctx) { expr_walk(e, dt_expr, ctx); }
+
+static void deftypes(stmt_t *s, int depth) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_DEFTYPE) {
+            int from = s->deftype.from & ~0x20, to = s->deftype.to & ~0x20;
+            if (depth) { bc_not_yet(s->line, "a DEFtype inside a block"); continue; }
+            for (int c = from; c >= 'A' && c <= to && c <= 'Z'; c++) {
+                if (bc_letter_used[c - 'A']) {
+                    bc_not_yet(s->line, "a DEFtype after a name of its letters");
+                    break;
+                }
+                bc_deftype[c - 'A'] = s->deftype.def_type;
+            }
+            continue;
+        }
+        stmt_exprs(s, dt_top, NULL);
+        switch (s->type) {
+        case STMT_ASSIGN: dt_use(s->assign.name); break;
+        case STMT_ARRAY_ASSIGN: dt_use(s->array_assign.name); break;
+        case STMT_INPUT:
+            for (int i = 0; i < s->input.nvars; i++) dt_use(s->input.varnames[i]);
+            break;
+        case STMT_READ:
+            for (int i = 0; i < s->read_stmt.nvars; i++) dt_use(s->read_stmt.varnames[i]);
+            break;
+        case STMT_DEF_FN:
+            dt_use(s->def_fn.name + 2);
+            for (int i = 0; i < s->def_fn.nparams; i++) dt_use(s->def_fn.params[i]);
+            break;
+        case STMT_DIM: {
+            int t = s->dim_stmt.typed ? (int)s->dim_stmt.elem_type : name_type(s->dim_stmt.name);
+            int k;
+            dt_use(s->dim_stmt.name);
+            for (k = 0; k < bc_natypes; k++)
+                if (strcmp(bc_atypes[k].name, s->dim_stmt.name) == 0) break;
+            if (k < bc_natypes) {
+                if (bc_atypes[k].type != t) bc_not_yet(s->line, "an array DIMmed with two types");
+                break;
+            }
+            if (bc_natypes == bc_capatypes) {
+                bc_capatypes = bc_capatypes ? bc_capatypes * 2 : 16;
+                bc_atypes = realloc(bc_atypes, (size_t)bc_capatypes * sizeof(atype_t));
+                if (!bc_atypes) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            }
+            strncpy(bc_atypes[bc_natypes].name, s->dim_stmt.name, 63);
+            bc_atypes[bc_natypes].name[63] = '\0';
+            bc_atypes[bc_natypes++].type = t;
+            break;
+        }
+        case STMT_FOR: dt_use(s->for_stmt.var_name); deftypes(s->for_stmt.body, depth + 1); break;
+        case STMT_IF:
+            deftypes(s->if_stmt.then_body, depth + 1);
+            deftypes(s->if_stmt.else_body, depth + 1);
+            break;
+        case STMT_WHILE: deftypes(s->while_stmt.body, depth + 1); break;
+        case STMT_DO_LOOP: deftypes(s->do_loop.body, depth + 1); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) deftypes(c->body, depth + 1);
+            break;
+        default: break;
+        }
+    }
+}
+
 /* the DEF FNs, before anything else: a name that is one is no variable
  * (DEF FNM = 123: FNM calls it), wherever its DEF is */
 static void find_fns(stmt_t *s) {
@@ -1845,12 +1952,23 @@ static void hl_func(Node *fn) {
     bc_nfns = 0;
     bc_nscope = 0;
     bc_nfn_open = 0;
+    for (int i = 0; i < 26; i++) bc_deftype[i] = VAL_SINGLE;
+    memset(bc_letter_used, 0, sizeof bc_letter_used);
+    bc_natypes = 0;
+    deftypes(bc_program, 0);
     preshadow(bc_program);
     find_fns(bc_program);
     prescan(bc_program);
     for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
     forslots_zero();
     call_void("bcrt_start");
+    for (int i = 0; i < 26; i++)        /* (implicit arrays are made with them) */
+        if (bc_deftype[i] != VAL_SINGLE) {
+            int cb = h_ncarg;
+            carg(iconst('A' + i), 0);
+            carg(iconst(bc_deftype[i]), 0);
+            call_end(cb, 2, "bcrt_deftype", NULL);
+        }
     /* the static arrays, then the OPTION BASE the text ends with in
      * force until an OPTION BASE runs (the interpreter's scan leaves it) */
     bc_nstatics = 0;
