@@ -124,6 +124,112 @@ static int alloca_of(int ty, int size) {
     return a;
 }
 
+/* --- SUB and FUNCTION: the procedures, and the globals they reach ---- */
+
+/* a name made a symbol's: letters, digits and _ kept, the rest spelled */
+static void mangle(char *out, size_t cap, const char *pre, const char *name) {
+    size_t o = strlen(pre);
+    memcpy(out, pre, o + 1);
+    for (; *name && o + 3 < cap; name++) {
+        char c = *name;
+        const char *sp = c == '$' ? "_s" : c == '%' ? "_i" : c == '&' ? "_l" :
+                         c == '#' ? "_d" : c == '!' ? "_f" : c == '.' ? "_o" : NULL;
+        if (sp) { out[o++] = sp[0]; out[o++] = sp[1]; }
+        else out[o++] = c;
+    }
+    out[o] = '\0';
+}
+
+/* the program's procedures, each a function of its own: bcp_NAME(result
+ * if a FUNCTION, then a pointer per parameter) */
+typedef struct { stmt_t *def; Node node; char sym[96]; } proc_t;
+static proc_t *bc_procs;
+static int bc_nprocs;
+static proc_t *bc_proc;         /* the one being lowered; NULL for the main program */
+static int bc_proc_exit;        /* its block that returns */
+
+static proc_t *proc_find(const char *name) {
+    for (int i = 0; i < bc_nprocs; i++)
+        if (strcmp(bc_procs[i].def->proc_def.name, name) == 0) return &bc_procs[i];
+    return NULL;
+}
+
+/* name, alone, calls a FUNCTION of no parameters (eval_is_function0):
+ * anywhere but in that FUNCTION, where it is its own variable */
+static int calls_function0(const char *name) {
+    proc_t *p = proc_find(name);
+    return p && p->def->type == STMT_FUNC_DEF && p->def->proc_def.nparams == 0 &&
+           !(bc_proc && bc_proc == p);
+}
+
+static int is_function(const char *name) {
+    proc_t *p = proc_find(name);
+    return p && p->def->type == STMT_FUNC_DEF;
+}
+
+/* globals: a main-program variable a SUB SHAREs, a procedure's STATIC */
+typedef struct { char name[64]; char sym[96]; int type; int zeroed; } global_t;
+static global_t *bc_globals;
+static int bc_nglobals, bc_capglobals;
+
+static const char *global_add(const char *name, const char *sym, int type) {
+    global_t *g;
+    for (int i = 0; i < bc_nglobals; i++)
+        if (strcmp(bc_globals[i].sym, sym) == 0) return bc_globals[i].sym;
+    if (bc_nglobals == bc_capglobals) {
+        bc_capglobals = bc_capglobals ? bc_capglobals * 2 : 16;
+        bc_globals = realloc(bc_globals, (size_t)bc_capglobals * sizeof(global_t));
+        if (!bc_globals) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    g = &bc_globals[bc_nglobals++];
+    strncpy(g->name, name, 63);
+    g->name[63] = '\0';
+    strncpy(g->sym, sym, 95);
+    g->sym[95] = '\0';
+    g->type = type;
+    g->zeroed = 0;
+    {                           /* (a .bss object gen_data writes) */
+        int i = ps_nglobals;
+        if (i >= P_MAX_GLOBALS) { fprintf(stderr, "s32-bc: too many globals\n"); exit(1); }
+        ps_gname[i] = g->sym;
+        ps_gtype[i] = TY_INT;
+        ps_gsize[i] = type == VAL_DOUBLE ? 8 : 4;
+        ps_ginit[i] = 0;
+        ps_ginit_hi[i] = 0;
+        ps_gstr[i] = -1;
+        ps_glocal[i] = 1;
+        ps_gextern[i] = 0;
+        ps_ginit_start[i] = -1;
+        ps_ginit_count[i] = 0;
+        ps_girel_start[i] = 0;
+        ps_girel_count[i] = 0;
+        ps_nglobals = i + 1;
+    }
+    return g->sym;
+}
+
+/* a SHARED name's global (the main program's variable), or procedure
+ * p's STATIC's */
+static void global_sym(char *sym, size_t cap, const proc_t *p, const char *name) {
+    char pre[112];
+    if (!p) { mangle(sym, cap, "bcg_", name); return; }
+    snprintf(pre, sizeof pre, "bcs%s_", p->sym + 3);
+    mangle(sym, cap, pre, name);
+}
+
+/* a main-program variable's global, where some SUB SHAREs it */
+static const char *global_of(const char *name) {
+    char sym[96];
+    if (bc_proc) return NULL;
+    mangle(sym, sizeof sym, "bcg_", name);
+    for (int i = 0; i < bc_nglobals; i++)
+        if (strcmp(bc_globals[i].sym, sym) == 0) {
+            bc_globals[i].zeroed = 1;   /* (main's own var_zero does it) */
+            return bc_globals[i].sym;
+        }
+    return NULL;
+}
+
 /* --- values: a double (lo, hi) and its run-time type --------------- */
 
 /* A value: three HIR words, lo, hi and its run-time val_type_t (bc_rt.c).
@@ -270,7 +376,10 @@ static void check16(int r) {
 typedef struct {
     char name[64];
     int type;                   /* VAL_INTEGER, VAL_LONG, VAL_SINGLE, VAL_DOUBLE, VAL_STRING */
-    int a, ahi;                 /* its slots: one, or a double's two words */
+    int a;                      /* its slot (a DOUBLE's 8 bytes), or a pointer parameter's
+                                 * value; -1 for a global */
+    const char *g;              /* a global's symbol (SHARED, STATIC), else NULL */
+    int local;                  /* the frame's own, released as a procedure returns */
 } var_t;
 
 /* names the program uses as arrays (DIM, A(...) = , a call to no
@@ -303,8 +412,9 @@ static int is_builtin_call(const char *name) {
            strcmp(name, "LBOUND") != 0 && strcmp(name, "UBOUND") != 0 && strcmp(name, "JOIN$") != 0;
 }
 
-static var_t *bc_vars;
+static var_t **bc_vars;         /* (each its own allocation: a pointer to one stays good) */
 static int bc_nvars, bc_capvars;
+static var_t *bc_proc_result;   /* the FUNCTION being lowered's own variable */
 
 /* a DEF FN's parameters, while its body is lowered: they shadow the
  * program's variables of their names (call_def_fn's scope of its own) */
@@ -315,11 +425,44 @@ static var_t *var_find(const char *name) {
     for (int i = bc_nscope - 1; i >= 0; i--)
         if (strcmp(bc_scope[i]->name, name) == 0) return bc_scope[i];
     for (int i = 0; i < bc_nvars; i++)
-        if (strcmp(bc_vars[i].name, name) == 0) return &bc_vars[i];
+        if (strcmp(bc_vars[i]->name, name) == 0) return bc_vars[i];
     return NULL;
 }
 
 static int name_type(const char *name);
+static const char *global_of(const char *name);
+
+/* a variable's storage: a global's symbol, else a slot in the frame (a
+ * DOUBLE's two words together, so it can be passed by reference) */
+static void var_init(var_t *v, const char *name, int type, const char *g) {
+    strncpy(v->name, name, 63);
+    v->name[63] = '\0';
+    v->type = type;
+    v->g = g;
+    v->local = g == NULL;
+    v->a = g ? -1 : alloca_of(type == VAL_SINGLE ? TY_FLOAT : TY_INT, type == VAL_DOUBLE ? 8 : 4);
+}
+
+/* its first word's address, and a DOUBLE's second's */
+static int VA(const var_t *v) {
+    return v->g ? hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)v->g) : v->a;
+}
+
+static int VH(const var_t *v) {
+    return hi_emit(HI_ADDI, TY_INT, VA(v), -1, 4, NULL);
+}
+
+/* a new variable of the function being lowered */
+static var_t *var_push(void) {
+    var_t *v = malloc(sizeof(var_t));
+    if (bc_nvars == bc_capvars) {
+        bc_capvars = bc_capvars ? bc_capvars * 2 : 32;
+        bc_vars = realloc(bc_vars, (size_t)bc_capvars * sizeof(var_t *));
+    }
+    if (!v || !bc_vars) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    bc_vars[bc_nvars++] = v;
+    return v;
+}
 
 /* made in the entry block, 0 (a string, empty) there, as every BASIC
  * variable starts */
@@ -332,21 +475,8 @@ static var_t *var_get(const char *name, int type, int line) {
         bc_not_yet(line, "a variable of this type");
         type = VAL_SINGLE;
     }
-    if (bc_nvars == bc_capvars) {
-        bc_capvars = bc_capvars ? bc_capvars * 2 : 32;
-        bc_vars = realloc(bc_vars, (size_t)bc_capvars * sizeof(var_t));
-        if (!bc_vars) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
-    }
-    v = &bc_vars[bc_nvars++];
-    strncpy(v->name, name, 63);
-    v->name[63] = '\0';
-    v->type = type;
-    v->ahi = -1;
-    if (type == VAL_DOUBLE) {
-        v->a = alloca_of(TY_INT, 4);
-        v->ahi = alloca_of(TY_INT, 4);
-    } else
-        v->a = alloca_of(type == VAL_SINGLE ? TY_FLOAT : TY_INT, 4);
+    v = var_push();
+    var_init(v, name, type, global_of(name));
     return v;
 }
 
@@ -383,26 +513,18 @@ static int arr_type(const char *name) {
 static var_t *var_param(const char *name, int type) {
     var_t *v = malloc(sizeof(var_t));
     if (!v) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
-    strncpy(v->name, name, 63);
-    v->name[63] = '\0';
-    v->type = type;
-    v->ahi = -1;
-    if (type == VAL_DOUBLE) {
-        v->a = alloca_of(TY_INT, 4);
-        v->ahi = alloca_of(TY_INT, 4);
-    } else
-        v->a = alloca_of(type == VAL_SINGLE ? TY_FLOAT : TY_INT, 4);
+    var_init(v, name, type, NULL);
     return v;
 }
 
 static bv_t var_load(var_t *v) {
     int x;
     if (v->type == VAL_DOUBLE)
-        return mk(hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL),
-                  hi_emit(HI_LOAD, TY_INT, v->ahi, -1, 0, NULL), -1, VAL_DOUBLE);
+        return mk(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL),
+                  hi_emit(HI_LOAD, TY_INT, VH(v), -1, 0, NULL), -1, VAL_DOUBLE);
     if (v->type == VAL_STRING) {        /* a reference of the value's own */
         int cb;
-        x = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
+        x = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
         cb = h_ncarg;
         carg(x, 0);
         return mk(call_end(cb, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
@@ -410,13 +532,13 @@ static bv_t var_load(var_t *v) {
     if (v->type == VAL_SINGLE) {
         bv_t r = mk(0, 0, -1, VAL_SINGLE);
         int cb;
-        x = hi_emit(HI_LOAD, TY_FLOAT, v->a, -1, 0, NULL);
+        x = hi_emit(HI_LOAD, TY_FLOAT, VA(v), -1, 0, NULL);
         cb = h_ncarg;
         carg(x, 0);
         r.lo = call_end(cb, 1, "__fp64_cvt_ftoD", &r.hi);
         return r;
     }
-    return mk(hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL), -1, -1, v->type);
+    return mk(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), -1, -1, v->type);
 }
 
 /* whether a double's words are a finite number of at most m (hi:lo the
@@ -540,41 +662,43 @@ static int to_float(bv_t x) {
  * string go */
 static void var_store(var_t *v, bv_t x) {
     if (v->type == VAL_SINGLE) {
-        hi_emit(HI_STORE, TY_FLOAT, v->a, to_float(x), 0, NULL);
+        hi_emit(HI_STORE, TY_FLOAT, VA(v), to_float(x), 0, NULL);
         return;
     }
     x = coerce(x, v->type);
     if (v->type == VAL_DOUBLE) {
-        hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
-        hi_emit(HI_STORE, TY_INT, v->ahi, x.hi, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VA(v), x.lo, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VH(v), x.hi, 0, NULL);
         return;
     }
     if (v->type == VAL_STRING) {
-        int old = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL), cb;
-        hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
+        int old = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), cb;
+        hi_emit(HI_STORE, TY_INT, VA(v), x.lo, 0, NULL);
         cb = h_ncarg;
         carg(old, 0);
         call_end(cb, 1, "bcrt_unref", NULL);
         return;
     }
-    hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, VA(v), x.lo, 0, NULL);
 }
 
 static void var_zero(var_t *v) {
     if (v->type == VAL_DOUBLE) {
-        hi_emit(HI_STORE, TY_INT, v->a, iconst(0), 0, NULL);
-        hi_emit(HI_STORE, TY_INT, v->ahi, iconst(0), 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VA(v), iconst(0), 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VH(v), iconst(0), 0, NULL);
     } else if (v->type == VAL_SINGLE) {
         int z = hi_emit(HI_ICONST, TY_FLOAT, -1, -1, 0, NULL);
-        hi_emit(HI_STORE, TY_FLOAT, v->a, z, 0, NULL);
+        hi_emit(HI_STORE, TY_FLOAT, VA(v), z, 0, NULL);
     } else if (v->type == VAL_STRING) {
         int e = call_end(h_ncarg, 0, "bcrt_str_empty", NULL);
-        hi_emit(HI_STORE, TY_INT, v->a, e, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VA(v), e, 0, NULL);
     } else
-        hi_emit(HI_STORE, TY_INT, v->a, iconst(0), 0, NULL);
+        hi_emit(HI_STORE, TY_INT, VA(v), iconst(0), 0, NULL);
 }
 
 /* --- expressions -------------------------------------------------- */
+
+static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res);
 
 static bv_t expr(expr_t *e);
 
@@ -756,8 +880,16 @@ static void st(int addr, int off, int v) {
  * subscripts made integers (val_to_integer), the array (or an implicit
  * one, eval_array_for) through its cell, each subscript in its
  * dimension (Subscript out of range) */
+static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix);
+
 static int array_elem(int line, const char *name, int n, bv_t *sub) {
-    int ix[3], id = array_id(name, line), cell, fast, slow, flat = 0, cb;
+    int ix[3];
+    return array_elem_ix(line, name, n, sub, ix);
+}
+
+/* (and the subscripts made integers, in ix) */
+static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) {
+    int id = array_id(name, line), cell, fast, slow, flat = 0, cb;
     if (n > 3) n = 0;           /* (refused: sub_args) */
     for (int i = 0; i < n; i++) ix[i] = coerce(sub[i], VAL_LONG).lo;
     cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
@@ -1003,6 +1135,27 @@ static bv_t array_read(expr_t *e) {
     return mk(ld(ea, 4), st_flt(ty) ? ld(ea, 8) : -1, -1, ty);
 }
 
+/* LBOUND(a[, dim]) and UBOUND: the array named, its bound (eval_bound) */
+static bv_t bound(expr_t *e) {
+    const char *name = NULL;
+    expr_t *a = e->call.nargs >= 1 ? e->call.args[0] : NULL;
+    int dim, cb;
+    if (a && a->type == EXPR_VARIABLE) name = a->var.name;
+    else if (a && a->type == EXPR_CALL && a->call.nargs == 0) name = a->call.name;
+    if (!name) {                /* (Illegal function call, as eval_expr says it) */
+        cb = h_ncarg;
+        carg(iconst(ERR_ILLEGAL_FUNCTION_CALL), 0);
+        call_end(cb, 1, "bcrt_err", NULL);
+        return zero();
+    }
+    dim = e->call.nargs >= 2 ? coerce(expr(e->call.args[1]), VAL_LONG).lo : iconst(1);
+    cb = h_ncarg;
+    carg(saddr(name, (int)strlen(name)), 0);
+    carg(dim, 0);
+    carg(iconst(e->call.name[0] == 'U'), 0);
+    return bv_call("bcrt_bound", cb, 3);
+}
+
 static int compare_expr(expr_t *e) {
     bv_t a = expr(e->compare.left), b = expr(e->compare.right);
     return compare01(e->compare.op, a, b);
@@ -1024,6 +1177,15 @@ static bv_t expr(expr_t *e) {
             return builtin_fn(e, e->var.name, 0, NULL);
         if (strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name))
             return def_fn_call(e, e->var.name, 0, NULL);  /* DEF FNM = 123: FNM calls it */
+        if (calls_function0(e->var.name)) {
+            bv_t r;
+            if (var_find(e->var.name)) {        /* (a variable too, here: which, when, is the run's) */
+                bc_not_yet(e->line, "a FUNCTION's name assigned outside it");
+                return zero();
+            }
+            proc_call(e->line, proc_find(e->var.name), 0, NULL, &r);
+            return r;
+        }
         return var_load(var_get(e->var.name, e->var.var_type, e->line));
     case EXPR_BINARY: {
         bv_t a = expr(e->binary.left), b = expr(e->binary.right);
@@ -1034,9 +1196,16 @@ static bv_t expr(expr_t *e) {
     case EXPR_UNARY:
         return unary(e->unary.op, expr(e->unary.operand));
     case EXPR_CALL:
+        if (is_function(e->call.name)) {        /* (before an array or a builtin: as eval_expr) */
+            bv_t r;
+            proc_call(e->line, proc_find(e->call.name), e->call.nargs, e->call.args, &r);
+            return r;
+        }
         if (is_builtin_call(e->call.name))
             return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
         if (strncmp(e->call.name, "FN", 2) == 0) return def_fn_call(e, e->call.name, e->call.nargs, e->call.args);
+        if (strcmp(e->call.name, "LBOUND") == 0 || strcmp(e->call.name, "UBOUND") == 0)
+            return bound(e);
         return array_read(e);
     default:
         bc_not_yet(e->line, "this expression");
@@ -1389,12 +1558,12 @@ static void bc_next(stmt_t *s) {
             int w;
             nv = flt_arith(OP_ADD, cur, stp);
             if (f->v->type == VAL_DOUBLE) {
-                hi_emit(HI_STORE, TY_INT, f->v->a, nv.lo, 0, NULL);
-                hi_emit(HI_STORE, TY_INT, f->v->ahi, nv.hi, 0, NULL);
+                hi_emit(HI_STORE, TY_INT, VA(f->v), nv.lo, 0, NULL);
+                hi_emit(HI_STORE, TY_INT, VH(f->v), nv.hi, 0, NULL);
             } else {
                 w = call_d1("__fp64_cvt_DtoF", nv.lo, nv.hi, NULL);
                 h_ty[w] = TY_FLOAT;
-                hi_emit(HI_STORE, TY_FLOAT, f->v->a, w, 0, NULL);
+                hi_emit(HI_STORE, TY_FLOAT, VA(f->v), w, 0, NULL);
             }
         }
         runs = for_runs(f);
@@ -1599,6 +1768,160 @@ static void bc_read(stmt_t *s) {
     }
 }
 
+/* --- calling a SUB or FUNCTION ------------------------------------------ */
+
+/* parameter i's type: its AS, or its name's under DEFtype (param_type) */
+static int param_type(const stmt_t *def, int i) {
+    const char *name = def->proc_def.params[i];
+    size_t n = strlen(name);
+    int t = def->proc_def.param_types[i];
+    int suffixed = n && strchr("%&!#$", name[n - 1]);
+    if (!suffixed && t == VAL_SINGLE) return name_type(name);
+    return t;
+}
+
+/* a slot of the caller's frame, of type ty, for an argument passed by
+ * value, an element passed by reference, or a FUNCTION's result */
+static var_t *temp_var(int ty) {
+    var_t *v = malloc(sizeof(var_t));
+    if (!v) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    var_init(v, "(temp)", ty, NULL);
+    return v;
+}
+
+static int is_plain_var(const expr_t *e) {
+    return e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
+           strncmp(e->var.name, "FN", 2) != 0 && !calls_function0(e->var.name);
+}
+
+static int is_array_ref(const expr_t *e) {
+    return e->type == EXPR_CALL && !is_function(e->call.name) && !is_builtin_call(e->call.name) &&
+           strncmp(e->call.name, "FN", 2) != 0;
+}
+
+/* name(args), as call_proc: each argument in order, a variable (not in
+ * parentheses) by reference -- of the parameter's very type, else
+ * Parameter type mismatch as it is reached -- an array element by
+ * reference too, copied in and, after the call, back (where the array
+ * still has it); anything else evaluated, then all of those made their
+ * parameters' types.  A FUNCTION's value comes back in a slot of the
+ * caller's; *res gets it (a string's reference passing). */
+static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) {
+    stmt_t *def = p->def;
+    int ptr[16], kind[16], ix[16][3], nix[16], cb, fn = def->type == STMT_FUNC_DEF;
+    var_t *tmp[16], *rv = NULL;
+    bv_t val[16];
+    if (nargs != def->proc_def.nparams || nargs > 16) {
+        bc_not_yet(line, "this call");
+        if (res) *res = zero();
+        return;
+    }
+    for (int i = 0; i < nargs; i++) {
+        expr_t *e = args[i];
+        int pt = param_type(def, i);
+        tmp[i] = NULL;
+        kind[i] = 0;
+        if (!e->paren && is_plain_var(e)) {
+            var_t *v = var_get(e->var.name, e->var.var_type, line);
+            if (v->type != pt) {
+                int c2 = h_ncarg;
+                carg(iconst(ERR_PARAM_MISMATCH), 0);
+                call_end(c2, 1, "bcrt_err", NULL);
+            }
+            ptr[i] = VA(v);
+            kind[i] = 1;
+        } else if (!e->paren && is_array_ref(e) && e->call.nargs > 0) {
+            bv_t a[3];
+            int ea, ty = arr_type(e->call.name);
+            sub_args(line, e->call.nargs, e->call.args, a);
+            ea = array_elem_ix(line, e->call.name, e->call.nargs, a, ix[i]);
+            nix[i] = e->call.nargs > 3 ? 0 : e->call.nargs;
+            if (ty != pt) {
+                int c2 = h_ncarg;
+                carg(iconst(ERR_PARAM_MISMATCH), 0);
+                call_end(c2, 1, "bcrt_err", NULL);
+            }
+            tmp[i] = temp_var(ty);
+            {                   /* the element's value (val_copy) */
+                bv_t x;
+                if (ty == VAL_STRING) {
+                    int c2 = h_ncarg;
+                    carg(ld(ea, 4), 0);
+                    x = mk(call_end(c2, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
+                } else
+                    x = mk(ld(ea, 4), st_flt(ty) ? ld(ea, 8) : -1, -1, ty);
+                if (ty == VAL_SINGLE) {         /* (its double is a float exactly) */
+                    int w = call_d1("__fp64_cvt_DtoF", x.lo, x.hi, NULL);
+                    h_ty[w] = TY_FLOAT;
+                    hi_emit(HI_STORE, TY_FLOAT, VA(tmp[i]), w, 0, NULL);
+                } else {
+                    hi_emit(HI_STORE, TY_INT, VA(tmp[i]), x.lo, 0, NULL);
+                    if (ty == VAL_DOUBLE) hi_emit(HI_STORE, TY_INT, VH(tmp[i]), x.hi, 0, NULL);
+                }
+            }
+            ptr[i] = VA(tmp[i]);
+            kind[i] = 2;
+        } else {
+            if (!e->paren && e->type == EXPR_CALL && is_array_ref(e)) {
+                bc_not_yet(line, "a whole array as an argument");
+                val[i] = zero();
+            } else
+                val[i] = expr(e);
+        }
+    }
+    for (int i = 0; i < nargs; i++) {       /* by value: the parameter's type */
+        if (kind[i]) continue;
+        tmp[i] = temp_var(param_type(def, i));
+        var_zero(tmp[i]);
+        var_store(tmp[i], val[i]);
+        ptr[i] = VA(tmp[i]);
+    }
+    if (fn) {
+        rv = temp_var(name_type(def->proc_def.name));   /* (the callee writes it) */
+    }
+    cb = h_ncarg;
+    if (fn) carg(VA(rv), 0);
+    for (int i = 0; i < nargs; i++) carg(ptr[i], 0);
+    call_end(cb, nargs + fn, p->sym, NULL);
+    if (fn) {                   /* (its reference the caller's now) */
+        if (rv->type == VAL_STRING) *res = mk(hi_emit(HI_LOAD, TY_INT, VA(rv), -1, 0, NULL), -1, -1, VAL_STRING);
+        else *res = var_load(rv);
+    }
+    for (int i = 0; i < nargs; i++) {       /* elements back, as they are now */
+        bv_t x;
+        int c2;
+        if (kind[i] != 2) continue;
+        x = tmp[i]->type == VAL_STRING
+            ? mk(hi_emit(HI_LOAD, TY_INT, VA(tmp[i]), -1, 0, NULL), -1, -1, VAL_STRING)
+            : var_load(tmp[i]);
+        x = dynv(x);
+        c2 = h_ncarg;
+        carg(saddr(args[i]->call.name, (int)strlen(args[i]->call.name)), 0);
+        carg(iconst(nix[i]), 0);
+        for (int j = 0; j < 3; j++) carg(j < nix[i] ? ix[i][j] : iconst(0), 0);
+        carg_bv(x);
+        call_end(c2, 8, "bcrt_elem_back", NULL);
+    }
+    for (int i = 0; i < nargs; i++)         /* the values passed: let go */
+        if (kind[i] == 0 && tmp[i]->type == VAL_STRING) {
+            int c2 = h_ncarg;
+            carg(hi_emit(HI_LOAD, TY_INT, VA(tmp[i]), -1, 0, NULL), 0);
+            call_end(c2, 1, "bcrt_unref", NULL);
+        }
+}
+
+static void bc_call(stmt_t *s) {
+    proc_t *p = proc_find(s->call_stmt.name);
+    bv_t r;
+    if (!p) { bc_not_yet(s->line, "a CALL of no SUB of the program"); return; }
+    proc_call(s->line, p, s->call_stmt.nargs, s->call_stmt.args, p->def->type == STMT_FUNC_DEF ? &r : NULL);
+    if (p->def->type == STMT_FUNC_DEF && r.st == VAL_STRING) {
+        int cb = h_ncarg;
+        carg(r.lo, 0);
+        call_end(cb, 1, "bcrt_unref", NULL);
+    }
+}
+
 /* --- EXIT, SELECT CASE, SWAP ----------------------------------------- */
 
 /* the WHILEs and DOs being lowered, innermost last: their kind and the
@@ -1626,8 +1949,12 @@ static void bc_exit(stmt_t *s) {
                 goto_blk(bc_loops[d].exit);
                 return;
             }
-    bc_not_yet(s->line, k == EXIT_SUB || k == EXIT_FUNCTION ? "EXIT SUB and EXIT FUNCTION"
-                                                            : "an EXIT outside its loop");
+    if (bc_proc && ((k == EXIT_SUB && bc_proc->def->type == STMT_SUB_DEF) ||
+                    (k == EXIT_FUNCTION && bc_proc->def->type == STMT_FUNC_DEF))) {
+        goto_blk(bc_proc_exit);
+        return;
+    }
+    bc_not_yet(s->line, "an EXIT outside what it leaves");
 }
 
 /* a value kept across blocks (SELECT CASE's test): its words in slots;
@@ -1739,7 +2066,7 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
 static bv_t lval_load(const lval_t *lv) {
     if (lv->ea >= 0)
         return mk(ld(lv->ea, 4), st_flt(lv->ty) ? ld(lv->ea, 8) : -1, -1, lv->ty);
-    if (lv->ty == VAL_STRING) return mk(hi_emit(HI_LOAD, TY_INT, lv->v->a, -1, 0, NULL), -1, -1, VAL_STRING);
+    if (lv->ty == VAL_STRING) return mk(hi_emit(HI_LOAD, TY_INT, VA(lv->v), -1, 0, NULL), -1, -1, VAL_STRING);
     return var_load(lv->v);
 }
 
@@ -1752,11 +2079,11 @@ static void lval_store(const lval_t *lv, bv_t x) {
     if (lv->ty == VAL_SINGLE) {         /* (a single's value: its float exactly) */
         int w = call_d1("__fp64_cvt_DtoF", x.lo, x.hi, NULL);
         h_ty[w] = TY_FLOAT;
-        hi_emit(HI_STORE, TY_FLOAT, lv->v->a, w, 0, NULL);
+        hi_emit(HI_STORE, TY_FLOAT, VA(lv->v), w, 0, NULL);
         return;
     }
-    hi_emit(HI_STORE, TY_INT, lv->v->a, x.lo, 0, NULL);
-    if (lv->ty == VAL_DOUBLE) hi_emit(HI_STORE, TY_INT, lv->v->ahi, x.hi, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, VA(lv->v), x.lo, 0, NULL);
+    if (lv->ty == VAL_DOUBLE) hi_emit(HI_STORE, TY_INT, VH(lv->v), x.hi, 0, NULL);
 }
 
 static void bc_swap(stmt_t *s) {
@@ -1775,6 +2102,10 @@ static void bc_swap(stmt_t *s) {
 
 static void bc_stmt(stmt_t *s) {
     if (!bc_live && s->type != STMT_LABEL) dead_blk();
+    if (bc_proc && (s->type == STMT_GOSUB || s->type == STMT_RETURN || s->type == STMT_ON_GOSUB)) {
+        bc_not_yet(s->line, "GOSUB in a SUB or FUNCTION");
+        return;
+    }
     switch (s->type) {
     case STMT_REM:
     case STMT_NOOP:
@@ -1931,6 +2262,15 @@ static void bc_stmt(stmt_t *s) {
     case STMT_EXIT:
         bc_exit(s);
         break;
+    case STMT_CALL:
+        bc_call(s);
+        break;
+    case STMT_SUB_DEF:          /* (each a function of its own: hl_func) */
+    case STMT_FUNC_DEF:
+    case STMT_SHARED:           /* (proc_begin) */
+    case STMT_STATIC:
+    case STMT_DECLARE:
+        break;
     case STMT_SELECT:
         bc_select(s);
         break;
@@ -1954,7 +2294,8 @@ static void bc_stmts(stmt_t *s) {
 static void prescan_expr(expr_t *e, void *ctx) {
     (void)ctx;
     if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
-        !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)))
+        !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)) &&
+        !calls_function0(e->var.name))
         var_get(e->var.name, e->var.var_type, e->line);
     if (e->type == EXPR_CALL && !builtin_exists(e->call.name)) shadow_add(e->call.name);
 }
@@ -1967,6 +2308,7 @@ static void preshadow(stmt_t *s) {
         case STMT_DIM: shadow_add(s->dim_stmt.name); break;
         case STMT_ARRAY_ASSIGN: shadow_add(s->array_assign.name); break;
         case STMT_FOR: preshadow(s->for_stmt.body); break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF: preshadow(s->proc_def.body); break;
         case STMT_IF: preshadow(s->if_stmt.then_body); preshadow(s->if_stmt.else_body); break;
         case STMT_WHILE: preshadow(s->while_stmt.body); break;
         case STMT_DO_LOOP: preshadow(s->do_loop.body); break;
@@ -2050,6 +2392,15 @@ static void deftypes(stmt_t *s, int depth) {
             break;
         }
         case STMT_FOR: dt_use(s->for_stmt.var_name); deftypes(s->for_stmt.body, depth + 1); break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF:
+            dt_use(s->proc_def.name);
+            for (int i = 0; i < s->proc_def.nparams; i++) dt_use(s->proc_def.params[i]);
+            deftypes(s->proc_def.body, depth + 1);
+            break;
+        case STMT_CALL: break;
+        case STMT_SHARED: case STMT_STATIC:
+            for (int i = 0; i < s->shared.nvars; i++) dt_use(s->shared.varnames[i]);
+            break;
         case STMT_IF:
             deftypes(s->if_stmt.then_body, depth + 1);
             deftypes(s->if_stmt.else_body, depth + 1);
@@ -2117,8 +2468,8 @@ static stmt_t *bc_program;
 static Node bc_main;
 static Node bc_root;
 
-static void hl_func(Node *fn) {
-    int entry;
+/* the state a function's lowering starts from */
+static void func_begin(void) {
     hir_reset();
     hl_nalloca = 0;
     hl_temp_stack = 0;
@@ -2133,21 +2484,134 @@ static void hl_func(Node *fn) {
     bc_nfail = 0;
     bc_nloops = 0;
     bc_nforslots = 0;
-    bc_nanames = 0;
-    entry = new_blk();
-    begin_blk(entry);
-    bc_nshadow = 0;
-    bc_nfns = 0;
     bc_nscope = 0;
     bc_nfn_open = 0;
+    bc_proc = NULL;
+    bc_proc_result = NULL;
+    begin_blk(new_blk());
+}
+
+/* SUB or FUNCTION p, a function of its own (call_proc_values): its
+ * parameters pointers to what the caller passes, a FUNCTION's result a
+ * pointer first; SHARED names the main program's variables (globals),
+ * STATIC its own globals; every other name a variable of the frame,
+ * made 0 or empty as it starts and let go as it returns */
+static void proc_func(proc_t *p, Node *fn) {
+    stmt_t *def = p->def;
+    int fnc = def->type == STMT_FUNC_DEF, n = def->proc_def.nparams + fnc, pin[17], ord = 0;
+    func_begin();
+    bc_proc = p;
+    hl_param_room(n);
+    hl_param_nflat = n;
+    hl_nparams = n;
+    hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+    for (int i = 0; i < n; i++) {
+        if (hl_param_map[i] < 0) { hl_param_stkord[i] = ord; ord += 4; }
+        else hl_param_stkord[i] = -1;
+    }
+    for (int i = 0; i < n; i++) pin[i] = hi_emit(HI_PARAM, TY_INT, -1, -1, i, NULL);
+    for (int i = 0; i < def->proc_def.nparams; i++) {
+        var_t *v = var_push();
+        var_init(v, def->proc_def.params[i], param_type(def, i), NULL);
+        v->a = pin[i + fnc];
+        v->local = 0;
+    }
+    if (fnc) bc_proc_result = var_get(def->proc_def.name, 0, def->line);
+    for (stmt_t *s = def->proc_def.body; s; s = s->next)
+        if (s->type == STMT_SHARED || s->type == STMT_STATIC)
+            for (int i = 0; i < s->shared.nvars; i++) {
+                const char *name = s->shared.varnames[i];
+                char sym[96];
+                var_t *v;
+                if (var_find(name)) continue;
+                global_sym(sym, sizeof sym, s->type == STMT_STATIC ? p : NULL, name);
+                v = var_push();
+                var_init(v, name, name_type(name), global_add(name, sym, name_type(name)));
+            }
+    prescan(def->proc_def.body);
+    for (int i = 0; i < bc_nvars; i++)
+        if (bc_vars[i]->local) var_zero(bc_vars[i]);
+    forslots_zero();
+    call_void("bcrt_enter");
+    bc_proc_exit = new_blk();
+    bc_stmts(def->proc_def.body);
+    goto_blk(bc_proc_exit);
+    begin_blk(bc_proc_exit);
+    if (fnc) {                  /* its value into the caller's slot, a string's reference with it */
+        var_t *r = bc_proc_result;
+        if (r->type == VAL_SINGLE)
+            hi_emit(HI_STORE, TY_FLOAT, pin[0], hi_emit(HI_LOAD, TY_FLOAT, VA(r), -1, 0, NULL), 0, NULL);
+        else {
+            hi_emit(HI_STORE, TY_INT, pin[0], hi_emit(HI_LOAD, TY_INT, VA(r), -1, 0, NULL), 0, NULL);
+            if (r->type == VAL_DOUBLE)
+                st(pin[0], 4, hi_emit(HI_LOAD, TY_INT, VH(r), -1, 0, NULL));
+        }
+    }
+    for (int i = 0; i < bc_nvars; i++)
+        if (bc_vars[i]->local && bc_vars[i]->type == VAL_STRING && bc_vars[i] != bc_proc_result) {
+            int cb = h_ncarg;
+            carg(hi_emit(HI_LOAD, TY_INT, VA(bc_vars[i]), -1, 0, NULL), 0);
+            call_end(cb, 1, "bcrt_unref", NULL);
+        }
+    call_void("bcrt_leave");
+    hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
+    bc_live = 0;
+    fail_blocks();
+    fn->locals_size = bc_frame;
+    bc_proc = NULL;
+}
+
+/* what the whole program decides before any function is lowered: DEFtypes
+ * and array types, the procedures, the globals SHARED and STATIC make */
+static void program_prepare(void) {
     for (int i = 0; i < 26; i++) bc_deftype[i] = VAL_SINGLE;
     memset(bc_letter_used, 0, sizeof bc_letter_used);
     bc_natypes = 0;
     deftypes(bc_program, 0);
+    bc_nprocs = 0;
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) bc_nprocs++;
+    bc_procs = calloc((size_t)(bc_nprocs ? bc_nprocs : 1), sizeof(proc_t));
+    if (!bc_procs) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    bc_nprocs = 0;
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) {
+            proc_t *p = &bc_procs[bc_nprocs++];
+            p->def = s;
+            mangle(p->sym, sizeof p->sym, "bcp_", s->proc_def.name);
+            p->node.name = p->sym;
+            p->node.is_static = 0;  /* (global: the backend's dead-function pass reopens its
+                                     * output with selfhost libc's open() flags, wrong on a host) */
+            p->node.nparams = s->proc_def.nparams + (s->type == STMT_FUNC_DEF);
+        }
+    for (int k = 0; k < bc_nprocs; k++)       /* (main zeroes them all, first) */
+        for (stmt_t *s = bc_procs[k].def->proc_def.body; s; s = s->next)
+            if (s->type == STMT_SHARED || s->type == STMT_STATIC)
+                for (int i = 0; i < s->shared.nvars; i++) {
+                    const char *name = s->shared.varnames[i];
+                    char sym[96];
+                    global_sym(sym, sizeof sym, s->type == STMT_STATIC ? &bc_procs[k] : NULL, name);
+                    global_add(name, sym, name_type(name));
+                }
+}
+
+static void hl_func(Node *fn) {
+    for (int k = 0; k < bc_nprocs; k++)
+        if (fn == &bc_procs[k].node) { proc_func(&bc_procs[k], fn); return; }
+    func_begin();
+    bc_nanames = 0;
+    bc_nshadow = 0;
+    bc_nfns = 0;
     preshadow(bc_program);
     find_fns(bc_program);
     prescan(bc_program);
-    for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
+    for (int i = 0; i < bc_nvars; i++) var_zero(bc_vars[i]);
+    for (int i = 0; i < bc_nglobals; i++)       /* (SHARED ones main has not, STATICs) */
+        if (!bc_globals[i].zeroed) {
+            var_t g;
+            var_init(&g, bc_globals[i].name, bc_globals[i].type, bc_globals[i].sym);
+            var_zero(&g);
+        }
     forslots_zero();
     call_void("bcrt_start");
     for (int i = 0; i < 26; i++)        /* (implicit arrays are made with them) */
@@ -2212,8 +2676,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "s32-bc: cannot write %s\n", argv[2]);
         return 1;
     }
+    program_prepare();
     bc_main.name = "main";
-    bc_main.next = NULL;
+    bc_main.next = bc_nprocs ? &bc_procs[0].node : NULL;
+    for (int k = 0; k < bc_nprocs; k++)
+        bc_procs[k].node.next = k + 1 < bc_nprocs ? &bc_procs[k + 1].node : NULL;
     bc_root.body = &bc_main;
     cg_fd = fd;
     cg_outpath = argv[2];

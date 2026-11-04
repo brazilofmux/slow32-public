@@ -171,6 +171,36 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
     return r.ival != 0;
 }
 
+/* a SUB's or FUNCTION's activation, counted as the interpreter counts
+ * them (eval_enter: Out of stack space past its depth) */
+void bcrt_enter(void) {
+    error_t e = eval_enter();
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_leave(void) { eval_leave(); }
+
+/* an array element passed by reference, its value back after the call
+ * where the array still has it (call_proc_values) */
+void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int hi, int t) {
+    value_t x = take(lo, hi, t), *slot;
+    int ix[3] = { i0, i1, i2 };
+    sb_array_t *arr = array_find(name);
+    error_t e = ERR_NONE;
+    if (arr && arr->ndims == n && array_get(name, ix, n, &slot) == ERR_NONE)
+        e = eval_store(slot, &x);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* LBOUND or UBOUND (upper) of array name's dimension dim */
+pair_t bcrt_bound(const char *name, int dim, int upper) {
+    value_t r;
+    error_t e = eval_bound(name, dim, upper, &r);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return give(&r);
+}
+
 /* a letter's DEFtype, set as the program starts (after bcrt_start) */
 void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
 
