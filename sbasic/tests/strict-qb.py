@@ -35,6 +35,10 @@ def qb_refuses(src, exe):
     v = nbs.run_qbasic(b'SYSTEM\r\n' + src, b'', exe)
     if isinstance(v, str) and v.startswith('ERROR('):
         return v[6:-1]
+    # (a file QBasic will not open at all says so before any program
+    # runs: "Tried to load file with duplicate procedure definition")
+    if isinstance(v, list) and v and v[0].startswith('Tried to load file'):
+        return v[0]
     return None
 
 

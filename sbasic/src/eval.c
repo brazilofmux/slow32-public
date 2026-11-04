@@ -580,7 +580,7 @@ static error_t arg_by_ref(env_t *env, expr_t *e, val_type_t pt, arg_ref_t *r, va
             /* not a variable yet: a builtin's name, an FN or ERR/ERL is
              * a value; anything else becomes the variable */
             if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0 ||
-                strncmp(name, "FN", 2) == 0 || builtin_exists(name))
+                strncmp(name, "FN", 2) == 0 || builtin_exists(name) || eval_is_function0(name))
                 return ERR_NONE;
             slot = env_get(env, name);
             if (!slot) return ERR_OUT_OF_MEMORY;
@@ -609,6 +609,12 @@ static error_t arg_by_ref(env_t *env, expr_t *e, val_type_t pt, arg_ref_t *r, va
         return ERR_NONE;
     }
     return ERR_NONE;
+}
+
+/* name is a FUNCTION of no parameters: named alone, it is called */
+int eval_is_function0(const char *name) {
+    proc_entry_t *fp = find_proc(name);
+    return fp && fp->def->type == STMT_FUNC_DEF && fp->def->proc_def.nparams == 0;
 }
 
 static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
@@ -740,6 +746,12 @@ static inline __attribute__((always_inline)) error_t eval_variable_impl(env_t *e
     if (found) {
         *out = val_copy(found);
         return ERR_NONE;
+    }
+    /* a FUNCTION of no parameters, named alone, is called (QuickBASIC) */
+    {
+        proc_entry_t *fp = find_proc(name);
+        if (fp && fp->def->type == STMT_FUNC_DEF && fp->def->proc_def.nparams == 0)
+            return call_proc(env, fp, NULL, 0, out);
     }
     if (builtin_exists(name)) {
         if (builtin_call(name, NULL, 0, out) == ERR_NONE)
@@ -955,15 +967,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                     val_clear(&dv);
                     if (err != ERR_NONE) return err;
                 }
-                sb_array_t *a = array_find(arrname);
-                if (!a) return ERR_UNDEFINED_VAR;
-                if (dim < 1 || dim > a->ndims)
-                    return ERR_ILLEGAL_FUNCTION_CALL;
-                if (strcmp(e->call.name, "LBOUND") == 0)
-                    *out = val_integer(a->base);
-                else
-                    *out = val_integer(a->base + a->dims[dim - 1] - 1);
-                return ERR_NONE;
+                return eval_bound(arrname, dim, e->call.name[0] == 'U', out);
             }
 
             /* 3b. JOIN$ special handling: JOIN$(array$(), delim$) */
@@ -2269,6 +2273,16 @@ error_t eval_randomize(int has_seed, double seed) {
         seed = atof(line);
     }
     builtin_randomize(seed);
+    return ERR_NONE;
+}
+
+/* LBOUND(name, dim) or UBOUND (upper) -- for compiled code too */
+error_t eval_bound(const char *name, int dim, int upper, value_t *out) {
+    sb_array_t *a = array_find(name);
+    if (!a) return ERR_UNDEFINED_VAR;
+    if (dim < 1 || dim > a->ndims)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_integer(upper ? a->base + a->dims[dim - 1] - 1 : a->base);
     return ERR_NONE;
 }
 

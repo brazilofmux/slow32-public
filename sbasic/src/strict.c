@@ -276,6 +276,9 @@ static void walk_list(check_t *c, stmt_t *s) {
             if (!p) {
                 snprintf(d, sizeof d, "%s is no SUB of the program", s->call_stmt.name);
                 finding(c, s->line, "sub-undefined", d);
+            } else if (p->seq) {        /* QB: "Duplicate definition" */
+                snprintf(d, sizeof d, "%s is a FUNCTION, not a SUB", s->call_stmt.name);
+                finding(c, s->line, "call-function", d);
             } else if (p->kind != s->call_stmt.nargs) {
                 snprintf(d, sizeof d, "%s with %d arguments, defined with %d",
                          s->call_stmt.name, s->call_stmt.nargs, p->kind);
@@ -391,6 +394,14 @@ static void walk_unit(check_t *c, stmt_t *body) {
     c->u = outer;
 }
 
+/* a and b one name but for a type suffix */
+static int same_but_suffix(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    if (la && strchr("$%&#!", a[la - 1])) la--;
+    if (lb && strchr("$%&#!", b[lb - 1])) lb--;
+    return la == lb && strncmp(a, b, la) == 0;
+}
+
 int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[STRICT_NINFO]) {
     check_t c;
     char d[128];
@@ -398,8 +409,17 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
     c.report = report;
     c.rctx = rctx;
     for (stmt_t *s = program; s; s = s->next)
-        if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF)
-            push(&c.procs, s->proc_def.name, 0, s->line, s->proc_def.nparams);
+        if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) {
+            /* one name, whatever its suffix (QB: "duplicate procedure
+             * definition"); seq says which kind: 1 a FUNCTION */
+            for (int i = 0; i < c.procs.n; i++)
+                if (same_but_suffix(c.procs.v[i].name, s->proc_def.name)) {
+                    snprintf(d, sizeof d, "%s again, as %s", s->proc_def.name, c.procs.v[i].name);
+                    finding(&c, s->line, "proc-twice", d);
+                    break;
+                }
+            push(&c.procs, s->proc_def.name, s->type == STMT_FUNC_DEF, s->line, s->proc_def.nparams);
+        }
     walk_unit(&c, program);
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
