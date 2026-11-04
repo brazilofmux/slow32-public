@@ -327,3 +327,16 @@ own that must end in it.  `run-oracle.py --bc`: 355 agree, 20 refused
 alike, none differ.  The 92 games: s32-bc 113.7M instructions, against
 s32-sbc's 137.3M and the interpreter's 417M (mastermind, near half of
 it, went from 79M to 48M when its arrays stopped being name lookups).
+
+Then (74dab7db, 7f0a53de, ad0444ee): a float made an integer inline
+(truncate, convert back, compare -- exact on every engine though
+fcvt.w.d out of range is Unspecified -- else bcrt_d2i's range and
+val_rint), which a SINGLE subscript takes on every access; builtins'
+results typed where builtin.c fixes them (with builtin_call's rule: a
+double result is a SINGLE unless a DOUBLE went in), INT, FIX, ABS,
+SGN, CINT, CLNG, CSNG, CDBL and RND computed in place; RANDOMIZE
+(eval_randomize, shared).  The 92 games: 66.6M -- half of s32-sbc's
+137.3M, a sixth of the interpreter's 417M.  What is left in the
+profile is the compiled code itself (variables of a large main live in
+the frame, the backend's own choice; the double helpers' register
+shuffles), string comparisons and builtins, PRINT.
