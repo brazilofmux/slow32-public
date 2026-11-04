@@ -1320,6 +1320,28 @@ static int names_used(const stmt_t *s, const char *name) {
     return n.seen;
 }
 
+/* an ON ERROR GOTO anywhere in s: a program that sets a handler has no
+ * native procedures -- an error in one runs the handler with it still
+ * there, and RESUME returns into it, which only the env version does */
+static int sets_handler(const stmt_t *s) {
+    for (; s; s = s->next) {
+        switch (s->type) {
+            case STMT_ON_ERROR: if (s->on_error.label[0]) return 1; break;
+            case STMT_IF: if (sets_handler(s->if_stmt.then_body) || sets_handler(s->if_stmt.else_body)) return 1; break;
+            case STMT_FOR: if (sets_handler(s->for_stmt.body)) return 1; break;
+            case STMT_WHILE: if (sets_handler(s->while_stmt.body)) return 1; break;
+            case STMT_DO_LOOP: if (sets_handler(s->do_loop.body)) return 1; break;
+            case STMT_SELECT:
+                for (const case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next)
+                    if (sets_handler(cl->body)) return 1;
+                break;
+            case STMT_SUB_DEF: case STMT_FUNC_DEF: if (sets_handler(s->proc_def.body)) return 1; break;
+            default: break;
+        }
+    }
+    return 0;
+}
+
 static int native_eligible(const stmt_t *def, const code_t *c) {
     int ok = 1;
     char bare[64];
@@ -2044,7 +2066,7 @@ int main(int argc, char **argv) {
      * written first (any unit may call them) */
     code_t *pcodes[1024];
     {
-        int jx = 0;
+        int jx = 0, traps = sets_handler(program);
         for (stmt_t *d = program; d; d = d->next) {
             if (d->type != STMT_SUB_DEF && d->type != STMT_FUNC_DEF) continue;
             if (jx >= 1024) break;
@@ -2053,7 +2075,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "%s: %s: %s\n", in, d->proc_def.name, error_message(err));
                 return 1;
             }
-            native_ok_proc[jx] = native_eligible(d, pcodes[jx]);
+            native_ok_proc[jx] = !traps && native_eligible(d, pcodes[jx]);
             jx++;
         }
         /* the native bodies: written to a buffer now (their names known

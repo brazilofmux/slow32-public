@@ -10,7 +10,8 @@ SUB countdown(n)
 END SUB
 CALL countdown(10)
 
-REM Excessive recursion should trigger trappable error
+REM Excessive recursion: Out of stack space, which QBasic does not trap in
+REM a procedure (the handler would need the stack) -- the program stops
 ON ERROR GOTO trap
 SUB infinite(n)
   CALL infinite(n + 1)

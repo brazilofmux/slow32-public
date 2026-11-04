@@ -59,6 +59,7 @@ typedef enum {
     ERR_PARAM_MISMATCH,
     ERR_ADVANCED,            /* QB's "Advanced feature unavailable": BSAVE, BLOAD, CALL ABSOLUTE */
     ERR_RUN,                 /* flow control: RUN, the program again */
+    ERR_RESUME_LABEL,        /* flow control: RESUME label from a procedure, out to the main program */
     ERR_COUNT
 } error_t;
 
@@ -67,6 +68,9 @@ int error_qb_code(error_t err);
 
 /* Return the message string for an error code */
 const char *error_message(error_t err);
+
+/* ERROR n's number (or a handled error's), as ERR_ON_ERROR_GOTO prints */
+extern int error_raised_code;
 
 /* Print an error with line number context */
 void error_print(error_t err, int line);

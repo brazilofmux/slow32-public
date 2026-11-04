@@ -2833,12 +2833,30 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_COMMON: {
-            /* COMMON [SHARED] var [, var, ...] — no-op (all vars are already shared) */
-            int line = tok->line;
+            /* COMMON [SHARED] var [, var, ...]: CHAIN's (no CHAIN here, so
+             * plain COMMON declares nothing); COMMON SHARED's variables
+             * are the main program's in every SUB and FUNCTION, as DIM
+             * SHARED's (a scalar, x AS type) -- an array, a(), is passed
+             * over still: it is the DIM that makes it */
+            int line = tok->line, shared;
+            stmt_t *head = NULL, *tail = NULL;
             lexer_skip(&p->lex);
-            if (lexer_check(&p->lex, TOK_SHARED)) lexer_skip(&p->lex);
+            shared = lexer_match(&p->lex, TOK_SHARED);
             while (!at_stmt_end(p)) {
                 if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
+                if (shared && lexer_check(&p->lex, TOK_IDENT)) {
+                    lexer_t at = p->lex;
+                    int array;
+                    lexer_skip(&p->lex);
+                    array = lexer_check(&p->lex, TOK_LPAREN);
+                    p->lex = at;
+                    if (!array) {
+                        stmt_t *d = parse_dim_one(p, 0, 0, 1, line);
+                        if (!d) { stmt_free(head); return NULL; }
+                        stmt_append(&head, &tail, d);
+                        continue;
+                    }
+                }
                 /* Consume var name and optional type/array syntax */
                 if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
                     lexer_skip(&p->lex);
@@ -2858,7 +2876,7 @@ static stmt_t *parse_stmt(parser_t *p) {
                     }
                 } else break;
             }
-            return stmt_alloc(STMT_NOOP, line);
+            return head ? head : stmt_alloc(STMT_NOOP, line);
         }
 
         case TOK_CLEAR: {

@@ -83,6 +83,7 @@ static type_def_t type_defs[MAX_TYPE_DEFS];
 static int type_def_count = 0;
 
 /* ON ERROR state */
+static act_t *main_act;               /* the main program's activation, while it runs */
 static int on_error_label_idx = -1;  /* -1 = no handler */
 static int on_error_active = 0;      /* currently handling an error? */
 static int on_error_err_code = 0;    /* ERR value */
@@ -124,6 +125,7 @@ static int is_trappable_error(error_t err) {
     case ERR_NONE:
     case ERR_EXIT:
     case ERR_RUN:
+    case ERR_RESUME_LABEL:
     case ERR_BREAK:
     case ERR_EXIT_FOR:
     case ERR_EXIT_WHILE:
@@ -4278,15 +4280,18 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_MID_ASSIGN:   return exec_mid_assign(env, s);
 
         case STMT_ON_ERROR: {
+            /* (in the handler, QBasic: GOTO 0 stops the program with the
+             * error being handled; another label is the handler from now,
+             * this one still RESUMEs) */
             if (s->on_error.label[0] == '\0') {
                 /* ON ERROR GOTO 0: disable error trapping */
                 on_error_label_idx = -1;
+                if (on_error_active) { error_raised_code = on_error_err_code; return ERR_ON_ERROR_GOTO; }
             } else {
                 int idx = main_code ? code_find_label(main_code, s->on_error.label) : -1;
                 if (idx < 0) return ERR_UNDEFINED_LABEL;
                 on_error_label_idx = idx;
             }
-            on_error_active = 0;
             return ERR_NONE;
         }
 
@@ -4306,6 +4311,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             val_clear(&v);
             if (cerr != ERR_NONE) return cerr;
             on_error_err_code = code;
+            error_raised_code = code;
             on_error_err_line = cur_basic_line;
             return ERR_ON_ERROR_GOTO;
         }
@@ -4577,6 +4583,7 @@ error_t act_begin(act_t *a, env_t *env, code_t *c, int is_main) {
     a->nfors = a->cap_fors = 0;
     a->gosub_base = gosub_top;
     cur_code = c;
+    if (is_main) main_act = a;
     return ERR_NONE;
 }
 
@@ -4606,6 +4613,7 @@ int eval_names_plain(const char *const *names, int n) {
 }
 
 void act_end(act_t *a) {
+    if (a == main_act) main_act = NULL;
     if (gosub_top > a->gosub_base) gosub_top = a->gosub_base;
     free(a->fors);
     cur_code = a->saved_code;
@@ -4749,6 +4757,30 @@ error_t act_gosub(act_t *a, int return_pc) {
     return ERR_NONE;
 }
 
+/* The handler, for an error in a procedure: the main program's code
+ * from the handler's label, run here -- the procedure's activation still
+ * under it -- until a RESUME (*how: 0 the statement again, 1 NEXT, 2 a
+ * label), as QuickBASIC does it: RESUME and RESUME NEXT return into the
+ * procedure.  Whatever else stops it (END, an error in the handler) is
+ * returned. */
+static error_t run_handler(int *how) {
+    act_t *m = main_act;
+    int pc = on_error_label_idx;
+    error_t result = ERR_NONE;
+    while (pc < m->c->nops) {
+        error_t err = act_step_in(m, &pc);
+        if (err == ERR_NONE) continue;
+        if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
+            on_error_active = 0;
+            on_error_err_code = 0;      /* (ERR is 0 after a RESUME, QBasic) */
+            *how = resume_is_next;
+            return ERR_NONE;
+        }
+        if (!act_transfer(m, err, &pc, &result)) return result;
+    }
+    return ERR_EXIT;                    /* (off the end of the program: it ends) */
+}
+
 int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
     int pc = *ppc;
     op_t *op = &a->c->ops[pc];
@@ -4776,6 +4808,31 @@ int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
         }
         return 1;
     }
+    /* (out of stack in a procedure: QBasic does not trap it -- the
+     * handler would need the stack -- and stops) */
+    if (!a->is_main && err == ERR_STACK_OVERFLOW) on_error_label_idx = -1;
+    /* an error in a procedure, a handler set: the handler runs now */
+    if (!a->is_main && main_act && on_error_label_idx >= 0 && !on_error_active &&
+        (err == ERR_ON_ERROR_GOTO || is_trappable_error(err))) {
+        int how = 0;
+        error_t r;
+        if (err != ERR_ON_ERROR_GOTO) {
+            on_error_err_code = error_qb_code(err);
+            on_error_err_line = op->basic_line;
+        }
+        on_error_active = 1;
+        r = run_handler(&how);
+        if (r != ERR_NONE) { *result = r; return 0; }
+        if (how == 2) { *result = ERR_RESUME_LABEL; return 0; }   /* (out to the main program) */
+        *ppc = how ? pc + 1 : pc;
+        return 1;
+    }
+    if (err == ERR_RESUME_LABEL && a->is_main) {    /* RESUME label, from a procedure */
+        int idx = find_label(resume_label);
+        if (idx < 0) { *result = ERR_UNDEFINED_LABEL; return 0; }
+        *ppc = idx;
+        return 1;
+    }
     if (!a->is_main || err == ERR_EXIT) {
         *result = err;
         return 0;
@@ -4784,6 +4841,7 @@ int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
     /* RESUME / RESUME NEXT / RESUME label (from error handler) */
     if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
         on_error_active = 0;
+        on_error_err_code = 0;          /* (ERR is 0 after a RESUME, QBasic) */
         if (resume_is_next == 1)
             *ppc = on_error_resume_next_pc;
         else if (resume_is_next == 2) {

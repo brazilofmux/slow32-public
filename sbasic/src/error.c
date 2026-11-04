@@ -102,12 +102,29 @@ const char *error_message(error_t err) {
     return "Unknown error";
 }
 
+/* ERROR n's number, or the error a handler had when ON ERROR GOTO 0
+ * stopped it: ERR_ON_ERROR_GOTO prints as QBasic prints that number --
+ * its error's message, or "Unprintable error" */
+int error_raised_code;
+
 void error_print(error_t err, int line) {
+    const char *m;
     if (err == ERR_NONE || err == ERR_EXIT ||
         (err >= ERR_EXIT_FOR && err <= ERR_RETURN))
         return;
+    m = error_message(err);
+    if (err == ERR_ON_ERROR_GOTO) {
+        m = "Unprintable error";
+        /* (5 is every unnumbered error's too: Illegal function call's own) */
+        if (error_raised_code == 5) m = error_message(ERR_ILLEGAL_FUNCTION_CALL);
+        else for (int e = ERR_NONE + 1; e < ERR_COUNT; e++)
+            if (e != ERR_ON_ERROR_GOTO && error_qb_code((error_t)e) == error_raised_code) {
+                m = error_message((error_t)e);
+                break;
+            }
+    }
     if (line > 0)
-        printf("Error in line %d: %s\n", line, error_message(err));
+        printf("Error in line %d: %s\n", line, m);
     else
-        printf("Error: %s\n", error_message(err));
+        printf("Error: %s\n", m);
 }
