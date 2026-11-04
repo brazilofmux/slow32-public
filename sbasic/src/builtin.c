@@ -3,6 +3,7 @@
 #include "fileio.h"
 #include "terminal.h"
 #include "graphics.h"
+#include "machine.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -711,19 +712,14 @@ static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
 }
 
 /* PEEK/POKE simulated memory state */
-extern unsigned char peek_poke_mem[];
-int def_seg = 0;  /* DEF SEG segment (address = seg*16 + offset) */
 int console_width = 80; /* WIDTH setting */
-#define PEEK_POKE_SIZE 65536
-
-/* PEEK(addr) - read byte from simulated memory (uses DEF SEG) */
+/* PEEK(offset): the byte at DEF SEG's segment there (machine.c) */
 static error_t fn_peek(value_t *args, int nargs, value_t *out) {
+    int offset, v;
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    int offset;
     EVAL_CHECK(val_to_integer(&args[0], &offset));
-    int addr = def_seg * 16 + offset;
-    if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_integer((int)peek_poke_mem[addr]);
+    EVAL_CHECK(pc_peek(offset, &v));
+    *out = val_integer(v);
     return ERR_NONE;
 }
 
@@ -757,9 +753,11 @@ static error_t fn_seek(value_t *args, int nargs, value_t *out) {
 
 /* INP(port) - hardware port read (stub, returns 0) */
 static error_t fn_inp(value_t *args, int nargs, value_t *out) {
+    int port, v;
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    (void)args;
-    *out = val_integer(0);
+    EVAL_CHECK(val_to_integer(&args[0], &port));
+    EVAL_CHECK(pc_inp(port, &v));       /* (machine.c: the VGA's ports, the rest 0) */
+    *out = val_integer(v);
     return ERR_NONE;
 }
 

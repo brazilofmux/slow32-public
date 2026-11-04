@@ -2815,30 +2815,19 @@ static stmt_t *parse_stmt(parser_t *p) {
             return s;
         }
 
-        case TOK_WAIT: {
-            /* WAIT port, expr [, expr] — no-op */
-            int line = tok->line;
+        case TOK_WAIT:                  /* WAIT port, and [, xor] */
+        case TOK_OUT: {                 /* OUT port, value (machine.c's devices) */
+            int line = tok->line, wait = tok->type == TOK_WAIT;
             lexer_skip(&p->lex);
-            while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
-                expr_t *e = parse_expr(p);
-                if (e) expr_free(e);
-                else break;
+            stmt_t *s = stmt_alloc(wait ? STMT_WAIT : STMT_OUT, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            if (!(s->port_stmt.port = parse_expr(p)) || !expect(p, TOK_COMMA) ||
+                !(s->port_stmt.a = parse_expr(p)) ||
+                (wait && lexer_match(&p->lex, TOK_COMMA) && !(s->port_stmt.b = parse_expr(p)))) {
+                stmt_free(s);
+                return NULL;
             }
-            return stmt_alloc(STMT_NOOP, line);
-        }
-
-        case TOK_OUT: {
-            /* OUT port, value — no-op */
-            int line = tok->line;
-            lexer_skip(&p->lex);
-            expr_t *e = parse_expr(p);
-            if (e) expr_free(e);
-            if (lexer_match(&p->lex, TOK_COMMA)) {
-                e = parse_expr(p);
-                if (e) expr_free(e);
-            }
-            return stmt_alloc(STMT_NOOP, line);
+            return s;
         }
 
         case TOK_COMMON: {

@@ -182,6 +182,8 @@ typedef enum {
     STMT_RUN,           /* RUN: the program again from its start */
     STMT_DRAW,          /* DRAW s$: shell_stmt.command the string */
     STMT_VIEW_PRINT,    /* VIEW PRINT [top TO bottom]: width_stmt's columns, rows */
+    STMT_OUT,           /* OUT port, value: port_stmt */
+    STMT_WAIT,          /* WAIT port, and[, xor]: port_stmt */
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -468,6 +470,11 @@ typedef struct stmt {
             struct expr *oldname;
             struct expr *newname;
         } name_stmt;
+
+        /* STMT_OUT / STMT_WAIT */
+        struct {
+            struct expr *port, *a, *b;  /* OUT: a the value; WAIT: a and, b xor (or NULL) */
+        } port_stmt;
 
         /* STMT_CLS: CLS [mode] */
         struct {

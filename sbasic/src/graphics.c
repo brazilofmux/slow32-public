@@ -19,6 +19,7 @@ static uint32_t palette[256];
 static uint32_t generation = 1;
 static int fg = 15;             /* default draw color */
 static void draw_reset(void);
+static void flip(void);
 
 /* VIEW: the viewport, absolute and inclusive (the whole screen when
  * none); view_scr, VIEW SCREEN's absolute coordinates (and none's), else
@@ -42,27 +43,68 @@ static const uint32_t rgbi16[16] = {
     0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF,
 };
 
+/* The VGA's colors: a DAC of 256 (here 8 bits a component; the ports
+ * read and write 6), and in the 16-color modes the attribute controller's
+ * map of each attribute to a DAC entry -- loaded, as the BIOS loads them,
+ * with EGA's 64 colors and 0-5, 20, 7, 56-63 (attribute 6 is brown,
+ * DAC 20).  What the screen shows (palette[]) is made from them. */
+static uint32_t dac[256];
+static uint8_t attr_map[16];
+
+static void palette_sync(void) {
+    for (int i = 0; i < 256; i++)
+        palette[i] = scr_colors <= 16 ? (i < 16 ? dac[attr_map[i]] : 0) : dac[i];
+}
+
+/* EGA's 64 colors: bits 0-2 B G R at 2/3, bits 3-5 b g r at 1/3 */
+static uint32_t ega64(int k) {
+    uint32_t r = (k & 4 ? 0xAA : 0) + (k & 32 ? 0x55 : 0);
+    uint32_t g = (k & 2 ? 0xAA : 0) + (k & 16 ? 0x55 : 0);
+    uint32_t b = (k & 1 ? 0xAA : 0) + (k & 8 ? 0x55 : 0);
+    return r << 16 | g << 8 | b;
+}
+
 static void build_default_palette(void) {
+    static const uint8_t map16[16] = { 0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63 };
     int i;
-    memset(palette, 0, sizeof(palette));
-    for (i = 0; i < 16; i++)
-        palette[i] = rgbi16[i];
-    if (scr_colors <= 16)
+    memset(dac, 0, sizeof(dac));
+    if (scr_colors <= 16) {
+        for (i = 0; i < 64; i++) dac[i] = ega64(i);
+        memcpy(attr_map, map16, sizeof attr_map);
+        palette_sync();
         return;
+    }
+    for (i = 0; i < 16; i++)
+        dac[i] = rgbi16[i];
     /* 256-color mode: 16 RGBI, a 16-step gray ramp, a 6x6x6 cube,
      * and black in the tail. Not the VGA ROM palette; PALETTE can
      * make it anything. */
     for (i = 16; i < 32; i++) {
         uint32_t v = (uint32_t)(i - 16) * 17u;
-        palette[i] = (v << 16) | (v << 8) | v;
+        dac[i] = (v << 16) | (v << 8) | v;
     }
     for (i = 32; i < 248; i++) {
         int idx = i - 32;
         uint32_t r = (uint32_t)(idx / 36) * 51u;
         uint32_t g = (uint32_t)((idx / 6) % 6) * 51u;
         uint32_t b = (uint32_t)(idx % 6) * 51u;
-        palette[i] = (r << 16) | (g << 8) | b;
+        dac[i] = (r << 16) | (g << 8) | b;
     }
+    palette_sync();
+}
+
+/* the DAC's entry k, component c (0 red, 1 green, 2 blue), 6 bits, as
+ * port 3C9 reads and writes it */
+int sb_gfx_dac_get(int k, int c) {
+    return (int)(dac[k & 255] >> (16 - 8 * c) & 0xFF) >> 2;
+}
+
+void sb_gfx_dac_set(int k, int r6, int g6, int b6) {
+    uint32_t r = (uint32_t)(r6 & 63), g = (uint32_t)(g6 & 63), b = (uint32_t)(b6 & 63);
+    dac[k & 255] = (r << 2 | r >> 4) << 16 | (g << 2 | g >> 4) << 8 | (b << 2 | b >> 4);
+    if (!scr_mode) return;
+    palette_sync();
+    flip();
 }
 
 static void flip(void) {
@@ -509,8 +551,10 @@ void sb_gfx_palette(int attr, int rgb) {
         return;
     if (attr < 0) {
         build_default_palette();
-    } else {
-        palette[attr & (scr_colors - 1)] = (uint32_t)rgb & 0xFFFFFFu;
+    } else {                            /* (the attribute's DAC entry) */
+        int a = attr & (scr_colors - 1);
+        dac[scr_colors <= 16 ? attr_map[a & 15] : a] = (uint32_t)rgb & 0xFFFFFFu;
+        palette_sync();
     }
     flip();
 }
@@ -723,6 +767,19 @@ int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action) {
         }
     flip();
     return 0;
+}
+
+int sb_gfx_mode(void) { return scr_mode; }
+
+int sb_gfx_fb_get(int off) {
+    if (scr_mode != 13 || off < 0 || off >= scr_w * scr_h) return -1;
+    return pixels[off];
+}
+
+void sb_gfx_fb_set(int off, int v) {
+    if (scr_mode != 13 || off < 0 || off >= scr_w * scr_h) return;
+    pixels[off] = (uint8_t)v;
+    flip();
 }
 
 int sb_gfx_point(int x, int y) {

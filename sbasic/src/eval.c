@@ -4,6 +4,7 @@
 #include "fileio.h"
 #include "terminal.h"
 #include "graphics.h"
+#include "machine.h"
 #include "lower.h"
 #include <stdio.h>
 #include <math.h>
@@ -113,8 +114,6 @@ static int eval_depth = 0;
 int trace_enabled = 0;
 
 /* PEEK/POKE simulated memory (64KB) */
-#define PEEK_POKE_SIZE 65536
-unsigned char peek_poke_mem[PEEK_POKE_SIZE];
 
 /* OPTION EXPLICIT: require variables to be declared before use */
 static int option_explicit = 0;
@@ -2550,6 +2549,28 @@ error_t eval_screen_at(int row, int col, int attr, value_t *out) {
     return ERR_NONE;
 }
 
+/* the text screen at B800 (machine.c): byte k of its cells, a character
+ * then an attribute each, a row of the width's cells after another --
+ * read (v < 0), or written and shown */
+int eval_text_byte(int k, int v) {
+    extern int console_width;
+    int cols = console_width > 0 && console_width <= SCR_COLS ? console_width : 80;
+    int cell = k / 2, row = cell / cols, col = cell % cols;
+    if (row >= scr_rows) return 0;
+    if (v < 0) return k & 1 ? scr_at[row][col] : scr_ch[row][col];
+    if (k & 1) scr_at[row][col] = (unsigned char)v;
+    else scr_ch[row][col] = (unsigned char)v;
+    sb_term_putat(row + 1, col + 1, scr_ch[row][col], scr_at[row][col], print_row, print_col + 1);
+    return v;
+}
+
+int eval_text_cols(void) {
+    extern int console_width;
+    return console_width > 0 ? console_width : 80;
+}
+
+int eval_text_rows(void) { return scr_rows; }
+
 /* VIEW PRINT [top TO bottom] (none: all the rows) -- for compiled code too */
 error_t eval_view_print(int has, int top, int bottom) {
     if (!has) { top = 1; bottom = scr_rows; }
@@ -3508,13 +3529,9 @@ error_t eval_dir(int kind, const value_t *path) {
     return r != 0 ? ERR_FILE_NOT_FOUND : ERR_NONE;
 }
 
-/* POKE offset, v (in DEF SEG's segment) -- for compiled code too */
+/* POKE offset, v (in DEF SEG's segment: machine.c) -- for compiled code too */
 error_t eval_poke(int offset, int val) {
-    extern int def_seg;
-    int addr = def_seg * 16 + offset;
-    if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
-    peek_poke_mem[addr] = (unsigned char)(val & 0xFF);
-    return ERR_NONE;
+    return pc_poke(offset, val);
 }
 
 /* SLEEP seconds (v NULL: SLEEP alone) -- for compiled code too */
@@ -4113,6 +4130,15 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
                 def_seg = 0;
             }
             return ERR_NONE;
+        }
+
+        case STMT_OUT:
+        case STMT_WAIT: {               /* the port, then the value(s), made integers */
+            int port, a, b = 0;
+            EVAL_CHECK(eval_int_of(env, s->port_stmt.port, &port));
+            EVAL_CHECK(eval_int_of(env, s->port_stmt.a, &a));
+            if (s->port_stmt.b) EVAL_CHECK(eval_int_of(env, s->port_stmt.b, &b));
+            return s->type == STMT_OUT ? pc_out(port, a) : pc_wait(port, a, b);
         }
 
         case STMT_VIEW_PRINT: {         /* VIEW PRINT [top TO bottom] */
@@ -4787,6 +4813,7 @@ void eval_reset(void) {
     view_top = 1;
     view_bottom = 24;
     scr_clear_rows(1, SCR_ROWS);
+    pc_reset();
     eval_depth = 0;
     on_error_label_idx = -1;
     on_error_active = 0;

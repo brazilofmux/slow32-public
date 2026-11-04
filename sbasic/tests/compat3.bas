@@ -25,11 +25,11 @@ PALETTE 1, 2
 ON TIMER(60) GOSUB 999
 ON KEY(1) GOSUB 999
 
-' 5. WAIT / OUT (no-op)
+' 5. WAIT / OUT at a port with no device (WAIT looks once)
 WAIT 888, 1
 OUT 888, 0
 
-' 6. INP function (stub)
+' 6. INP at a port with no device: 255, the bus floating high
 PRINT "INP:"; INP(888)
 
 ' 7. VARPTR / SADD (stubs)

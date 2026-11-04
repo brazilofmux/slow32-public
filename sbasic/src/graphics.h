@@ -68,6 +68,16 @@ void sb_gfx_get(int x1, int y1, int x2, int y2, unsigned char *buf);
  * call), else 0 */
 int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action);
 
+/* the VGA DAC's entry k, a component (0 red, 1 green, 2 blue) of 6 bits,
+ * as ports 3C7-3C9 read and write it; set changes what the screen shows */
+int sb_gfx_dac_get(int k, int c);
+void sb_gfx_dac_set(int k, int r6, int g6, int b6);
+/* the open mode's number (0: none), and a SCREEN 13 pixel by its byte's
+ * offset at A000 (64000 of them): -1 / nothing past them, or another mode */
+int sb_gfx_mode(void);
+int sb_gfx_fb_get(int off);
+void sb_gfx_fb_set(int off, int v);
+
 /* POINT(x, y): pixel value, or -1 (no screen / out of range). */
 int sb_gfx_point(int x, int y);
 

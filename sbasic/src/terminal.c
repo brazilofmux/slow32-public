@@ -89,6 +89,26 @@ void sb_term_locate(int row, int col) {
 
 int sb_term_attr(void) { return (cur_fg & 15) | (cur_bg & 7) << 4; }
 
+void sb_term_putat(int row, int col, int ch, int attr, int crow, int ccol) {
+    int fg = attr & 15, bg = attr >> 4 & 7;
+    ensure_init();
+    if (term_state == 1) {
+        term_sync();
+        term_gotoxy(row, col);
+        term_set_attr(fg >= 8 ? 1 : 0);
+        term_set_color(fg & 7, bg);
+        putchar(ch);
+        term_sync();
+        term_set_attr(cur_fg >= 8 ? 1 : 0);
+        term_set_color(cur_fg & 7, cur_bg & 7);
+        term_gotoxy(crow, ccol);
+        return;
+    }
+    printf("\0337\033[%d;%dH\033[%d;%dm%c\0338", row, col,
+           fg < 8 ? 30 + fg : 90 + fg - 8, 40 + bg, ch);
+    fflush(stdout);
+}
+
 void sb_term_color(int fg, int bg, int has_fg, int has_bg) {
     ensure_init();
 
