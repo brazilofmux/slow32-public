@@ -410,11 +410,21 @@ s32-bc's per-function table of failure blocks held four kinds of error
 unchecked: vektor.bas overran it (now 32, checked).  The 92 games:
 67.8M instructions (from 66-67.5M: e first costs a little).
 
-Left, by count: graphics GET/PUT sprites (13), WINDOW/VIEW and SCREEN
+Then graphics GET and PUT (35d4d75a/d8a3cfcf): QuickBASIC's array
+layout per mode, checked in QBasic's SCREEN 7 and 1 (its DOS emulator
+has no VGA; 13 and 12 are held to the layout as documented, and
+compiled to interpreted); HEX$ of a negative INTEGER its 16 bits on the
+way.  68 compile.  Seen and left: A! under DEFINT is SINGLE in QBasic
+(the lexer drops the !, so here it is A); SCREEN 0 after SCREEN 7 keeps
+40 columns there.
+
+Left, by count: WINDOW/VIEW and SCREEN
 with arguments left out, CIRCLE's arcs and aspect, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
 commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
-whole array as an argument, a DEFtype after a use, ELSEIF on a line
+whole array as an argument, PUT #/GET # and MID$ = on an element, the
+checker not knowing PMAP, VARSEG, BSAVE (it takes them for an array or
+a SUB), a DEFtype after a use, ELSEIF on a line
 of its own after a single-line THEN, SCREEN() as a function.  Also
 from QBasic: a FUNCTION f% may be named f, inside and out (the
 interpreter makes f a variable).
