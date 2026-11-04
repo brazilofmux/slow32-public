@@ -2439,8 +2439,14 @@ error_t eval_gfx(const gfx_op_t *g) {
     int color = g->color, aux = g->aux, ax, ay, bx, by;
     double lx, ly, mx, my;
     if (!sb_gfx_active()) {
-        if (g->type == STMT_PALETTE)
-            return ERR_NONE;            /* legal in text mode (no-op) */
+        if (g->type == STMT_PALETTE) {  /* (text mode: checked as QBasic does, kept no further) */
+            int a = 0;
+            if (g->has_x1) {
+                value_t t = val_double(g->x1);
+                EVAL_CHECK(val_to_integer(&t, &a));
+            }
+            return a < 0 || a > 15 || color < -1 || color > 63 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
+        }
         if (sb_gfx_degraded())
             return ERR_NONE;            /* no tube: statements no-op */
         return ERR_ILLEGAL_FUNCTION_CALL;  /* no SCREEN yet */
@@ -2514,7 +2520,7 @@ error_t eval_gfx(const gfx_op_t *g) {
                 int attr;
                 value_t t = val_double(g->x1);
                 EVAL_CHECK(val_to_integer(&t, &attr));
-                sb_gfx_palette(attr, color);
+                if (attr < 0 || sb_gfx_palette(attr, color) < 0) return ERR_ILLEGAL_FUNCTION_CALL;
             } else
                 sb_gfx_palette(-1, 0);
             break;
@@ -3585,11 +3591,24 @@ error_t eval_sleep(const value_t *v) {
 
 /* WIDTH w, made an integer -- for compiled code too */
 /* WIDTH's columns (20 to 255 kept, for the dialects that set a line's
- * length so) -- but 40 in SCREEN 11 or 12 is refused, as QBasic does */
+ * length so).  In a graphics mode QBasic changes to the mode of that
+ * width (probed): 80 makes SCREEN 1 into 2, 7 into 8, and 13 into text
+ * (SCREEN 0, 80 columns); 40 makes 2 into 1, and 8 or 9 into 7; 40 in
+ * SCREEN 11 or 12 is refused; a mode already that wide is left alone */
 error_t eval_width(int w) {
     extern int console_width;
-    int m = sb_gfx_mode();
-    if (w == 40 && (m == 11 || m == 12)) return ERR_ILLEGAL_FUNCTION_CALL;
+    int m = sb_gfx_mode(), to = -1;
+    if (w == 80) to = m == 1 ? 2 : m == 7 ? 8 : m == 13 ? 0 : -1;
+    if (w == 40) {
+        if (m == 11 || m == 12) return ERR_ILLEGAL_FUNCTION_CALL;
+        to = m == 2 ? 1 : m == 8 || m == 9 ? 7 : -1;
+    }
+    if (to >= 0) {
+        EVAL_CHECK(eval_screen(to));
+        if (!to) console_width = 80;
+        return ERR_NONE;
+    }
+    if (m && (w == 40 || w == 80)) return ERR_NONE;
     if (w >= 20 && w <= 255) console_width = w;
     return ERR_NONE;
 }

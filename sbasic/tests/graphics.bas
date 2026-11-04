@@ -22,8 +22,8 @@ PRINT POINT(100, 70)
 REM diagonal line and STEP on the second point
 LINE (0, 0)-STEP(4, 4), 7
 PRINT POINT(0, 0); POINT(2, 2); POINT(4, 4)
-REM palette animation is host-side; entry writes just must not error
-PALETTE 4, 16744448
+REM PALETTE: an attribute SCREEN 1 has, one of the 16 colors
+PALETTE 3, 13
 PALETTE
 REM clipping is silent; out-of-range POINT is -1
 PSET (-5, -5), 1

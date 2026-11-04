@@ -46,7 +46,7 @@ void sb_gfx_cls(void);
 /* PALETTE attr, rgb24 (0xRRGGBB). attr -1 restores the default
  * palette. The host re-reads the palette every present, so this
  * animates already-drawn pixels. */
-void sb_gfx_palette(int attr, int rgb);
+int sb_gfx_palette(int attr, int value);
 
 /* GET and PUT's images, laid out as QuickBASIC lays them out for the
  * mode: two 16-bit words, the width times the bits a pixel has in one

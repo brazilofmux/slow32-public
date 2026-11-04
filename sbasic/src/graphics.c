@@ -64,13 +64,20 @@ static uint32_t ega64(int k) {
     return r << 16 | g << 8 | b;
 }
 
+/* the 16 colors' EGA registers by default (6 brown, 8 to 15 bright) */
+static const uint8_t map16[16] = { 0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63 };
+
 static void build_default_palette(void) {
-    static const uint8_t map16[16] = { 0, 1, 2, 3, 4, 5, 20, 7, 56, 57, 58, 59, 60, 61, 62, 63 };
     int i;
     memset(dac, 0, sizeof(dac));
     if (scr_colors <= 16) {
         for (i = 0; i < 64; i++) dac[i] = ega64(i);
         memcpy(attr_map, map16, sizeof attr_map);
+        if (scr_colors == 4) {          /* (CGA's: bright cyan, magenta, white) */
+            attr_map[1] = 59; attr_map[2] = 61; attr_map[3] = 63;
+        } else if (scr_colors == 2) {
+            attr_map[1] = 63;
+        }
         palette_sync();
         return;
     }
@@ -134,10 +141,15 @@ int sb_gfx_screen(int mode) {
     }
 
     switch (mode) {
-        case 1: case 7:  w = 320; h = 200; colors = 16;  break;
-        case 2: case 8:  w = 640; h = 200; colors = 16;  break;
+        /* (the colors each has: 4 in 1, 2 in 2 and 11 -- PSET 15 there
+         * reads back 3 and 1, QBasic) */
+        case 1:          w = 320; h = 200; colors = 4;   break;
+        case 7:          w = 320; h = 200; colors = 16;  break;
+        case 2:          w = 640; h = 200; colors = 2;   break;
+        case 8:          w = 640; h = 200; colors = 16;  break;
         case 9:          w = 640; h = 350; colors = 16;  break;
-        case 11: case 12: w = 640; h = 480; colors = 16; break;
+        case 11:         w = 640; h = 480; colors = 2;   break;
+        case 12:         w = 640; h = 480; colors = 16;  break;
         case 13:         w = 320; h = 200; colors = 256; break;
         default:         return -2;
     }
@@ -172,7 +184,7 @@ int sb_gfx_screen(int mode) {
         return -1;
     }
     scr_mode = mode;
-    fg = 15;
+    fg = colors > 16 ? 15 : colors - 1;  /* (the foreground: the last attribute) */
     view_reset();
     win_on = 0;
     draw_reset();
@@ -311,10 +323,17 @@ int sb_gfx_window(int on, int scr, double x1, double y1, double x2, double y2) {
     return 0;
 }
 
+/* a color as QBasic draws it: its low byte, the mode's last color if
+ * past them (SCREEN 1's 4 to 255 all 3; -1 given is the foreground) */
+static int mode_color(int color) {
+    color &= 255;
+    return color >= scr_colors ? scr_colors - 1 : color;
+}
+
 static int clamp_color(int color) {
     if (color < 0)
         return fg;
-    return color & (scr_colors - 1);
+    return mode_color(color);
 }
 
 static void plot(int x, int y, int c) {
@@ -484,7 +503,7 @@ void sb_gfx_paint(int x, int y, int paint, int border) {
     if (!scr_mode)
         return;
     paint = clamp_color(paint);
-    border = (border < 0) ? paint : (border & (scr_colors - 1));
+    border = (border < 0) ? paint : mode_color(border);
     if (!fillable(x, y, paint, border)) {
         flip();
         return;
@@ -546,17 +565,34 @@ void sb_gfx_cls(void) {
     flip();
 }
 
-void sb_gfx_palette(int attr, int rgb) {
+/* PALETTE attr, value (attr < 0: PALETTE alone, the default back), as
+ * QBasic takes them (probed): an attribute the mode has (in 13 its low
+ * byte); a value of -1 leaves it; in the EGA modes the value is a color
+ * for the attribute's palette register -- one of the 16 at 200 lines
+ * (1, 2, 7, 8), any of the 64 in 9; at VGA
+ * (11, 12, 13) it is blue * 65536 + green * 256 + red, six bits each,
+ * the attribute's DAC entry.  -1 when QBasic says Illegal function call. */
+int sb_gfx_palette(int attr, int value) {
     if (!scr_mode)
-        return;
+        return 0;
     if (attr < 0) {
         build_default_palette();
-    } else {                            /* (the attribute's DAC entry) */
-        int a = attr & (scr_colors - 1);
-        dac[scr_colors <= 16 ? attr_map[a & 15] : a] = (uint32_t)rgb & 0xFFFFFFu;
-        palette_sync();
+        flip();
+        return 0;
     }
-    flip();
+    if (scr_colors == 256) attr &= 255;
+    if (attr >= scr_colors) return -1;
+    if (value == -1) return 0;
+    if (scr_mode <= 9) {
+        if (value < 0 || value > (scr_mode == 9 ? 63 : 15)) return -1;
+        attr_map[attr] = scr_mode == 9 ? (uint8_t)value : map16[value];
+        palette_sync();
+        flip();
+        return 0;
+    }
+    if (value < 0 || (value & 0xC0C0C0) || value > 0x3F3F3F) return -1;
+    sb_gfx_dac_set(scr_colors == 256 ? attr : attr_map[attr], value & 63, value >> 8 & 63, value >> 16 & 63);
+    return 0;
 }
 
 /* --- DRAW ----------------------------------------------------------- */

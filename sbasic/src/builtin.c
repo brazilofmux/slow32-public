@@ -1175,6 +1175,7 @@ static error_t fn_point(value_t *args, int nargs, value_t *out) {
     if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
     EVAL_CHECK(get_num(&args[0], &x));
     EVAL_CHECK(get_num(&args[1], &y));
+    if (!sb_gfx_active() && !sb_gfx_degraded()) return ERR_ILLEGAL_FUNCTION_CALL;  /* (text mode, as PSET) */
     if (sb_gfx_map(x, y, &ax, &ay) < 0) return ERR_OVERFLOW;
     *out = val_integer(sb_gfx_point(ax, ay));
     return ERR_NONE;

@@ -485,9 +485,20 @@ refused.  Every SCREEN clears the text and homes the cursor; a mode's
 text is 40 columns in 1, 7 and 13 and 80 in the rest, 30 rows in 11 and
 12; SCREEN 0 after a graphics mode takes its columns, 25 rows; WIDTH 40
 in SCREEN 11 or 12 is refused.  SCREEN 11 is there (12's size, 2's
-one-bit image layout).  Left: WIDTH 80 in SCREEN 1, 7 or 13 switches
-QBasic to the 80-column mode (2, 8; the pixels change) -- ours changes
-only the text's columns.
+one-bit image layout).
+
+Then WIDTH in the graphics modes, and the colors (widthmodes.bas, byte
+for byte with QBasic): WIDTH 80 makes SCREEN 1 into 2, 7 into 8, and 13
+into text (SCREEN 0, 80 columns); WIDTH 40 makes 2 into 1, 8 or 9 into
+7; a change clears, the mode's own width changes nothing.  Each mode
+has its colors -- 4 in SCREEN 1, 2 in 2 and 11 -- and a color drawn is
+its low byte, the mode's last if past them (SCREEN 1's 4 to 255 all 3;
+256 is 0); POINT in text mode is Illegal function call.  PALETTE takes
+QBasic's values at last: an attribute the mode has; at 200 lines (1, 2,
+7, 8) one of the 16 colors, in 9 (and text) any of the 64 EGA colors,
+at VGA (11, 12, 13) blue * 65536 + green * 256 + red, six bits each;
+-1 leaves it.  graphics.bas had PALETTE 4, &HFF8000 in SCREEN 1, which
+QBasic refuses twice over, and colors past 3 that it draws as 3.
 
 Older list, by count: SCREEN
 with arguments left out, names with a dot
