@@ -422,7 +422,8 @@ static const compiled_proc_t *find_compiled(const char *name) {
 
 /* --- User-defined procedure call --- */
 
-/* the main program's DIM SHARED names, an array's as NAME() (scan) */
+/* the main program's DIM SHARED names, an array's as NAME() (scan) --
+ * and its CONSTs, which every procedure sees too */
 static char (*dim_shared)[68];
 static int ndim_shared, cap_dim_shared;
 
@@ -3555,6 +3556,8 @@ static error_t scan_one_stmt(stmt_t *s) {
     }
     if (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared)
         dim_shared_add(s->dim_scalar.name, 0);
+    if (s->type == STMT_CONST)          /* (a module CONST: every procedure's; the scan is the main program's) */
+        dim_shared_add(s->const_stmt.name, 0);
     if (s->type == STMT_LABEL) {
         if (label_count == label_cap) {
             int cap = label_cap ? label_cap * 2 : 256;

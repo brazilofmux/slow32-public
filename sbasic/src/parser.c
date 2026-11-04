@@ -1072,17 +1072,24 @@ static stmt_t *parse_exit(parser_t *p) {
     return stmt_exit(what, line);
 }
 
+/* CONST a = e [, b = e ...]: one statement per name, chained */
 static stmt_t *parse_const(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
+    stmt_t *head = NULL, *tail = NULL;
     lexer_skip(&p->lex); /* consume CONST */
-    if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); return NULL;
-    }
-    token_t name = lexer_next(&p->lex);
-    if (!expect(p, TOK_EQ)) return NULL;
-    expr_t *val = parse_expr(p);
-    if (!val) return NULL;
-    return stmt_const(name.text, var_type_from_name(name.text), val, line);
+    do {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(head); return NULL;
+        }
+        token_t name = lexer_next(&p->lex);
+        if (!expect(p, TOK_EQ)) { stmt_free(head); return NULL; }
+        expr_t *val = parse_expr(p);
+        if (!val) { stmt_free(head); return NULL; }
+        stmt_t *s = stmt_const(name.text, var_type_from_name(name.text), val, line);
+        if (!s) { stmt_free(head); return NULL; }
+        stmt_append(&head, &tail, s);
+    } while (lexer_match(&p->lex, TOK_COMMA));
+    return head;
 }
 
 static int list_name(parser_t *p, stmt_t *s, void (*add)(stmt_t *, const char *));

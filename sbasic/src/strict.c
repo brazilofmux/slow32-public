@@ -25,6 +25,7 @@ typedef struct {
     refs_t dims, uses;          /* arrays: DIMs, and uses */
     refs_t bounds;              /* arrays LBOUND or UBOUND names */
     refs_t redims;              /* arrays REDIMmed (which declares one too) */
+    refs_t consts;              /* its CONSTs */
     refs_t erased;              /* arrays ERASEd, which may be DIMmed again */
     refs_t options;             /* OPTION BASE statements */
     int base;                   /* the OPTION BASE in force */
@@ -40,6 +41,7 @@ typedef struct {
     refs_t procs;               /* SUB and FUNCTION names */
     refs_t fndefs, fnuses;      /* DEF FN, program-wide */
     refs_t dimshared;           /* arrays the main program DIMs SHARED */
+    refs_t modconsts;           /* the main program's CONSTs, every unit's */
     unit_t *u;                  /* the unit being walked */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
     int depth;                  /* statement lists open inside the unit's own */
@@ -146,6 +148,45 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc);
  * open.  So `IF ... THEN PRINT X$;: NEXT Z` is "NEXT without FOR", and
  * so is a NEXT that would skip an inner FOR; a FOR left open is "FOR
  * without NEXT".  Jumps into and out of a FOR are allowed. */
+/* name, a CONST of this unit or the main program's, given a value: QB
+ * refuses it at load ("Duplicate definition", "Variable required") */
+static void const_target(check_t *c, const char *name, int line) {
+    char d[128];
+    if (find(&c->u->consts, name) || find(&c->modconsts, name)) {
+        snprintf(d, sizeof d, "%s is a CONST", name);
+        finding(c, line, "const-assign", d);
+    }
+}
+
+/* what a CONST's value may be (QB: "Invalid constant", and "Illegal
+ * function call" for a string operator): literals and CONSTs, joined by
+ * numeric operators and comparisons; why not, else NULL */
+static const char *const_value(check_t *c, const expr_t *e) {
+    const char *why;
+    switch (e->type) {
+    case EXPR_LITERAL:
+        return NULL;
+    case EXPR_VARIABLE:
+        return find(&c->u->consts, e->var.name) || find(&c->modconsts, e->var.name)
+               ? NULL : "names no CONST";
+    case EXPR_UNARY:
+        return const_value(c, e->unary.operand);
+    case EXPR_COMPARE:
+        if ((why = const_value(c, e->compare.left))) return why;
+        return const_value(c, e->compare.right);
+    case EXPR_BINARY:
+        if (e->binary.op == OP_STRCAT) return "joins strings";
+        if ((why = const_value(c, e->binary.left))) return why;
+        if ((why = const_value(c, e->binary.right))) return why;
+        if ((e->binary.left->type == EXPR_LITERAL && e->binary.left->literal.type == VAL_STRING) ||
+            (e->binary.right->type == EXPR_LITERAL && e->binary.right->literal.type == VAL_STRING))
+            return "joins strings";
+        return NULL;
+    default:
+        return "calls a function";
+    }
+}
+
 static void walk_list(check_t *c, stmt_t *s) {
     int base = c->nst;
     char d[128];
@@ -154,6 +195,24 @@ static void walk_list(check_t *c, stmt_t *s) {
         int seq = ++c->seq;
         stmt_exprs(s, scan_top, c);
         switch (s->type) {
+        case STMT_CONST: {
+            const char *why = const_value(c, s->const_stmt.value);
+            if (why) {
+                snprintf(d, sizeof d, "CONST %s's value %s", s->const_stmt.name, why);
+                finding(c, s->line, "const-value", d);
+            }
+            push(&c->u->consts, s->const_stmt.name, seq, s->line, 0);
+            break;
+        }
+        case STMT_ASSIGN:
+            const_target(c, s->assign.name, s->line);
+            break;
+        case STMT_INPUT:
+            for (int i = 0; i < s->input.nvars; i++) const_target(c, s->input.varnames[i], s->line);
+            break;
+        case STMT_READ:
+            for (int i = 0; i < s->read_stmt.nvars; i++) const_target(c, s->read_stmt.varnames[i], s->line);
+            break;
         case STMT_LABEL:
             if (find(&c->u->labels, s->label.name)) {
                 snprintf(d, sizeof d, "label %s defined twice", s->label.name);
@@ -162,6 +221,7 @@ static void walk_list(check_t *c, stmt_t *s) {
                 push(&c->u->labels, s->label.name, seq, s->line, 0);
             break;
         case STMT_FOR:
+            const_target(c, s->for_stmt.var_name, s->line);
             if (c->nst == c->capst) {
                 c->capst = c->capst ? c->capst * 2 : 8;
                 c->st = realloc(c->st, (size_t)c->capst * sizeof(open_for_t));
@@ -323,7 +383,7 @@ static void walk_list(check_t *c, stmt_t *s) {
 
 static void free_unit(unit_t *u) {
     free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v);
-    free(u->bounds.v); free(u->redims.v);
+    free(u->bounds.v); free(u->redims.v); free(u->consts.v);
     free(u->options.v); free(u->fors);
 }
 
@@ -462,9 +522,12 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
                 }
             push(&c.procs, s->proc_def.name, s->type == STMT_FUNC_DEF, s->line, s->proc_def.nparams);
         }
-    for (stmt_t *s = program; s; s = s->next)
+    for (stmt_t *s = program; s; s = s->next) {
         if (s->type == STMT_DIM && s->dim_stmt.shared)
             push(&c.dimshared, s->dim_stmt.name, 0, s->line, 0);
+        if (s->type == STMT_CONST)
+            push(&c.modconsts, s->const_stmt.name, 0, s->line, 0);
+    }
     walk_unit(&c, program, NULL);
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
@@ -485,6 +548,6 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
-    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.st);
+    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.st);
     return c.findings;
 }
