@@ -699,7 +699,15 @@ static int main_rtype(const char *name) {
     return -1;
 }
 
+static int param_type(const stmt_t *def, int i);
+
 static int arr_type(const char *name) {
+    if (bc_proc) {                      /* an array parameter, name(): its type there */
+        const stmt_t *d = bc_proc->def;
+        for (int i = 0; i < d->proc_def.nparams && i < 16; i++)
+            if ((d->proc_def.param_arrays >> i & 1) && strcmp(d->proc_def.params[i], name) == 0)
+                return param_type(d, i);
+    }
     for (int i = 0; i < bc_natypes; i++)
         if (strcmp(bc_atypes[i].name, name) == 0) return bc_atypes[i].type;
     return name_type(name);
@@ -2584,6 +2592,22 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
         int pt = param_type(def, i);
         tmp[i] = NULL;
         kind[i] = 0;
+        if (i < 16 && (def->proc_def.param_arrays >> i & 1)) {     /* name(): an array, its key */
+            int c2;
+            if (e->type != EXPR_CALL || e->call.nargs != 0 || e->paren || arr_type(e->call.name) != pt) {
+                c2 = h_ncarg;
+                carg(iconst(ERR_PARAM_MISMATCH), 0);
+                call_end(c2, 1, "bcrt_err", NULL);
+                ptr[i] = iconst(0);
+            } else {
+                c2 = h_ncarg;
+                carg(saddr(e->call.name, (int)strlen(e->call.name)), 0);
+                carg(iconst(arr_mode(e->call.name)), 0);
+                ptr[i] = call_end(c2, 2, "bcrt_array_ref", NULL);
+            }
+            kind[i] = 3;
+            continue;
+        }
         if (!e->paren && is_plain_var(e)) {
             var_t *v = var_get(e->var.name, e->var.var_type, line);
             if (v->type != pt) {
@@ -3789,7 +3813,12 @@ static void proc_func(proc_t *p, Node *fn) {
     for (int i = 0; i < n; i++) pin[i] = hi_emit(HI_PARAM, TY_INT, -1, -1, i, NULL);
     for (int i = 0; i < def->proc_def.nparams; i++) {
         var_t *v = var_push();
-        var_init(v, def->proc_def.params[i], param_type(def, i), NULL);
+        char an[68];
+        int arr = i < 16 && (def->proc_def.param_arrays >> i & 1);
+        snprintf(an, sizeof an, "%s()", def->proc_def.params[i]);
+        /* (an array parameter: the key of the caller's array, bcrt_alias's;
+         * named so no variable is) */
+        var_init(v, arr ? an : def->proc_def.params[i], arr ? VAL_LONG : param_type(def, i), NULL);
         v->a = pin[i + fnc];
         v->local = 0;
     }
@@ -3848,6 +3877,15 @@ static void proc_func(proc_t *p, Node *fn) {
         int cb = h_ncarg;
         carg(iconst((int)(p - bc_procs)), 0);
         call_end(cb, 1, "bcrt_enter", NULL);
+        for (int i = 0; i < def->proc_def.nparams && i < 16; i++)  /* array parameters: the callers' */
+            if (def->proc_def.param_arrays >> i & 1) {
+                char an[68];
+                snprintf(an, sizeof an, "%s()", def->proc_def.params[i]);
+                cb = h_ncarg;
+                carg(saddr(def->proc_def.params[i], (int)strlen(def->proc_def.params[i])), 0);
+                carg(VA(var_find(an)), 0);
+                call_end(cb, 2, "bcrt_alias", NULL);
+            }
     }
     bc_proc_exit = new_blk();
     bc_lowering = 1;

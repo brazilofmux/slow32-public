@@ -277,6 +277,25 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
 
 /* a SUB's or FUNCTION's activation, counted as the interpreter counts
  * them (eval_enter: Out of stack space past its depth) */
+static const char *akey(const char *name, int mode, char *kb);
+
+/* an array argument: its key where it is (array_ref_key), a copy the
+ * callee's bcrt_alias takes */
+int bcrt_array_ref(const char *name, int mode) {
+    char kb[ARRAY_KEY_MAX], rb[ARRAY_KEY_MAX + 2];
+    char *k = strdup(array_ref_key(akey(name, mode, kb), rb, sizeof rb));
+    if (!k) bcrt_fail(ERR_OUT_OF_MEMORY);
+    return (int)(intptr_t)k;
+}
+
+/* an array parameter, name(): the caller's array (key, from
+ * bcrt_array_ref, let go here) */
+void bcrt_alias(const char *name, int key) {
+    error_t e = array_scope_alias(name, (const char *)(intptr_t)key);
+    free((void *)(intptr_t)key);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 void bcrt_enter(int proc) {
     error_t e;
     if (bcrt_ngbase == bcrt_capgbase) {
