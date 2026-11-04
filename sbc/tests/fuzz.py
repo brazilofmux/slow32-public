@@ -25,6 +25,7 @@ EMU = os.path.join(ROOT, 'tools/emulator/slow32-fast')
 SBASIC = os.path.join(ROOT, 'sbasic/sbasic.s32x')
 OUT = os.path.join(SBC, 'out/fuzz')
 
+QB_CLEAN = False
 VARS = ['A%', 'B%', 'C&', 'D&', 'E!', 'F!', 'G#', 'H#', 'X', 'Y']
 EDGE = ['0', '1', '-1', '2', '3', '7', '-7', '255', '32767', '-32768', '32766',
         '65535', '2147483647', '-2147483647', '.5', '2.5', '-2.5', '1.5',
@@ -96,7 +97,9 @@ def expr(r, depth):
         name, nargs = r.choice([('F1%', 2), ('F2#', 1), ('F3!', 1), ('F4!', 1)])
         if name == 'F4!' and r.random() < 0.6:
             # by reference: a SINGLE variable or element, or a copy
-            return 'F4!(' + r.choice(['E!', 'F!', 'X', 'Y', '(E!)', 'R!(1, 2)', 'A%']) + ')'
+            return 'F4!(' + r.choice(['E!', 'F!', 'X', 'Y', '(E!)', 'R!(1, 2)'] + ([] if QB_CLEAN else ['A%'])) + ')'
+        if QB_CLEAN:            # (by value: QBasic refuses another type by reference)
+            return name + '(' + ', '.join('(' + expr(r, depth - 1) + ')' for _ in range(nargs)) + ')'
         return name + '(' + ', '.join(expr(r, depth - 1) for _ in range(nargs)) + ')'
     return '(' + expr(r, depth - 1) + ' ' + r.choice(BINOPS) + ' ' + expr(r, depth - 1) + ')'
 
@@ -109,6 +112,8 @@ def program(seed):
     r = random.Random(seed)
     lines = ['ON ERROR GOTO 900', 'DIM P%(10), Q&(10), R!(3, 4), S#(10), W$(5)',
              'S$ = "abc": U$ = "Hello": W$(1) = "x": I% = 2']
+    if QB_CLEAN:                # (bounds not constant: QBasic refuses a REDIM otherwise)
+        lines[1] = 'Z1% = 10: Z2% = 3: Z3% = 4: DIM P%(Z1%), Q&(Z1%), R!(Z2%, Z3%), S#(Z1%), W$(5)'
     for v in VARS:
         lines.append('%s = %s' % (v, r.choice(EDGE)))
     defn = r.randint(0, 6)
@@ -140,9 +145,9 @@ def program(seed):
         if r.random() < 0.04:
             lines.append(r.choice(['ERASE S#', 'REDIM S#(5)', 'ERASE T', 'REDIM P%(20)', 'ERASE Q&: DIM Q&(3)']))
         if r.random() < 0.08:
-            lines.append('CALL S1(%s): PRINT "S"; Y' % expr(r, 2))
+            lines.append(('CALL S1((%s)): PRINT "S"; Y' if QB_CLEAN else 'CALL S1(%s): PRINT "S"; Y') % expr(r, 2))
         if r.random() < 0.08:
-            a = r.choice(['A%', 'B%', 'P%(2)', '(A%)', 'C&', A_EXPR(r)])
+            a = r.choice(['A%', 'B%', 'P%(2)', '(A%)'] + (['(' + A_EXPR(r) + ')'] if QB_CLEAN else ['C&', A_EXPR(r)]))
             lines.append('CALL S2(%s, %s): PRINT "S2"; A%%; B%%; P%%(2)' % (a, r.choice(['A%', 'B%', '3'])))
         if r.random() < 0.06:
             lines.append('GOSUB 800: PRINT "G"; B%; C&')
@@ -176,6 +181,73 @@ def program(seed):
               'SUB S1(a!)', 'SHARED Y', 'Y = Y + a!', 'END SUB',
               'FUNCTION F4!(z!)', 'z! = z! + 1', 'F4! = z! * 2', 'END FUNCTION',
               'SUB S2(a%, b%)', 'a% = a% + b%', 'END SUB']
+    if QB_CLEAN and seed % 2 == 0:      # (half with no handler: what s32-bc does differently then)
+        lines = [l for l in lines if l != 'ON ERROR GOTO 900' and not l.startswith('900 ')]
+    return '\n'.join(lines) + '\n'
+
+
+def loops(seed):
+    """--loops: what a compiler might hold in registers across a loop --
+    arrays with constant and variable bounds, counters near their limits,
+    counters the body changes, jumps out and back, arrays moved elsewhere --
+    all of it folded into a checksum printed as it goes.  No handler in
+    three of four, so the loop optimizations apply."""
+    r = random.Random(seed)
+    arrs = {'C1%': (1, 'c'), 'C2&': (2, 'c'), 'C3!': (1, 'c'), 'C4#': (2, 'c'), 'V1%': (1, 'v'), 'V2#': (2, 'v'),
+            'M1%': (1, 'm')}
+    lim = 6
+    head = ['DECLARE FUNCTION fx% (k%)', 'DECLARE SUB tick ()', 'CONST KN = %d' % lim]
+    if seed % 4 == 0: head.append('ON ERROR GOTO 900')
+    head += ['DIM SHARED C1%%(%d), C2&(KN, 3), C3!(%d), C4#(%d, %d)' % (lim, lim, lim, lim),
+             'n%% = %d: DIM V1%%(n%%), V2#(n%%, n%%)' % lim, 'REDIM M1%(n%)', 'DIM SHARED t&']
+    vars_ = ['i%', 'i%', 'j%', 'j%', 'k&', 'x!', 'y#']
+    clean = seed % 2 == 1       # (no labels or calls: the bodies a compiler can reason about)
+    def sub():
+        q = r.random()
+        if q < 0.85: return r.choice(['i% MOD 3', 'j% MOD 3', '1', '2', '0', str(lim)])
+        if q < 0.97: return r.choice(['k& AND 3', 'x!', 'y#', 'i% AND 1', 'j% AND 3'])
+        return r.choice([str(lim + 1), '-1', '.5', '2.5', 'i% - 40'])
+    def elem():
+        a = r.choice(list(arrs))
+        return '%s(%s)' % (a, ', '.join(sub() for _ in range(arrs[a][0])))
+    def val():
+        return r.choice(['i%', 'j%', '1', '3', 't& MOD 100', elem(), elem(), 'i% * 2 + j%', 'x!', 'y# / 2', 'k& AND 15'])
+    lbl = [0]
+    def body(depth, ctr):
+        out = []
+        for _ in range(r.randint(1, 3)):
+            q = r.random()
+            if q < 0.35: out.append('%s = %s' % (elem(), val()))
+            elif q < 0.6: out.append('t& = (t& + %s) AND 65535' % val())
+            elif q < 0.68 and depth < 3: out += loop(depth + 1)
+            elif q < 0.74: out += ['IF %s > %s THEN' % (val(), val())] + body(depth + 1, ctr) + ['ELSE'] + body(depth + 1, ctr) + ['END IF']
+            elif q < 0.84:
+                # (only sometimes: most such programs end here, in Overflow)
+                out.append('IF %s > %s THEN %s = %s' % (val(), val(), ctr, r.choice(['1', str(lim), ctr + ' + 1', '32767', '-32768'])))
+            elif q < 0.87 and not clean: out.append('t& = t& + fx%(1)' if r.random() < .5 else 'tick')
+            elif q < 0.89 and not clean:
+                lbl[0] += 1
+                out += ['IF t& MOD 7 = 0 THEN GOTO out%d' % lbl[0], 'GOTO on%d' % lbl[0], 'out%d: t& = t& + 1' % lbl[0], 'on%d:' % lbl[0]]
+            elif q < 0.92: out.append('PRINT t&;')
+            else: out.append('DO WHILE y# < 2: y# = y# + 1: t& = t& + %s: LOOP' % val())
+        return out
+    def loop(depth):
+        v = r.choice(vars_)
+        start, stop = r.choice([('0', str(lim)), ('1', 'n%'), ('KN', '0'), ('1', 'KN'), ('32760', '32767'),
+                                ('-32768', '-32760'), ('32760', '32766'), ('5', '1'), ('.5', '3.5'),
+                                ('2147483640', '2147483644')])
+        step = r.choice(['', '', ' STEP 1', ' STEP -1', ' STEP 2', ' STEP .5', ' STEP n%'])
+        return ['K%d& = 0' % depth, 'FOR %s = %s TO %s%s' % (v, start, stop, step)] + body(depth, v) + \
+               ['K%d& = K%d& + 1: IF K%d& > 12 THEN EXIT FOR' % (depth, depth, depth), 'NEXT %s' % v, 'PRINT "L"; t&; %s' % v]
+    lines = list(head)
+    for _ in range(r.randint(2, 6)):
+        lines += loop(0)
+        q = r.random()
+        if q < 0.2: lines.append('ERASE M1%: REDIM M1%(n% + 2)')
+    lines += ['PRINT "end"; t&', 'END']
+    if seed % 4 == 0: lines.append('900 PRINT "E"; ERR: RESUME NEXT')
+    lines += ['FUNCTION fx% (k%)', 'C1%(1) = C1%(1) + k%', 'fx% = 1', 'END FUNCTION',
+              'SUB tick', 'C4#(2, 2) = C4#(2, 2) + 1', 't& = t& + 1', 'END SUB']
     return '\n'.join(lines) + '\n'
 
 
@@ -183,11 +255,15 @@ def one(seed):
     d = os.path.join(OUT, str(seed))
     os.makedirs(d, exist_ok=True)
     src = os.path.join(d, 'f.bas')
-    open(src, 'w').write(program(seed))
+    open(src, 'w').write(loops(seed) if USE_LOOPS else program(seed))
     exe = os.path.join(d, 'f.s32x')
-    c = subprocess.run(['bash', os.path.join(SBC, 'compile-bas.sh'), src, exe],
+    c = subprocess.run(['bash', os.path.join(SBC, 'compile-bc.sh' if USE_BC else 'compile-bas.sh'), src, exe],
                        capture_output=True, env=dict(os.environ, SBC_WORK=d))
     if c.returncode != 0:
+        # (s32-bc refuses what QBasic would: not its failure, and counted apart)
+        if USE_BC and b'not yet' not in c.stderr:
+            REFUSED.append(c.stderr.decode().split('\n')[0])
+            return seed, None
         return seed, 'NOCOMPILE ' + c.stderr.decode()[-200:]
     try:
         i = subprocess.run([EMU, '-q', SBASIC, src], capture_output=True, timeout=60).stdout
@@ -207,19 +283,38 @@ def one(seed):
     return seed, 'DIFFER (kept in %s)' % d
 
 
+USE_BC = False
+USE_LOOPS = False
+REFUSED = []
+
+
 def main():
+    global USE_BC, USE_LOOPS, QB_CLEAN
     a = sys.argv[1:]
+    if '--bc' in a:             # s32-bc instead of s32-sbc, programs QBasic would load
+        USE_BC = QB_CLEAN = True
+        a.remove('--bc')
+    if '--loops' in a:          # the loop generator (with --bc or without)
+        USE_LOOPS = True
+        a.remove('--loops')
     n = int(a[a.index('-n') + 1]) if '-n' in a else 50
     s0 = int(a[a.index('-s') + 1]) if '-s' in a else 1
     j = int(a[a.index('-j') + 1]) if '-j' in a else 8
-    subprocess.run(['bash', os.path.join(SBC, 'build.sh')], check=True, capture_output=True)
+    subprocess.run(['bash', os.path.join(SBC, 'build-bc.sh' if USE_BC else 'build.sh')], check=True, capture_output=True)
     bad = 0
     with cf.ThreadPoolExecutor(max_workers=j) as ex:
         for seed, verdict in ex.map(one, range(s0, s0 + n)):
             if verdict:
                 bad += 1
                 print(seed, verdict)
-    print('%d of %d agree' % (n - bad, n))
+    print('%d of %d agree' % (n - bad - len(REFUSED), n - len(REFUSED)))
+    if REFUSED:
+        why = {}
+        for x in REFUSED:
+            k = x.split(': ')[2] if x.count(': ') >= 2 else x
+            why[k] = why.get(k, 0) + 1
+        print('%d refused: %s' % (len(REFUSED), ', '.join('%s %d' % kv for kv in sorted(why.items(), key=lambda kv: -kv[1]))))
+        print('  e.g.', REFUSED[0])
     sys.exit(1 if bad else 0)
 
 

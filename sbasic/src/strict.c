@@ -46,6 +46,7 @@ typedef struct {
     refs_t dimshared;           /* arrays the main program DIMs SHARED */
     refs_t modconsts;           /* the main program's CONSTs, every unit's */
     refs_t modjumps;            /* RESTORE's and ON ERROR GOTO's labels, anywhere: the main program's */
+    refs_t staticdims;          /* arrays the main program's DIMs of constant bounds made, so far */
     unit_t *u;                  /* the unit being walked */
     stmt_t *proc;               /* its SUB or FUNCTION, NULL for the main program */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
@@ -661,9 +662,10 @@ enum { K_ANY = 0, K_NUM, K_STR };
 /* names declared without a suffix (DIM x AS, CONST, parameters): the
  * main program's first (nmod of them; shared: every procedure's -- DIM
  * SHARED, COMMON SHARED, CONST), then the procedure's being checked */
-typedef struct { char name[64]; int k, shared; } kname_t;
+typedef struct { char name[64]; int k, shared, type; } kname_t;   /* (type: a val_type_t, -1 not known) */
 static kname_t *kn;
 static int nkn, capkn, nmod;
+static int k_of(val_type_t t);
 static stmt_t *ty_program, *ty_cur;     /* (ty_cur: the SUB or FUNCTION, NULL in the main program) */
 static int ty_shared_decl;              /* declarations being noted are the module's shared ones */
 
@@ -675,7 +677,14 @@ static void kn_add(const char *name, int k) {
     }
     snprintf(kn[nkn].name, sizeof kn[nkn].name, "%s", name);
     kn[nkn].shared = ty_shared_decl;
+    kn[nkn].type = -1;
     kn[nkn++].k = k;
+}
+
+/* the same, with its exact type */
+static void kn_add_t(const char *name, val_type_t t) {
+    kn_add(name, k_of(t));
+    kn[nkn - 1].type = (int)t;
 }
 
 /* a SHARED list in body names name (name or name()): the procedure's
@@ -769,6 +778,40 @@ static void ty_want(check_t *c, expr_t *e, int want, const char *what) {
     if (k != K_ANY && k != want) ty_mismatch(c, e->line, what);
 }
 
+/* name's exact type: by its suffix, as it was declared, else a SINGLE; -1
+ * when it cannot be told */
+static int exact_t(const char *name) {
+    size_t n = strlen(name);
+    if (n) switch (name[n - 1]) {
+        case '$': return VAL_STRING;
+        case '%': return VAL_INTEGER;
+        case '&': return VAL_LONG;
+        case '!': return VAL_SINGLE;
+        case '#': return VAL_DOUBLE;
+        default: break;
+    }
+    for (int i = nkn - 1; i >= nmod; i--)
+        if (strcmp(kn[i].name, name) == 0) return kn[i].type;
+    for (int i = nmod - 1; i >= 0; i--)
+        if (strcmp(kn[i].name, name) == 0 && (!ty_cur || kn[i].shared || ty_proc_shares(name)))
+            return kn[i].type;
+    return VAL_SINGLE;
+}
+
+/* an argument that names storage: a variable, or an array's element (not
+ * a FUNCTION, a builtin, or a CONST: those are values) */
+static int is_ref_arg(const expr_t *e) {
+    const char *name;
+    if (e->type == EXPR_VARIABLE) name = e->var.name;
+    else if (e->type == EXPR_CALL && e->call.nargs > 0) name = e->call.name;
+    else return 0;
+    if (ty_proc(name) || strncmp(name, "FN", 2) == 0 || builtin_exists(name)) return 0;
+    if (e->type == EXPR_VARIABLE && (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0)) return 0;
+    for (int i = 0; i < nkn; i++)
+        if (strcmp(kn[i].name, name) == 0 && kn[i].type == -2) return 0;
+    return 1;
+}
+
 /* f's arguments against its parameters (an array parameter: passed over) */
 static void ty_args(check_t *c, int line, stmt_t *def, expr_t **args, int nargs) {
     for (int i = 0; i < nargs; i++) {
@@ -779,6 +822,13 @@ static void ty_args(check_t *c, int line, stmt_t *def, expr_t **args, int nargs)
             continue;
         }
         want = k_of(def->proc_def.param_types[i]);
+        /* a variable or element goes by reference, so its type must be the
+         * parameter's exactly (QB: "Parameter type mismatch"); (x) is a value */
+        if (!args[i]->paren && (is_ref_arg(args[i]))) {
+            int t = exact_t(args[i]->type == EXPR_VARIABLE ? args[i]->var.name : args[i]->call.name);
+            if (t >= 0 && t != (int)def->proc_def.param_types[i])
+                finding(c, args[i]->line, "param-mismatch", "a variable of another type than its parameter, by reference");
+        }
         ty_want(c, args[i], want, "an argument of the other type than its parameter");
     }
     (void)line;
@@ -963,6 +1013,19 @@ static void ty_stmt(check_t *c, stmt_t *s) {
         ty_cur = NULL;
         return;
     }
+    case STMT_DIM:
+        /* QB's "Array already dimensioned": a REDIM of what a DIM of
+         * constant bounds made, ERASE or no, in a procedure through SHARED */
+        if (!s->dim_stmt.is_redim && !ty_cur && dim_static(c, s))
+            push(&c->staticdims, s->dim_stmt.name, 0, s->line, 0);
+        else if (s->dim_stmt.is_redim && find(&c->staticdims, s->dim_stmt.name) &&
+                 (!ty_cur || find(&c->dimshared, s->dim_stmt.name) || ty_proc_shares(s->dim_stmt.name))) {
+            char d[128];
+            snprintf(d, sizeof d, "REDIM %s, which a DIM of constant bounds made", s->dim_stmt.name);
+            finding(c, s->line, "redim-static", d);
+        }
+        stmt_exprs(s, ty_top, c);
+        return;
     case STMT_SELECT:
         ty_expr(c, s->select_stmt.test_expr);
         for (case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next) ty_list(c, cl->body);
@@ -997,7 +1060,7 @@ static void ty_declare(stmt_t *s) {
         switch (s->type) {
         case STMT_DIM_SCALAR:
             ty_shared_decl = !ty_cur && s->dim_scalar.shared;
-            kn_add(s->dim_scalar.name, k_of(s->dim_scalar.scalar_type));
+            kn_add_t(s->dim_scalar.name, s->dim_scalar.scalar_type);
             break;
         case STMT_DIM_AS_TYPE:
             ty_shared_decl = !ty_cur && s->dim_as_type.shared;
@@ -1005,13 +1068,14 @@ static void ty_declare(stmt_t *s) {
             break;
         case STMT_DIM:
             ty_shared_decl = !ty_cur && s->dim_stmt.shared;
-            if (s->dim_stmt.typed) kn_add(s->dim_stmt.name, k_of(s->dim_stmt.elem_type));
+            if (s->dim_stmt.typed) kn_add_t(s->dim_stmt.name, s->dim_stmt.elem_type);
             break;
         case STMT_CONST:
             ty_shared_decl = !ty_cur;
             if (s->const_stmt.value && s->const_stmt.value->type == EXPR_LITERAL)
                 kn_add(s->const_stmt.name, s->const_stmt.value->literal.type == VAL_STRING ? K_STR : K_NUM);
             else kn_add(s->const_stmt.name, K_ANY);
+            kn[nkn - 1].type = -2;      /* (a CONST: a value, passed so) */
             break;
         case STMT_SUB_DEF: case STMT_FUNC_DEF: {
             char bare[64];
@@ -1039,13 +1103,16 @@ static void ty_declare(stmt_t *s) {
 static void ty_declare_proc(stmt_t *s) {
     for (int i = 0; i < s->proc_def.nparams; i++) {
         ty_shared_decl = 0;
-        kn_add(s->proc_def.params[i], (i < 16 && s->proc_def.param_recs && s->proc_def.param_recs[i][0])
-                                      ? K_ANY : k_of(s->proc_def.param_types[i]));
+        if (i < 16 && s->proc_def.param_recs && s->proc_def.param_recs[i][0]) kn_add(s->proc_def.params[i], K_ANY);
+        else kn_add_t(s->proc_def.params[i], s->proc_def.param_types[i]);
     }
     ty_declare(s->proc_def.body);
 }
 
 static void ty_check(check_t *c, stmt_t *program) {
+    unit_t none;                        /* (walk_unit's are gone: CONSTs are the main program's here) */
+    memset(&none, 0, sizeof none);
+    c->u = &none;
     ty_program = program;
     ty_cur = NULL;
     nkn = 0;
@@ -1055,6 +1122,7 @@ static void ty_check(check_t *c, stmt_t *program) {
     free(kn);
     kn = NULL;
     nkn = capkn = 0;
+    c->u = NULL;
 }
 
 int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[STRICT_NINFO]) {
@@ -1110,6 +1178,6 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
-    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.modjumps.v); free(c.st);
+    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.modjumps.v); free(c.staticdims.v); free(c.st);
     return c.findings;
 }

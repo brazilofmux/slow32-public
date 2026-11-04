@@ -855,6 +855,17 @@ static bv_t flt_to_int(bv_t x, int ty) {
  * Type mismatch), a value of static type ty.  A SINGLE's value is its
  * float as a double. */
 static int to_float(bv_t x);
+static bv_t coerce(bv_t x, int ty);
+
+/* x as a store of type ty takes it: a value is only held to its type's
+ * range when it is stored (an expression carries infinity on, QBasic), so
+ * a SINGLE past a SINGLE's range is an Overflow here, DOUBLE or no */
+static bv_t store_coerce(bv_t x, int ty) {
+    if (ty == VAL_DOUBLE && x.st == VAL_SINGLE && !x.k)
+        guard(in_range(x.lo, x.hi, FLT_MAX_HI, FLT_MAX_LO), ERR_OVERFLOW);
+    return coerce(x, ty);
+}
+
 static bv_t coerce(bv_t x, int ty) {
     int cb, lo, hi;
     if (st_int(ty) && st_int(x.st)) {
@@ -942,7 +953,7 @@ static void var_store(var_t *v, bv_t x) {
         hi_emit(HI_STORE, TY_FLOAT, VA(v), to_float(x), 0, NULL);
         return;
     }
-    x = coerce(x, v->type);
+    x = store_coerce(x, v->type);
     if (v->type == VAL_DOUBLE) {
         hi_emit(HI_STORE, TY_INT, VA(v), x.lo, 0, NULL);
         hi_emit(HI_STORE, TY_INT, VH(v), x.hi, 0, NULL);
@@ -1263,7 +1274,9 @@ static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
  * evaluated left to right */
 static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
     (void)line;
-    for (int i = 0; i < 8; i++) a[i] = i < n ? expr(ix[i]) : zero();
+    /* (each made an integer as it comes: an overflow in the first stops
+     * the second being evaluated at all -- QBasic) */
+    for (int i = 0; i < 8; i++) a[i] = i < n ? coerce(expr(ix[i]), VAL_LONG) : zero();
 }
 
 /* --- arrays: the interpreter's, their elements reached directly ----- */
@@ -1306,20 +1319,17 @@ static int array_elem(int line, const char *name, int n, bv_t *sub) {
 }
 
 /* (and the subscripts made integers, in ix) */
-static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) {
-    int id = array_id(name, line), cell, fast, slow, flat = 0, cb;
-    for (int i = 0; i < n; i++) ix[i] = coerce(sub[i], VAL_LONG).lo;
-    if (n > 3) {                /* (more dimensions than a cell keeps: the run time's) */
-        int blk = alloca_of(TY_INT, 4 * n);
-        for (int i = 0; i < n; i++) st(blk, 4 * i, ix[i]);
-        cb = h_ncarg;
-        carg(saddr(name, (int)strlen(name)), 0);
-        carg(iconst(n), 0);
-        carg(iconst(arr_type(name)), 0);
-        carg(iconst(arr_mode(name)), 0);
-        carg(blk, 0);
-        return call_end(cb, 5, "bcrt_elem_n", NULL);
-    }
+/* A loop whose body cannot change an array (region_for, below) holds
+ * that array's data and bounds in values made before it, not the cell:
+ * the array's mirror, for as long as the loop's text lasts */
+typedef struct { char name[64]; int n, data, lb[3], dim[3]; } mirror_t;
+#define BC_MIRRORS 16
+static mirror_t bc_mirrors[BC_MIRRORS];
+static int bc_nmirrors;
+
+/* name's cell, good now: looked up (or made) if the generation has moved */
+static int array_cell(int line, const char *name, int n) {
+    int id = array_id(name, line), cell, fast, slow, cb;
     cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
                    id * BC_ACELL, NULL);
     fast = new_blk();
@@ -1338,6 +1348,34 @@ static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) 
     call_end(cb, 5, "bcrt_alook", NULL);
     goto_blk(fast);
     begin_blk(fast);
+    return cell;
+}
+
+static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) {
+    int cell, flat = 0, cb;
+    for (int i = 0; i < n; i++) ix[i] = coerce(sub[i], VAL_LONG).lo;
+    for (int k = bc_nmirrors - 1; k >= 0; k--) {
+        mirror_t *m = &bc_mirrors[k];
+        if (m->n != n || strcmp(m->name, name) != 0) continue;
+        for (int i = 0; i < n; i++) {
+            int x = bin(HI_SUB, ix[i], m->lb[i]);
+            guard(bin(HI_SLTU, x, m->dim[i]), ERR_SUBSCRIPT_OUT_OF_RANGE);
+            flat = i == 0 ? x : bin(HI_ADD, bin(HI_MUL, flat, m->dim[i]), x);
+        }
+        return bin(HI_ADD, m->data, bin(HI_MUL, flat, iconst(BC_ELEM)));
+    }
+    if (n > 3) {                /* (more dimensions than a cell keeps: the run time's) */
+        int blk = alloca_of(TY_INT, 4 * n);
+        for (int i = 0; i < n; i++) st(blk, 4 * i, ix[i]);
+        cb = h_ncarg;
+        carg(saddr(name, (int)strlen(name)), 0);
+        carg(iconst(n), 0);
+        carg(iconst(arr_type(name)), 0);
+        carg(iconst(arr_mode(name)), 0);
+        carg(blk, 0);
+        return call_end(cb, 5, "bcrt_elem_n", NULL);
+    }
+    cell = array_cell(line, name, n);
     {
         for (int i = 0; i < n; i++) {
             int dim = ld(cell, 20 + 4 * i), x = bin(HI_SUB, ix[i], ld(cell, 8 + 4 * i));
@@ -1352,7 +1390,7 @@ static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) 
 /* name(sub...) = x: the element found, then x made its type (store_into) */
 static void array_store(int line, const char *name, int n, bv_t *sub, bv_t x) {
     int ty = arr_type(name), ea = array_elem(line, name, n, sub);
-    x = coerce(x, ty);
+    x = store_coerce(x, ty);
     if (ty == VAL_STRING) {
         int old, cb;
         x.lo = fix_str(x.lo, arr_fixlen(name));
@@ -1873,9 +1911,12 @@ typedef struct {
     var_t *v;
     slot_t lim, stp;
     int body, exit;
+    int mbase;                  /* the mirrors below this FOR's own */
+    int no_overflow;            /* NEXT cannot pass the variable's range */
 } for_t;
 
 static void bc_stmts(stmt_t *s);
+static int array_settled(const char *name, int n);
 
 /* GOSUB's return points, and the block every RETURN goes to: it pops
  * one (bcrt_return) and jumps through a table of them, made last, when
@@ -2489,8 +2530,134 @@ static int for_runs(for_t *f) {
  * the three evaluated once, in that order; limit and step kept in the
  * FOR's own slots; the variable set as an assignment sets it; the loop
  * skipped when it starts out of range */
+/* --- what a loop's body can do ---------------------------------------
+ *
+ * A body of these statements alone -- none of the program's code runs
+ * from it, nothing jumps into it (no label), no array is made over -- 
+ * leaves every array where it is, and its counter to itself unless a
+ * statement here names it. */
+typedef struct {
+    int ok;
+    const char *var;            /* the counter */
+    int var_set;
+    char names[BC_MIRRORS][64];
+    int n[BC_MIRRORS];
+    int nnames;
+} region_t;
+
+static void region_expr(expr_t *e, void *ctx) {
+    region_t *r = ctx;
+    if (e->type == EXPR_VARIABLE) {
+        if (is_function(e->var.name) || strncmp(e->var.name, "FN", 2) == 0) r->ok = 0;
+    } else if (e->type == EXPR_CALL) {
+        const char *name = e->call.name;
+        if (is_function(name) || strncmp(name, "FN", 2) == 0) r->ok = 0;
+        else if (!is_builtin_call(name) && strcmp(name, "LBOUND") != 0 && strcmp(name, "UBOUND") != 0 &&
+                 e->call.nargs >= 1 && e->call.nargs <= 3) {
+            for (int i = 0; i < r->nnames; i++)
+                if (strcmp(r->names[i], name) == 0) return;
+            if (r->nnames < BC_MIRRORS) {
+                strncpy(r->names[r->nnames], name, 63);
+                r->names[r->nnames][63] = '\0';
+                r->n[r->nnames++] = e->call.nargs;
+            }
+        }
+    }
+}
+
+static void region_top(expr_t *e, void *ctx) { expr_walk(e, region_expr, ctx); }
+
+static void region_set(region_t *r, const char *name) {
+    if (r->var && strcmp(r->var, name) == 0) r->var_set = 1;
+}
+
+static void region_stmt(stmt_t *s, region_t *r);
+
+static void region_list(stmt_t *s, region_t *r) {
+    for (; s && r->ok; s = s->next) region_stmt(s, r);
+}
+
+static void region_stmt(stmt_t *s, region_t *r) {
+    stmt_exprs(s, region_top, r);
+    switch (s->type) {
+    case STMT_ASSIGN: region_set(r, s->assign.name); break;
+    case STMT_ARRAY_ASSIGN: {
+        expr_t e;
+        memset(&e, 0, sizeof e);
+        e.type = EXPR_CALL;
+        strncpy(e.call.name, s->array_assign.name, 63);
+        e.call.nargs = s->array_assign.nindices;
+        region_expr(&e, r);
+        break;
+    }
+    case STMT_FOR: region_set(r, s->for_stmt.var_name); break;
+    case STMT_NEXT: case STMT_REM: case STMT_NOOP: case STMT_EXIT: case STMT_GOTO:
+    case STMT_PRINT: case STMT_FIELD_ASSIGN: case STMT_LOCATE: case STMT_COLOR: case STMT_CLS:
+    case STMT_POKE: case STMT_PSET: case STMT_LINE_G: case STMT_RANDOMIZE:
+        break;
+    case STMT_IF:
+        region_list(s->if_stmt.then_body, r);
+        region_list(s->if_stmt.else_body, r);
+        break;
+    case STMT_WHILE: region_list(s->while_stmt.body, r); break;
+    case STMT_DO_LOOP: region_list(s->do_loop.body, r); break;
+    case STMT_SELECT:
+        for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) region_list(c->body, r);
+        break;
+    default:
+        r->ok = 0;              /* (anything else: not known to leave things alone) */
+    }
+}
+
+static void region_init(region_t *r, const char *var) {
+    r->ok = 1;
+    r->var = var;
+    r->var_set = 0;
+    r->nnames = 0;
+}
+
+/* FOR s's body: the statements after it, to its NEXT (the checker has it
+ * in FOR's own block) */
+static void region_for(stmt_t *s, region_t *r) {
+    int depth = 1;
+    stmt_t *q;
+    region_init(r, s->for_stmt.var_name);
+    for (q = s->next; q && r->ok; q = q->next) {
+        if (q->type == STMT_FOR) depth++;
+        if (q->type == STMT_NEXT) {
+            depth -= q->next_stmt.nvars ? q->next_stmt.nvars : 1;
+            if (depth <= 0) return;
+        }
+        region_stmt(q, r);
+    }
+    r->ok = 0;                  /* (no NEXT here) */
+}
+
+/* the arrays r's body names that can be mirrored: their values, now */
+static void mirrors_make(region_t *r, int line) {
+    for (int i = 0; i < r->nnames; i++) {
+        const char *name = r->names[i];
+        int n = r->n[i], cell, have = 0;
+        mirror_t *m;
+        for (int k = 0; k < bc_nmirrors; k++)
+            if (strcmp(bc_mirrors[k].name, name) == 0) have = 1;
+        if (have || bc_nmirrors == BC_MIRRORS || !array_settled(name, n)) continue;
+        cell = array_cell(line, name, n);
+        m = &bc_mirrors[bc_nmirrors++];
+        strncpy(m->name, name, 63);
+        m->name[63] = '\0';
+        m->n = n;
+        m->data = ld(cell, 4);
+        for (int k = 0; k < n; k++) {
+            m->lb[k] = ld(cell, 8 + 4 * k);
+            m->dim[k] = ld(cell, 20 + 4 * k);
+        }
+    }
+}
+
 static void bc_for(stmt_t *s) {
     for_t *f;
+    region_t r;
     bv_t start, lim, stp;
     int runs;
     op_here();
@@ -2512,9 +2679,30 @@ static void bc_for(stmt_t *s) {
     var_store(v, start);
     f = &bc_fors[bc_nfors++];
     f->v = v;
-    f->lim = slot_of(lim, forslots_of(s), 0);
+    /* (a constant limit or step needs no slot where its FOR is the only way
+     * in -- a jump into the body, or a FOR that failed under a handler, finds
+     * the slots as they were: QBasic's NEXT has the limit 0 then) */
+    region_init(&r, s->for_stmt.var_name);
+    r.ok = 0;
+    if (!bc_trap) region_for(s, &r);
+    f->lim = slot_of(lim, forslots_of(s), r.ok && lim.k);
     f->stp = slot_of(stp, forslots_of(s) + 2,
-                     !s->for_stmt.step || s->for_stmt.step->type == EXPR_LITERAL);
+                     !s->for_stmt.step || (r.ok && stp.k));
+    f->mbase = bc_nmirrors;
+    f->no_overflow = 0;
+    {
+        if (r.ok) {
+            mirrors_make(&r, s->line);
+            if (!r.var_set && st_int(v->type) && f->stp.k && f->lim.k && st_int(f->stp.st)) {
+                /* (the counter only NEXT moves, the limit and step known:
+                 * limit + step in range, every NEXT is) */
+                double top = f->lim.kv + f->stp.kv;
+                double hi = v->type == VAL_INTEGER ? 32767.0 : 2147483647.0;
+                double lo = v->type == VAL_INTEGER ? -32768.0 : -2147483648.0;
+                f->no_overflow = top <= hi && top >= lo;
+            }
+        }
+    }
     runs = for_runs(f);
     f->body = new_blk();
     f->exit = new_blk();
@@ -2540,8 +2728,12 @@ static void bc_next(stmt_t *s) {
         cur = var_load(f->v);
         stp = slot_load(&f->stp);
         if (st_int(f->v->type)) {
-            if (st_int(stp.st)) {
-                stp.st = VAL_LONG;      /* (the sum in 32 bits, then the variable's range) */
+            if (f->no_overflow) {
+                nv = mk(bin(HI_ADD, cur.lo, stp.k ? iconst((int)stp.kv) : stp.lo), -1, -1, f->v->type);
+            } else if (st_int(stp.st)) {
+                /* (the sum in 32 bits, then the variable's range: of two
+                 * INTEGERs, the range alone) */
+                if (!(f->v->type == VAL_INTEGER && stp.st == VAL_INTEGER)) stp.st = VAL_LONG;
                 nv = int_arith(OP_ADD, cur, stp);
             } else
                 nv = flt_arith(OP_ADD, cur, stp);
@@ -2562,6 +2754,7 @@ static void bc_next(stmt_t *s) {
         hi_emit(HI_BRC, TY_VOID, runs, f->body, f->exit, NULL);
         bc_live = 0;
         begin_blk(f->exit);
+        bc_nmirrors = f->mbase;
     }
 }
 
@@ -2575,6 +2768,92 @@ static int bc_nstatics, bc_capstatics;
 static int is_static_dim(stmt_t *s) {
     for (int i = 0; i < bc_nstatics; i++)
         if (bc_statics[i] == s) return 1;
+    return 0;
+}
+
+/* the arrays the program ERASEs or REDIMs, and whether it has a CLEAR
+ * (found once): every other array DIMmed with constant bounds is there
+ * from before the run to the end, where it first was */
+static char (*bc_moved)[64];
+static int bc_nmoved, bc_capmoved, bc_clears, bc_moved_found;
+
+static void moved_add(const char *name) {
+    if (bc_nmoved == bc_capmoved) {
+        bc_capmoved = bc_capmoved ? bc_capmoved * 2 : 16;
+        bc_moved = realloc(bc_moved, (size_t)bc_capmoved * sizeof *bc_moved);
+        if (!bc_moved) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    strncpy(bc_moved[bc_nmoved], name, 63);
+    bc_moved[bc_nmoved++][63] = '\0';
+}
+
+static void moved_find(stmt_t *s) {
+    for (; s; s = s->next) {
+        switch (s->type) {
+        case STMT_ERASE:
+            for (int i = 0; i < s->erase_stmt.nnames; i++) moved_add(s->erase_stmt.names[i]);
+            break;
+        case STMT_DIM: if (s->dim_stmt.is_redim) moved_add(s->dim_stmt.name); break;
+        case STMT_CLEAR: case STMT_RUN: bc_clears = 1; break;
+        case STMT_IF: moved_find(s->if_stmt.then_body); moved_find(s->if_stmt.else_body); break;
+        case STMT_FOR: moved_find(s->for_stmt.body); break;
+        case STMT_WHILE: moved_find(s->while_stmt.body); break;
+        case STMT_DO_LOOP: moved_find(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) moved_find(c->body);
+            break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF: moved_find(s->proc_def.body); break;
+        default: break;
+        }
+    }
+}
+
+/* statement s, or the list from s, holds a jump (nothing can go past what
+ * follows it unseen until then) */
+static int list_jumps(stmt_t *s);
+
+static int stmt_jumps(stmt_t *s) {
+    switch (s->type) {
+    case STMT_GOTO: case STMT_GOSUB: case STMT_ON_GOTO: case STMT_ON_GOSUB: return 1;
+    case STMT_IF: return list_jumps(s->if_stmt.then_body) || list_jumps(s->if_stmt.else_body);
+    case STMT_WHILE: return list_jumps(s->while_stmt.body);
+    case STMT_DO_LOOP: return list_jumps(s->do_loop.body);
+    case STMT_SELECT:
+        for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next)
+            if (list_jumps(c->body)) return 1;
+        return 0;
+    default: return 0;
+    }
+}
+
+static int list_jumps(stmt_t *s) {
+    for (; s; s = s->next)
+        if (stmt_jumps(s)) return 1;
+    return 0;
+}
+
+/* name is the main program's array, n subscripts, there when this loop
+ * starts and never moved: DIMmed with constant bounds (made before the
+ * run), or -- for a loop of the main program -- by a DIM in its top level
+ * with no jump before it, which has run by the time anything after it
+ * does (a use before its DIM the checker refuses) */
+static int array_settled(const char *name, int n) {
+    if (!bc_moved_found) {
+        moved_find(bc_program);
+        bc_moved_found = 1;
+    }
+    if (bc_clears || arr_mode(name) != ARRAY_MODULE) return 0;
+    for (int i = 0; i < bc_nmoved; i++)
+        if (strcmp(bc_moved[i], name) == 0) return 0;
+    for (int i = 0; i < bc_nstatics; i++)
+        if (strcmp(bc_statics[i]->dim_stmt.name, name) == 0)
+            return bc_statics[i]->dim_stmt.ndims == n;
+    if (bc_proc) return 0;
+    for (stmt_t *d = bc_program; d; d = d->next) {
+        if (d->type == STMT_DIM && strcmp(d->dim_stmt.name, name) == 0)
+            return d->dim_stmt.ndims == n;
+        if (stmt_jumps(d)) return 0;
+    }
     return 0;
 }
 
@@ -4099,6 +4378,7 @@ static void func_begin(void) {
     bc_proc = NULL;
     bc_proc_result = NULL;
     bc_pbody = 0;
+    bc_nmirrors = 0;
     begin_blk(new_blk());
 }
 

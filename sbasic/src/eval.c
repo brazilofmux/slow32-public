@@ -4825,17 +4825,10 @@ static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *
             if (k < 0) {
                 /* no loop running (a GOTO into its body, a FOR that
                  * failed and was resumed past): QBasic's NEXT then has
-                 * its FOR's limit as never set, 0, and its step as the
-                 * FOR states it -- 1 without STEP, a constant one as
-                 * written (compiled into the NEXT), else 0 (NBS P055;
-                 * a FOR whose start overflowed, checked) */
-                double zstep = 0.0;
-                const expr_t *se = op->s->for_stmt.step;
-                if (!se) zstep = 1.0;
-                else if (se->type == EXPR_LITERAL && se->literal.type != VAL_STRING) {
-                    value_t sv = se->literal;
-                    val_to_double(&sv, &zstep);
-                }
+                 * its FOR's limit as never set, 0, and its step 1 if the
+                 * FOR writes none, else as never set too, 0 -- a literal
+                 * as well (checked both ways, tests/native/intoloop.bas) */
+                double zstep = op->s->for_stmt.step ? 0.0 : 1.0;
                 for_slot_t z = { op->s, 0.0, zstep, op->slot + 1, NULL, 0 };
                 EVAL_CHECK(for_next(env, op->s, &z, &yes));
                 *ppc = yes ? z.body_pc : pc + 1;
@@ -4925,18 +4918,21 @@ int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
         return 1;
     }
     if (err == ERR_RETURN) {
-        if (gosub_top <= a->gosub_base) { *result = ERR_RETURN_WITHOUT_GOSUB; return 0; }
-        gosub_top--;
-        if (return_label[0]) {
-            /* RETURN label -- to the label instead of the caller */
-            int idx = find_label(return_label);
-            return_label[0] = '\0';
-            if (idx < 0) { *result = ERR_UNDEFINED_LABEL; return 0; }
-            *ppc = idx;
+        if (gosub_top <= a->gosub_base) {
+            err = ERR_RETURN_WITHOUT_GOSUB;     /* (an error like any other: trapped, QBasic) */
         } else {
-            *ppc = gosub_stack[gosub_top];
+            gosub_top--;
+            if (return_label[0]) {
+                /* RETURN label -- to the label instead of the caller */
+                int idx = find_label(return_label);
+                return_label[0] = '\0';
+                if (idx < 0) { *result = ERR_UNDEFINED_LABEL; return 0; }
+                *ppc = idx;
+            } else {
+                *ppc = gosub_stack[gosub_top];
+            }
+            return 1;
         }
-        return 1;
     }
     /* (out of stack in a procedure: QBasic does not trap it -- the
      * handler would need the stack -- and stops) */

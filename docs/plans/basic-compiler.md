@@ -280,6 +280,38 @@ because all of them compare output.  A scroll now moves row numbers and a
 cleared row is a length of 0.  `compare-speed.py --check` holds the
 totals to speed-baseline.txt, within 5%.
 
+**s32-bc on its known types (2026-11-04).**  Kernels in sbc/tests/kernels
+(one concern each, a checksum printed) say what the games, mostly output,
+cannot; `compare-speed.py sbc/tests/kernels`.  Strings go to typed entries
+with a literal made once and a variable borrowed when nothing after it can
+run the program's code.  A loop whose body can do nothing to an array
+(region_for: only listed statements, no label, none of the program's code)
+holds a settled array's data and bounds in values made before it: a mirror.
+Settled: never ERASEd or REDIMmed, and made before the run or by a top-level
+DIM with no jump before it.  NEXT drops its overflow checks when the counter
+is INTEGER and the step too (the 32-bit one), and when only NEXT moves it and
+limit + step is known in range (both).  None of this in a program that traps
+errors, where any op can be entered again.
+
+The fuzzer met s32-bc that day (`tests/fuzz.py --bc`, programs QBasic would
+load, half with no handler; `--loops`, loops above all, with a refusal tally
+so "all agree" cannot be vacuous, and mutation-tested: a mirror's bounds check
+removed shows in 39 of 200, the counter rule in 3 of 600).  It found, QBasic
+deciding each: RETURN without GOSUB is trapped (the interpreter stopped); a
+subscript is made an integer as it is evaluated (s32-bc did them all first);
+a value is held to its type's range only when stored, an expression carries
+infinity on; passing a variable by reference to another type is a load error
+(param-mismatch); `name (x)` with no CALL passes by value.
+
+A NEXT whose FOR did not run (a jump into the body, a start that overflowed,
+resumed past) has the limit 0 and the step 1 if none is written, else 0, a
+literal too.
+
+Known and left, each pathological: nested on one counter, with the inner FOR
+failed, the interpreter's NEXT finds the outer loop's frame by name.  QBasic's `7 ^ (32767 + g#)` raises Overflow
+and takes the THEN too, and a store after an overflowing ^ leaves 1.#INF in the
+variable; inf - inf stores a NaN without error.
+
 ## s32-bc (sbc/bc/, 2026-11-03)
 
 The compiler that decides up front, begun.  `sbc/compile-bc.sh

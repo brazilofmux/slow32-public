@@ -2396,8 +2396,11 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, const char *a
                                  args, nargs, value, line);
     }
 
-    /* Otherwise it's a call with parens */
+    /* Otherwise it's a call with parens: name (x), no CALL -- x in
+     * parentheses, QBasic's way of passing it by value (a() stays an array) */
     stmt_t *s = stmt_call(name, line);
+    if (nargs == 1 && !(args[0]->type == EXPR_CALL && args[0]->call.nargs == 0))
+        args[0]->paren = 1;
     for (int i = 0; i < nargs; i++)
         stmt_call_add_arg(s, args[i]);
     return s;
