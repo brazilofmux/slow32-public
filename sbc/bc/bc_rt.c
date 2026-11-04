@@ -321,6 +321,9 @@ pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
 
 void bcrt_cls(void) { eval_cls(); }
 
+int bcrt_cursor_row(void) { return eval_cursor_row(); }
+int bcrt_cursor_col(void) { return eval_cursor_col(); }
+
 void bcrt_locate(int row, int col) {
     error_t e = eval_locate(row, col);
     if (e != ERR_NONE) bcrt_fail(e);

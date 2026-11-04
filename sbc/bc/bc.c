@@ -1740,6 +1740,8 @@ static void bc_print(stmt_t *s) {
     bc_print_items(&p);
 }
 
+static void store_target(int line, const char *name, int type, expr_t *target, bv_t x);
+
 /* --- files --------------------------------------------------------------- */
 
 static int handle_of(expr_t *e) { return coerce(expr(e), VAL_LONG).lo; }
@@ -1802,11 +1804,12 @@ static void bc_write_file(stmt_t *s) {
 static void bc_input_file(stmt_t *s) {
     int fp = file_fp(s->input_file.handle_num);
     for (int i = 0; i < s->input_file.nvars; i++) {
-        var_t *v = var_get(s->input_file.varnames[i], 0, s->line);
+        expr_t *t = s->input_file.targets[i];
+        const char *name = s->input_file.varnames[i];
         int cb = h_ncarg;
         carg(fp, 0);
-        carg(iconst(v->type), 0);
-        var_store(v, bv_call("bcrt_input_field", cb, 2));
+        carg(iconst(t ? arr_type(name) : var_get(name, 0, s->line)->type), 0);   /* (target_type) */
+        store_target(s->line, name, 0, t, bv_call("bcrt_input_field", cb, 2));
     }
 }
 
@@ -1889,14 +1892,16 @@ static void bc_lrset(stmt_t *s) {
 }
 
 static void bc_line_input_file(stmt_t *s) {
-    var_t *v = s->input_file.nvars > 0 ? var_get(s->input_file.varnames[0], 0, s->line) : NULL;
+    expr_t *t = s->input_file.nvars > 0 ? s->input_file.targets[0] : NULL;
+    var_t *v = s->input_file.nvars > 0 && !t ? var_get(s->input_file.varnames[0], 0, s->line) : NULL;
     int fp, p, cb;
     if (v && v->type != VAL_STRING) { bc_not_yet(s->line, "a LINE INPUT # into this"); return; }
     fp = file_fp(s->input_file.handle_num);
     cb = h_ncarg;
     carg(fp, 0);
     p = call_end(cb, 1, "bcrt_line_input_file", NULL);
-    if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
+    if (t) store_target(s->line, s->input_file.varnames[0], 0, t, mk(p, -1, -1, VAL_STRING));
+    else if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
     else { cb = h_ncarg; carg(p, 0); call_end(cb, 1, "bcrt_unref", NULL); }
 }
 
@@ -3044,9 +3049,16 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 6, "bcrt_name", NULL);
         break;
     }
-    case STMT_LOCATE: {         /* both evaluated, then made integers (exec_locate) */
-        bv_t r = expr(s->locate_stmt.row), c = expr(s->locate_stmt.col);
-        int ri = coerce(r, VAL_LONG).lo, ci = coerce(c, VAL_LONG).lo, cb = h_ncarg;
+    case STMT_LOCATE: {         /* row and column (left out: the cursor's), then made
+                                 * integers; the cursor's shape evaluated (exec_locate) */
+        bv_t r = s->locate_stmt.row ? expr(s->locate_stmt.row)
+                                    : mk(call_end(h_ncarg, 0, "bcrt_cursor_row", NULL), -1, -1, VAL_LONG);
+        bv_t c = s->locate_stmt.col ? expr(s->locate_stmt.col)
+                                    : mk(call_end(h_ncarg, 0, "bcrt_cursor_col", NULL), -1, -1, VAL_LONG);
+        int ri = coerce(r, VAL_LONG).lo, ci = coerce(c, VAL_LONG).lo, cb;
+        for (int i = 0; i < 3; i++)
+            if (s->locate_stmt.rest[i]) handle_of(s->locate_stmt.rest[i]);
+        cb = h_ncarg;
         carg(ri, 0); carg(ci, 0);
         call_end(cb, 2, "bcrt_locate", NULL);
         break;
@@ -3067,18 +3079,19 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 4, "bcrt_color", NULL);
         break;
     }
-    case STMT_LINE_INPUT_CONSOLE: {     /* a line, into a string variable */
-        var_t *v = s->input.nvars > 0 && !s->input.targets[0]
-                   ? var_get(s->input.varnames[0], 0, s->line) : NULL;
+    case STMT_LINE_INPUT_CONSOLE: {     /* a line, into a string variable or element */
+        expr_t *t = s->input.nvars > 0 ? s->input.targets[0] : NULL;
+        var_t *v = s->input.nvars > 0 && !t ? var_get(s->input.varnames[0], 0, s->line) : NULL;
         int cb, p;
-        if (s->input.nvars > 0 && (!v || v->type != VAL_STRING)) {
+        if (v && v->type != VAL_STRING) {
             bc_not_yet(s->line, "a LINE INPUT into this");
             break;
         }
         cb = h_ncarg;
         carg(s->input.prompt ? saddr(s->input.prompt, (int)strlen(s->input.prompt)) : iconst(0), 0);
         p = call_end(cb, 1, "bcrt_line_input", NULL);
-        if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
+        if (t) store_target(s->line, s->input.varnames[0], 0, t, mk(p, -1, -1, VAL_STRING));
+        else if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
         else { cb = h_ncarg; carg(p, 0); call_end(cb, 1, "bcrt_unref", NULL); }
         break;
     }
@@ -3103,7 +3116,9 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_WIDTH: {
-        int w = coerce(expr(s->width_stmt.columns), VAL_LONG).lo, cb = h_ncarg;
+        int w = coerce(expr(s->width_stmt.columns), VAL_LONG).lo, cb;
+        if (s->width_stmt.rows) handle_of(s->width_stmt.rows);    /* (evaluated, no more) */
+        cb = h_ncarg;
         carg(w, 0);
         call_end(cb, 1, "bcrt_width", NULL);
         break;
@@ -3404,7 +3419,8 @@ static void prescan(stmt_t *s) {
         case STMT_GET: case STMT_PUT: var_get(s->get_put_stmt.varname, 0, s->line); break;
         case STMT_LSET: case STMT_RSET: var_get(s->lrset.varname, 0, s->line); break;
         case STMT_INPUT_FILE: case STMT_LINE_INPUT:
-            for (int i = 0; i < s->input_file.nvars; i++) var_get(s->input_file.varnames[i], 0, s->line);
+            for (int i = 0; i < s->input_file.nvars; i++)
+                if (!s->input_file.targets[i]) var_get(s->input_file.varnames[i], 0, s->line);
             break;
         case STMT_FOR:
             var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
