@@ -151,8 +151,12 @@ static proc_t *bc_proc;         /* the one being lowered; NULL for the main prog
 static int bc_proc_exit;        /* its block that returns */
 
 static proc_t *proc_find(const char *name) {
+    char bare[64];
     for (int i = 0; i < bc_nprocs; i++)
         if (strcmp(bc_procs[i].def->proc_def.name, name) == 0) return &bc_procs[i];
+    for (int i = 0; i < bc_nprocs; i++)     /* (FUNCTION f% named f: QuickBASIC's, find_proc's) */
+        if (ast_name_bare(bc_procs[i].def->proc_def.name, bare) && strcmp(bare, name) == 0)
+            return &bc_procs[i];
     return NULL;
 }
 
@@ -1936,13 +1940,16 @@ static void bc_input_file(stmt_t *s) {
 /* GET #h[, pos], v and PUT #h[, pos], v (exec_get, exec_put): the file,
  * the position, then the value -- GET's of the type the parser gave v,
  * stored as it is (compiled where that is v's type) */
+/* (SWAP's, GET #'s and PUT #'s) */
+typedef struct { var_t *v; int ea, ty, flen; } lval_t;   /* (flen: a STRING * n's n) */
+static int lval_of(expr_t *e, int line, lval_t *lv);
+static void field_store(int ea, int ty, int flen, bv_t x);
+
 static void bc_get_put(stmt_t *s) {
-    var_t *v = var_get(s->get_put_stmt.varname, 0, s->line);
-    int h, fp, cb;
-    if (s->type == STMT_GET && (int)s->get_put_stmt.vartype != v->type) {
-        bc_not_yet(s->line, "a GET into a variable DEFtype types");
-        return;
-    }
+    expr_t *t = s->get_put_stmt.target;
+    const char *name = s->get_put_stmt.varname;
+    int h, fp, cb, rec = -1, rt;
+    lval_t lv;
     h = handle_of(s->get_put_stmt.handle_num);
     cb = h_ncarg;
     carg(h, 0);
@@ -1953,14 +1960,45 @@ static void bc_get_put(stmt_t *s) {
         carg(h, 0); carg(fp, 0); carg(pos, 0);
         call_end(cb, 3, "bcrt_file_pos", NULL);
     }
+    /* then what is read or written: a variable as it is typed, an element,
+     * a field, or a record field by field (exec_get, exec_put) */
+    if (!t) {
+        var_t *v = var_get(name, 0, s->line);
+        if (v->type == VAL_RECORD) rec = record_of(s->line, name, NULL, &rt);
+        else { lv.v = v; lv.ea = -1; lv.ty = v->type; lv.flen = v->fixlen; }
+    } else if (t->type == EXPR_CALL && arr_rtype(t->call.name) >= 0) {
+        rec = record_of(s->line, t->call.name, t, &rt);
+    } else if (!lval_of(t, s->line, &lv)) {
+        bc_not_yet(s->line, "this GET # or PUT #");
+        return;
+    }
+    if (rec >= 0) {
+        cb = h_ncarg;
+        carg(fp, 0); carg(rec, 0);
+        call_end(cb, 2, s->type == STMT_GET ? "bcrt_get_record" : "bcrt_put_record", NULL);
+        return;
+    }
     if (s->type == STMT_GET) {
+        int cur = lv.ty != VAL_STRING ? iconst(0) :
+                  lv.ea >= 0 ? ld(lv.ea, 4) : hi_emit(HI_LOAD, TY_INT, VA(lv.v), -1, 0, NULL);
+        bv_t x;
         cb = h_ncarg;
         carg(fp, 0);
-        carg(iconst(v->type), 0);
-        carg(v->type == VAL_STRING ? hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL) : iconst(0), 0);
-        var_store(v, typed(bv_call("bcrt_get_val", cb, 3), v->type));
+        carg(iconst(lv.ty), 0);
+        carg(cur, 0);
+        x = typed(bv_call("bcrt_get_val", cb, 3), lv.ty);
+        if (lv.ea >= 0) field_store(lv.ea, lv.ty, lv.flen, x);
+        else var_store(lv.v, x);
     } else {
-        bv_t x = dynv(var_load(v));
+        bv_t x;
+        if (lv.ea < 0) x = var_load(lv.v);
+        else if (lv.ty == VAL_STRING) {
+            cb = h_ncarg;
+            carg(ld(lv.ea, 4), 0);
+            x = mk(call_end(cb, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
+        } else
+            x = mk(ld(lv.ea, 4), st_flt(lv.ty) ? ld(lv.ea, 8) : -1, -1, lv.ty);
+        x = dynv(x);
         cb = h_ncarg;
         carg(fp, 0);
         carg_bv(x);
@@ -2655,10 +2693,21 @@ static void bc_call(stmt_t *s) {
  * and nothing changes; else n (not negative), then r$ (a string) over
  * v$ from start, v$'s length kept */
 static void bc_mid_assign(stmt_t *s) {
-    var_t *v = var_get(s->mid_assign.var_name, 0, s->line);
-    int start, in, body = new_blk(), done = new_blk(), n = iconst(-1), cb, old, nw;
+    lval_t lv;
+    int start, in, body, done, n = iconst(-1), cb, old, nw;
     bv_t r;
-    if (v->type != VAL_STRING) {
+    /* the string: a variable's, or an element's or a field's (exec_mid_assign) */
+    if (!s->mid_assign.target) {
+        lv.v = var_get(s->mid_assign.var_name, 0, s->line);
+        lv.ea = -1;
+        lv.ty = lv.v->type;
+    } else if (!lval_of(s->mid_assign.target, s->line, &lv)) {
+        bc_not_yet(s->line, "this MID$ =");
+        return;
+    }
+    body = new_blk();
+    done = new_blk();
+    if (lv.ty != VAL_STRING) {
         cb = h_ncarg;
         carg(iconst(ERR_TYPE_MISMATCH), 0);
         call_end(cb, 1, "bcrt_err", NULL);
@@ -2666,7 +2715,7 @@ static void bc_mid_assign(stmt_t *s) {
     }
     start = coerce(expr(s->mid_assign.start), VAL_LONG).lo;
     cb = h_ncarg;
-    carg(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), 0);
+    carg(lv.ea >= 0 ? ld(lv.ea, 4) : hi_emit(HI_LOAD, TY_INT, VA(lv.v), -1, 0, NULL), 0);
     carg(start, 0);
     in = call_end(cb, 2, "bcrt_mid_in", NULL);
     hi_emit(HI_BRC, TY_VOID, in, body, done, NULL);
@@ -2679,12 +2728,13 @@ static void bc_mid_assign(stmt_t *s) {
         call_end(cb, 1, "bcrt_mid_len", NULL);
     }
     r = dynv(expr(s->mid_assign.value));
-    old = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+    old = lv.ea >= 0 ? ld(lv.ea, 4) : hi_emit(HI_LOAD, TY_INT, VA(lv.v), -1, 0, NULL);
     cb = h_ncarg;
     carg(old, 0); carg(start, 0); carg(n, 0);
     carg_bv(r);
     nw = call_end(cb, 6, "bcrt_mid_set", NULL);
-    hi_emit(HI_STORE, TY_INT, VA(v), nw, 0, NULL);
+    if (lv.ea >= 0) st(lv.ea, 4, nw);
+    else hi_emit(HI_STORE, TY_INT, VA(lv.v), nw, 0, NULL);
     cb = h_ncarg;
     carg(old, 0);
     call_end(cb, 1, "bcrt_unref", NULL);
@@ -2816,7 +2866,6 @@ static void bc_select(stmt_t *s) {
 
 /* SWAP a, b: two variables or elements of one type, their values
  * exchanged as they are (no conversion, no reference counted) */
-typedef struct { var_t *v; int ea, ty, flen; } lval_t;   /* (flen: a STRING * n's n) */
 
 static int lval_of(expr_t *e, int line, lval_t *lv) {
     lv->v = NULL;
@@ -3703,7 +3752,16 @@ static void proc_func(proc_t *p, Node *fn) {
         v->a = pin[i + fnc];
         v->local = 0;
     }
-    if (fnc) bc_proc_result = var_get(def->proc_def.name, 0, def->line);
+    if (fnc) {
+        char bare[64];
+        bc_proc_result = var_get(def->proc_def.name, 0, def->line);
+        if (ast_name_bare(def->proc_def.name, bare) && !var_find(bare)) {
+            var_t *v = var_push();          /* f, f%'s value too (call_proc_values) */
+            *v = *bc_proc_result;
+            strncpy(v->name, bare, 63);
+            v->local = 0;                   /* (released as f%) */
+        }
+    }
     for (stmt_t *s = def->proc_def.body; s; s = s->next)
         if (s->type == STMT_SHARED || s->type == STMT_STATIC)
             for (int i = 0; i < s->shared.nvars; i++) {

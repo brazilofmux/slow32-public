@@ -1294,9 +1294,40 @@ static void nat_store(FILE *out, const char *slot, int st, const char *x, int t)
  * TRACE, none of its variables named as a builtin), the env version
  * otherwise; what it does is what the env version does. --- */
 
+/* a name in a statement list, as a variable or an assignment's target */
+typedef struct { const char *name; int seen; } name_seen_t;
+static void seen_expr(expr_t *e, void *ctx) {
+    name_seen_t *n = ctx;
+    if (e->type == EXPR_VARIABLE && strcmp(e->var.name, n->name) == 0) n->seen = 1;
+    if (e->type == EXPR_CALL && strcmp(e->call.name, n->name) == 0) n->seen = 1;
+}
+static void seen_top(expr_t *e, void *ctx) { expr_walk(e, seen_expr, ctx); }
+static int names_used(const stmt_t *s, const char *name) {
+    name_seen_t n = { name, 0 };
+    for (; s && !n.seen; s = s->next) {
+        if (s->type == STMT_ASSIGN && strcmp(s->assign.name, name) == 0) return 1;
+        stmt_exprs((stmt_t *)s, seen_top, &n);
+        switch (s->type) {
+            case STMT_IF: if (names_used(s->if_stmt.then_body, name) || names_used(s->if_stmt.else_body, name)) return 1; break;
+            case STMT_FOR: if (names_used(s->for_stmt.body, name)) return 1; break;
+            case STMT_WHILE: if (names_used(s->while_stmt.body, name)) return 1; break;
+            case STMT_DO_LOOP: if (names_used(s->do_loop.body, name)) return 1; break;
+            case STMT_SELECT:
+                for (const case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next)
+                    if (names_used(cl->body, name)) return 1;
+                break;
+            default: break;
+        }
+    }
+    return n.seen;
+}
+
 static int native_eligible(const stmt_t *def, const code_t *c) {
     int ok = 1;
+    char bare[64];
     if (has_deftype) return 0;
+    /* (FUNCTION f% whose body names f: f% too, which its C locals are not) */
+    if (ast_name_bare(def->proc_def.name, bare) && names_used(def->proc_def.body, bare)) return 0;
     for (int i = 0; i < def->proc_def.nparams; i++)
         if (n_of_val(def->proc_def.param_types[i]) == N_NONE ||
             predict_name(def->proc_def.params[i]) == N_NONE ||

@@ -523,6 +523,17 @@ void bcrt_put_val(int fp, int lo, int hi, int t) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* GET # and PUT # of a record (eval_get_record, eval_put_record) */
+void bcrt_get_record(int fp, int rec) {
+    error_t e = eval_get_record((FILE *)(intptr_t)fp, (sb_record_t *)(intptr_t)rec);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_put_record(int fp, int rec) {
+    error_t e = eval_put_record((FILE *)(intptr_t)fp, (sb_record_t *)(intptr_t)rec);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* LSET (left) / RSET: the variable's string's length (cur, not taken),
  * and the new string */
 int bcrt_strlen(int cur) { return cur ? ((sb_string_t *)(intptr_t)cur)->len : 0; }
