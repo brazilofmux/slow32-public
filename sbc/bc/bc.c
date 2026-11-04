@@ -1750,6 +1750,7 @@ static const char *stmt_word(int t) {
     case STMT_OPTION_BASE: return "OPTION BASE";
     case STMT_ERASE: return "ERASE";
     case STMT_TYPE_DEF: case STMT_DIM_AS_TYPE: case STMT_FIELD_ASSIGN: return "TYPE";
+    case STMT_RUN: return "RUN";
     default: {
         static char w[32];      /* (the parser's number for it: ast.h's stmt_type_t) */
         snprintf(w, sizeof w, "statement %d", t);
@@ -3215,7 +3216,10 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_SCREEN: {
-        int m = handle_of(s->shell_stmt.command), cb = h_ncarg;
+        int m, cb;
+        if (!s->shell_stmt.command) break;          /* (pages only: the mode kept) */
+        m = handle_of(s->shell_stmt.command);
+        cb = h_ncarg;
         carg(m, 0);
         call_end(cb, 1, "bcrt_screen", NULL);
         break;
@@ -3801,10 +3805,14 @@ static void proc_func(proc_t *p, Node *fn) {
                 const char *name = s->shared.varnames[i];
                 char sym[96];
                 var_t *v;
+                int t;
                 if (is_array_entry(name) || var_find(name)) continue;
                 global_sym(sym, sizeof sym, s->type == STMT_STATIC ? p : NULL, name);
+                /* (STATIC x AS type: that type; else as the main program types it) */
+                t = s->type == STMT_STATIC && i < 16 && s->shared.astype[i] ? s->shared.astype[i] - 1
+                                                                            : main_type(name);
                 v = var_push();
-                var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
+                var_init(v, name, t, global_add(name, sym, t));
                 v->rtype = main_rtype(name);
             }
     bc_nconsts = bc_nmodconsts;

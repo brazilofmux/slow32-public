@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 SB=../sbasic/src
-SRCS="$SB/program.c $SB/lexer.c $SB/parser.c $SB/ast.c $SB/value.c $SB/error.c $SB/lower.c"
+SRCS="$SB/program.c $SB/lexer.c $SB/parser.c $SB/ast.c $SB/value.c $SB/error.c $SB/lower.c $SB/builtin_names.c"
 if [ -x s32-sbc ] && [ -z "$(find s32-sbc.c $SRCS $SB/*.h -newer s32-sbc 2>/dev/null)" ]; then
     exit 0
 fi
