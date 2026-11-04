@@ -617,6 +617,18 @@ void bcrt_gfx_getput(int put, int steps, int action, int x1l, int x1h, int y1l, 
 }
 
 /* flags: has_x1, has_color, has_aux, step1, step2, has_from, preset, from bit 0 */
+/* CIRCLE (exec_gfx's): flags bit 0 a color given, 1 STEP, 2 a start, 3
+ * an end, 4 an aspect; each number a double's two words */
+void bcrt_circle(int flags, int color, int xl, int xh, int yl, int yh, int rl, int rh,
+                 int sl, int sh, int el, int eh, int al, int ah) {
+    gfx_op_t g = { STMT_CIRCLE, dwords_of(xl, xh), dwords_of(yl, yh), dwords_of(rl, rh), 0,
+                   color, -1, 1, flags & 1, 0, (flags >> 1) & 1, 0, 0, 0, 0,
+                   dwords_of(sl, sh), dwords_of(el, eh), dwords_of(al, ah),
+                   (flags >> 2) & 1, (flags >> 3) & 1, (flags >> 4) & 1 };
+    error_t e = eval_gfx(&g);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* the points' coordinates as evaluated, each a double's two words (eval_gfx
  * rounds them, or maps them through a WINDOW) */
 void bcrt_gfx(int type, int flags, int box, int color, int aux, int x1l, int x1h, int y1l, int y1h,

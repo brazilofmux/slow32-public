@@ -3220,7 +3220,26 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 1, "bcrt_screen", NULL);
         break;
     }
-    case STMT_PSET: case STMT_LINE_G: case STMT_CIRCLE: case STMT_PAINT: case STMT_PALETTE:
+    case STMT_CIRCLE: {
+        /* the center, the radius, the color, then start, end and aspect,
+         * each as it comes (exec_gfx): the numbers doubles' words */
+        expr_t *op[6] = { s->gfx.x1, s->gfx.y1, s->gfx.x2, s->gfx.start, s->gfx.end, s->gfx.aspect };
+        int lo[6], hi[6], col, cb, flags;
+        for (int i = 0; i < 3; i++) dwords(coerce(expr(op[i]), VAL_DOUBLE), &lo[i], &hi[i]);
+        col = s->gfx.color ? handle_of(s->gfx.color) : iconst(-1);
+        for (int i = 3; i < 6; i++) {
+            if (op[i]) dwords(coerce(expr(op[i]), VAL_DOUBLE), &lo[i], &hi[i]);
+            else lo[i] = dconst(0, &hi[i]);
+        }
+        flags = (s->gfx.color != NULL) | s->gfx.step1 << 1 | (s->gfx.start != NULL) << 2 |
+                (s->gfx.end != NULL) << 3 | (s->gfx.aspect != NULL) << 4;
+        cb = h_ncarg;
+        carg(iconst(flags), 0); carg(col, 0);
+        for (int i = 0; i < 6; i++) { carg(lo[i], 0); carg(hi[i], 0); }
+        call_end(cb, 14, "bcrt_circle", NULL);
+        break;
+    }
+    case STMT_PSET: case STMT_LINE_G: case STMT_PAINT: case STMT_PALETTE:
     case STMT_VIEW: case STMT_WINDOW: {
         /* each point's coordinate as it is, a double (eval_gfx rounds it or
          * maps it), a color an integer, as each comes; an absent one 0, an
