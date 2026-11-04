@@ -34,6 +34,7 @@
 #include "builtin.h"
 #include "fileio.h"
 #include "terminal.h"
+#include "machine.h"
 
 extern int console_width;
 
@@ -657,6 +658,17 @@ void bcrt_dir(int kind, int lo, int hi, int t) {
 
 void bcrt_poke(int offset, int v) {
     error_t e = eval_poke(offset, v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* OUT and WAIT: the ports the machine model knows (machine.c) */
+void bcrt_out(int port, int v) {
+    error_t e = pc_out(port, v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_wait(int port, int a, int b) {
+    error_t e = pc_wait(port, a, b);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 

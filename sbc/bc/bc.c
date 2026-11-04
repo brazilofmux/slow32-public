@@ -3249,6 +3249,16 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 2, "bcrt_poke", NULL);
         break;
     }
+    case STMT_OUT: case STMT_WAIT: {    /* the port, then the value(s), each made an integer */
+        int port = coerce(expr(s->port_stmt.port), VAL_LONG).lo, a, b, cb;
+        a = coerce(expr(s->port_stmt.a), VAL_LONG).lo;
+        b = s->port_stmt.b ? coerce(expr(s->port_stmt.b), VAL_LONG).lo : iconst(0);
+        cb = h_ncarg;
+        carg(port, 0); carg(a, 0);
+        if (s->type == STMT_WAIT) carg(b, 0);
+        call_end(cb, s->type == STMT_WAIT ? 3 : 2, s->type == STMT_WAIT ? "bcrt_wait" : "bcrt_out", NULL);
+        break;
+    }
     case STMT_DEF_SEG: {
         int seg = s->shell_stmt.command ? handle_of(s->shell_stmt.command) : iconst(0), cb = h_ncarg;
         carg(seg, 0);
