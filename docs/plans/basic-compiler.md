@@ -266,9 +266,11 @@ So they are two compilers for two languages, named for them:
 The reconciliation is auto-detection: `sbc/compile.sh prog.bas` tries
 s32-bc and, when it refuses, compiles with s32-sbc and says why
 (`--qb` and `--any` choose one).  sbc/README.md is their common
-description.  What is not done: s32-bc in the slow32:basic image (it
-is a host program, as s32-sbc is, but its run time bc_rt.s32o is built
-by clang; the image builds with the toolchain stage already).
+description.  And slow32:basic ships both (2026-11-04): `s32bc`,
+`s32sbc`, and `s32basic` (compile.sh) -- s32-bc and its bc_rt.s32o
+built in the image's toolchain stage, both compilers linking
+libsbasic.s32a; s32-bc writes assembly, so its programs need no C
+compiler in the image at all.
 
 ## s32-bc (sbc/bc/, 2026-11-03)
 

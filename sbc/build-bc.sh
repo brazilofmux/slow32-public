@@ -9,6 +9,7 @@ cd "$(dirname "$0")"
 SB=../sbasic/src
 LLVM_BIN="${LLVM_BIN:-$HOME/llvm-project/build/bin}"
 ASM="${S32_AS:-../tools/assembler/slow32asm}"
+RT_INCLUDE="${S32_RT_INCLUDE:-../runtime/include}"   # (an installed prefix's, in an image build)
 SRCS="$SB/program.c $SB/lexer.c $SB/parser.c $SB/ast.c $SB/value.c $SB/error.c $SB/strict.c $SB/builtin_names.c"
 mkdir -p out
 if [ ! -x s32-bc ] || [ -n "$(find bc/bc.c bc/bc_contract.h bc/hir $SRCS $SB/*.h $SB/builtins.def -newer s32-bc 2>/dev/null)" ]; then
@@ -19,7 +20,7 @@ if [ ! -f out/bc_rt.s32o ] || [ -n "$(find bc/bc_rt.c $SB/*.h -newer out/bc_rt.s
     W="$(mktemp -d "${TMPDIR:-/tmp}/bcrt.XXXXXX")"
     trap 'rm -rf "${W:?}"' EXIT
     "$LLVM_BIN/clang" -target slow32-unknown-none -S -emit-llvm -nostdinc -fno-builtin \
-        -I../runtime/include -I$SB -O2 bc/bc_rt.c -o "$W/bc_rt.ll"
+        -I"$RT_INCLUDE" -I$SB -O2 bc/bc_rt.c -o "$W/bc_rt.ll"
     "$LLVM_BIN/llc" -mtriple=slow32-unknown-none "$W/bc_rt.ll" -o "$W/bc_rt.s"
     "$ASM" "$W/bc_rt.s" out/bc_rt.s32o >/dev/null
     echo "OK  out/bc_rt.s32o"

@@ -11,11 +11,14 @@ history: [docs/plans/basic-compiler.md](../docs/plans/basic-compiler.md).
 | how | decides the program's shape before it runs and writes native code through HIR (stage08's back end, `bc/hir/`); values the run time types go through the interpreter's own code (`bc/bc_rt.c`) | writes the interpreter's lowered ops as C, native behind guards, the interpreter's executor running the rest; C by clang or stage08 |
 | speed (the 92 games both take, instructions; `tests/compare-speed.py`) | 371M | 467M (the interpreter: 755M) -- s32-bc the faster on 89 of the 92 |
 | sources | `bc/bc.c`, `bc/bc_rt.c`, `build-bc.sh`, `compile-bc.sh` | `s32-sbc.c`, `runtime/`, `build.sh`, `compile-bas.sh`, `build-lib.sh` |
-| shipped | not yet in an image | `slow32:basic` (`s32sbc`, stage08 cc on the emulator, no LLVM) |
+| shipped | `slow32:basic` (`s32bc`; assembly straight out, no C compiler) | `slow32:basic` (`s32sbc`, stage08 cc on the emulator, no LLVM) |
 | gate | `tests/run-oracle.py --bc`, `tests/qb-corpus.py` (QBasic's programs), `sbasic/tests/strict-qb.py` (the checker against QBasic) | `tests/run-oracle.py`, `tests/run-stage08.sh`, `tests/fuzz.py` |
 
 Both print what the interpreter prints, byte for byte: that is each
 one's gate.  The interpreter runs every program either compiler takes.
+
+In the slow32:basic image the same three are `s32basic`, `s32bc` and
+`s32sbc` (each `prog.bas [out.s32x]`).
 
 ```bash
 ./compile.sh prog.bas [prog.s32x]        # s32-bc if it takes the program, else s32-sbc (it says which, and why)

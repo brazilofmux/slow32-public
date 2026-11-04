@@ -1,0 +1,22 @@
+#!/bin/bash
+# s32bc -- compile QuickBASIC (.bas: what QBasic 1.1 loads) to a SLOW-32
+# executable inside slow32:basic, with s32-bc, the QuickBASIC compiler.
+#   s32bc prog.bas [out.s32x]
+# s32-bc checks the program as QBasic would load it (a refusal says the
+# line and why), writes SLOW-32 assembly, and it links with bc_rt and the
+# interpreter's runtime (libsbasic.s32a), so it prints what the
+# interpreter prints.  Then `s32run out.s32x`.  A program s32-bc refuses
+# -- GW-BASIC's habits, say -- s32sbc compiles, and s32basic picks.
+X=/opt/slow32/basic
+export S32_BC=/opt/slow32/bin/s32-bc
+export BC_RT=$X/bc_rt.s32o
+export SBASIC_LIB=$X/libsbasic.s32a
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "usage: s32bc prog.bas [out.s32x]" >&2
+    exit 1
+fi
+b=$(basename "$1")
+exec bash $X/compile-bc.sh "$1" "${2:-./${b%.*}.s32x}"

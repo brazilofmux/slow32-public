@@ -1,0 +1,31 @@
+#!/bin/bash
+# s32basic -- compile a BASIC program (.bas) to a SLOW-32 executable inside
+# slow32:basic, by whichever compiler takes it: s32-bc (the QuickBASIC
+# compiler, tried first) or else s32-sbc (the SLOW BASIC compiler, which
+# takes anything the interpreter runs); it says which, and why.
+#   s32basic [--qb | --any] prog.bas [out.s32x]
+#   --qb   s32-bc only (s32bc);  --any  s32-sbc only (s32sbc)
+X=/opt/slow32/basic
+export S32_BC=/opt/slow32/bin/s32-bc
+export BC_RT=$X/bc_rt.s32o
+export SBC_CC=stage08
+export S32_CC_S32X=$X/cc.s32x
+export S32_CC_EMU="${S32_CC_EMU:-slow32-dbt}"
+export S32_SBC=/opt/slow32/bin/s32-sbc
+export SBASIC_INCLUDE=$X/c-include
+export SBASIC_LIB=$X/libsbasic.s32a
+export S32_AS=/opt/slow32/bin/slow32asm
+export S32_LD=/opt/slow32/bin/s32-ld
+export S32_RT=/opt/slow32/lib
+export S32_RT_INCLUDE=/opt/slow32/include
+opt=()
+case "${1:-}" in --qb|--any) opt=("$1"); shift ;; esac
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "usage: s32basic [--qb | --any] prog.bas [out.s32x]" >&2
+    exit 1
+fi
+b=$(basename "$1")
+SBC_WORK=$(mktemp -d "${TMPDIR:-/tmp}/s32basic.XXXXXX") || exit 1
+export SBC_WORK
+trap 'rm -rf "${SBC_WORK:?}"' EXIT
+bash $X/compile.sh "${opt[@]}" "$1" "${2:-./${b%.*}.s32x}"

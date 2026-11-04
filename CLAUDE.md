@@ -155,9 +155,13 @@ substituted 1:1.
   interactive kernel (`podman run -i`), `s32forthc [--hosted] prog.fth`
   compiles a closed-world program to a standalone `.s32x`.
 - `slow32:basic` (FROM base): SLOW BASIC -- `sbasic` (the interpreter,
-  sbasic.s32x) and `s32sbc prog.bas [out.s32x]` (s32-sbc writes C,
-  stage08 cc.s32x from slow32:kit compiles it on the emulator, linked
-  with libsbasic.s32a; no LLVM).  Gate: sbc/tests/run-stage08.sh.
+  sbasic.s32x) and its two compilers (sbc/README.md): `s32bc prog.bas
+  [out.s32x]` (s32-bc, the QuickBASIC compiler: what QBasic loads,
+  straight to SLOW-32 assembly), `s32sbc prog.bas [out.s32x]` (s32-sbc,
+  the SLOW BASIC compiler: anything sbasic runs, as C that stage08
+  cc.s32x from slow32:kit compiles on the emulator), and `s32basic`
+  (s32-bc if it takes the program, else s32-sbc); both link
+  libsbasic.s32a, no LLVM.  Gate: sbc/tests/run-stage08.sh.
 - `slow32:kit` (FROM base): + `/opt/slow32/kit`, the self-hosted kit
   (`~/s32x`: cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
   and `s32kcc`, C to `.s32x` through that toolchain on the emulator. The

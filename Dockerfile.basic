@@ -1,12 +1,19 @@
-# SLOW-32 BASIC Image: the interpreter and the s32-sbc compiler on slow32:base.
+# SLOW-32 BASIC Image: the interpreter and the two BASIC compilers
+# (sbc/README.md) on slow32:base.
 #
 #   slow32:base   emulators + as/ld/ar/utilities + runtime
-#     -> slow32:basic   + sbasic.s32x (the interpreter), s32-sbc (host
-#                       compiler, .bas to C), libsbasic.s32a (the
-#                       interpreter's runtime, compiled ahead of time),
-#                       the C headers the generated C includes, stage08
-#                       cc, and two launchers: `sbasic` and `s32sbc`.
+#     -> slow32:basic   + sbasic.s32x (the interpreter); s32-bc (the
+#                       QuickBASIC compiler, host: .bas to SLOW-32
+#                       assembly) and its run time bc_rt.s32o; s32-sbc
+#                       (the SLOW BASIC compiler, host: .bas to C), the
+#                       C headers the generated C includes and stage08
+#                       cc; libsbasic.s32a (the interpreter's runtime,
+#                       compiled ahead of time, which both link); and
+#                       four launchers: `sbasic`, `s32bc`, `s32sbc`, and
+#                       `s32basic` (s32-bc if it takes the program, else
+#                       s32-sbc).
 #
+# s32-bc writes assembly, so its programs need no C compiler at all.
 # s32-sbc writes C; stage08 cc (cc.s32x, a SLOW-32 program run on the
 # emulator) compiles each program's C, and it links against
 # libsbasic.s32a, so the image needs no LLVM.  The interpreter and its
@@ -30,26 +37,32 @@ FROM ${TOOLCHAIN_IMAGE} AS basic-builder
 WORKDIR /build
 COPY sbasic/build.sh /build/sbasic/
 COPY sbasic/src /build/sbasic/src
-COPY sbc/build.sh sbc/build-lib.sh sbc/compile-bas.sh sbc/s32-sbc.c /build/sbc/
+COPY sbc/build.sh sbc/build-lib.sh sbc/compile-bas.sh sbc/s32-sbc.c \
+     sbc/build-bc.sh sbc/compile-bc.sh sbc/compile.sh /build/sbc/
 COPY sbc/runtime /build/sbc/runtime
+COPY sbc/bc /build/sbc/bc
 ENV LLVM_BIN=/opt/llvm/bin S32_AS=/opt/slow32/bin/slow32asm S32_LD=/opt/slow32/bin/s32-ld \
     S32_AR=/opt/slow32/bin/s32-ar S32_RT=/opt/slow32/lib S32_RT_INCLUDE=/opt/slow32/include
 RUN bash sbasic/build.sh >/dev/null && bash sbc/build.sh && bash sbc/build-lib.sh && \
+    bash sbc/build-bc.sh && strip sbc/s32-bc && \
     mkdir -p /build/c-include && \
     cp sbasic/src/*.h sbc/runtime/sbcrt.h /build/c-include/
 
 # Stage 2: layer onto base
 FROM ${BASE_IMAGE}
-COPY --from=basic-builder /build/sbc/s32-sbc /opt/slow32/bin/
+COPY --from=basic-builder /build/sbc/s32-sbc /build/sbc/s32-bc /opt/slow32/bin/
 COPY --from=basic-builder /build/sbasic/sbasic.s32x /build/sbc/out/libsbasic.s32a \
-     /build/sbc/compile-bas.sh /opt/slow32/basic/
+     /build/sbc/out/bc_rt.s32o /build/sbc/compile-bas.sh /build/sbc/compile-bc.sh \
+     /build/sbc/compile.sh /opt/slow32/basic/
 COPY --from=basic-builder /build/c-include /opt/slow32/basic/c-include
 COPY --from=kit /opt/slow32/kit/cc.s32x /opt/slow32/basic/
-COPY docker/bin/sbasic docker/bin/s32sbc /opt/slow32/bin/
-RUN chmod +x /opt/slow32/bin/sbasic /opt/slow32/bin/s32sbc
+COPY docker/bin/sbasic docker/bin/s32sbc docker/bin/s32bc docker/bin/s32basic /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/sbasic /opt/slow32/bin/s32sbc /opt/slow32/bin/s32bc /opt/slow32/bin/s32basic
 
 # Usage:  sbasic prog.bas            run it with the interpreter
 #         sbasic                     the interpreter's prompt
-#         s32sbc prog.bas [out.s32x] compile it (stage08 cc, no LLVM)
+#         s32bc prog.bas [out.s32x]  compile QuickBASIC (s32-bc)
+#         s32sbc prog.bas [out.s32x] compile SLOW BASIC (s32-sbc; stage08 cc, no LLVM)
+#         s32basic prog.bas [out]    whichever takes it
 #         s32run prog.s32x
 WORKDIR /data
