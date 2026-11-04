@@ -2006,22 +2006,32 @@ error_t eval_gfx(const gfx_op_t *g) {
     return ERR_NONE;
 }
 
+static error_t eval_int_of(env_t *env, expr_t *e, int *out);
+
 static error_t exec_locate(env_t *env, stmt_t *s) {
-    value_t rv, cv;
-    EVAL_CHECK(eval_expr(env, s->locate_stmt.row, &rv));
-    error_t err = eval_expr(env, s->locate_stmt.col, &cv);
-    if (err != ERR_NONE) {
-        val_clear(&rv);
-        return err;
+    value_t rv = val_integer(eval_cursor_row()), cv = val_integer(eval_cursor_col());
+    if (s->locate_stmt.row) EVAL_CHECK(eval_expr(env, s->locate_stmt.row, &rv));
+    if (s->locate_stmt.col) {
+        error_t err = eval_expr(env, s->locate_stmt.col, &cv);
+        if (err != ERR_NONE) {
+            val_clear(&rv);
+            return err;
+        }
     }
-    int row, col;
-    err = val_to_integer(&rv, &row);
+    int row, col, rest;
+    error_t err = val_to_integer(&rv, &row);
     if (err == ERR_NONE) err = val_to_integer(&cv, &col);
     val_clear(&rv);
     val_clear(&cv);
     if (err != ERR_NONE) return err;
+    for (int i = 0; i < 3; i++)         /* (the cursor's shape: evaluated, no more) */
+        if (s->locate_stmt.rest[i]) EVAL_CHECK(eval_int_of(env, s->locate_stmt.rest[i], &rest));
     return eval_locate(row, col);
 }
+
+/* the cursor: a LOCATE's row or column left out keeps it */
+int eval_cursor_row(void) { return print_row; }
+int eval_cursor_col(void) { return print_col + 1; }
 
 /* LOCATE row, col, made integers -- for compiled code too */
 error_t eval_locate(int row, int col) {
@@ -2727,8 +2737,9 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->input_file.varnames[i]))
             return ERR_CONST_REASSIGN;
         value_t val;
-        EVAL_CHECK(eval_input_field(fp, target_type(s->input_file.varnames[i], 0), &val));
-        err = store_into(env_get(env, s->input_file.varnames[i]), &val);
+        EVAL_CHECK(eval_input_field(fp, target_type(s->input_file.varnames[i], s->input_file.targets[i] != NULL),
+                                    &val));
+        err = store_target(env, s->input_file.targets[i], s->input_file.varnames[i], &val);
         val_clear(&val);
         if (err != ERR_NONE) return err;
     }
@@ -2784,6 +2795,11 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
             val_clear(&val);
             return ERR_CONST_REASSIGN;
         }
+        if (s->input_file.targets[0]) {     /* an array element */
+            err = store_target(env, s->input_file.targets[0], s->input_file.varnames[0], &val);
+            val_clear(&val);
+            return err;
+        }
         env_set(env, s->input_file.varnames[0], &val);
     }
     val_clear(&val);
@@ -2811,6 +2827,11 @@ static error_t exec_line_input_console(env_t *env, stmt_t *s) {
         if (env_is_const(env, s->input.varnames[0])) {
             val_clear(&val);
             return ERR_CONST_REASSIGN;
+        }
+        if (s->input.targets[0]) {          /* an array element */
+            error_t err = store_target(env, s->input.targets[0], s->input.varnames[0], &val);
+            val_clear(&val);
+            return err;
         }
         env_set(env, s->input.varnames[0], &val);
     }
@@ -3475,10 +3496,11 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             extern int console_width;
             value_t v;
             EVAL_CHECK(eval_expr(env, s->width_stmt.columns, &v));
-            int w;
+            int w, rows;
             error_t err = val_to_integer(&v, &w);
             val_clear(&v);
             if (err != ERR_NONE) return err;
+            if (s->width_stmt.rows) EVAL_CHECK(eval_int_of(env, s->width_stmt.rows, &rows));
             eval_width(w);
             return ERR_NONE;
         }

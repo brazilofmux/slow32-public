@@ -21,6 +21,14 @@ static int debug_enabled(void) {
     return term_debug;
 }
 
+/* The terminal service draws at once; PRINT's text waits in stdout's
+ * buffer.  What PRINT wrote must go first, or text printed before a
+ * LOCATE, CLS or COLOR comes out after it (PRINT "ab"; : LOCATE 3, 10
+ * showed the move, then "ab"). */
+static void term_sync(void) {
+    fflush(stdout);
+}
+
 static void ensure_init(void) {
     if (term_state != 0)
         return;
@@ -41,8 +49,10 @@ int sb_term_init(void) {
 }
 
 void sb_term_shutdown(void) {
-    if (term_state == 1)
+    if (term_state == 1) {
+        term_sync();
         term_cleanup();
+    }
     term_state = 0;
 }
 
@@ -55,6 +65,7 @@ static int clamp_ansi_color(int c) {
 void sb_term_cls(void) {
     ensure_init();
     if (term_state == 1) {
+        term_sync();
         term_clear(0);
         term_gotoxy(1, 1);
         return;
@@ -68,6 +79,7 @@ void sb_term_locate(int row, int col) {
     if (row < 1) row = 1;
     if (col < 1) col = 1;
     if (term_state == 1) {
+        term_sync();
         term_gotoxy(row, col);
         return;
     }
@@ -88,6 +100,7 @@ void sb_term_color(int fg, int bg, int has_fg, int has_bg) {
 
     if (term_state == 1) {
         int service_fg = cur_fg & 7;
+        term_sync();
         int service_bg = cur_bg & 7;
         term_set_attr((cur_fg >= 8) ? 1 : 0);
         term_set_color(service_fg, service_bg);

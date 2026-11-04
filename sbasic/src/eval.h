@@ -108,6 +108,8 @@ int eval_trappable(error_t err);
 /* statements' actions, their operands evaluated -- for compiled code too */
 void eval_cls(void);
 error_t eval_locate(int row, int col);
+int eval_cursor_row(void);
+int eval_cursor_col(void);
 error_t eval_color_arg(int c);
 void eval_color(int fg, int bg, int has_fg, int has_bg);
 error_t eval_line_input(const char *prompt, value_t *out);

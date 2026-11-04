@@ -230,8 +230,9 @@ typedef struct stmt {
 
         /* STMT_LOCATE */
         struct {
-            expr_t *row;
-            expr_t *col;
+            expr_t *row;            /* NULL: the cursor's row stays */
+            expr_t *col;            /* NULL: its column stays */
+            expr_t *rest[3];        /* cursor, start, stop: evaluated, no more */
         } locate_stmt;
 
         /* STMT_COLOR */
@@ -437,6 +438,7 @@ typedef struct stmt {
             struct expr *handle_num;
             char (*varnames)[64];
             val_type_t *vartypes;
+            struct expr **targets;  /* an array element's lvalue, or NULL */
             int nvars;
             int var_cap;
         } input_file;
@@ -578,6 +580,7 @@ typedef struct stmt {
         /* STMT_WIDTH */
         struct {
             struct expr *columns;
+            struct expr *rows;      /* WIDTH cols, rows: evaluated, no more */
         } width_stmt;
 
         /* STMT_PSET / STMT_LINE_G / STMT_CIRCLE / STMT_PAINT / STMT_PALETTE */
@@ -695,6 +698,7 @@ stmt_t *stmt_write_file(expr_t *handle, int line);
 int stmt_write_file_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_input_file(expr_t *handle, int line);
 int stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
+int stmt_input_file_add_target(stmt_t *s, expr_t *target);
 stmt_t *stmt_line_input(expr_t *handle, int line);
 stmt_t *stmt_kill(expr_t *filename, int line);
 stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line);

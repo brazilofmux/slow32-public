@@ -212,6 +212,12 @@ int stmt_read_add_target(stmt_t *s, expr_t *e) {
     return add_target(s, e, stmt_read_add_var, read_targets, &s->read_stmt.nvars);
 }
 
+static expr_t **input_file_targets(stmt_t *s) { return s->input_file.targets; }
+
+int stmt_input_file_add_target(stmt_t *s, expr_t *e) {
+    return add_target(s, e, stmt_input_file_add_var, input_file_targets, &s->input_file.nvars);
+}
+
 stmt_t *stmt_cls(int line) {
     return stmt_alloc(STMT_CLS, line);
 }
@@ -503,6 +509,7 @@ void stmt_free(stmt_t *s) {
             case STMT_LOCATE:
                 expr_free(s->locate_stmt.row);
                 expr_free(s->locate_stmt.col);
+                for (int i = 0; i < 3; i++) expr_free(s->locate_stmt.rest[i]);
                 break;
             case STMT_COLOR:
                 expr_free(s->color_stmt.fg);
@@ -619,8 +626,11 @@ void stmt_free(stmt_t *s) {
             case STMT_INPUT_FILE:
             case STMT_LINE_INPUT:
                 expr_free(s->input_file.handle_num);
+                for (int i = 0; i < s->input_file.nvars; i++)
+                    if (s->input_file.targets) expr_free(s->input_file.targets[i]);
                 free(s->input_file.varnames);
                 free(s->input_file.vartypes);
+                free(s->input_file.targets);
                 break;
             case STMT_KILL:
                 expr_free(s->kill_stmt.filename);
@@ -704,6 +714,7 @@ void stmt_free(stmt_t *s) {
                 break;
             case STMT_WIDTH:
                 expr_free(s->width_stmt.columns);
+                expr_free(s->width_stmt.rows);
                 break;
             case STMT_NOOP:
             case STMT_CLEAR:
@@ -925,8 +936,12 @@ int stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
         void *tmp2 = realloc(s->input_file.vartypes, newcap * sizeof(s->input_file.vartypes[0]));
         if (!tmp2) return -1;
         s->input_file.vartypes = tmp2;
+        void *tmp3 = realloc(s->input_file.targets, newcap * sizeof(s->input_file.targets[0]));
+        if (!tmp3) return -1;
+        s->input_file.targets = tmp3;
         s->input_file.var_cap = newcap;
     }
+    s->input_file.targets[n] = NULL;
     ast_name_copy(s->input_file.varnames[n], name);
     s->input_file.vartypes[n] = type;
     s->input_file.nvars = n + 1;
@@ -1182,7 +1197,10 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_LINE_INPUT_CONSOLE:
         exprs_n(s->input.targets, s->input.nvars, fn, ctx);
         break;
-    case STMT_LOCATE: X(s->locate_stmt.row); X(s->locate_stmt.col); break;
+    case STMT_LOCATE:
+        X(s->locate_stmt.row); X(s->locate_stmt.col);
+        for (int i = 0; i < 3; i++) X(s->locate_stmt.rest[i]);
+        break;
     case STMT_COLOR: X(s->color_stmt.fg); X(s->color_stmt.bg); break;
     case STMT_ASSIGN: X(s->assign.value); break;
     case STMT_IF: X(s->if_stmt.condition); break;
@@ -1219,7 +1237,10 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
         X(s->print_file.using_expr);
         break;
     case STMT_INPUT_FILE:
-    case STMT_LINE_INPUT: X(s->input_file.handle_num); break;
+    case STMT_LINE_INPUT:
+        X(s->input_file.handle_num);
+        exprs_n(s->input_file.targets, s->input_file.nvars, fn, ctx);
+        break;
     case STMT_KILL: X(s->kill_stmt.filename); break;
     case STMT_NAME: X(s->name_stmt.oldname); X(s->name_stmt.newname); break;
     case STMT_GET:
@@ -1241,7 +1262,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_POKE: X(s->poke_stmt.addr); X(s->poke_stmt.value); break;
     case STMT_LSET:
     case STMT_RSET: X(s->lrset.value); break;
-    case STMT_WIDTH: X(s->width_stmt.columns); break;
+    case STMT_WIDTH: X(s->width_stmt.columns); X(s->width_stmt.rows); break;
     case STMT_PSET:
     case STMT_LINE_G:
     case STMT_CIRCLE:
