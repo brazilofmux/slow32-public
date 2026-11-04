@@ -576,6 +576,19 @@ void bcrt_screen(int mode) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* GET (x1, y1)-(x2, y2), a or PUT (x, y), a, action (eval_gfx_getput):
+ * steps bit 0 the first point's STEP, bit 1 the second's; a, array
+ * name's element of n subscripts (none: its first) */
+void bcrt_gfx_getput(int put, int steps, int action, int x1, int y1, int x2, int y2,
+                     const char *name, int mode, int n, int i0, int i1, int i2) {
+    int ix[3] = { i0, i1, i2 };
+    char kb[ARRAY_KEY_MAX];
+    gfx_op_t g = { put ? STMT_GFX_PUT : STMT_GFX_GET, x1, y1, x2, y2, -1, -1, 1, 0, 0,
+                   steps & 1, (steps >> 1) & 1, 1, action, 0 };
+    error_t e = eval_gfx_getput(&g, akey(name, mode, kb), n, ix);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* flags: has_x1, has_color, has_aux, step1, step2, has_from, preset, from bit 0 */
 void bcrt_gfx(int type, int flags, int box, int x1, int y1, int x2, int y2, int color, int aux) {
     gfx_op_t g = { type, x1, y1, x2, y2, color, aux, flags & 1, (flags >> 1) & 1, (flags >> 2) & 1,

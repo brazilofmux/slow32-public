@@ -3181,6 +3181,26 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 9, "bcrt_gfx", NULL);
         break;
     }
+    case STMT_GFX_GET: case STMT_GFX_PUT: {
+        /* GET (x1, y1)-(x2, y2), a / PUT (x, y), a, action: the points, then
+         * the element's subscripts, made integers in turn (exec_gfx_getput) */
+        expr_t *op[4] = { s->gfx.x1, s->gfx.y1, s->gfx.x2, s->gfx.y2 }, *t = s->gfx.target;
+        int v[4], ix[3], cb;
+        if (t->call.nargs > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); break; }
+        for (int i = 0; i < 4; i++) v[i] = op[i] ? handle_of(op[i]) : iconst(0);
+        for (int i = 0; i < 3; i++) ix[i] = i < t->call.nargs ? handle_of(t->call.args[i]) : iconst(0);
+        cb = h_ncarg;
+        carg(iconst(s->type == STMT_GFX_PUT), 0);
+        carg(iconst(s->gfx.step1 | s->gfx.step2 << 1), 0);
+        carg(iconst(s->gfx.box), 0);
+        for (int i = 0; i < 4; i++) carg(v[i], 0);
+        carg(saddr(t->call.name, (int)strlen(t->call.name)), 0);
+        carg(iconst(arr_mode(t->call.name)), 0);
+        carg(iconst(t->call.nargs), 0);
+        for (int i = 0; i < 3; i++) carg(ix[i], 0);
+        call_end(cb, 13, "bcrt_gfx_getput", NULL);
+        break;
+    }
     case STMT_CLOSE: {
         int h = s->close_stmt.handle_num ? handle_of(s->close_stmt.handle_num) : iconst(0), cb = h_ncarg;
         carg(h, 0);
