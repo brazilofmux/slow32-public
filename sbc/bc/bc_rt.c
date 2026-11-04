@@ -321,6 +321,12 @@ pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
 
 void bcrt_cls(void) { eval_cls(); }
 
+/* CLS mode (eval_cls_mode) */
+void bcrt_cls_mode(int m) {
+    error_t e = eval_cls_mode(m);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 int bcrt_cursor_row(void) { return eval_cursor_row(); }
 int bcrt_cursor_col(void) { return eval_cursor_col(); }
 
@@ -587,22 +593,36 @@ void bcrt_screen(int mode) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* a double from its two words */
+static double dwords_of(int lo, int hi) {
+    union { double d; int w[2]; } u;
+    u.w[0] = lo;
+    u.w[1] = hi;
+    return u.d;
+}
+
 /* GET (x1, y1)-(x2, y2), a or PUT (x, y), a, action (eval_gfx_getput):
  * steps bit 0 the first point's STEP, bit 1 the second's; a, array
  * name's element of n subscripts (none: its first) */
-void bcrt_gfx_getput(int put, int steps, int action, int x1, int y1, int x2, int y2,
+void bcrt_gfx_getput(int put, int steps, int action, int x1l, int x1h, int y1l, int y1h,
+                     int x2l, int x2h, int y2l, int y2h,
                      const char *name, int mode, int n, int i0, int i1, int i2) {
     int ix[3] = { i0, i1, i2 };
     char kb[ARRAY_KEY_MAX];
-    gfx_op_t g = { put ? STMT_GFX_PUT : STMT_GFX_GET, x1, y1, x2, y2, -1, -1, 1, 0, 0,
+    gfx_op_t g = { put ? STMT_GFX_PUT : STMT_GFX_GET, dwords_of(x1l, x1h), dwords_of(y1l, y1h),
+                   dwords_of(x2l, x2h), dwords_of(y2l, y2h), -1, -1, 1, 0, 0,
                    steps & 1, (steps >> 1) & 1, 1, action, 0 };
     error_t e = eval_gfx_getput(&g, akey(name, mode, kb), n, ix);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
 /* flags: has_x1, has_color, has_aux, step1, step2, has_from, preset, from bit 0 */
-void bcrt_gfx(int type, int flags, int box, int x1, int y1, int x2, int y2, int color, int aux) {
-    gfx_op_t g = { type, x1, y1, x2, y2, color, aux, flags & 1, (flags >> 1) & 1, (flags >> 2) & 1,
+/* the points' coordinates as evaluated, each a double's two words (eval_gfx
+ * rounds them, or maps them through a WINDOW) */
+void bcrt_gfx(int type, int flags, int box, int color, int aux, int x1l, int x1h, int y1l, int y1h,
+              int x2l, int x2h, int y2l, int y2h) {
+    gfx_op_t g = { type, dwords_of(x1l, x1h), dwords_of(y1l, y1h), dwords_of(x2l, x2h),
+                   dwords_of(y2l, y2h), color, aux, flags & 1, (flags >> 1) & 1, (flags >> 2) & 1,
                    (flags >> 3) & 1, (flags >> 4) & 1, (flags >> 5) & 1, box, (flags >> 6) & 1 };
     error_t e = eval_gfx(&g);
     if (e != ERR_NONE) bcrt_fail(e);

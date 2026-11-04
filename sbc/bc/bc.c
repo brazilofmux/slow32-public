@@ -3176,7 +3176,12 @@ static void bc_stmt(stmt_t *s) {
         bc_call(s);
         break;
     case STMT_CLS:
-        call_void("bcrt_cls");
+        if (s->cls_stmt.mode) {
+            int m = handle_of(s->cls_stmt.mode), cb = h_ncarg;
+            carg(m, 0);
+            call_end(cb, 1, "bcrt_cls_mode", NULL);
+        } else
+            call_void("bcrt_cls");
         break;
     case STMT_OPEN:
         bc_open(s);
@@ -3215,39 +3220,48 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 1, "bcrt_screen", NULL);
         break;
     }
-    case STMT_PSET: case STMT_LINE_G: case STMT_CIRCLE: case STMT_PAINT: case STMT_PALETTE: {
-        /* each operand made an integer as it comes; an absent one 0, an
+    case STMT_PSET: case STMT_LINE_G: case STMT_CIRCLE: case STMT_PAINT: case STMT_PALETTE:
+    case STMT_VIEW: case STMT_WINDOW: {
+        /* each point's coordinate as it is, a double (eval_gfx rounds it or
+         * maps it), a color an integer, as each comes; an absent one 0, an
          * absent color -1 (exec_gfx) */
         expr_t *op[6] = { s->gfx.x1, s->gfx.y1, s->gfx.x2, s->gfx.y2, s->gfx.color, s->gfx.aux };
-        int v[6], cb, flags;
-        for (int i = 0; i < 6; i++)
-            v[i] = op[i] ? handle_of(op[i]) : iconst(i < 4 ? 0 : -1);
+        int lo[4], hi[4], v[2], cb, flags;
+        for (int i = 0; i < 4; i++) {
+            if (op[i]) dwords(coerce(expr(op[i]), VAL_DOUBLE), &lo[i], &hi[i]);
+            else lo[i] = dconst(0, &hi[i]);
+        }
+        for (int i = 0; i < 2; i++) v[i] = op[4 + i] ? handle_of(op[4 + i]) : iconst(-1);
         flags = (s->gfx.x1 != NULL) | (s->gfx.color != NULL) << 1 | (s->gfx.aux != NULL) << 2 |
                 s->gfx.step1 << 3 | s->gfx.step2 << 4 | s->gfx.has_from << 5 | s->gfx.preset << 6;
         cb = h_ncarg;
         carg(iconst(s->type), 0); carg(iconst(flags), 0); carg(iconst(s->gfx.box), 0);
-        for (int i = 0; i < 6; i++) carg(v[i], 0);
-        call_end(cb, 9, "bcrt_gfx", NULL);
+        carg(v[0], 0); carg(v[1], 0);
+        for (int i = 0; i < 4; i++) { carg(lo[i], 0); carg(hi[i], 0); }
+        call_end(cb, 13, "bcrt_gfx", NULL);
         break;
     }
     case STMT_GFX_GET: case STMT_GFX_PUT: {
         /* GET (x1, y1)-(x2, y2), a / PUT (x, y), a, action: the points, then
          * the element's subscripts, made integers in turn (exec_gfx_getput) */
         expr_t *op[4] = { s->gfx.x1, s->gfx.y1, s->gfx.x2, s->gfx.y2 }, *t = s->gfx.target;
-        int v[4], ix[3], cb;
+        int lo[4], hi[4], ix[3], cb;
         if (t->call.nargs > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); break; }
-        for (int i = 0; i < 4; i++) v[i] = op[i] ? handle_of(op[i]) : iconst(0);
+        for (int i = 0; i < 4; i++) {
+            if (op[i]) dwords(coerce(expr(op[i]), VAL_DOUBLE), &lo[i], &hi[i]);
+            else lo[i] = dconst(0, &hi[i]);
+        }
         for (int i = 0; i < 3; i++) ix[i] = i < t->call.nargs ? handle_of(t->call.args[i]) : iconst(0);
         cb = h_ncarg;
         carg(iconst(s->type == STMT_GFX_PUT), 0);
         carg(iconst(s->gfx.step1 | s->gfx.step2 << 1), 0);
         carg(iconst(s->gfx.box), 0);
-        for (int i = 0; i < 4; i++) carg(v[i], 0);
+        for (int i = 0; i < 4; i++) { carg(lo[i], 0); carg(hi[i], 0); }
         carg(saddr(t->call.name, (int)strlen(t->call.name)), 0);
         carg(iconst(arr_mode(t->call.name)), 0);
         carg(iconst(t->call.nargs), 0);
         for (int i = 0; i < 3; i++) carg(ix[i], 0);
-        call_end(cb, 13, "bcrt_gfx_getput", NULL);
+        call_end(cb, 17, "bcrt_gfx_getput", NULL);
         break;
     }
     case STMT_CLOSE: {
