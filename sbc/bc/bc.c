@@ -28,6 +28,7 @@
 #include "program.h"
 #include "strict.h"
 #include "builtin.h"
+#include "array.h"
 
 /* --- what the backend reads of a C-like front end ------------------ */
 
@@ -215,6 +216,38 @@ static void global_sym(char *sym, size_t cap, const proc_t *p, const char *name)
     if (!p) { mangle(sym, cap, "bcg_", name); return; }
     snprintf(pre, sizeof pre, "bcs%s_", p->sym + 3);
     mangle(sym, cap, pre, name);
+}
+
+/* a SHARED or STATIC list's entry for an array: NAME() */
+static int is_array_entry(const char *e) {
+    size_t n = strlen(e);
+    return n > 2 && e[n - 2] == '(' && e[n - 1] == ')';
+}
+
+/* the main program's DIM SHAREDs: arrays, and variables with their types */
+static stmt_t **bc_dimshared;
+static int bc_ndimshared;
+
+static int dimshared_array(const char *name) {
+    for (int i = 0; i < bc_ndimshared; i++)
+        if (bc_dimshared[i]->type == STMT_DIM && strcmp(bc_dimshared[i]->dim_stmt.name, name) == 0)
+            return 1;
+    return 0;
+}
+
+/* how the function being lowered scopes array name (array.c): the main
+ * program's (in it; SHARED name() or DIM SHARED in a procedure), the
+ * procedure's STATIC, or its activation's own */
+static int arr_mode(const char *name) {
+    char a[68];
+    if (!bc_proc) return ARRAY_MODULE;
+    snprintf(a, sizeof a, "%s()", name);
+    for (stmt_t *s = bc_proc->def->proc_def.body; s; s = s->next)
+        if (s->type == STMT_SHARED || s->type == STMT_STATIC)
+            for (int i = 0; i < s->shared.nvars; i++)
+                if (strcmp(s->shared.varnames[i], a) == 0)
+                    return s->type == STMT_STATIC ? ARRAY_STATIC : ARRAY_MODULE;
+    return dimshared_array(name) ? ARRAY_MODULE : ARRAY_LOCAL;
 }
 
 /* a main-program variable's global, where some SUB SHAREs it */
@@ -502,6 +535,20 @@ static int name_type(const char *name) {
 typedef struct { char name[64]; int type; } atype_t;
 static atype_t *bc_atypes;
 static int bc_natypes, bc_capatypes;
+
+/* DIM x AS type's type, or (DIM SHARED x) its name's */
+static int decl_type(const stmt_t *s) {
+    return s->dim_scalar.typed ? (int)s->dim_scalar.scalar_type : name_type(s->dim_scalar.name);
+}
+
+/* a main-program variable's type: a DIM AS's at the program's top, else
+ * its name's */
+static stmt_t *bc_program;
+static int main_type(const char *name) {
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_DIM_SCALAR && strcmp(s->dim_scalar.name, name) == 0) return decl_type(s);
+    return name_type(name);
+}
 
 static int arr_type(const char *name) {
     for (int i = 0; i < bc_natypes; i++)
@@ -906,7 +953,8 @@ static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) 
     carg(iconst(n), 0);
     carg(iconst(id), 0);
     carg(iconst(arr_type(name)), 0);
-    call_end(cb, 4, "bcrt_alook", NULL);
+    carg(iconst(arr_mode(name)), 0);
+    call_end(cb, 5, "bcrt_alook", NULL);
     goto_blk(fast);
     begin_blk(fast);
     {
@@ -1153,7 +1201,8 @@ static bv_t bound(expr_t *e) {
     carg(saddr(name, (int)strlen(name)), 0);
     carg(dim, 0);
     carg(iconst(e->call.name[0] == 'U'), 0);
-    return bv_call("bcrt_bound", cb, 3);
+    carg(iconst(arr_mode(name)), 0);
+    return bv_call("bcrt_bound", cb, 4);
 }
 
 static int compare_expr(expr_t *e) {
@@ -1601,7 +1650,8 @@ static void bc_dim(stmt_t *s, int is_static, int base) {
     carg(iconst(s->dim_stmt.is_redim), 0);
     carg(iconst(s->dim_stmt.preserve), 0);
     for (int i = 0; i < 3; i++) carg_bv(a[i]);
-    call_end(cb, 16, "bcrt_dim", NULL);
+    carg(iconst(arr_mode(s->dim_stmt.name)), 0);
+    call_end(cb, 17, "bcrt_dim", NULL);
 }
 
 static int bc_base;             /* the OPTION BASE of the text, as it is read */
@@ -1900,7 +1950,8 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
         carg(iconst(nix[i]), 0);
         for (int j = 0; j < 3; j++) carg(j < nix[i] ? ix[i][j] : iconst(0), 0);
         carg_bv(x);
-        call_end(c2, 8, "bcrt_elem_back", NULL);
+        carg(iconst(arr_mode(args[i]->call.name)), 0);
+        call_end(c2, 9, "bcrt_elem_back", NULL);
     }
     for (int i = 0; i < nargs; i++)         /* the values passed: let go */
         if (kind[i] == 0 && tmp[i]->type == VAL_STRING) {
@@ -2225,7 +2276,8 @@ static void bc_stmt(stmt_t *s) {
         for (int i = 0; i < s->erase_stmt.nnames; i++) {
             int cb = h_ncarg;
             carg(saddr(s->erase_stmt.names[i], (int)strlen(s->erase_stmt.names[i])), 0);
-            call_end(cb, 1, "bcrt_erase", NULL);
+            carg(iconst(arr_mode(s->erase_stmt.names[i])), 0);
+            call_end(cb, 2, "bcrt_erase", NULL);
         }
         break;
     case STMT_NEXT:
@@ -2265,6 +2317,16 @@ static void bc_stmt(stmt_t *s) {
     case STMT_CALL:
         bc_call(s);
         break;
+    case STMT_DIM_SCALAR: {     /* the variable made anew (env_set of its default) */
+        var_t *v = var_find(s->dim_scalar.name);
+        if (v && v->type == VAL_STRING) {
+            int cb = h_ncarg;
+            carg(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), 0);
+            call_end(cb, 1, "bcrt_unref", NULL);
+        }
+        if (v) var_zero(v);
+        break;
+    }
     case STMT_SUB_DEF:          /* (each a function of its own: hl_func) */
     case STMT_FUNC_DEF:
     case STMT_SHARED:           /* (proc_begin) */
@@ -2440,11 +2502,25 @@ static void find_fns(stmt_t *s) {
     }
 }
 
+/* how deep in blocks prescan is */
+static int bc_prescan_depth;
+
 static void prescan(stmt_t *s) {
+    bc_prescan_depth++;
     for (; s; s = s->next) {
         if (s->type == STMT_DEF_FN) continue;   /* (its parameters are no program variables) */
         stmt_exprs(s, prescan_top, NULL);
         switch (s->type) {
+        case STMT_DIM_SCALAR: {
+            /* DIM x AS type types x from the first, as the interpreter's
+             * does when it runs first: in no block, before any use */
+            var_t *v;
+            if (bc_prescan_depth > 1) { bc_not_yet(s->line, "a DIM AS inside a block"); break; }
+            if (var_find(s->dim_scalar.name)) { bc_not_yet(s->line, "a DIM AS after its variable's use"); break; }
+            v = var_push();
+            var_init(v, s->dim_scalar.name, decl_type(s), global_of(s->dim_scalar.name));
+            break;
+        }
         case STMT_ASSIGN: var_get(s->assign.name, s->assign.var_type, s->line); break;
         case STMT_FOR:
             var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
@@ -2460,11 +2536,11 @@ static void prescan(stmt_t *s) {
         default: break;
         }
     }
+    bc_prescan_depth--;
 }
 
 /* --- the program -------------------------------------------------- */
 
-static stmt_t *bc_program;
 static Node bc_main;
 static Node bc_root;
 
@@ -2523,16 +2599,28 @@ static void proc_func(proc_t *p, Node *fn) {
                 const char *name = s->shared.varnames[i];
                 char sym[96];
                 var_t *v;
-                if (var_find(name)) continue;
+                if (is_array_entry(name) || var_find(name)) continue;
                 global_sym(sym, sizeof sym, s->type == STMT_STATIC ? p : NULL, name);
                 v = var_push();
-                var_init(v, name, name_type(name), global_add(name, sym, name_type(name)));
+                var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
             }
+    for (int i = 0; i < bc_ndimshared; i++)   /* DIM SHARED's variables: everywhere */
+        if (bc_dimshared[i]->type == STMT_DIM_SCALAR && !var_find(bc_dimshared[i]->dim_scalar.name)) {
+            const char *name = bc_dimshared[i]->dim_scalar.name;
+            char sym[96];
+            var_t *v = var_push();
+            global_sym(sym, sizeof sym, NULL, name);
+            var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
+        }
     prescan(def->proc_def.body);
     for (int i = 0; i < bc_nvars; i++)
         if (bc_vars[i]->local) var_zero(bc_vars[i]);
     forslots_zero();
-    call_void("bcrt_enter");
+    {
+        int cb = h_ncarg;
+        carg(iconst((int)(p - bc_procs)), 0);
+        call_end(cb, 1, "bcrt_enter", NULL);
+    }
     bc_proc_exit = new_blk();
     bc_stmts(def->proc_def.body);
     goto_blk(bc_proc_exit);
@@ -2590,9 +2678,23 @@ static void program_prepare(void) {
                 for (int i = 0; i < s->shared.nvars; i++) {
                     const char *name = s->shared.varnames[i];
                     char sym[96];
+                    if (is_array_entry(name)) continue;     /* (array.c's) */
                     global_sym(sym, sizeof sym, s->type == STMT_STATIC ? &bc_procs[k] : NULL, name);
-                    global_add(name, sym, name_type(name));
+                    global_add(name, sym, s->type == STMT_STATIC ? name_type(name) : main_type(name));
                 }
+    bc_ndimshared = 0;
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if ((s->type == STMT_DIM && s->dim_stmt.shared) ||
+            (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared)) {
+            bc_dimshared = realloc(bc_dimshared, (size_t)(bc_ndimshared + 1) * sizeof(stmt_t *));
+            if (!bc_dimshared) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            bc_dimshared[bc_ndimshared++] = s;
+            if (s->type == STMT_DIM_SCALAR) {
+                char sym[96];
+                global_sym(sym, sizeof sym, NULL, s->dim_scalar.name);
+                global_add(s->dim_scalar.name, sym, main_type(s->dim_scalar.name));
+            }
+        }
 }
 
 static void hl_func(Node *fn) {

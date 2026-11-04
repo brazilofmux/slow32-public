@@ -173,19 +173,31 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
 
 /* a SUB's or FUNCTION's activation, counted as the interpreter counts
  * them (eval_enter: Out of stack space past its depth) */
-void bcrt_enter(void) {
+void bcrt_enter(int proc) {
     error_t e = eval_enter();
+    if (e == ERR_NONE) e = array_scope_push(proc, NULL, NULL);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
-void bcrt_leave(void) { eval_leave(); }
+void bcrt_leave(void) {
+    array_scope_pop();          /* (its own arrays erased) */
+    eval_leave();
+}
+
+/* an array's name as compiled code gives it, with how it is scoped
+ * there (ARRAY_MODULE, ARRAY_LOCAL, ARRAY_STATIC: bc.c decides from the
+ * procedure's SHARED and STATIC and DIM SHARED), made its key */
+static const char *akey(const char *name, int mode, char *kb) {
+    return array_key_mode(name, mode, kb, ARRAY_KEY_MAX);
+}
 
 /* an array element passed by reference, its value back after the call
  * where the array still has it (call_proc_values) */
-void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int hi, int t) {
+void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int hi, int t, int mode) {
     value_t x = take(lo, hi, t), *slot;
     int ix[3] = { i0, i1, i2 };
-    sb_array_t *arr = array_find(name);
+    char kb[ARRAY_KEY_MAX];
+    sb_array_t *arr = array_find(name = akey(name, mode, kb));
     error_t e = ERR_NONE;
     if (arr && arr->ndims == n && array_get(name, ix, n, &slot) == ERR_NONE)
         e = eval_store(slot, &x);
@@ -194,9 +206,10 @@ void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int
 }
 
 /* LBOUND or UBOUND (upper) of array name's dimension dim */
-pair_t bcrt_bound(const char *name, int dim, int upper) {
+pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
     value_t r;
-    error_t e = eval_bound(name, dim, upper, &r);
+    char kb[ARRAY_KEY_MAX];
+    error_t e = eval_bound(akey(name, mode, kb), dim, upper, &r);
     if (e != ERR_NONE) bcrt_fail(e);
     return give(&r);
 }
@@ -299,10 +312,12 @@ int bcrt_return(void) {
  * one of its place in the text.  A static DIM met when it runs is a
  * declaration, unless ERASE took the array away (exec_dim). */
 void bcrt_dim(const char *name, int type, int n, int is_static, int base, int redim, int preserve,
-              int alo, int ahi, int at, int blo, int bhi, int bt, int clo, int chi, int ct) {
+              int alo, int ahi, int at, int blo, int bhi, int bt, int clo, int chi, int ct, int mode) {
     value_t v[3];
     int u[3];
     error_t e;
+    char kb[ARRAY_KEY_MAX];
+    name = akey(name, mode, kb);
     v[0] = take(alo, ahi, at);
     v[1] = take(blo, bhi, bt);
     v[2] = take(clo, chi, ct);
@@ -326,10 +341,11 @@ void bcrt_dim(const char *name, int type, int n, int is_static, int base, int re
 
 /* cell id's array, name(n subscripts) (eval_array_for: an implicit one
  * made), of elements of type ty */
-void bcrt_alook(const char *name, int n, int id, int ty) {
+void bcrt_alook(const char *name, int n, int id, int ty, int mode) {
     sb_array_t *arr;
     bcrt_acell_t *c = &bcrt_acache[id];
-    error_t e = eval_array_for(name, n, &arr);
+    char kb[ARRAY_KEY_MAX];
+    error_t e = eval_array_for(name = akey(name, mode, kb), n, &arr);
     if (e != ERR_NONE) bcrt_fail(e);
     if ((int)arr->elem_type != ty) {
         fprintf(stderr, "s32-bc: internal: %s has elements of type %d, not %d\n", name, arr->elem_type, ty);
@@ -343,7 +359,10 @@ void bcrt_alook(const char *name, int n, int id, int ty) {
 
 void bcrt_option_base(int base) { eval_set_option_base(base); }
 
-void bcrt_erase(const char *name) { array_erase(name); }
+void bcrt_erase(const char *name, int mode) {
+    char kb[ARRAY_KEY_MAX];
+    array_erase(akey(name, mode, kb));
+}
 
 /* --- INPUT, DATA, READ, RESTORE: the interpreter's cores ------------- */
 
