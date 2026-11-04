@@ -414,15 +414,15 @@ static int in_range(int lo, int hi, unsigned mhi, unsigned mlo) {
 
 /* a float made an integer of type ty, as val_to_integer makes it: in
  * range or Overflow, a whole number as it is, else rounded half to even
- * (val_rint, bcrt_rint) -- and an INTEGER's 16 bits */
+ * -- and an INTEGER's 16 bits.  The truncation converted back is the
+ * value only when the value is a whole number in range (fcvt.w.d's
+ * result out of range is Unspecified, SPEC 4, but no int converts back
+ * to a number out of range, nor to a NaN); anything else is bcrt_d2i's,
+ * the range and val_rint. */
 static bv_t flt_to_int(bv_t x, int ty) {
-    int clo, chi, i, whole, frac, join, slot, cb, r;
+    int clo, chi, i, whole, frac, join, slot, cb;
     if (x.k && x.kv == (double)(int)x.kv && (ty == VAL_LONG || INT16_OK(x.kv)))
         return kint((int)x.kv, ty);
-    clo = dconst(2147483647.5, &chi);
-    r = call_d2("__fp64_lt", x.lo, x.hi, clo, chi, NULL);
-    clo = dconst(-2147483648.5, &chi);
-    guard(bin(HI_AND, r, call_d2("__fp64_le", clo, chi, x.lo, x.hi, NULL)), ERR_OVERFLOW);
     i = call_d1("__fp64_cvt_DtoI", x.lo, x.hi, NULL);
     cb = h_ncarg;
     carg(i, 0);
@@ -435,7 +435,7 @@ static bv_t flt_to_int(bv_t x, int ty) {
     hi_emit(HI_BRC, TY_VOID, whole, join, frac, NULL);
     bc_live = 0;
     begin_blk(frac);
-    hi_emit(HI_STORE, TY_INT, slot, call_d1("bcrt_rint", x.lo, x.hi, NULL), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, slot, call_d1("bcrt_d2i", x.lo, x.hi, NULL), 0, NULL);
     goto_blk(join);
     begin_blk(join);
     i = hi_emit(HI_LOAD, TY_INT, slot, -1, 0, NULL);

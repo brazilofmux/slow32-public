@@ -179,8 +179,10 @@ double bcrt_rnd(double n, int has_n) { return sb_rnd_of(n, has_n); }
 double bcrt_floor(double d) { return floor(d); }
 double bcrt_trunc(double d) { return trunc(d); }
 
-/* a float in range and not whole, rounded half to even (round_even) */
-int bcrt_rint(double d) {
+/* a float not a whole number in range (or not a number) made an int,
+ * as val_to_integer makes it: Overflow, or rounded half to even */
+int bcrt_d2i(double d) {
+    if (!(d < 2147483647.5 && d >= -2147483648.5)) bcrt_fail(ERR_OVERFLOW);
     return (int)val_rint(d);
 }
 
