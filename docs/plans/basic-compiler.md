@@ -435,7 +435,15 @@ Then CIRCLE fitted to QBasic's pixels (arcs, aspect; 79 compile).  Its
 LINE breaks ties otherwise than ours, in both directions -- a single
 Bresenham offset does not fit the four lines measured; open.
 
-Left, by count: SCREEN
+Then the parser's forms (677e1ae8: names with a dot, RUN, SUB ...
+STATIC, STATIC x AS type, one-line ELSEIF, label 1.1, SCREEN , , p, p)
+and GOSUB in procedures (s32-bc): 84 compile.  Left: a whole array as
+an argument (3), DEFtype after a use (3), RUN in s32-bc (2), SCREEN()
+the function (2: needs a model of the text screen), DRAW, the machine's
+memory (CALL ABSOLUTE, BSAVE), a name's ! under DEFINT (mooncr), and two
+QB64 programs QBasic loads only because its _ continues a line.
+
+Older list, by count: SCREEN
 with arguments left out, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
 commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
