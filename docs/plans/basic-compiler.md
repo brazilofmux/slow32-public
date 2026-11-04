@@ -439,7 +439,9 @@ Then the parser's forms (677e1ae8: names with a dot, RUN, SUB ...
 STATIC, STATIC x AS type, one-line ELSEIF, label 1.1, SCREEN , , p, p)
 and GOSUB in procedures (s32-bc): 84 compile.  Then whole arrays as
 arguments (87 compile), DEFtype as the text's: the parser writes each
-name's suffix, the run-time DEFtype gone (89); RUN in s32-bc (91); DRAW (92).  Left: DEFtype after a use (done), RUN in s32-bc (2), SCREEN()
+name's suffix, the run-time DEFtype gone (89); RUN in s32-bc (91); DRAW (92); the text screen -- SCREEN(), VIEW PRINT,
+WIDTH's rows -- (93).  Left: ON ERROR in a SUB (s32-bc), the machine's
+memory (not to be done unasked), and two QB64 programs.  Left: DEFtype after a use (done), RUN in s32-bc (2), SCREEN()
 the function (2: needs a model of the text screen), DRAW, the machine's
 memory (CALL ABSOLUTE, BSAVE), a name's ! under DEFINT (mooncr), and two
 QB64 programs QBasic loads only because its _ continues a line.
