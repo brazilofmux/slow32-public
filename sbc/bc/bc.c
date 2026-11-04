@@ -29,6 +29,7 @@
 #include "strict.h"
 #include "builtin.h"
 #include "array.h"
+#include "fileio.h"
 
 /* --- what the backend reads of a C-like front end ------------------ */
 
@@ -1553,19 +1554,22 @@ static void call_void(const char *name) {
 /* PRINT USING, as exec_print_using_items drives it: the format, then
  * the items the format asks for, each evaluated when its field is
  * reached (and again at the next field if this one cannot take it) */
-static void bc_print_using(stmt_t *s) {
-    int n = s->print.nitems, cb, top, tab, done, k, *blk;
+/* a PRINT's (or PRINT #'s) items, its USING format if any */
+typedef struct { print_item_t *items; int n; char *using_fmt; expr_t *using_expr; int line; } prints_t;
+
+static void bc_print_using(const prints_t *s) {
+    int n = s->n, cb, top, tab, done, k, *blk;
     char has[257];
     bv_t f;
     if (n > 256) { bc_not_yet(s->line, "a PRINT USING of more than 256"); return; }
-    if (s->print.using_fmt) {
+    if (s->using_fmt) {
         cb = h_ncarg;
-        carg(saddr(s->print.using_fmt, (int)strlen(s->print.using_fmt)), 0);
-        carg(iconst((int)strlen(s->print.using_fmt)), 0);
+        carg(saddr(s->using_fmt, (int)strlen(s->using_fmt)), 0);
+        carg(iconst((int)strlen(s->using_fmt)), 0);
         f = mk(call_end(cb, 2, "bcrt_str_lit", NULL), -1, -1, VAL_STRING);
     } else
-        f = expr(s->print.using_expr);
-    for (int i = 0; i < n; i++) has[i] = s->print.items[i].expr ? '1' : '0';
+        f = expr(s->using_expr);
+    for (int i = 0; i < n; i++) has[i] = s->items[i].expr ? '1' : '0';
     has[n] = '\0';
     f = dynv(f);
     cb = h_ncarg;
@@ -1587,8 +1591,8 @@ static void bc_print_using(stmt_t *s) {
         bv_t v;
         blk[i] = new_blk();
         begin_blk(blk[i]);
-        if (s->print.items[i].expr) {
-            v = dynv(expr(s->print.items[i].expr));
+        if (s->items[i].expr) {
+            v = dynv(expr(s->items[i].expr));
             cb = h_ncarg;
             carg_bv(v);
             call_end(cb, 3, "bcrt_using_put", NULL);
@@ -1603,11 +1607,11 @@ static void bc_print_using(stmt_t *s) {
     free(blk);
 }
 
-static void bc_print(stmt_t *s) {
+static void bc_print_items(const prints_t *s) {
     int nl = 1;
-    if (s->print.using_fmt || s->print.using_expr) { bc_print_using(s); return; }
-    for (int i = 0; i < s->print.nitems; i++) {
-        print_item_t *it = &s->print.items[i];
+    if (s->using_fmt || s->using_expr) { bc_print_using(s); return; }
+    for (int i = 0; i < s->n; i++) {
+        print_item_t *it = &s->items[i];
         if (it->expr) {
             expr_t *e = it->expr;
             int cb;
@@ -1630,6 +1634,171 @@ static void bc_print(stmt_t *s) {
         else nl = 1;
     }
     if (nl) call_void("bcrt_print_nl");
+}
+
+static void bc_print(stmt_t *s) {
+    prints_t p = { s->print.items, s->print.nitems, s->print.using_fmt, s->print.using_expr, s->line };
+    bc_print_items(&p);
+}
+
+/* --- files --------------------------------------------------------------- */
+
+static int handle_of(expr_t *e) { return coerce(expr(e), VAL_LONG).lo; }
+
+/* OPEN, as exec_open: the name (a string), the handle, the open, then a
+ * RANDOM file's record length (128 unless LEN says) */
+static void bc_open(stmt_t *s) {
+    bv_t f = dynv(expr(s->open_stmt.filename));
+    int h, cb = h_ncarg;
+    carg_bv(f);
+    call_end(cb, 3, "bcrt_open_name", NULL);
+    h = handle_of(s->open_stmt.handle_num);
+    cb = h_ncarg;
+    carg(h, 0); carg(iconst(s->open_stmt.mode), 0);
+    call_end(cb, 2, "bcrt_open", NULL);
+    if (s->open_stmt.mode == FMODE_RANDOM) {
+        int n = s->open_stmt.reclen ? handle_of(s->open_stmt.reclen) : iconst(128);
+        cb = h_ncarg;
+        carg(h, 0); carg(n, 0);
+        call_end(cb, 2, "bcrt_reclen", NULL);
+    }
+}
+
+/* PRINT #h, items: the items as PRINT's, to the file (exec_print_file) */
+static void bc_print_file(stmt_t *s) {
+    prints_t p = { s->print_file.items, s->print_file.nitems, s->print_file.using_fmt,
+                   s->print_file.using_expr, s->line };
+    int h = handle_of(s->print_file.handle_num), cb = h_ncarg;
+    carg(h, 0);
+    call_end(cb, 1, "bcrt_pfile_begin", NULL);
+    bc_print_items(&p);
+    call_void("bcrt_pfile_end");
+}
+
+static int file_fp(expr_t *handle) {
+    int h = handle_of(handle), cb = h_ncarg;
+    carg(h, 0);
+    return call_end(cb, 1, "bcrt_file_fp", NULL);
+}
+
+static void bc_write_file(stmt_t *s) {
+    int fp = file_fp(s->print_file.handle_num), cb;
+    for (int i = 0; i < s->print_file.nitems; i++) {
+        if (i > 0) { cb = h_ncarg; carg(fp, 0); call_end(cb, 1, "bcrt_write_file_comma", NULL); }
+        if (s->print_file.items[i].expr) {
+            bv_t v = dynv(expr(s->print_file.items[i].expr));
+            cb = h_ncarg;
+            carg(fp, 0);
+            carg_bv(v);
+            call_end(cb, 4, "bcrt_write_file_val", NULL);
+        }
+    }
+    cb = h_ncarg;
+    carg(fp, 0);
+    call_end(cb, 1, "bcrt_write_file_end", NULL);
+}
+
+/* INPUT #h, v...: each field read for its variable's type, stored as an
+ * assignment stores it */
+static void bc_input_file(stmt_t *s) {
+    int fp = file_fp(s->input_file.handle_num);
+    for (int i = 0; i < s->input_file.nvars; i++) {
+        var_t *v = var_get(s->input_file.varnames[i], 0, s->line);
+        int cb = h_ncarg;
+        carg(fp, 0);
+        carg(iconst(v->type), 0);
+        var_store(v, bv_call("bcrt_input_field", cb, 2));
+    }
+}
+
+/* GET #h[, pos], v and PUT #h[, pos], v (exec_get, exec_put): the file,
+ * the position, then the value -- GET's of the type the parser gave v,
+ * stored as it is (compiled where that is v's type) */
+static void bc_get_put(stmt_t *s) {
+    var_t *v = var_get(s->get_put_stmt.varname, 0, s->line);
+    int h, fp, cb;
+    if (s->type == STMT_GET && (int)s->get_put_stmt.vartype != v->type) {
+        bc_not_yet(s->line, "a GET into a variable DEFtype types");
+        return;
+    }
+    h = handle_of(s->get_put_stmt.handle_num);
+    cb = h_ncarg;
+    carg(h, 0);
+    fp = call_end(cb, 1, "bcrt_getput_fp", NULL);
+    if (s->get_put_stmt.position) {
+        int pos = handle_of(s->get_put_stmt.position);
+        cb = h_ncarg;
+        carg(h, 0); carg(fp, 0); carg(pos, 0);
+        call_end(cb, 3, "bcrt_file_pos", NULL);
+    }
+    if (s->type == STMT_GET) {
+        cb = h_ncarg;
+        carg(fp, 0);
+        carg(iconst(v->type), 0);
+        carg(v->type == VAL_STRING ? hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL) : iconst(0), 0);
+        var_store(v, typed(bv_call("bcrt_get_val", cb, 3), v->type));
+    } else {
+        bv_t x = dynv(var_load(v));
+        cb = h_ncarg;
+        carg(fp, 0);
+        carg_bv(x);
+        call_end(cb, 4, "bcrt_put_val", NULL);
+    }
+}
+
+/* SEEK #h, pos (exec_seek): the file open, then the position */
+static void bc_seek(stmt_t *s) {
+    int h = handle_of(s->seek_stmt.seek_handle), fp, pos, cb = h_ncarg;
+    carg(h, 0);
+    fp = call_end(cb, 1, "bcrt_file_fp", NULL);
+    pos = handle_of(s->seek_stmt.seek_position);
+    cb = h_ncarg;
+    carg(h, 0); carg(fp, 0); carg(pos, 0);
+    call_end(cb, 3, "bcrt_file_pos", NULL);
+}
+
+/* LSET v$ = e and RSET: v$ a string, else Type mismatch; an empty one
+ * stays (e not evaluated); else e padded or cut to its length */
+static void bc_lrset(stmt_t *s) {
+    var_t *v = var_get(s->lrset.varname, 0, s->line);
+    int body = new_blk(), done = new_blk(), cb, old, nw;
+    bv_t x;
+    if (v->type != VAL_STRING) {
+        cb = h_ncarg;
+        carg(iconst(ERR_TYPE_MISMATCH), 0);
+        call_end(cb, 1, "bcrt_err", NULL);
+        return;
+    }
+    cb = h_ncarg;
+    carg(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), 0);
+    hi_emit(HI_BRC, TY_VOID, call_end(cb, 1, "bcrt_strlen", NULL), body, done, NULL);
+    bc_live = 0;
+    begin_blk(body);
+    x = dynv(expr(s->lrset.value));
+    old = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+    cb = h_ncarg;
+    carg(old, 0);
+    carg_bv(x);
+    carg(iconst(s->type == STMT_LSET), 0);
+    nw = call_end(cb, 5, "bcrt_lrset", NULL);
+    hi_emit(HI_STORE, TY_INT, VA(v), nw, 0, NULL);
+    cb = h_ncarg;
+    carg(old, 0);
+    call_end(cb, 1, "bcrt_unref", NULL);
+    goto_blk(done);
+    begin_blk(done);
+}
+
+static void bc_line_input_file(stmt_t *s) {
+    var_t *v = s->input_file.nvars > 0 ? var_get(s->input_file.varnames[0], 0, s->line) : NULL;
+    int fp, p, cb;
+    if (v && v->type != VAL_STRING) { bc_not_yet(s->line, "a LINE INPUT # into this"); return; }
+    fp = file_fp(s->input_file.handle_num);
+    cb = h_ncarg;
+    carg(fp, 0);
+    p = call_end(cb, 1, "bcrt_line_input_file", NULL);
+    if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
+    else { cb = h_ncarg; carg(p, 0); call_end(cb, 1, "bcrt_unref", NULL); }
 }
 
 /* the open FORs of the block being lowered, innermost last */
@@ -2518,6 +2687,11 @@ static void bc_stmt(stmt_t *s) {
         on_branch(s, 1);
         break;
     case STMT_RETURN:
+        if (s->goto_stmt.label[0]) {    /* RETURN label: the GOSUB's return dropped, then the label */
+            call_end(h_ncarg, 0, "bcrt_return", NULL);
+            goto_blk(label_blk(s->goto_stmt.label));
+            break;
+        }
         if (bc_ret_blk < 0) bc_ret_blk = new_blk();
         goto_blk(bc_ret_blk);
         break;
@@ -2654,6 +2828,54 @@ static void bc_stmt(stmt_t *s) {
     case STMT_CLS:
         call_void("bcrt_cls");
         break;
+    case STMT_OPEN:
+        bc_open(s);
+        break;
+    case STMT_CLOSE: {
+        int h = s->close_stmt.handle_num ? handle_of(s->close_stmt.handle_num) : iconst(0), cb = h_ncarg;
+        carg(h, 0);
+        call_end(cb, 1, "bcrt_close", NULL);
+        break;
+    }
+    case STMT_PRINT_FILE:
+        bc_print_file(s);
+        break;
+    case STMT_GET: case STMT_PUT:
+        bc_get_put(s);
+        break;
+    case STMT_SEEK:
+        bc_seek(s);
+        break;
+    case STMT_LSET: case STMT_RSET:
+        bc_lrset(s);
+        break;
+    case STMT_WRITE_FILE:
+        bc_write_file(s);
+        break;
+    case STMT_INPUT_FILE:
+        bc_input_file(s);
+        break;
+    case STMT_LINE_INPUT:
+        bc_line_input_file(s);
+        break;
+    case STMT_KILL: {
+        bv_t f = dynv(expr(s->kill_stmt.filename));
+        int cb = h_ncarg;
+        carg_bv(f);
+        call_end(cb, 3, "bcrt_kill", NULL);
+        break;
+    }
+    case STMT_NAME: {
+        bv_t a = expr(s->name_stmt.oldname), b = expr(s->name_stmt.newname);
+        int cb;
+        a = dynv(a);
+        b = dynv(b);
+        cb = h_ncarg;
+        carg_bv(a);
+        carg_bv(b);
+        call_end(cb, 6, "bcrt_name", NULL);
+        break;
+    }
     case STMT_LOCATE: {         /* both evaluated, then made integers (exec_locate) */
         bv_t r = expr(s->locate_stmt.row), c = expr(s->locate_stmt.col);
         int ri = coerce(r, VAL_LONG).lo, ci = coerce(c, VAL_LONG).lo, cb = h_ncarg;
@@ -2969,6 +3191,11 @@ static void prescan(stmt_t *s) {
                 if (!s->read_stmt.targets[i]) var_get(s->read_stmt.varnames[i], 0, s->line);
             break;
         case STMT_MID_ASSIGN: var_get(s->mid_assign.var_name, 0, s->line); break;
+        case STMT_GET: case STMT_PUT: var_get(s->get_put_stmt.varname, 0, s->line); break;
+        case STMT_LSET: case STMT_RSET: var_get(s->lrset.varname, 0, s->line); break;
+        case STMT_INPUT_FILE: case STMT_LINE_INPUT:
+            for (int i = 0; i < s->input_file.nvars; i++) var_get(s->input_file.varnames[i], 0, s->line);
+            break;
         case STMT_FOR:
             var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
             forslots_add(s);

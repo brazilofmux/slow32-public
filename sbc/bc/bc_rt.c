@@ -41,6 +41,14 @@ typedef long long pair_t;       /* lo in the low word, hi in the high */
 
 static int bcrt_last;           /* the type of the last result */
 
+/* PRINT #'s output, the file's, until its end puts back what was (a
+ * stack: an item's evaluation may PRINT # too); PRINT's width is then 0
+ * (print_items: no wrapping in a file) */
+static print_redirect_t bcrt_redirect[16];
+static int bcrt_nredirect;
+
+static int bcrt_width_now(void) { return bcrt_nredirect ? 0 : console_width; }
+
 /* --- ON ERROR GOTO: the handler, entered from wherever the error is ---
  *
  * As act_transfer traps them: only while a handler is set and none is
@@ -57,7 +65,10 @@ static int bcrt_running;        /* inside bcrt_run's body */
 static int trap_handler = -1, trap_active, trap_op, trap_code, trap_line;
 static int bcrt_nactive;        /* procedures entered (bcrt_enter) and not left */
 
+static int bcrt_nusing;
 static void bcrt_trap(int code) {
+    while (bcrt_nredirect > 0) eval_print_file_end(&bcrt_redirect[--bcrt_nredirect]);
+    bcrt_nusing = 0;
     trap_code = code;
     trap_line = bcrt_line;
     trap_active = 1;
@@ -357,7 +368,6 @@ void bcrt_clear(void) { array_clear_all(); }
  * evaluation may PRINT USING too (a FUNCTION). */
 static using_t bcrt_using[16];
 static unsigned char bcrt_using_has[16][256];
-static int bcrt_nusing;
 
 void bcrt_using_begin(int lo, int hi, int t, int n, const char *has) {
     value_t f = take(lo, hi, t);
@@ -404,6 +414,132 @@ int bcrt_mid_set(int old, int start, int n, int lo, int hi, int t) {
     return (int)(intptr_t)res.sval;
 }
 
+/* --- files: the interpreter's (fileio.c, eval.c) ----------------------- */
+
+/* OPEN name FOR mode AS #handle [LEN = n]: the name a string (held until
+ * the handle is evaluated), then the open, then a RANDOM file's length */
+static value_t bcrt_open_held;
+
+void bcrt_open_name(int lo, int hi, int t) {
+    value_t f = take(lo, hi, t);
+    if (f.type != VAL_STRING) { val_clear(&f); bcrt_fail(ERR_TYPE_MISMATCH); }
+    val_clear(&bcrt_open_held);
+    bcrt_open_held = f;
+}
+
+void bcrt_open(int handle, int mode) {
+    error_t e = fileio_open(bcrt_open_held.sval->data, (file_mode_t)mode, handle);
+    val_clear(&bcrt_open_held);
+    bcrt_open_held = val_default(VAL_INTEGER);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_reclen(int handle, int n) { fileio_set_reclen(handle, n); }
+
+void bcrt_close(int handle) {
+    error_t e = fileio_close(handle);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_pfile_begin(int handle) {
+    error_t e;
+    if (bcrt_nredirect == 16) bcrt_fail(ERR_STACK_OVERFLOW);
+    e = eval_print_file_begin(handle, &bcrt_redirect[bcrt_nredirect]);
+    if (e != ERR_NONE) bcrt_fail(e);
+    bcrt_nredirect++;
+}
+
+void bcrt_pfile_end(void) { eval_print_file_end(&bcrt_redirect[--bcrt_nredirect]); }
+
+/* the open file #handle (INPUT #, LINE INPUT #, WRITE #) */
+int bcrt_file_fp(int handle) {
+    FILE *fp = fileio_get(handle);
+    if (!fp) bcrt_fail(ERR_FILE_NOT_OPEN);
+    return (int)(intptr_t)fp;
+}
+
+void bcrt_write_file_comma(int fp) { fprintf((FILE *)(intptr_t)fp, ","); }
+void bcrt_write_file_end(int fp) { fprintf((FILE *)(intptr_t)fp, "\n"); }
+
+void bcrt_write_file_val(int fp, int lo, int hi, int t) {
+    value_t x = take(lo, hi, t);
+    eval_write_file_value((FILE *)(intptr_t)fp, &x);
+    val_clear(&x);
+}
+
+/* INPUT #'s next field, for a target of type t */
+pair_t bcrt_input_field(int fp, int t) {
+    value_t v;
+    error_t e = eval_input_field((FILE *)(intptr_t)fp, (val_type_t)t, &v);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return give(&v);
+}
+
+int bcrt_line_input_file(int fp) {
+    value_t v;
+    error_t e = eval_line_input_file((FILE *)(intptr_t)fp, &v);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)v.sval;
+}
+
+/* GET and PUT's file (BINARY or RANDOM), and a position (from 1) */
+int bcrt_getput_fp(int handle) {
+    FILE *fp;
+    error_t e = eval_getput_file(handle, &fp);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)fp;
+}
+
+void bcrt_file_pos(int handle, int fp, int pos) {
+    error_t e = eval_file_pos(handle, (FILE *)(intptr_t)fp, pos);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* GET's value of type t (a string's as long as cur, the variable's own
+ * string, not taken) */
+pair_t bcrt_get_val(int fp, int t, int cur) {
+    value_t v;
+    sb_string_t *c = (sb_string_t *)(intptr_t)cur;
+    error_t e = eval_get_value((FILE *)(intptr_t)fp, (val_type_t)t, c ? c->len : 0, &v);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return give(&v);
+}
+
+void bcrt_put_val(int fp, int lo, int hi, int t) {
+    value_t x = take(lo, hi, t);
+    error_t e = eval_put_value((FILE *)(intptr_t)fp, &x);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* LSET (left) / RSET: the variable's string's length (cur, not taken),
+ * and the new string */
+int bcrt_strlen(int cur) { return cur ? ((sb_string_t *)(intptr_t)cur)->len : 0; }
+
+int bcrt_lrset(int cur, int lo, int hi, int t, int left) {
+    value_t nv = take(lo, hi, t), r;
+    error_t e = eval_lrset(bcrt_strlen(cur), &nv, left, &r);
+    val_clear(&nv);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)r.sval;
+}
+
+void bcrt_kill(int lo, int hi, int t) {
+    value_t f = take(lo, hi, t);
+    error_t e = f.type == VAL_STRING ? fileio_kill(f.sval->data) : ERR_TYPE_MISMATCH;
+    val_clear(&f);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_name(int alo, int ahi, int at, int blo, int bhi, int bt) {
+    value_t a = take(alo, ahi, at), b = take(blo, bhi, bt);
+    error_t e = a.type == VAL_STRING && b.type == VAL_STRING
+                ? fileio_rename(a.sval->data, b.sval->data) : ERR_TYPE_MISMATCH;
+    val_clear(&a);
+    val_clear(&b);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* a letter's DEFtype, set as the program starts (after bcrt_start) */
 void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
 
@@ -440,12 +576,12 @@ int bcrt_true(int lo, int hi, int t) {
 
 void bcrt_print_val(int lo, int hi, int t) {
     value_t x = take(lo, hi, t);
-    error_t e = print_value(&x, 0, console_width);
+    error_t e = print_value(&x, 0, bcrt_width_now());
     val_clear(&x);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
-void bcrt_print_comma(void) { print_comma(console_width); }
+void bcrt_print_comma(void) { print_comma(bcrt_width_now()); }
 
 void bcrt_print_nl(void) { print_text("\n"); }
 
@@ -456,7 +592,7 @@ void bcrt_print_tab(const char *name, int lo, int hi, int t) {
     error_t e = builtin_call(name, &arg, 1, &out);
     val_clear(&arg);
     if (e != ERR_NONE) bcrt_fail(e);
-    e = print_value(&out, 1, console_width);
+    e = print_value(&out, 1, bcrt_width_now());
     val_clear(&out);
     if (e != ERR_NONE) bcrt_fail(e);
 }
