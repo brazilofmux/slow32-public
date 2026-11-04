@@ -303,7 +303,7 @@ void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int
     sb_array_t *arr = array_find(name = akey(name, mode, kb));
     error_t e = ERR_NONE;
     if (arr && arr->ndims == n && array_get(name, ix, n, &slot) == ERR_NONE)
-        e = eval_store(slot, &x);
+        e = eval_store_fixed(slot, &x, arr->fixlen);
     val_clear(&x);
     if (e != ERR_NONE) bcrt_fail(e);
 }
@@ -592,18 +592,81 @@ static unsigned char bcrt_types_ran[256];
 /* TYPE t has run: DIM AS t may make one */
 void bcrt_type_ran(int t) { if (t >= 0 && t < 256) bcrt_types_ran[t] = 1; }
 
-/* DIM v AS t: a record of n fields, of types ('A' + val_type_t each),
- * each 0 or empty (exec_dim_as_type) */
-int bcrt_record_new(int t, const char *types, int n) {
-    sb_record_t *r;
+/* TYPE t's n fields read from bc.c's type_sig: a letter each ('A' +
+ * val_type_t), a STRING * n's followed by n -- t one that has run */
+static void sig_fields(int t, const char *sig, int n, val_type_t *types, int *lens) {
     if (t < 0 || t >= 256 || !bcrt_types_ran[t]) bcrt_fail(ERR_UNDEFINED_TYPE);
-    r = record_alloc(t, n);
-    if (!r) bcrt_fail(ERR_OUT_OF_MEMORY);
-    for (int i = 0; i < n; i++) {
-        val_clear(&r->fields[i]);
-        r->fields[i] = val_default((val_type_t)(types[i] - 'A'));
+    for (int i = 0; i < n && i < 32; i++) {
+        types[i] = (val_type_t)(*sig++ - 'A');
+        lens[i] = 0;
+        while (*sig >= '0' && *sig <= '9') lens[i] = lens[i] * 10 + (*sig++ - '0');
     }
+}
+
+/* DIM v AS t: a record of n fields, each 0 or empty, a STRING * n n
+ * CHR$(0)s (exec_dim_as_type) */
+int bcrt_record_new(int t, const char *sig, int n) {
+    val_type_t types[32];
+    int lens[32];
+    sb_record_t *r;
+    if (n > 32) n = 32;
+    sig_fields(t, sig, n, types, lens);
+    r = eval_record_make(t, n, types, lens);
+    if (!r) bcrt_fail(ERR_OUT_OF_MEMORY);
     return (int)(intptr_t)r;
+}
+
+/* DIM a(...) AS t: its elements records (eval_array_records) */
+void bcrt_dim_records(const char *name, int mode, int t, const char *sig, int n) {
+    val_type_t types[32];
+    int lens[32];
+    char kb[ARRAY_KEY_MAX];
+    error_t e;
+    if (n > 32) n = 32;
+    sig_fields(t, sig, n, types, lens);
+    e = eval_array_records(akey(name, mode, kb), t, n, types, lens);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* DIM a(...) AS STRING * n (eval_array_fixed) */
+void bcrt_dim_fixed(const char *name, int mode, int n) {
+    char kb[ARRAY_KEY_MAX];
+    error_t e = eval_array_fixed(akey(name, mode, kb), n);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* b = a, two records: a's fields into b's (record_store) */
+void bcrt_record_copy(int dst, int src) {
+    value_t d, r;
+    error_t e;
+    if (!dst || !src) bcrt_fail(ERR_TYPE_MISMATCH);
+    d.type = r.type = VAL_RECORD;
+    d.rval = (sb_record_t *)(intptr_t)dst;
+    r.rval = (sb_record_t *)(intptr_t)src;
+    e = eval_record_copy(&d, &r);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* string p (its reference taken) made a STRING * n's: cut, or padded
+ * with spaces */
+int bcrt_fix(int p, int n) {
+    value_t v;
+    error_t e;
+    v.type = VAL_STRING;
+    v.sval = (sb_string_t *)(intptr_t)p;
+    e = eval_fix_string(&v, n);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)v.sval;
+}
+
+/* DIM x AS STRING * n: x n CHR$(0)s, unless it is n characters already
+ * (a DIM met again: a declaration) */
+int bcrt_fixinit(int p, int n) {
+    value_t v;
+    if (p && ((sb_string_t *)(intptr_t)p)->len == n) return p;
+    bcrt_unref(p);
+    v = eval_fixed_value(n);
+    return (int)(intptr_t)v.sval;
 }
 
 void bcrt_record_unref(int p) {
