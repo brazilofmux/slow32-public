@@ -305,6 +305,105 @@ pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
     return give(&r);
 }
 
+/* --- console statements: the interpreter's actions (eval.c) ---------- */
+
+void bcrt_cls(void) { eval_cls(); }
+
+void bcrt_locate(int row, int col) {
+    error_t e = eval_locate(row, col);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_color_arg(int c) {
+    error_t e = eval_color_arg(c);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_color(int fg, int bg, int has_fg, int has_bg) { eval_color(fg, bg, has_fg, has_bg); }
+
+/* LINE INPUT's line, a string of the caller's */
+int bcrt_line_input(const char *prompt) {
+    value_t v;
+    error_t e = eval_line_input(prompt, &v);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)v.sval;
+}
+
+void bcrt_write_comma(void) { print_text(","); }
+void bcrt_write_end(void) { print_text("\n"); }
+
+void bcrt_write_val(int lo, int hi, int t) {
+    value_t x = take(lo, hi, t);
+    eval_write_value(&x);
+    val_clear(&x);
+}
+
+/* SLEEP v (has 0: SLEEP alone) */
+void bcrt_sleep(int lo, int hi, int t, int has) {
+    value_t x = take(lo, hi, t);
+    error_t e = eval_sleep(has ? &x : NULL);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_width(int w) { eval_width(w); }
+
+/* CLEAR's arrays (compiled code clears its own variables) */
+void bcrt_clear(void) { array_clear_all(); }
+
+/* PRINT USING: the format's value and which items have one ("1"/"0"
+ * each); then using_next (the item to evaluate, -1 when done) and
+ * using_put, as exec_print_using_items drives them.  A stack: an item's
+ * evaluation may PRINT USING too (a FUNCTION). */
+static using_t bcrt_using[16];
+static unsigned char bcrt_using_has[16][256];
+static int bcrt_nusing;
+
+void bcrt_using_begin(int lo, int hi, int t, int n, const char *has) {
+    value_t f = take(lo, hi, t);
+    using_t *u;
+    if (bcrt_nusing == 16 || n > 256) bcrt_fail(ERR_STACK_OVERFLOW);
+    u = &bcrt_using[bcrt_nusing];
+    for (int i = 0; i < n; i++) bcrt_using_has[bcrt_nusing][i] = has[i] == '1';
+    using_begin(u, f.type == VAL_STRING && f.sval ? f.sval->data : "", n, bcrt_using_has[bcrt_nusing]);
+    bcrt_nusing++;
+    val_clear(&f);
+}
+
+int bcrt_using_next(void) {
+    int k = using_next(&bcrt_using[bcrt_nusing - 1]);
+    if (k < 0) bcrt_nusing--;
+    return k;
+}
+
+void bcrt_using_put(int lo, int hi, int t) {
+    value_t x = take(lo, hi, t);
+    using_put(&bcrt_using[bcrt_nusing - 1], &x);
+    val_clear(&x);
+}
+
+/* MID$(v$, start[, n]) = r$ (exec_mid_assign): whether start is in v$
+ * (else nothing is evaluated, nothing changes); n's check; the new
+ * string of v$'s length -- old, the variable's own, not taken */
+int bcrt_mid_in(int old, int start) {
+    sb_string_t *o = (sb_string_t *)(intptr_t)old;
+    return start - 1 >= 0 && start - 1 < o->len;
+}
+
+void bcrt_mid_len(int n) { if (n < 0) bcrt_fail(ERR_ILLEGAL_FUNCTION_CALL); }
+
+int bcrt_mid_set(int old, int start, int n, int lo, int hi, int t) {
+    sb_string_t *o = (sb_string_t *)(intptr_t)old;
+    value_t r = take(lo, hi, t), res;
+    int maxlen = o->len - (start - 1);
+    error_t e;
+    if (n >= 0 && n < maxlen) maxlen = n;
+    e = eval_mid_set(o, start - 1, o->len, maxlen, &r, &res);
+    val_clear(&r);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return (int)(intptr_t)res.sval;
+}
+
 /* a letter's DEFtype, set as the program starts (after bcrt_start) */
 void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
 

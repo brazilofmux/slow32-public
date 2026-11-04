@@ -502,6 +502,9 @@ static int VH(const var_t *v) {
     return hi_emit(HI_ADDI, TY_INT, VA(v), -1, 4, NULL);
 }
 
+/* statements are being lowered: every variable was made before (prescan) */
+static int bc_lowering;
+
 /* a new variable of the function being lowered */
 static var_t *var_push(void) {
     var_t *v = malloc(sizeof(var_t));
@@ -525,6 +528,8 @@ static var_t *var_get(const char *name, int type, int line) {
         bc_not_yet(line, "a variable of this type");
         type = VAL_SINGLE;
     }
+    if (bc_lowering)            /* (prescan made every variable, all zeroed as the function starts) */
+        bc_error(line, "internal: a variable prescan did not see");
     v = var_push();
     var_init(v, name, type, global_of(name, type));
     return v;
@@ -1545,9 +1550,62 @@ static void call_void(const char *name) {
     call_end(h_ncarg, 0, name, NULL);
 }
 
+/* PRINT USING, as exec_print_using_items drives it: the format, then
+ * the items the format asks for, each evaluated when its field is
+ * reached (and again at the next field if this one cannot take it) */
+static void bc_print_using(stmt_t *s) {
+    int n = s->print.nitems, cb, top, tab, done, k, *blk;
+    char has[257];
+    bv_t f;
+    if (n > 256) { bc_not_yet(s->line, "a PRINT USING of more than 256"); return; }
+    if (s->print.using_fmt) {
+        cb = h_ncarg;
+        carg(saddr(s->print.using_fmt, (int)strlen(s->print.using_fmt)), 0);
+        carg(iconst((int)strlen(s->print.using_fmt)), 0);
+        f = mk(call_end(cb, 2, "bcrt_str_lit", NULL), -1, -1, VAL_STRING);
+    } else
+        f = expr(s->print.using_expr);
+    for (int i = 0; i < n; i++) has[i] = s->print.items[i].expr ? '1' : '0';
+    has[n] = '\0';
+    f = dynv(f);
+    cb = h_ncarg;
+    carg_bv(f);
+    carg(iconst(n), 0);
+    carg(saddr(has, n > 0 ? n : 1), 0);
+    call_end(cb, 5, "bcrt_using_begin", NULL);
+    blk = malloc((size_t)(n ? n : 1) * sizeof(int));
+    if (!blk) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    top = new_blk();
+    tab = new_blk();
+    done = new_blk();
+    goto_blk(top);
+    begin_blk(top);
+    k = call_end(h_ncarg, 0, "bcrt_using_next", NULL);
+    hi_emit(HI_BRC, TY_VOID, bin(HI_SLTU, k, iconst(n)), tab, done, NULL);
+    bc_live = 0;
+    for (int i = 0; i < n; i++) {
+        bv_t v;
+        blk[i] = new_blk();
+        begin_blk(blk[i]);
+        if (s->print.items[i].expr) {
+            v = dynv(expr(s->print.items[i].expr));
+            cb = h_ncarg;
+            carg_bv(v);
+            call_end(cb, 3, "bcrt_using_put", NULL);
+        }
+        goto_blk(top);
+    }
+    begin_blk(tab);
+    if (n > 0) hi_emit_jmptab(k, done, blk, n);
+    else hi_emit(HI_BR, TY_VOID, -1, -1, done, NULL);
+    bc_live = 0;
+    begin_blk(done);
+    free(blk);
+}
+
 static void bc_print(stmt_t *s) {
     int nl = 1;
-    if (s->print.using_fmt || s->print.using_expr) { bc_not_yet(s->line, "PRINT USING"); return; }
+    if (s->print.using_fmt || s->print.using_expr) { bc_print_using(s); return; }
     for (int i = 0; i < s->print.nitems; i++) {
         print_item_t *it = &s->print.items[i];
         if (it->expr) {
@@ -2149,6 +2207,48 @@ static void bc_call(stmt_t *s) {
     }
 }
 
+/* MID$(v$, start[, n]) = r$, as exec_mid_assign: v$ a string, else Type
+ * mismatch; start made an integer; outside v$, nothing more is evaluated
+ * and nothing changes; else n (not negative), then r$ (a string) over
+ * v$ from start, v$'s length kept */
+static void bc_mid_assign(stmt_t *s) {
+    var_t *v = var_get(s->mid_assign.var_name, 0, s->line);
+    int start, in, body = new_blk(), done = new_blk(), n = iconst(-1), cb, old, nw;
+    bv_t r;
+    if (v->type != VAL_STRING) {
+        cb = h_ncarg;
+        carg(iconst(ERR_TYPE_MISMATCH), 0);
+        call_end(cb, 1, "bcrt_err", NULL);
+        return;
+    }
+    start = coerce(expr(s->mid_assign.start), VAL_LONG).lo;
+    cb = h_ncarg;
+    carg(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), 0);
+    carg(start, 0);
+    in = call_end(cb, 2, "bcrt_mid_in", NULL);
+    hi_emit(HI_BRC, TY_VOID, in, body, done, NULL);
+    bc_live = 0;
+    begin_blk(body);
+    if (s->mid_assign.length) {
+        n = coerce(expr(s->mid_assign.length), VAL_LONG).lo;
+        cb = h_ncarg;
+        carg(n, 0);
+        call_end(cb, 1, "bcrt_mid_len", NULL);
+    }
+    r = dynv(expr(s->mid_assign.value));
+    old = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+    cb = h_ncarg;
+    carg(old, 0); carg(start, 0); carg(n, 0);
+    carg_bv(r);
+    nw = call_end(cb, 6, "bcrt_mid_set", NULL);
+    hi_emit(HI_STORE, TY_INT, VA(v), nw, 0, NULL);
+    cb = h_ncarg;
+    carg(old, 0);
+    call_end(cb, 1, "bcrt_unref", NULL);
+    goto_blk(done);
+    begin_blk(done);
+}
+
 /* --- EXIT, SELECT CASE, SWAP ----------------------------------------- */
 
 /* the WHILEs and DOs being lowered, innermost last: their kind and the
@@ -2551,6 +2651,90 @@ static void bc_stmt(stmt_t *s) {
     case STMT_CALL:
         bc_call(s);
         break;
+    case STMT_CLS:
+        call_void("bcrt_cls");
+        break;
+    case STMT_LOCATE: {         /* both evaluated, then made integers (exec_locate) */
+        bv_t r = expr(s->locate_stmt.row), c = expr(s->locate_stmt.col);
+        int ri = coerce(r, VAL_LONG).lo, ci = coerce(c, VAL_LONG).lo, cb = h_ncarg;
+        carg(ri, 0); carg(ci, 0);
+        call_end(cb, 2, "bcrt_locate", NULL);
+        break;
+    }
+    case STMT_COLOR: {          /* each made an integer and checked as it comes */
+        int fg = iconst(7), bg = iconst(0), cb;
+        if (s->color_stmt.has_fg) {
+            fg = coerce(expr(s->color_stmt.fg), VAL_LONG).lo;
+            cb = h_ncarg; carg(fg, 0); call_end(cb, 1, "bcrt_color_arg", NULL);
+        }
+        if (s->color_stmt.has_bg) {
+            bg = coerce(expr(s->color_stmt.bg), VAL_LONG).lo;
+            cb = h_ncarg; carg(bg, 0); call_end(cb, 1, "bcrt_color_arg", NULL);
+        }
+        cb = h_ncarg;
+        carg(fg, 0); carg(bg, 0);
+        carg(iconst(s->color_stmt.has_fg), 0); carg(iconst(s->color_stmt.has_bg), 0);
+        call_end(cb, 4, "bcrt_color", NULL);
+        break;
+    }
+    case STMT_LINE_INPUT_CONSOLE: {     /* a line, into a string variable */
+        var_t *v = s->input.nvars > 0 && !s->input.targets[0]
+                   ? var_get(s->input.varnames[0], 0, s->line) : NULL;
+        int cb, p;
+        if (s->input.nvars > 0 && (!v || v->type != VAL_STRING)) {
+            bc_not_yet(s->line, "a LINE INPUT into this");
+            break;
+        }
+        cb = h_ncarg;
+        carg(s->input.prompt ? saddr(s->input.prompt, (int)strlen(s->input.prompt)) : iconst(0), 0);
+        p = call_end(cb, 1, "bcrt_line_input", NULL);
+        if (v) var_store(v, mk(p, -1, -1, VAL_STRING));
+        else { cb = h_ncarg; carg(p, 0); call_end(cb, 1, "bcrt_unref", NULL); }
+        break;
+    }
+    case STMT_WRITE_CONSOLE:    /* each item after its comma (exec_write_console) */
+        for (int i = 0; i < s->print.nitems; i++) {
+            if (i > 0) call_void("bcrt_write_comma");
+            if (s->print.items[i].expr) {
+                bv_t v = dynv(expr(s->print.items[i].expr));
+                int cb = h_ncarg;
+                carg_bv(v);
+                call_end(cb, 3, "bcrt_write_val", NULL);
+            }
+        }
+        call_void("bcrt_write_end");
+        break;
+    case STMT_SLEEP: {
+        bv_t v = s->sleep_stmt.duration ? dynv(expr(s->sleep_stmt.duration)) : dynv(zero());
+        int cb = h_ncarg;
+        carg_bv(v);
+        carg(iconst(s->sleep_stmt.duration != NULL), 0);
+        call_end(cb, 4, "bcrt_sleep", NULL);
+        break;
+    }
+    case STMT_WIDTH: {
+        int w = coerce(expr(s->width_stmt.columns), VAL_LONG).lo, cb = h_ncarg;
+        carg(w, 0);
+        call_end(cb, 1, "bcrt_width", NULL);
+        break;
+    }
+    case STMT_BEEP:
+        break;
+    case STMT_CLEAR:            /* every variable as it started, every array gone */
+        if (bc_proc) { bc_not_yet(s->line, "CLEAR in a SUB or FUNCTION"); break; }
+        for (int i = 0; i < bc_nvars; i++) {
+            if (bc_vars[i]->type == VAL_STRING) {
+                int cb = h_ncarg;
+                carg(hi_emit(HI_LOAD, TY_INT, VA(bc_vars[i]), -1, 0, NULL), 0);
+                call_end(cb, 1, "bcrt_unref", NULL);
+            }
+            var_zero(bc_vars[i]);
+        }
+        call_void("bcrt_clear");
+        break;
+    case STMT_MID_ASSIGN:
+        bc_mid_assign(s);
+        break;
     case STMT_CONST: {          /* its value, its type (exec_const) */
         var_t *v = var_find(s->const_stmt.name);
         bv_t x = expr(s->const_stmt.value);
@@ -2776,6 +2960,15 @@ static void prescan(stmt_t *s) {
             break;
         }
         case STMT_ASSIGN: var_get(s->assign.name, s->assign.var_type, s->line); break;
+        case STMT_INPUT: case STMT_LINE_INPUT_CONSOLE:   /* (a variable target is a name, no expression) */
+            for (int i = 0; i < s->input.nvars; i++)
+                if (!s->input.targets[i]) var_get(s->input.varnames[i], 0, s->line);
+            break;
+        case STMT_READ:
+            for (int i = 0; i < s->read_stmt.nvars; i++)
+                if (!s->read_stmt.targets[i]) var_get(s->read_stmt.varnames[i], 0, s->line);
+            break;
+        case STMT_MID_ASSIGN: var_get(s->mid_assign.var_name, 0, s->line); break;
         case STMT_FOR:
             var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
             forslots_add(s);
@@ -2885,7 +3078,9 @@ static void proc_func(proc_t *p, Node *fn) {
         call_end(cb, 1, "bcrt_enter", NULL);
     }
     bc_proc_exit = new_blk();
+    bc_lowering = 1;
     bc_stmts(def->proc_def.body);
+    bc_lowering = 0;
     goto_blk(bc_proc_exit);
     begin_blk(bc_proc_exit);
     if (fnc) {                  /* its value into the caller's slot, a string's reference with it */
@@ -3026,7 +3221,9 @@ static void body_func(Node *fn) {
     hi_emit(HI_BRC, TY_VOID, pin, bc_dispatch, start, NULL);
     bc_live = 0;
     begin_blk(start);
+    bc_lowering = 1;
     bc_stmts(bc_program);
+    bc_lowering = 0;
     end = new_blk();            /* (the op past the last: the program's end) */
     goto_blk(end);
     begin_blk(end);
@@ -3098,8 +3295,11 @@ static void hl_func(Node *fn) {
         int cb = h_ncarg;
         carg(hi_emit(HI_FADDR, TY_INT, -1, -1, 0, "bcm_body"), 0);
         call_end(cb, 1, "bcrt_run", NULL);
-    } else
+    } else {
+        bc_lowering = 1;
         bc_stmts(bc_program);
+        bc_lowering = 0;
+    }
     if (bc_live) call_void("bcrt_end");
     if (bc_live) hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
