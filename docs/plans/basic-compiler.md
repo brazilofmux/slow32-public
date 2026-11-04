@@ -390,6 +390,32 @@ dim-twice for DIM AS.  `run-oracle.py --bc`: 435 agree, 20 refused
 alike, none differ.
 
 Interpreter deviations from QuickBASIC seen and left: PRINT USING's
-signs and fields; a TYPE's STRING * n fields not fixed length; a name
-with a dot (TWO.PI#) does not lex; REDIM resizes a static array.
+signs and fields; a name with a dot (TWO.PI#) does not lex; REDIM
+resizes a static array.
+
+### The QB corpus (2026-11-03)
+
+`sbc/tests/qb-corpus.py [-l]` runs s32-bc over QB64-PE's QBasic test
+cases (~/refs/basic/qb64pe/tests/qbasic_testcases, not in the tree),
+the 100 of 143 that QBasic 1.1 loads, and counts what stops each: the
+parser, the checker, or a "not yet" (-l: the line).  Worked down from
+59 compiling: DIM a(lo TO hi) (67626669/70362fd7), the QB forms of
+LOCATE, WIDTH, INPUT # and LINE INPUT (c62464ec/d191b573), then arrays
+of records and STRING * n (1007f26b/64321ea4/49151c3f) -- 61 compile.
+QBasic showed, on the way: a record assigned is copied (the
+interpreter had shared it); a fixed-length string starts as n CHR$(0)s
+and every store cuts or pads it, a SUB's by-reference one included
+when the call returns; A(i) = e evaluates e before the subscripts.
+s32-bc's per-function table of failure blocks held four kinds of error
+unchecked: vektor.bas overran it (now 32, checked).  The 92 games:
+67.8M instructions (from 66-67.5M: e first costs a little).
+
+Left, by count: graphics GET/PUT sprites (13), WINDOW/VIEW and SCREEN
+with arguments left out, CIRCLE's arcs and aspect, names with a dot
+(SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
+commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
+whole array as an argument, a DEFtype after a use, ELSEIF on a line
+of its own after a single-line THEN, SCREEN() as a function.  Also
+from QBasic: a FUNCTION f% may be named f, inside and out (the
+interpreter makes f a variable).
 
