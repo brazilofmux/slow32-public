@@ -553,6 +553,78 @@ typedef struct { char name[64]; int type; } atype_t;
 static atype_t *bc_atypes;
 static int bc_natypes, bc_capatypes;
 
+/* --- CONST ------------------------------------------------------------- */
+
+/* the CONSTs met so far in the text, with their types (const_type) */
+typedef struct { char name[64]; int type; int module; } konst_t;
+static konst_t *bc_consts;
+static int bc_nconsts, bc_capconsts;
+
+static int const_find(const char *name) {
+    for (int i = bc_nconsts - 1; i >= 0; i--)
+        if (strcmp(bc_consts[i].name, name) == 0) return i;
+    return -1;
+}
+
+/* the type a constant expression's value has, as value.c types it, where
+ * the text fixes it (literals, CONSTs, + - * / NOT, comparisons); else
+ * ST_DYN.  A SINGLE only from a literal: the interpreter's CONST keeps
+ * its value as it is, a SINGLE's unrounded */
+static int expr_const_type(const expr_t *e) {
+    int a, b, k;
+    switch (e->type) {
+    case EXPR_LITERAL:
+        return e->literal.type;
+    case EXPR_VARIABLE:
+        k = const_find(e->var.name);
+        return k >= 0 ? bc_consts[k].type : ST_DYN;
+    case EXPR_UNARY:
+        a = expr_const_type(e->unary.operand);
+        if (e->unary.op == OP_NEG) return st_num(a) ? a : ST_DYN;
+        return st_int(a) ? a : ST_DYN;
+    case EXPR_COMPARE:
+        a = expr_const_type(e->compare.left);
+        b = expr_const_type(e->compare.right);
+        return a != ST_DYN && b != ST_DYN ? VAL_INTEGER : ST_DYN;
+    case EXPR_BINARY:
+        a = expr_const_type(e->binary.left);
+        b = expr_const_type(e->binary.right);
+        if (a == ST_DYN || b == ST_DYN) return ST_DYN;
+        if (a == VAL_STRING || b == VAL_STRING)
+            return a == b && (e->binary.op == OP_ADD || e->binary.op == OP_STRCAT) ? VAL_STRING : ST_DYN;
+        if (st_int(a) && st_int(b) && e->binary.op != OP_DIV && e->binary.op != OP_POW)
+            return a == VAL_LONG || b == VAL_LONG ? VAL_LONG : VAL_INTEGER;
+        if (e->binary.op != OP_ADD && e->binary.op != OP_SUB && e->binary.op != OP_MUL &&
+            e->binary.op != OP_DIV) return ST_DYN;
+        /* (a DOUBLE; a SINGLE's value would be unrounded) */
+        return a == VAL_DOUBLE || b == VAL_DOUBLE ? VAL_DOUBLE : ST_DYN;
+    default:
+        return ST_DYN;
+    }
+}
+
+/* CONST name = e: its type, a suffix's, else its value's (exec_const) */
+static int const_type(const stmt_t *s) {
+    const char *nm = s->const_stmt.name;
+    size_t n = strlen(nm);
+    if (n && strchr("%&!#$", nm[n - 1])) return name_type(nm);
+    return expr_const_type(s->const_stmt.value);
+}
+
+static int bc_nmodconsts;       /* (the first so many are the main program's) */
+
+static void const_add(const char *name, int type, int module) {
+    if (bc_nconsts == bc_capconsts) {
+        bc_capconsts = bc_capconsts ? bc_capconsts * 2 : 16;
+        bc_consts = realloc(bc_consts, (size_t)bc_capconsts * sizeof(konst_t));
+        if (!bc_consts) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    strncpy(bc_consts[bc_nconsts].name, name, 63);
+    bc_consts[bc_nconsts].name[63] = '\0';
+    bc_consts[bc_nconsts].type = type;
+    bc_consts[bc_nconsts++].module = module;
+}
+
 /* DIM x AS type's type, or (DIM SHARED x) its name's */
 static int decl_type(const stmt_t *s) {
     return s->dim_scalar.typed ? (int)s->dim_scalar.scalar_type : name_type(s->dim_scalar.name);
@@ -1461,7 +1533,11 @@ static const char *stmt_word(int t) {
     case STMT_OPTION_BASE: return "OPTION BASE";
     case STMT_ERASE: return "ERASE";
     case STMT_TYPE_DEF: case STMT_DIM_AS_TYPE: case STMT_FIELD_ASSIGN: return "TYPE";
-    default: return "this statement";
+    default: {
+        static char w[32];      /* (the parser's number for it: ast.h's stmt_type_t) */
+        snprintf(w, sizeof w, "statement %d", t);
+        return w;
+    }
     }
 }
 
@@ -2475,6 +2551,12 @@ static void bc_stmt(stmt_t *s) {
     case STMT_CALL:
         bc_call(s);
         break;
+    case STMT_CONST: {          /* its value, its type (exec_const) */
+        var_t *v = var_find(s->const_stmt.name);
+        bv_t x = expr(s->const_stmt.value);
+        if (v) var_store(v, x);
+        break;
+    }
     case STMT_DIM_SCALAR: {     /* the variable made anew (env_set of its default) */
         var_t *v = var_find(s->dim_scalar.name);
         if (v && v->type == VAL_STRING) {
@@ -2669,6 +2751,20 @@ static void prescan(stmt_t *s) {
         if (s->type == STMT_DEF_FN) continue;   /* (its parameters are no program variables) */
         stmt_exprs(s, prescan_top, NULL);
         switch (s->type) {
+        case STMT_CONST: {
+            /* a CONST, a variable of its value's type from the start: in
+             * no block, before any use (as exec_const makes it when it
+             * runs) */
+            var_t *v;
+            int t = const_type(s);
+            if (bc_prescan_depth > 1) { bc_not_yet(s->line, "a CONST inside a block"); break; }
+            if (t == ST_DYN) { bc_not_yet(s->line, "this CONST's value"); break; }
+            if (bc_proc && const_find(s->const_stmt.name) < 0) const_add(s->const_stmt.name, t, 0);
+            if (var_find(s->const_stmt.name)) { bc_not_yet(s->line, "a CONST after its name's use"); break; }
+            v = var_push();
+            var_init(v, s->const_stmt.name, t, global_of(s->const_stmt.name, t));
+            break;
+        }
         case STMT_DIM_SCALAR: {
             /* DIM x AS type types x from the first, as the interpreter's
              * does when it runs first: in no block, before any use */
@@ -2762,6 +2858,15 @@ static void proc_func(proc_t *p, Node *fn) {
                 v = var_push();
                 var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
             }
+    bc_nconsts = bc_nmodconsts;
+    for (int i = 0; i < bc_nmodconsts; i++)   /* the main program's CONSTs: everywhere */
+        if (!var_find(bc_consts[i].name)) {
+            char sym[96];
+            var_t *v = var_push();
+            global_sym(sym, sizeof sym, NULL, bc_consts[i].name);
+            var_init(v, bc_consts[i].name, bc_consts[i].type,
+                     global_add(bc_consts[i].name, sym, bc_consts[i].type));
+        }
     for (int i = 0; i < bc_ndimshared; i++)   /* DIM SHARED's variables: everywhere */
         if (bc_dimshared[i]->type == STMT_DIM_SCALAR && !var_find(bc_dimshared[i]->dim_scalar.name)) {
             const char *name = bc_dimshared[i]->dim_scalar.name;
@@ -2869,6 +2974,19 @@ static void program_prepare(void) {
                     global_sym(sym, sizeof sym, s->type == STMT_STATIC ? &bc_procs[k] : NULL, name);
                     global_add(name, sym, s->type == STMT_STATIC ? name_type(name) : main_type(name));
                 }
+    bc_nconsts = 0;             /* the main program's CONSTs: globals every procedure sees */
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_CONST) {
+            int t = const_type(s);
+            if (t == ST_DYN || const_find(s->const_stmt.name) >= 0) continue;   /* (prescan says so) */
+            const_add(s->const_stmt.name, t, 1);
+            {
+                char sym[96];
+                global_sym(sym, sizeof sym, NULL, s->const_stmt.name);
+                global_add(s->const_stmt.name, sym, t);
+            }
+        }
+    bc_nmodconsts = bc_nconsts;
     bc_ndimshared = 0;
     for (stmt_t *s = bc_program; s; s = s->next)
         if ((s->type == STMT_DIM && s->dim_stmt.shared) ||

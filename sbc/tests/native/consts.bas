@@ -1,0 +1,14 @@
+' CONST in s32-bc: typed by its value or its suffix; module CONSTs in SUBs
+DECLARE SUB Show ()
+CONST PI = 3.14159, MAXN% = 100, BIG = 100000, GREET$ = "Hello"
+CONST TWOPI# = 2 * 3.141592653589793#, HALF = .5, NEG = -7, FLAG = 3 > 2
+CONST LIM% = 7.6, SUM = MAXN% + 5, TAG$ = "!"
+PRINT PI; MAXN%; BIG; GREET$; TWOPI#; HALF; NEG; FLAG; LIM%; SUM; TAG$
+PRINT PI * 2; BIG * 3; MAXN% \ 3
+CALL Show
+END
+
+SUB Show
+    CONST LOCALC = 42
+    PRINT PI; GREET$; LOCALC + MAXN%
+END SUB
