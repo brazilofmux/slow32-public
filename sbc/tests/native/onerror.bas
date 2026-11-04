@@ -3,13 +3,13 @@
 30 A% = 32767: A% = A% + 1: PRINT "after overflow"; A%
 40 X = 0: Y = 1 / X: PRINT "after div"; Y
 50 DIM Q(3): Q(5) = 1: PRINT "after subscript"
-60 S$ = "x": T = S$ + 1: PRINT "after mismatch"
+60 S$ = "x": ERROR 13: PRINT "after mismatch"
 70 ERROR 77: PRINT "after ERROR 77"
 80 CALL Bad(3): PRINT "after CALL"
 90 IF 1 / X > 0 THEN PRINT "then part" ELSE PRINT "else part"
 100 FOR I% = 32766 TO 32767: PRINT "loop"; I%: NEXT I%: PRINT "past loop"
 110 N = 0: WHILE 1 / N > 5: PRINT "in while": N = 1: WEND: PRINT "past while"
-120 SELECT CASE S$ + 1
+120 SELECT CASE 1 / X
 CASE 1: PRINT "one"
 CASE ELSE: PRINT "else"
 END SELECT

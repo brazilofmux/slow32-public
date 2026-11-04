@@ -89,6 +89,8 @@ typedef struct {
     char text[256];     /* original text (for idents, strings) */
     char suffix;        /* type suffix: '%', '#', '$', or '\0' */
     char first;         /* the line's first token (a name then : is a label) */
+    char bad;           /* a number QBasic will not load: its exponent past its
+                         * range (3E-99999), or n& past a LONG */
 } token_t;
 
 typedef struct {
@@ -98,6 +100,8 @@ typedef struct {
     token_t cur;        /* current (peeked) token */
     int has_cur;        /* whether cur is valid */
     int at_line_start;  /* the next token begins a line */
+    token_type_t prev;  /* the token consumed last (-1: none yet), and whether it began its line */
+    int prev_first;
 } lexer_t;
 
 /* Initialize lexer with source text */

@@ -195,6 +195,8 @@ void lexer_init(lexer_t *lex, const char *src, int start_line) {
     lex->line = start_line;
     lex->has_cur = 0;
     lex->at_line_start = 1;
+    lex->prev = (token_type_t)-1;     /* (none yet) */
+    lex->prev_first = 0;
 }
 
 static char peek_char(lexer_t *lex) {
@@ -215,6 +217,41 @@ static void skip_spaces(lexer_t *lex) {
 /* the next token, into *tok (the lexer's own: no copies) */
 static void scan_token_raw(lexer_t *lex, token_t *tok);
 
+/* a number QBasic refuses to load though its value would round (QBasic,
+ * probed): its first significant digit's power of ten below -32751
+ * (1E-32752, .1E-32752; 12E-32752 loads), or n& past a LONG */
+static int number_bad(const char *text, char sfx) {
+    const char *e = strchr(text, 'E');
+    if (sfx == '&' && !e && !strchr(text, '.')) {
+        long long v = 0;
+        for (const char *q = text; *q >= '0' && *q <= '9'; q++)
+            if ((v = v * 10 + (*q - '0')) > 2147483647LL) return 1;
+        return 0;
+    }
+    if (e) {
+        long ex = 0;
+        int neg = 0, lead = 0, k0 = 0, seen = 0;
+        const char *q = e + 1;
+        if (*q == '+' || *q == '-') neg = *q++ == '-';
+        for (; *q >= '0' && *q <= '9'; q++) if (ex < 1000000) ex = ex * 10 + (*q - '0');
+        if (neg) ex = -ex;
+        /* the first significant digit's place: its power of ten, unscaled */
+        for (q = text; q < e && *q != '.'; q++) lead++;
+        for (q = text; q < e; q++) {
+            if (*q == '.') continue;
+            if (*q != '0') { seen = 1; break; }
+        }
+        if (!seen) return 0;
+        {
+            int pos = 0;            /* digits before the significant one, from the start */
+            for (q = text; q < e && (*q == '0' || *q == '.'); q++) if (*q != '.') pos++;
+            k0 = lead - pos - 1;
+        }
+        if (ex + k0 < -32751) return 1;
+    }
+    return 0;
+}
+
 /* the next token, marked when it begins a line */
 static void scan_token(lexer_t *lex, token_t *tok) {
     int first = lex->at_line_start;
@@ -228,6 +265,7 @@ static void scan_token_raw(lexer_t *lex, token_t *tok) {
     tok->dval = 0;
     tok->text[0] = '\0';
     tok->suffix = '\0';
+    tok->bad = 0;
     tok->line = lex->line;
 
     skip_spaces(lex);
@@ -383,6 +421,7 @@ static void scan_token_raw(lexer_t *lex, token_t *tok) {
             for (int i = 0; i < len && tok->text[i] != 'E'; i++)
                 if (tok->text[i] != '.') sig++;
             if (sfx == '%' || sfx == '&') { is_double = 0; tok->suffix = sfx; }
+            tok->bad = number_bad(tok->text, sfx);
             if (sfx == '#' || sfx == '!') is_double = 1;
             if (!is_double && len <= 10) {
                 /* digits alone (a line number, a count): their value here,
@@ -596,11 +635,14 @@ token_t lexer_next(lexer_t *lex) {
     if (!lex->has_cur)
         scan_token(lex, &lex->cur);
     lex->has_cur = 0;
+    lex->prev = lex->cur.type;
+    lex->prev_first = lex->cur.first;
     t.type = lex->cur.type;
     t.line = lex->cur.line;
     t.dval = lex->cur.dval;     /* ival or dval: the bits (no NaN either way) */
     t.suffix = lex->cur.suffix;
     t.first = lex->cur.first;
+    t.bad = lex->cur.bad;
     {   /* a few characters, as a rule: copied here, not by two calls */
         char *d = t.text;
         const char *q = lex->cur.text;
@@ -613,6 +655,8 @@ void lexer_skip(lexer_t *lex) {
     if (!lex->has_cur)
         scan_token(lex, &lex->cur);
     lex->has_cur = 0;
+    lex->prev = lex->cur.type;
+    lex->prev_first = lex->cur.first;
 }
 
 int lexer_check(lexer_t *lex, token_type_t type) {

@@ -562,6 +562,33 @@ not to be done, W^X) and two that only load because QB64's _
 continues a line.  Everything QBasic was asked along the way is
 pinned in a test that prints what QBasic prints.
 
+Then QBasic's load-time checks (2026-11-04), the last of what the
+checker took that QBasic does not: strict-qb now agrees on every
+program (398, the 4 hoisted DEF FNs apart; it had been 14 short).
+QBasic types the whole program as it loads it, so the checker does
+too (strict.c's ty_check): each expression a number, a string, or not
+told (a record, another dialect's builtin), and a definite mismatch
+is type-mismatch -- an operator's operands, a comparison's, an
+assignment's two sides, an array's subscripts and element, a
+condition (IF, WHILE, DO), FOR's counter and bounds, ON's index, PRINT
+USING's format, LOCATE's and COLOR's operands, SWAP's two, a builtin's
+arguments (a table of QBasic's, each its result and its arguments'
+types; LEN of a number not a variable is variable-required), a SUB's
+or FUNCTION's or DEF FN's arguments against their parameters, a DEF
+FN's value against its name.  Names are typed by their suffix, else
+by a declaration in their scope -- the procedure's own, or the main
+program's where the procedure sees it (DIM SHARED, COMMON SHARED,
+CONST, its own SHARED) -- else as SINGLEs.  Also: empty parentheses
+on a builtin, a DEF FN or a FUNCTION (RND(), FNP(), f(): "Expected:
+expression"), a statement right after another with no colon between
+(end-of-statement; IF c GOTO n is one statement, and DATA's rest is
+its own), and a number whose first significant digit is below
+10^-32751 (3E-99999; 12E-32752 loads) or an n& past a LONG, refused as
+the parser refuses other literals out of range.  The tests/strict
+pairs pin each.  s32-bc now refuses what QBasic refuses at load: the
+native err-* tests (run-time type errors) are QBasic load errors, and
+onerror.bas raises its Type mismatch with ERROR 13 now.
+
 Older list, by count: SCREEN
 with arguments left out, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as

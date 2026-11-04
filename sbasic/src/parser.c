@@ -149,7 +149,7 @@ static expr_t *parse_primary(parser_t *p) {
         token_t t = lexer_next(&p->lex);
         /* an integer literal: INTEGER to 32767, LONG beyond (or with &);
          * a % that does not fit is an Overflow */
-        if (t.suffix == '%' && !INT16_OK(t.ival)) {
+        if ((t.suffix == '%' && !INT16_OK(t.ival)) || t.bad) {
             parser_error(p, ERR_OVERFLOW);
             return NULL;
         }
@@ -159,7 +159,7 @@ static expr_t *parse_primary(parser_t *p) {
         token_t t = lexer_next(&p->lex);
         value_t lv = t.suffix == '#' ? val_double(t.dval) : val_single(single_round(t.dval));
         /* a literal out of its type's range: QBasic's Overflow on loading */
-        if (val_check_range(&lv) != ERR_NONE) {
+        if (val_check_range(&lv) != ERR_NONE || t.bad) {
             parser_error(p, ERR_OVERFLOW);
             return NULL;
         }
@@ -501,6 +501,8 @@ static int check_end_keyword(parser_t *p, token_type_t kw) {
     int save_line = p->lex.line;
     int save_has = p->lex.has_cur;
     token_t save_cur = p->lex.cur;
+    token_type_t save_prev = p->lex.prev;
+    int save_prev_first = p->lex.prev_first;
 
     lexer_skip(&p->lex);
     int result = lexer_check(&p->lex, kw);
@@ -510,6 +512,8 @@ static int check_end_keyword(parser_t *p, token_type_t kw) {
     p->lex.line = save_line;
     p->lex.has_cur = save_has;
     p->lex.cur = save_cur;
+    p->lex.prev = save_prev;
+    p->lex.prev_first = save_prev_first;
     return result;
 }
 
@@ -2463,7 +2467,27 @@ static stmt_t *parse_option(parser_t *p, int line) {
 
 /* --- Main statement dispatch --- */
 
+static stmt_t *parse_stmt_in(parser_t *p);
+
+/* a statement; noted when it follows another on its line with no colon,
+ * THEN or ELSE between (and not after the line's number) */
 static stmt_t *parse_stmt(parser_t *p) {
+    token_t *tok;
+    int unsep;
+    stmt_t *s;
+    if (p->error != ERR_NONE) return NULL;
+    tok = lexer_peek(&p->lex);
+    /* (IF c GOTO n is one; DATA's items are text, its rest the parser's) */
+    unsep = !tok->first && (int)p->lex.prev != -1 && p->lex.prev != TOK_COLON && p->lex.prev != TOK_EOL &&
+            p->lex.prev != TOK_THEN && p->lex.prev != TOK_ELSE && tok->type != TOK_GOTO &&
+            p->lex.prev != TOK_DATA &&
+            !(p->lex.prev_first && (p->lex.prev == TOK_INTEGER_LIT || p->lex.prev == TOK_DOUBLE_LIT));
+    s = parse_stmt_in(p);
+    if (s && unsep) s->unsep = 1;
+    return s;
+}
+
+static stmt_t *parse_stmt_in(parser_t *p) {
     if (p->error != ERR_NONE) return NULL;
     token_t *tok = lexer_peek(&p->lex);
 

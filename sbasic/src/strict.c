@@ -212,8 +212,10 @@ static void const_target(check_t *c, const char *name, int line) {
 
 static const char *const_value(check_t *c, const expr_t *e);
 
-/* a DIM's bounds all constant (a static array, QB's) */
+/* a DIM's bounds all constant (a static array, QB's) -- and not an
+ * array COMMON SHARED declares, which is dynamic */
 static int dim_static(check_t *c, const stmt_t *s) {
+    if (find(&c->dimshared, s->dim_stmt.name) && !s->dim_stmt.shared) return 0;
     for (int i = 0; i < s->dim_stmt.ndims; i++)
         if ((s->dim_stmt.dims[i] && const_value(c, s->dim_stmt.dims[i])) ||
             (s->dim_stmt.lower[i] && const_value(c, s->dim_stmt.lower[i])))
@@ -645,6 +647,416 @@ static int same_but_suffix(const char *a, const char *b) {
     return la == lb && strncmp(a, b, la) == 0;
 }
 
+/* --- types: QBasic's load-time Type mismatch ------------------------
+ *
+ * QBasic types a program as it loads it: every operator, comparison,
+ * assignment, condition, argument and statement operand is a number or
+ * a string, and a string where a number goes (or the reverse) is "Type
+ * mismatch" before anything runs (probed, 2026-11-04).  Each expression
+ * here is K_NUM, K_STR, or K_ANY where it cannot be told (a record, a
+ * builtin of another dialect): only a definite mismatch is a finding. */
+
+enum { K_ANY = 0, K_NUM, K_STR };
+
+/* names declared without a suffix (DIM x AS, CONST, parameters): the
+ * main program's first (nmod of them; shared: every procedure's -- DIM
+ * SHARED, COMMON SHARED, CONST), then the procedure's being checked */
+typedef struct { char name[64]; int k, shared; } kname_t;
+static kname_t *kn;
+static int nkn, capkn, nmod;
+static stmt_t *ty_program, *ty_cur;     /* (ty_cur: the SUB or FUNCTION, NULL in the main program) */
+static int ty_shared_decl;              /* declarations being noted are the module's shared ones */
+
+static void kn_add(const char *name, int k) {
+    if (nkn == capkn) {
+        capkn = capkn ? capkn * 2 : 64;
+        kn = realloc(kn, (size_t)capkn * sizeof *kn);
+        if (!kn) { fprintf(stderr, "sbasic: out of memory\n"); exit(1); }
+    }
+    snprintf(kn[nkn].name, sizeof kn[nkn].name, "%s", name);
+    kn[nkn].shared = ty_shared_decl;
+    kn[nkn++].k = k;
+}
+
+/* a SHARED list in body names name (name or name()): the procedure's
+ * own SHARED, or the main program's (COMMON SHARED) */
+static int ty_shares_in(stmt_t *body, const char *name) {
+    char a[68];
+    snprintf(a, sizeof a, "%s()", name);
+    for (stmt_t *s = body; s; s = s->next)
+        if (s->type == STMT_SHARED)
+            for (int i = 0; i < s->shared.nvars; i++)
+                if (strcmp(s->shared.varnames[i], name) == 0 || strcmp(s->shared.varnames[i], a) == 0)
+                    return 1;
+    return 0;
+}
+
+static int ty_proc_shares(const char *name) {
+    return ty_cur && (ty_shares_in(ty_cur->proc_def.body, name) || ty_shares_in(ty_program, name));
+}
+
+static int k_of(val_type_t t) { return t == VAL_STRING ? K_STR : t == VAL_RECORD ? K_ANY : K_NUM; }
+
+/* a name's kind: its suffix's, or as it was declared, else a SINGLE's
+ * (the parser writes every other DEFtype into the name) */
+static int name_k(const char *name) {
+    size_t n = strlen(name);
+    if (n && name[n - 1] == '$') return K_STR;
+    if (n && strchr("%&!#", name[n - 1])) return K_NUM;
+    for (int i = nkn - 1; i >= nmod; i--)           /* the procedure's own */
+        if (strcmp(kn[i].name, name) == 0) return kn[i].k;
+    for (int i = nmod - 1; i >= 0; i--)             /* the main program's, where seen */
+        if (strcmp(kn[i].name, name) == 0 && (!ty_cur || kn[i].shared || ty_proc_shares(name)))
+            return kn[i].k;
+    return K_NUM;
+}
+
+/* QBasic's builtins, each its result and its arguments' kinds for a
+ * number of them ('N', 'S', '*' either; 'L' LEN's: a string, or a
+ * variable of any type) */
+static const struct { const char *name; char res; const char *args; } qb_sigs[] = {
+    {"ABS", 'N', "N"}, {"INT", 'N', "N"}, {"SGN", 'N', "N"}, {"SQR", 'N', "N"}, {"FIX", 'N', "N"},
+    {"CINT", 'N', "N"}, {"CLNG", 'N', "N"}, {"CDBL", 'N', "N"}, {"CSNG", 'N', "N"},
+    {"SIN", 'N', "N"}, {"COS", 'N', "N"}, {"TAN", 'N', "N"}, {"ATN", 'N', "N"},
+    {"EXP", 'N', "N"}, {"LOG", 'N', "N"}, {"RND", 'N', ""}, {"RND", 'N', "N"},
+    {"PEEK", 'N', "N"}, {"INP", 'N', "N"}, {"POS", 'N', "N"}, {"LOF", 'N', "N"}, {"LOC", 'N', "N"},
+    {"EOF", 'N', "N"}, {"STICK", 'N', "N"}, {"STRIG", 'N', "N"}, {"PEN", 'N', "N"}, {"PLAY", 'N', "N"},
+    {"FRE", 'N', "*"}, {"SCREEN", 'N', "NN"}, {"SCREEN", 'N', "NNN"}, {"POINT", 'N', "N"},
+    {"POINT", 'N', "NN"}, {"PMAP", 'N', "NN"}, {"TIMER", 'N', ""}, {"CSRLIN", 'N', ""},
+    {"FREEFILE", 'N', ""}, {"SADD", 'N', "S"}, {"VARPTR", 'N', "*"}, {"VARSEG", 'N', "*"},
+    {"LEN", 'N', "L"}, {"VAL", 'N', "S"}, {"ASC", 'N', "S"}, {"INSTR", 'N', "SS"}, {"INSTR", 'N', "NSS"},
+    {"CVI", 'N', "S"}, {"CVL", 'N', "S"}, {"CVS", 'N', "S"}, {"CVD", 'N', "S"},
+    {"CHR$", 'S', "N"}, {"STR$", 'S', "N"}, {"HEX$", 'S', "N"}, {"OCT$", 'S', "N"}, {"SPACE$", 'S', "N"},
+    {"STRING$", 'S', "N*"}, {"LEFT$", 'S', "SN"}, {"RIGHT$", 'S', "SN"}, {"MID$", 'S', "SN"},
+    {"MID$", 'S', "SNN"}, {"LCASE$", 'S', "S"}, {"UCASE$", 'S', "S"}, {"LTRIM$", 'S', "S"},
+    {"RTRIM$", 'S', "S"}, {"MKI$", 'S', "N"}, {"MKL$", 'S', "N"}, {"MKS$", 'S', "N"}, {"MKD$", 'S', "N"},
+    {"INPUT$", 'S', "N"}, {"INPUT$", 'S', "NN"}, {"ENVIRON$", 'S', "*"}, {"INKEY$", 'S', ""},
+    {"DATE$", 'S', ""}, {"TIME$", 'S', ""}, {"COMMAND$", 'S', ""}, {"TAB", 0, "N"}, {"SPC", 0, "N"},
+    {"LBOUND", 'N', "*"}, {"LBOUND", 'N', "*N"}, {"UBOUND", 'N', "*"}, {"UBOUND", 'N', "*N"},
+};
+
+/* a SUB or FUNCTION by its name, or a FUNCTION f% by f (QuickBASIC) */
+static stmt_t *ty_proc(const char *name) {
+    char bare[64];
+    for (stmt_t *s = ty_program; s; s = s->next)
+        if ((s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) && strcmp(s->proc_def.name, name) == 0)
+            return s;
+    for (stmt_t *s = ty_program; s; s = s->next)
+        if (s->type == STMT_FUNC_DEF && ast_name_bare(s->proc_def.name, bare) && strcmp(bare, name) == 0)
+            return s;
+    return NULL;
+}
+
+static stmt_t *ty_fn;           /* (DEF FNs anywhere: found by walking) */
+static stmt_t *ty_deffn_in(stmt_t *s, const char *name);
+static stmt_t *ty_deffn(const char *name) { return ty_deffn_in(ty_program, name); }
+
+static int ty_report_once;      /* one Type mismatch a statement, as QBasic stops at the first */
+
+static void ty_mismatch(check_t *c, int line, const char *what) {
+    if (ty_report_once) return;
+    ty_report_once = 1;
+    finding(c, line, "type-mismatch", what);
+}
+
+static int ty_expr(check_t *c, expr_t *e);
+
+/* e where a number (want K_NUM) or a string goes */
+static void ty_want(check_t *c, expr_t *e, int want, const char *what) {
+    int k;
+    if (!e) return;
+    k = ty_expr(c, e);
+    if (k != K_ANY && k != want) ty_mismatch(c, e->line, what);
+}
+
+/* f's arguments against its parameters (an array parameter: passed over) */
+static void ty_args(check_t *c, int line, stmt_t *def, expr_t **args, int nargs) {
+    for (int i = 0; i < nargs; i++) {
+        int want;
+        if (!def || i >= def->proc_def.nparams || i >= 16 || (def->proc_def.param_arrays >> i & 1) ||
+            (def->proc_def.param_recs && def->proc_def.param_recs[i][0])) {
+            if (!(args[i]->type == EXPR_CALL && args[i]->call.nargs == 0)) ty_expr(c, args[i]);
+            continue;
+        }
+        want = k_of(def->proc_def.param_types[i]);
+        ty_want(c, args[i], want, "an argument of the other type than its parameter");
+    }
+    (void)line;
+}
+
+static int ty_call(check_t *c, expr_t *e) {
+    const char *name = e->call.name;
+    stmt_t *d;
+    int matched = 0;
+    if ((d = ty_proc(name)) && d->type == STMT_FUNC_DEF) {
+        if (e->call.nargs == 0 && !e->paren && d->proc_def.nparams == 0)
+            finding(c, e->line, "expected-expression", "a FUNCTION of no parameters called with ()");
+        ty_args(c, e->line, d, e->call.args, e->call.nargs);
+        return name_k(d->proc_def.name);
+    }
+    if (strncmp(name, "FN", 2) == 0) {
+        if ((d = ty_deffn(name))) {
+            if (e->call.nargs == 0 && d->def_fn.nparams == 0)
+                finding(c, e->line, "expected-expression", "a DEF FN of no parameters called with ()");
+            for (int i = 0; i < e->call.nargs && i < d->def_fn.nparams; i++)
+                ty_want(c, e->call.args[i], k_of(d->def_fn.param_types[i]),
+                        "an argument of the other type than its parameter");
+        }
+        return name_k(name);
+    }
+    for (size_t j = 0; j < sizeof qb_sigs / sizeof qb_sigs[0]; j++) {
+        if (strcmp(qb_sigs[j].name, name) != 0) continue;
+        matched = 1;
+        if ((int)strlen(qb_sigs[j].args) != e->call.nargs) continue;
+        if (e->call.nargs == 0)         /* RND(), TIMER() */
+            finding(c, e->line, "expected-expression", "a builtin of no arguments called with ()");
+        for (int i = 0; i < e->call.nargs; i++) {
+            char a = qb_sigs[j].args[i];
+            expr_t *x = e->call.args[i];
+            if (a == '*' && (strcmp(name, "LBOUND") == 0 || strcmp(name, "UBOUND") == 0 ||
+                             strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0)) continue;
+            if (a == 'L') {             /* LEN: a string, or any variable (its size) */
+                int k = ty_expr(c, x);
+                if (k == K_NUM && x->type != EXPR_VARIABLE && x->type != EXPR_CALL &&
+                    x->type != EXPR_FIELD_ACCESS)
+                    finding(c, x->line, "variable-required", "LEN of a number not a variable");
+                continue;
+            }
+            if (a == '*') { ty_expr(c, x); continue; }
+            ty_want(c, x, a == 'S' ? K_STR : K_NUM,
+                    a == 'S' ? "a number where the builtin takes a string"
+                             : "a string where the builtin takes a number");
+        }
+        return qb_sigs[j].res == 'S' ? K_STR : qb_sigs[j].res == 'N' ? K_NUM : K_ANY;
+    }
+    if (matched || builtin_exists(name)) {      /* (another dialect's, or a count QB has not) */
+        for (int i = 0; i < e->call.nargs; i++) ty_expr(c, e->call.args[i]);
+        return K_ANY;
+    }
+    /* an array's element: numbers for subscripts (a() alone, as GET
+     * and PUT and calls take it, is no value to type) */
+    if (e->call.nargs == 0) return K_ANY;
+    for (int i = 0; i < e->call.nargs; i++)
+        ty_want(c, e->call.args[i], K_NUM, "a string as a subscript");
+    return name_k(name);
+}
+
+static int ty_expr(check_t *c, expr_t *e) {
+    int a, b;
+    if (!e) return K_ANY;
+    switch (e->type) {
+    case EXPR_LITERAL:
+        return e->literal.type == VAL_STRING ? K_STR : K_NUM;
+    case EXPR_VARIABLE:
+        return name_k(e->var.name);
+    case EXPR_FIELD_ACCESS:
+        if (e->field.elem) ty_expr(c, e->field.elem);
+        return K_ANY;
+    case EXPR_UNARY:
+        a = ty_expr(c, e->unary.operand);
+        if (a == K_STR) ty_mismatch(c, e->line, e->unary.op == OP_NOT ? "NOT of a string" : "- of a string");
+        return K_NUM;
+    case EXPR_COMPARE:
+        a = ty_expr(c, e->compare.left);
+        b = ty_expr(c, e->compare.right);
+        if (a != K_ANY && b != K_ANY && a != b) ty_mismatch(c, e->line, "a string compared with a number");
+        return K_NUM;
+    case EXPR_BINARY:
+        a = ty_expr(c, e->binary.left);
+        b = ty_expr(c, e->binary.right);
+        if (e->binary.op == OP_ADD) {
+            if (a != K_ANY && b != K_ANY && a != b) { ty_mismatch(c, e->line, "+ of a string and a number"); return K_ANY; }
+            return a != K_ANY ? a : b;
+        }
+        if (e->binary.op == OP_STRCAT) return K_STR;
+        if (a == K_STR || b == K_STR) { ty_mismatch(c, e->line, "a string in arithmetic"); return K_NUM; }
+        return K_NUM;
+    case EXPR_CALL:
+        return ty_call(c, e);
+    default:
+        return K_ANY;
+    }
+}
+
+static void ty_top(expr_t *e, void *vc) { ty_expr((check_t *)vc, e); }
+
+static void ty_list(check_t *c, stmt_t *s);
+static void ty_declare_proc(stmt_t *s);
+
+static void ty_stmt(check_t *c, stmt_t *s) {
+    int k;
+    stmt_t *d;
+    ty_report_once = 0;
+    if (s->unsep)                       /* QB: "Expected: end-of-statement" */
+        finding(c, s->line, "end-of-statement", "a statement right after another, no colon between");
+    switch (s->type) {
+    case STMT_ASSIGN:
+        k = ty_expr(c, s->assign.value);
+        if (k != K_ANY && k != name_k(s->assign.name))
+            ty_mismatch(c, s->line, "a value of the other type than its variable");
+        return;
+    case STMT_ARRAY_ASSIGN:
+        for (int i = 0; i < s->array_assign.nindices; i++)
+            ty_want(c, s->array_assign.indices[i], K_NUM, "a string as a subscript");
+        ty_want(c, s->array_assign.value, name_k(s->array_assign.name), "a value of the other type than its array");
+        return;
+    case STMT_IF:
+        ty_want(c, s->if_stmt.condition, K_NUM, "a string as a condition");
+        ty_list(c, s->if_stmt.then_body);
+        ty_list(c, s->if_stmt.else_body);
+        return;
+    case STMT_WHILE:
+        ty_want(c, s->while_stmt.condition, K_NUM, "a string as a condition");
+        ty_list(c, s->while_stmt.body);
+        return;
+    case STMT_DO_LOOP:
+        ty_want(c, s->do_loop.pre_cond, K_NUM, "a string as a condition");
+        ty_want(c, s->do_loop.post_cond, K_NUM, "a string as a condition");
+        ty_list(c, s->do_loop.body);
+        return;
+    case STMT_FOR:
+        if (name_k(s->for_stmt.var_name) == K_STR) ty_mismatch(c, s->line, "a string as FOR's counter");
+        ty_want(c, s->for_stmt.start, K_NUM, "a string in FOR");
+        ty_want(c, s->for_stmt.end, K_NUM, "a string in FOR");
+        ty_want(c, s->for_stmt.step, K_NUM, "a string in FOR");
+        ty_list(c, s->for_stmt.body);
+        return;
+    case STMT_ON_GOTO: case STMT_ON_GOSUB:
+        ty_want(c, s->on_branch.index, K_NUM, "a string as ON's index");
+        return;
+    case STMT_PRINT: case STMT_LPRINT:
+        for (int i = 0; i < s->print.nitems; i++) ty_expr(c, s->print.items[i].expr);
+        ty_want(c, s->print.using_expr, K_STR, "a number as PRINT USING's format");
+        return;
+    case STMT_LOCATE:
+        ty_want(c, s->locate_stmt.row, K_NUM, "a string in LOCATE");
+        ty_want(c, s->locate_stmt.col, K_NUM, "a string in LOCATE");
+        for (int i = 0; i < 3; i++) ty_want(c, s->locate_stmt.rest[i], K_NUM, "a string in LOCATE");
+        return;
+    case STMT_COLOR:
+        ty_want(c, s->color_stmt.fg, K_NUM, "a string in COLOR");
+        ty_want(c, s->color_stmt.bg, K_NUM, "a string in COLOR");
+        return;
+    case STMT_SWAP: {
+        int a = ty_expr(c, s->swap_stmt.lhs), b = ty_expr(c, s->swap_stmt.rhs);
+        if (a != K_ANY && b != K_ANY && a != b) ty_mismatch(c, s->line, "SWAP of a string and a number");
+        return;
+    }
+    case STMT_CALL:
+        if ((d = ty_proc(s->call_stmt.name)) && d->type == STMT_SUB_DEF)
+            ty_args(c, s->line, d, s->call_stmt.args, s->call_stmt.nargs);
+        else
+            for (int i = 0; i < s->call_stmt.nargs; i++)
+                if (!(s->call_stmt.args[i]->type == EXPR_CALL && s->call_stmt.args[i]->call.nargs == 0))
+                    ty_expr(c, s->call_stmt.args[i]);
+        return;
+    case STMT_DEF_FN:
+        ty_want(c, s->def_fn.body, name_k(s->def_fn.name), "a DEF FN's value of the other type than its name");
+        return;
+    case STMT_SUB_DEF: case STMT_FUNC_DEF: {
+        /* its own names, over the main program's */
+        int keep = nkn;
+        ty_cur = s;
+        ty_declare_proc(s);
+        ty_list(c, s->proc_def.body);
+        nkn = keep;
+        ty_cur = NULL;
+        return;
+    }
+    case STMT_SELECT:
+        ty_expr(c, s->select_stmt.test_expr);
+        for (case_clause_t *cl = s->select_stmt.clauses; cl; cl = cl->next) ty_list(c, cl->body);
+        return;
+    default:
+        stmt_exprs(s, ty_top, c);
+        return;
+    }
+}
+
+static void ty_list(check_t *c, stmt_t *s) {
+    for (; s; s = s->next) ty_stmt(c, s);
+}
+
+static stmt_t *ty_deffn_in(stmt_t *s, const char *name) {
+    for (; s; s = s->next) {
+        stmt_t *r = NULL;
+        if (s->type == STMT_DEF_FN && strcmp(s->def_fn.name, name) == 0) return s;
+        switch (s->type) {
+        case STMT_IF: if (!(r = ty_deffn_in(s->if_stmt.then_body, name))) r = ty_deffn_in(s->if_stmt.else_body, name); break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF: r = ty_deffn_in(s->proc_def.body, name); break;
+        default: break;
+        }
+        if (r) return r;
+    }
+    return NULL;
+}
+
+/* the declarations that type a name with no suffix, anywhere */
+static void ty_declare(stmt_t *s) {
+    for (; s; s = s->next) {
+        switch (s->type) {
+        case STMT_DIM_SCALAR:
+            ty_shared_decl = !ty_cur && s->dim_scalar.shared;
+            kn_add(s->dim_scalar.name, k_of(s->dim_scalar.scalar_type));
+            break;
+        case STMT_DIM_AS_TYPE:
+            ty_shared_decl = !ty_cur && s->dim_as_type.shared;
+            kn_add(s->dim_as_type.name, K_ANY);
+            break;
+        case STMT_DIM:
+            ty_shared_decl = !ty_cur && s->dim_stmt.shared;
+            if (s->dim_stmt.typed) kn_add(s->dim_stmt.name, k_of(s->dim_stmt.elem_type));
+            break;
+        case STMT_CONST:
+            ty_shared_decl = !ty_cur;
+            if (s->const_stmt.value && s->const_stmt.value->type == EXPR_LITERAL)
+                kn_add(s->const_stmt.name, s->const_stmt.value->literal.type == VAL_STRING ? K_STR : K_NUM);
+            else kn_add(s->const_stmt.name, K_ANY);
+            break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF: {
+            char bare[64];
+            /* (FUNCTION f$ is f too, everywhere; its body is its own) */
+            ty_shared_decl = 1;
+            if (s->type == STMT_FUNC_DEF && ast_name_bare(s->proc_def.name, bare))
+                kn_add(bare, name_k(s->proc_def.name));
+            break;
+        }
+        case STMT_STATIC: case STMT_SHARED:
+            ty_shared_decl = 0;
+            for (int i = 0; i < s->shared.nvars && i < 16; i++)
+                if (s->shared.astype[i]) kn_add(s->shared.varnames[i], k_of((val_type_t)(s->shared.astype[i] - 1)));
+            break;
+        case STMT_IF: ty_declare(s->if_stmt.then_body); ty_declare(s->if_stmt.else_body); break;
+        case STMT_FOR: ty_declare(s->for_stmt.body); break;
+        case STMT_WHILE: ty_declare(s->while_stmt.body); break;
+        case STMT_DO_LOOP: ty_declare(s->do_loop.body); break;
+        default: break;
+        }
+    }
+}
+
+/* a procedure's own: its parameters, its DIMs and STATICs */
+static void ty_declare_proc(stmt_t *s) {
+    for (int i = 0; i < s->proc_def.nparams; i++) {
+        ty_shared_decl = 0;
+        kn_add(s->proc_def.params[i], (i < 16 && s->proc_def.param_recs && s->proc_def.param_recs[i][0])
+                                      ? K_ANY : k_of(s->proc_def.param_types[i]));
+    }
+    ty_declare(s->proc_def.body);
+}
+
+static void ty_check(check_t *c, stmt_t *program) {
+    ty_program = program;
+    ty_cur = NULL;
+    nkn = 0;
+    ty_declare(program);
+    nmod = nkn;
+    ty_list(c, program);
+    free(kn);
+    kn = NULL;
+    nkn = capkn = 0;
+}
+
 int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[STRICT_NINFO]) {
     check_t c;
     char d[128];
@@ -678,6 +1090,7 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
             push(&c.modconsts, s->const_stmt.name, 0, s->line, 0);
     }
     walk_unit(&c, program, NULL);
+    ty_check(&c, program);
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
         ref_t *def = find(&c.fndefs, use->name);

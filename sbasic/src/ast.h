@@ -218,6 +218,8 @@ typedef struct case_clause {
 typedef struct stmt {
     stmt_type_t type;
     int line;
+    int unsep;          /* begun right after another, no colon between (QBasic's "Expected:
+                         * end-of-statement"; the interpreter takes it) */
     struct stmt *next;  /* linked list of statements */
     union {
         /* STMT_PRINT */

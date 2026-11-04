@@ -443,7 +443,7 @@ void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int
 }
 
 /* (an element of more than three dimensions: its subscripts in ix) */
-void bcrt_elem_back_n(const char *name, int n, const int *ix, int lo, int hi, int t, int mode) {
+void bcrt_elem_back_n(const char *name, int n, int *ix, int lo, int hi, int t, int mode) {
     value_t x = take(lo, hi, t), *slot;
     char kb[ARRAY_KEY_MAX];
     sb_array_t *arr = array_find(name = akey(name, mode, kb));
