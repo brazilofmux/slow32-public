@@ -681,6 +681,8 @@ static val_type_t param_type(const stmt_t *def, int i) {
     size_t n = strlen(name);
     val_type_t t = def->proc_def.param_types[i];
     int suffixed = n && strchr("%&!#$", name[n - 1]);
+    if (i < 16 && def->proc_def.param_recs && def->proc_def.param_recs[i][0])
+        return VAL_RECORD;                  /* (x AS a TYPE: a record, by reference) */
     if (!suffixed && t == VAL_SINGLE)       /* no AS (or AS SINGLE) */
         return resolve_var_type(name);
     return t;

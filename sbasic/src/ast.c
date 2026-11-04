@@ -582,6 +582,7 @@ void stmt_free(stmt_t *s) {
             case STMT_FUNC_DEF:
                 stmt_free(s->proc_def.body);
                 free(s->proc_def.params);
+                free(s->proc_def.param_recs);
                 break;
             case STMT_CALL:
                 for (int i = 0; i < s->call_stmt.nargs; i++)

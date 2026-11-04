@@ -47,7 +47,8 @@ static void canon_tok(parser_t *p, token_t *t) {
     int letter;
     static const char sfx[] = { [VAL_INTEGER] = '%', [VAL_LONG] = '&', [VAL_DOUBLE] = '#', [VAL_STRING] = '$' };
     if (t->suffix || !n || n > 60 || builtin_exists(t->text) || is_record_name(p, t->text) ||
-        strcmp(t->text, "ERR") == 0 || strcmp(t->text, "ERL") == 0)
+        strcmp(t->text, "ERR") == 0 || strcmp(t->text, "ERL") == 0 ||
+        strcmp(t->text, "LBOUND") == 0 || strcmp(t->text, "UBOUND") == 0)  /* (eval's own, no builtin's) */
         return;
     for (int i = 0; i < p->nplain; i++)
         if (strcmp(p->plain[i], t->text) == 0) return;
@@ -1367,17 +1368,25 @@ static int parse_params(parser_t *p, stmt_t *s) {
                  strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
                 lexer_skip(&p->lex);
             token_t param = lexer_next(&p->lex);
-            /* name(): an array (noted; the interpreter passes none yet) */
+            int arr = 0;
+            /* name(): an array, the caller's */
             if (lexer_match(&p->lex, TOK_LPAREN)) {
                 lexer_match(&p->lex, TOK_RPAREN);
                 if (s->proc_def.nparams < 16) s->proc_def.param_arrays |= 1u << s->proc_def.nparams;
+                arr = 1;
             }
             val_type_t ptype;
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
                 ptype = var_type_from_name(param.text);
-                if (!as_type(tn.text, &ptype)) record_note(p, param.text);   /* (a record, by reference) */
-                else plain_note(p, param.text);
+                if (!as_type(tn.text, &ptype)) {            /* (a record, by reference) */
+                    int k = s->proc_def.nparams;
+                    record_note(p, param.text);
+                    if (arr) ptype = VAL_RECORD;            /* (an array of them: its elements') */
+                    if (k < 16 && (s->proc_def.param_recs ||
+                                   (s->proc_def.param_recs = calloc(16, sizeof *s->proc_def.param_recs))))
+                        ast_name_copy(s->proc_def.param_recs[k], tn.text);
+                } else plain_note(p, param.text);
             } else {
                 canon_tok(p, &param);
                 ptype = var_type_from_name(param.text);

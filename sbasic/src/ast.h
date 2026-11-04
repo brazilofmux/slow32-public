@@ -317,6 +317,7 @@ typedef struct stmt {
             val_type_t param_types[16];
             int nparams;
             unsigned param_arrays;  /* bit i: parameter i is an array, name() */
+            char (*param_recs)[64]; /* x AS a TYPE: parameter i's TYPE (16, made at the first); else "" */
             int is_static;          /* SUB/FUNCTION ... STATIC: its variables kept */
             val_type_t return_type; /* FUNC_DEF only */
             struct stmt *body;

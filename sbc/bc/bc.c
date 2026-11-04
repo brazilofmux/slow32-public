@@ -740,7 +740,18 @@ static const atype_t *arr_decl(const char *name) {
 }
 
 /* an array of records' TYPE, or -1; a STRING * n array's n, or 0 */
-static int arr_rtype(const char *name) { const atype_t *a = arr_decl(name); return a ? a->rtype : -1; }
+static int arr_rtype(const char *name) {
+    const atype_t *a;
+    if (bc_proc) {                      /* an array parameter, name() AS a TYPE: that TYPE */
+        const stmt_t *d = bc_proc->def;
+        for (int i = 0; i < d->proc_def.nparams && i < 16; i++)
+            if ((d->proc_def.param_arrays >> i & 1) && strcmp(d->proc_def.params[i], name) == 0)
+                return d->proc_def.param_recs && d->proc_def.param_recs[i][0]
+                       ? type_find(d->proc_def.param_recs[i]) : -1;
+    }
+    a = arr_decl(name);
+    return a ? a->rtype : -1;
+}
 static int arr_fixlen(const char *name) { const atype_t *a = arr_decl(name); return a ? a->fixlen : 0; }
 
 /* a main-program variable's DIM x AS STRING * n: n, else 0 */
@@ -1110,10 +1121,11 @@ static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
     return bv_call(name, cb, 7);
 }
 
-/* name(i[, j[, k]]): the subscripts, evaluated left to right */
+/* name(i[, j...]): the subscripts (8 at most, as the parser takes them),
+ * evaluated left to right */
 static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
-    if (n > 3) bc_not_yet(line, "arrays of more than three dimensions");
-    for (int i = 0; i < 3; i++) a[i] = i < n && n <= 3 ? expr(ix[i]) : zero();
+    (void)line;
+    for (int i = 0; i < 8; i++) a[i] = i < n ? expr(ix[i]) : zero();
 }
 
 /* --- arrays: the interpreter's, their elements reached directly ----- */
@@ -1151,15 +1163,25 @@ static void st(int addr, int off, int v) {
 static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix);
 
 static int array_elem(int line, const char *name, int n, bv_t *sub) {
-    int ix[3];
+    int ix[8];
     return array_elem_ix(line, name, n, sub, ix);
 }
 
 /* (and the subscripts made integers, in ix) */
 static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) {
     int id = array_id(name, line), cell, fast, slow, flat = 0, cb;
-    if (n > 3) n = 0;           /* (refused: sub_args) */
     for (int i = 0; i < n; i++) ix[i] = coerce(sub[i], VAL_LONG).lo;
+    if (n > 3) {                /* (more dimensions than a cell keeps: the run time's) */
+        int blk = alloca_of(TY_INT, 4 * n);
+        for (int i = 0; i < n; i++) st(blk, 4 * i, ix[i]);
+        cb = h_ncarg;
+        carg(saddr(name, (int)strlen(name)), 0);
+        carg(iconst(n), 0);
+        carg(iconst(arr_type(name)), 0);
+        carg(iconst(arr_mode(name)), 0);
+        carg(blk, 0);
+        return call_end(cb, 5, "bcrt_elem_n", NULL);
+    }
     cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
                    id * BC_ACELL, NULL);
     fast = new_blk();
@@ -1424,7 +1446,7 @@ static int field_addr(int line, const char *var, const char *field, expr_t *elem
 static int record_of(int line, const char *var, expr_t *elem, int *t) {
     int rec;
     if (elem) {
-        bv_t a[3];
+        bv_t a[8];
         int ea;
         *t = arr_rtype(var);
         if (*t < 0) { bc_not_yet(line, "a field of no array of records"); return iconst(0); }
@@ -1507,7 +1529,7 @@ static void field_assign(stmt_t *s) {
 }
 
 static bv_t array_read(expr_t *e) {
-    bv_t a[3];
+    bv_t a[8];
     int ty = arr_type(e->call.name), ea;
     sub_args(e->line, e->call.nargs, e->call.args, a);
     ea = array_elem(e->line, e->call.name, e->call.nargs, a);
@@ -2386,9 +2408,8 @@ static int is_static_dim(stmt_t *s) {
  * its upper, made integers, its range checked before the next is
  * evaluated; then the array */
 static void bc_dim(stmt_t *s, int is_static, int base) {
-    int lo[3], up[3], n = s->dim_stmt.ndims, cb;
-    if (n > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); return; }
-    for (int i = 0; i < 3; i++) {
+    int lo[8], up[8], n = s->dim_stmt.ndims, cb;
+    for (int i = 0; i < (n > 3 ? n : 3); i++) {
         if (i >= n) { lo[i] = up[i] = iconst(0); continue; }
         if (s->dim_stmt.lower[i]) lo[i] = handle_of(s->dim_stmt.lower[i]);
         else lo[i] = base >= 0 ? iconst(base) : call_end(h_ncarg, 0, "bcrt_option_base_now", NULL);
@@ -2397,17 +2418,32 @@ static void bc_dim(stmt_t *s, int is_static, int base) {
         carg(lo[i], 0); carg(up[i], 0);
         call_end(cb, 2, "bcrt_dim_range", NULL);
     }
-    cb = h_ncarg;
-    carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
-    carg(iconst(arr_type(s->dim_stmt.name)), 0);
-    carg(iconst(n), 0);
-    carg(iconst(is_static && base < 0), 0);
-    carg(iconst(s->dim_stmt.is_redim), 0);
-    carg(iconst(s->dim_stmt.preserve), 0);
-    for (int i = 0; i < 3; i++) carg(lo[i], 0);
-    for (int i = 0; i < 3; i++) carg(up[i], 0);
-    carg(iconst(arr_mode(s->dim_stmt.name)), 0);
-    call_end(cb, 13, "bcrt_dim", NULL);
+    if (n > 3) {                /* (its bounds in a block: lower ones, then upper) */
+        int blk = alloca_of(TY_INT, 8 * n);
+        for (int i = 0; i < n; i++) { st(blk, 4 * i, lo[i]); st(blk, 4 * (n + i), up[i]); }
+        cb = h_ncarg;
+        carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
+        carg(iconst(arr_type(s->dim_stmt.name)), 0);
+        carg(iconst(n), 0);
+        carg(iconst(is_static && base < 0), 0);
+        carg(iconst(s->dim_stmt.is_redim), 0);
+        carg(iconst(s->dim_stmt.preserve), 0);
+        carg(blk, 0);
+        carg(iconst(arr_mode(s->dim_stmt.name)), 0);
+        call_end(cb, 8, "bcrt_dim_n", NULL);
+    } else {
+        cb = h_ncarg;
+        carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
+        carg(iconst(arr_type(s->dim_stmt.name)), 0);
+        carg(iconst(n), 0);
+        carg(iconst(is_static && base < 0), 0);
+        carg(iconst(s->dim_stmt.is_redim), 0);
+        carg(iconst(s->dim_stmt.preserve), 0);
+        for (int i = 0; i < 3; i++) carg(lo[i], 0);
+        for (int i = 0; i < 3; i++) carg(up[i], 0);
+        carg(iconst(arr_mode(s->dim_stmt.name)), 0);
+        call_end(cb, 13, "bcrt_dim", NULL);
+    }
     if (base >= 0) return;      /* (made before the run: its records or strings when its DIM runs) */
     if (s->dim_stmt.rec_type[0]) {      /* its elements records (eval_array_records) */
         int t = type_find(s->dim_stmt.rec_type);
@@ -2481,7 +2517,7 @@ static void hoist_dims(stmt_t *s) {
  * variable or an array element, the target as an assignment's */
 static void store_target(int line, const char *name, int type, expr_t *target, bv_t x) {
     if (target && target->type == EXPR_CALL) {
-        bv_t a[3];
+        bv_t a[8];
         sub_args(line, target->call.nargs, target->call.args, a);
         array_store(line, target->call.name, target->call.nargs, a, x);
         return;
@@ -2611,6 +2647,8 @@ static int param_type(const stmt_t *def, int i) {
     size_t n = strlen(name);
     int t = def->proc_def.param_types[i];
     int suffixed = n && strchr("%&!#$", name[n - 1]);
+    if (i < 16 && def->proc_def.param_recs && def->proc_def.param_recs[i][0])
+        return VAL_RECORD;              /* (x AS a TYPE: a record, by reference) */
     if (!suffixed && t == VAL_SINGLE) return name_type(name);
     return t;
 }
@@ -2643,7 +2681,7 @@ static int is_array_ref(const expr_t *e) {
  * caller's; *res gets it (a string's reference passing). */
 static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) {
     stmt_t *def = p->def;
-    int ptr[16], kind[16], ix[16][3], nix[16], cb, fn = def->type == STMT_FUNC_DEF;
+    int ptr[16], kind[16], ix[16][8], nix[16], cb, fn = def->type == STMT_FUNC_DEF;
     var_t *tmp[16], *rv = NULL;
     bv_t val[16];
     if (nargs != def->proc_def.nparams || nargs > 16) {
@@ -2682,8 +2720,10 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
             ptr[i] = VA(v);
             kind[i] = 1;
         } else if (!e->paren && is_array_ref(e) && e->call.nargs > 0) {
-            bv_t a[3];
+            bv_t a[8];
             int ea, ty = arr_type(e->call.name);
+            if (e->call.nargs > 3 && ty != VAL_RECORD)
+                bc_not_yet(line, "an element of more than three dimensions passed by reference");
             sub_args(line, e->call.nargs, e->call.args, a);
             ea = array_elem_ix(line, e->call.name, e->call.nargs, a, ix[i]);
             nix[i] = e->call.nargs > 3 ? 0 : e->call.nargs;
@@ -2711,7 +2751,9 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
                 }
             }
             ptr[i] = VA(tmp[i]);
-            kind[i] = 2;
+            /* (a record: the element's own, which the callee changes in
+             * place -- nothing to put back) */
+            kind[i] = ty == VAL_RECORD ? 4 : 2;
         } else {
             if (!e->paren && e->type == EXPR_CALL && is_array_ref(e)) {
                 bc_not_yet(line, "a whole array as an argument");
@@ -2980,7 +3022,7 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
         return 1;
     }
     if (e->type == EXPR_CALL && !is_builtin_call(e->call.name) && strncmp(e->call.name, "FN", 2) != 0) {
-        bv_t a[3];
+        bv_t a[8];
         sub_args(line, e->call.nargs, e->call.args, a);
         lv->ea = array_elem(line, e->call.name, e->call.nargs, a);
         lv->ty = arr_type(e->call.name);
@@ -3170,7 +3212,7 @@ static void bc_stmt(stmt_t *s) {
         bc_dim(s, is_static_dim(s), -1);
         break;
     case STMT_ARRAY_ASSIGN: {   /* the value, then the subscripts (QBasic's order, exec_array_assign) */
-        bv_t a[3], x;
+        bv_t a[8], x;
         if (arr_rtype(s->array_assign.name) >= 0) {     /* c(i) = a: a's fields copied */
             int src = record_value(s->array_assign.value, s->line), t;
             expr_t el = { 0 };
@@ -3927,6 +3969,8 @@ static void proc_func(proc_t *p, Node *fn, int body) {
         var_init(v, arr ? an : def->proc_def.params[i], arr ? VAL_LONG : param_type(def, i), NULL);
         v->a = pin[i + fnc];
         v->local = 0;
+        if (!arr && v->type == VAL_RECORD)  /* (its TYPE) */
+            v->rtype = type_find(def->proc_def.param_recs[i]);
     }
     if (fnc) {
         char bare[64];

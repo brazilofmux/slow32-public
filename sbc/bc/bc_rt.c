@@ -1002,6 +1002,39 @@ void bcrt_dim(const char *name, int type, int n, int in_place, int redim, int pr
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* DIM / REDIM of more than three dimensions: the bounds in b, n lower
+ * then n upper */
+void bcrt_dim_n(const char *name, int type, int n, int in_place, int redim, int preserve,
+                const int *b, int mode) {
+    char kb[ARRAY_KEY_MAX];
+    error_t e;
+    name = akey(name, mode, kb);
+    if (in_place && array_find(name)) return;
+    e = eval_dim(name, (val_type_t)type, n, b, b + n, redim, preserve);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* name(subscripts in sx, n of them, more than three): its element's
+ * address, as array_get finds it (eval_array_for: an implicit one made;
+ * each subscript in its dimension, else Subscript out of range) */
+int bcrt_elem_n(const char *name, int n, int ty, int mode, const int *sx) {
+    sb_array_t *arr;
+    char kb[ARRAY_KEY_MAX];
+    int flat = 0;
+    error_t e = eval_array_for(name = akey(name, mode, kb), n, &arr);
+    if (e != ERR_NONE) bcrt_fail(e);
+    if ((int)arr->elem_type != ty) {
+        fprintf(stderr, "s32-bc: internal: %s has elements of type %d, not %d\n", name, arr->elem_type, ty);
+        exit(1);
+    }
+    for (int i = 0; i < n; i++) {
+        unsigned x = (unsigned)(sx[i] - arr->lbound[i]);
+        if (x >= (unsigned)arr->dims[i]) bcrt_fail(ERR_SUBSCRIPT_OUT_OF_RANGE);
+        flat = flat * arr->dims[i] + (int)x;
+    }
+    return (int)(intptr_t)&arr->data[flat];
+}
+
 void bcrt_dim_range(int lower, int upper) {
     error_t e = eval_dim_range(lower, upper);
     if (e != ERR_NONE) bcrt_fail(e);

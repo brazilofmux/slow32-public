@@ -23,6 +23,7 @@ typedef struct { int from, to; } range_t;   /* a FOR..NEXT, by seq */
 typedef struct {
     refs_t labels, jumps;
     refs_t dims, uses;          /* arrays: DIMs, and uses */
+    refs_t sdims;               /* the main program's DIMs with constant bounds (static arrays) */
     refs_t bounds;              /* arrays LBOUND or UBOUND names */
     refs_t redims;              /* arrays REDIMmed (which declares one too) */
     refs_t consts;              /* its CONSTs */
@@ -209,6 +210,17 @@ static void const_target(check_t *c, const char *name, int line) {
     }
 }
 
+static const char *const_value(check_t *c, const expr_t *e);
+
+/* a DIM's bounds all constant (a static array, QB's) */
+static int dim_static(check_t *c, const stmt_t *s) {
+    for (int i = 0; i < s->dim_stmt.ndims; i++)
+        if ((s->dim_stmt.dims[i] && const_value(c, s->dim_stmt.dims[i])) ||
+            (s->dim_stmt.lower[i] && const_value(c, s->dim_stmt.lower[i])))
+            return 0;
+    return 1;
+}
+
 /* what a CONST's value may be (QB: "Invalid constant", and "Illegal
  * function call" for a string operator): literals and CONSTs, joined by
  * numeric operators and comparisons; why not, else NULL */
@@ -386,11 +398,19 @@ static void walk_list(check_t *c, stmt_t *s) {
             }
             if (s->dim_stmt.is_redim) push(&c->u->redims, s->dim_stmt.name, seq, s->line, 0);
             if (!s->dim_stmt.is_redim) {
-                ref_t *prev = find(&c->u->dims, s->dim_stmt.name);
-                if (prev) {
-                    snprintf(d, sizeof d, "DIM %s again (first at line %d)", s->dim_stmt.name, prev->line);
+                ref_t *prev = find(&c->u->dims, s->dim_stmt.name), *sprev;
+                /* (QB refuses a static array DIMmed again in the main program
+                 * -- "Array already dimensioned" -- and loads the rest: in a
+                 * SUB, or with bounds not constant, the second DIM fails, if
+                 * it runs, when it runs) */
+                int stat = !c->proc && dim_static(c, s);
+                if (stat && (sprev = find(&c->u->sdims, s->dim_stmt.name))) {
+                    snprintf(d, sizeof d, "DIM %s again (first at line %d)", s->dim_stmt.name, sprev->line);
                     finding(c, s->line, "dim-twice", d);
-                } else {            /* kind 1: after an ERASE, uses before it were the old array's */
+                }
+                if (stat && !find(&c->u->sdims, s->dim_stmt.name))
+                    push(&c->u->sdims, s->dim_stmt.name, seq, s->line, 0);
+                if (!prev) {            /* kind 1: after an ERASE, uses before it were the old array's */
                     push(&c->u->dims, s->dim_stmt.name, seq, s->line,
                          find(&c->u->erased, s->dim_stmt.name) != NULL);
                     c->u->dims.v[c->u->dims.n - 1].n = s->dim_stmt.ndims;
@@ -493,7 +513,7 @@ static void walk_list(check_t *c, stmt_t *s) {
 static void free_unit(unit_t *u) {
     free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v);
     free(u->bounds.v); free(u->redims.v); free(u->consts.v); free(u->vars.v); free(u->asdims.v);
-    free(u->options.v); free(u->fors);
+    free(u->options.v); free(u->sdims.v); free(u->fors);
 }
 
 /* in proc (NULL: the main program), name is an array of the main
