@@ -166,6 +166,11 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
     return r.ival != 0;
 }
 
+/* a float in range and not whole, rounded half to even (round_even) */
+int bcrt_rint(double d) {
+    return (int)val_rint(d);
+}
+
 /* an error compiled code finds itself (Overflow, Division by zero) */
 void bcrt_err(int e) {
     bcrt_fail((error_t)e);

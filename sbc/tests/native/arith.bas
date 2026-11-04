@@ -34,3 +34,7 @@ DEF FNB#(X#) = X# / 3
 DEF FNC(X, Y) = X * Y + 0.1
 DEF FND$(A$) = A$ + "!"
 PRINT FNA%(10); FNB#(1); FNC(2, 3); FND$("hi"); FNA%(2.5)
+FOR X = -3 TO 3 STEP .5: I% = X: L& = X * 1000.5: PRINT I%; L&;: NEXT: PRINT
+X# = 2147483647.4#: L& = X#: PRINT L&: X# = -2147483648.4#: L& = X#: PRINT L&
+X = 32766.5: I% = X: PRINT I%: X = -32768.5: I% = X: PRINT I%
+DIM W(10): FOR X = 0 TO 9.5 STEP .25: W(X) = W(X) + 1: NEXT: FOR I = 0 TO 10: PRINT W(I);: NEXT: PRINT

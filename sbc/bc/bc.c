@@ -412,6 +412,37 @@ static int in_range(int lo, int hi, unsigned mhi, unsigned mlo) {
 #define FLT_MAX_LO 0xE0000000u
 #define DBL_INF_HI 0x7FF00000u  /* below it: finite */
 
+/* a float made an integer of type ty, as val_to_integer makes it: in
+ * range or Overflow, a whole number as it is, else rounded half to even
+ * (val_rint, bcrt_rint) -- and an INTEGER's 16 bits */
+static bv_t flt_to_int(bv_t x, int ty) {
+    int clo, chi, i, whole, frac, join, slot, cb, r;
+    if (x.k && x.kv == (double)(int)x.kv && (ty == VAL_LONG || INT16_OK(x.kv)))
+        return kint((int)x.kv, ty);
+    clo = dconst(2147483647.5, &chi);
+    r = call_d2("__fp64_lt", x.lo, x.hi, clo, chi, NULL);
+    clo = dconst(-2147483648.5, &chi);
+    guard(bin(HI_AND, r, call_d2("__fp64_le", clo, chi, x.lo, x.hi, NULL)), ERR_OVERFLOW);
+    i = call_d1("__fp64_cvt_DtoI", x.lo, x.hi, NULL);
+    cb = h_ncarg;
+    carg(i, 0);
+    clo = call_end(cb, 1, "__fp64_cvt_itoD", &chi);
+    whole = call_d2("__fp64_eq", clo, chi, x.lo, x.hi, NULL);
+    slot = alloca_of(TY_INT, 4);
+    hi_emit(HI_STORE, TY_INT, slot, i, 0, NULL);
+    frac = new_blk();
+    join = new_blk();
+    hi_emit(HI_BRC, TY_VOID, whole, join, frac, NULL);
+    bc_live = 0;
+    begin_blk(frac);
+    hi_emit(HI_STORE, TY_INT, slot, call_d1("bcrt_rint", x.lo, x.hi, NULL), 0, NULL);
+    goto_blk(join);
+    begin_blk(join);
+    i = hi_emit(HI_LOAD, TY_INT, slot, -1, 0, NULL);
+    if (ty == VAL_INTEGER) check16(i);
+    return mk(i, -1, -1, ty);
+}
+
 /* x as a variable of type ty holds it (store_into: rounding, Overflow,
  * Type mismatch), a value of static type ty.  A SINGLE's value is its
  * float as a double. */
@@ -423,6 +454,7 @@ static bv_t coerce(bv_t x, int ty) {
         x.st = ty;
         return x;
     }
+    if (st_int(ty) && st_flt(x.st)) return flt_to_int(x, ty);
     if (ty == VAL_DOUBLE && st_num(x.st)) {
         if (st_int(x.st)) {
             int k = x.k;
