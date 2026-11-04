@@ -438,6 +438,16 @@ void bcrt_sleep(int lo, int hi, int t, int has) {
 
 void bcrt_width(int w) { eval_width(w); }
 
+void bcrt_width_rows(int r) {
+    error_t e = eval_width_rows(r);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_view_print(int has, int top, int bottom) {
+    error_t e = eval_view_print(has, top, bottom);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* CLEAR's arrays (compiled code clears its own variables) */
 void bcrt_clear(void) { array_clear_all(); }
 

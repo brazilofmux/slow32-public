@@ -1767,6 +1767,7 @@ static const char *stmt_word(int t) {
     case STMT_ERASE: return "ERASE";
     case STMT_TYPE_DEF: case STMT_DIM_AS_TYPE: case STMT_FIELD_ASSIGN: return "TYPE";
     case STMT_RUN: return "RUN";
+    case STMT_VIEW_PRINT: return "VIEW PRINT";
     default: {
         static char w[32];      /* (the parser's number for it: ast.h's stmt_type_t) */
         snprintf(w, sizeof w, "statement %d", t);
@@ -3439,10 +3440,24 @@ static void bc_stmt(stmt_t *s) {
     }
     case STMT_WIDTH: {
         int w = coerce(expr(s->width_stmt.columns), VAL_LONG).lo, cb;
-        if (s->width_stmt.rows) handle_of(s->width_stmt.rows);    /* (evaluated, no more) */
+        int r = s->width_stmt.rows ? handle_of(s->width_stmt.rows) : -1;
         cb = h_ncarg;
         carg(w, 0);
         call_end(cb, 1, "bcrt_width", NULL);
+        if (s->width_stmt.rows) {       /* (its rows: the text screen's, eval_width_rows) */
+            cb = h_ncarg;
+            carg(r, 0);
+            call_end(cb, 1, "bcrt_width_rows", NULL);
+        }
+        break;
+    }
+    case STMT_VIEW_PRINT: {     /* VIEW PRINT [top TO bottom] (eval_view_print) */
+        int t = s->width_stmt.columns ? handle_of(s->width_stmt.columns) : iconst(0);
+        int b = s->width_stmt.columns ? handle_of(s->width_stmt.rows) : iconst(0), cb = h_ncarg;
+        carg(iconst(s->width_stmt.columns != NULL), 0);
+        carg(t, 0);
+        carg(b, 0);
+        call_end(cb, 3, "bcrt_view_print", NULL);
         break;
     }
     case STMT_BEEP:
