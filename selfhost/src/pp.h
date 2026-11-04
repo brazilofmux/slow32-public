@@ -2309,7 +2309,7 @@ static void pp_emit_string_token(char *s) {
     lex_str[slen] = 0;
     lex_str_room(lex_str_count + 1);
     lex_str_off[lex_str_count] = pool_start;
-    lex_str_len[lex_str_count] = slen;
+    lex_str_len[lex_str_count] = i;     /* (the name's own length: lex_str holds 255 of it) */
     lex_val = lex_str_count;
     lex_str_count = lex_str_count + 1;
     lex_tok = TK_STRING;

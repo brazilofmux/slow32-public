@@ -1246,9 +1246,8 @@ static void lex_parse_fnum(char *ts, char *te) {
 
 /* Identical string literals share one pool entry (one .rodata copy, one
  * address), as clang and gcc do.  Returns the existing index, the
- * lowest that matches, or -1.  Only for literals that were not
- * truncated at LEX_STR_SZ, so equal recorded lengths mean equal
- * literals.  A hash of chains (lex_str_hhead, by length and bytes)
+ * lowest that matches, or -1.  Lengths are the literals' own, the
+ * bytes the pool's.  A hash of chains (lex_str_hhead, by length and bytes)
  * that catches up on the literals registered since the last lookup,
  * whichever path registered them: it was a scan of every literal, and
  * 70,000 of them took most of a minute. */
@@ -1306,7 +1305,6 @@ static int lex_str_intern(int pool_start, int slen) {
     int b;
     int best;
     unsigned h;
-    if (slen >= LEX_STR_SZ - 1) return -1;
     if (lex_str_count == 0) return -1;
     lex_str_hash_sync();
     h = lex_str_hash(pool_start, slen);
@@ -1495,6 +1493,7 @@ static void lex_parse_str(char *ts, char *te) {
     int ucn_k;
     int pool_start;
     int slen;
+    int total;      /* the literal's length: slen is lex_str's, at most LEX_STR_SZ - 1 */
     int ch;
     int pos;
     int end;
@@ -1503,6 +1502,7 @@ static void lex_parse_str(char *ts, char *te) {
     if (ts[0] == 117 && ts[1] != 56) { lex_parse_wide_str(ts, te, 2); return; }  /* u"" */
     pool_start = lex_strpool_len;
     slen = 0;
+    total = 0;
     pos = 0;
     while (ts[pos] != 34) pos = pos + 1;   /* past a u8 prefix */
     pos = pos + 1;  /* skip opening quote */
@@ -1514,6 +1514,7 @@ static void lex_parse_str(char *ts, char *te) {
             pos = pos + 2;
             ch = lex_parse_ucn(ts, &pos, ts[pos - 1] == 117 ? 4 : 8);
             ucn_n = lex_pool_utf8(ch);
+            total = total + ucn_n;
             ucn_k = 0;
             while (ucn_k < ucn_n && slen < LEX_STR_SZ - 1) {
                 lex_str[slen] = lex_strpool[lex_strpool_len - ucn_n + ucn_k];
@@ -1529,6 +1530,7 @@ static void lex_parse_str(char *ts, char *te) {
             pos = pos + 1;
         }
         lex_pool_put(ch);
+        total = total + 1;
         if (slen < LEX_STR_SZ - 1) {
             lex_str[slen] = ch;
             slen = slen + 1;
@@ -1537,7 +1539,7 @@ static void lex_parse_str(char *ts, char *te) {
     lex_pool_put(0);
     lex_str[slen] = 0;
     lex_slen = slen;
-    dup = ts[0] == 117 ? -1 : lex_str_intern(pool_start, slen);   /* a u8 one keeps its own entry, and its prefix */
+    dup = ts[0] == 117 ? -1 : lex_str_intern(pool_start, total);   /* a u8 one keeps its own entry, and its prefix */
     if (dup >= 0) {
         lex_strpool_len = pool_start;   /* give the bytes back */
         lex_val = dup;
@@ -1546,7 +1548,7 @@ static void lex_parse_str(char *ts, char *te) {
     }
     lex_str_room(lex_str_count + 1);
     lex_str_off[lex_str_count] = pool_start;
-    lex_str_len[lex_str_count] = slen;
+    lex_str_len[lex_str_count] = total;    /* (it was slen: a literal past 255 was cut there) */
     lex_str_width[lex_str_count] = 1;
     lex_str_pfx[lex_str_count] = ts[0] == 117 ? 8 : 0;
     lex_val = lex_str_count;
