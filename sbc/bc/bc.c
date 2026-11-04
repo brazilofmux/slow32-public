@@ -3063,6 +3063,10 @@ static void bc_stmt(stmt_t *s) {
         if (bc_ret_blk < 0) bc_ret_blk = new_blk();
         goto_blk(bc_ret_blk);
         break;
+    case STMT_RUN:              /* the program again, all of it cleared (bcrt_rerun) */
+        call_void("bcrt_rerun");
+        goto_blk(new_blk());    /* (never taken: bcrt_rerun does not return) */
+        break;
     case STMT_END:
         call_void("bcrt_end");
         goto_blk(new_blk());    /* (never taken: bcrt_end does not return) */
@@ -4153,7 +4157,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     program_prepare();
-    bc_main.name = "main";
+    bc_main.name = "bcm_main";          /* (bc_rt's main runs it, and again at RUN) */
     bc_main.next = bc_nprocs ? &bc_procs[0].node : NULL;
     if (bc_trap) {
         bc_bodynode.name = "bcm_body";

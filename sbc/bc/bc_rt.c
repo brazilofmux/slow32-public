@@ -189,6 +189,31 @@ _Static_assert(sizeof(value_t) == 12 && offsetof(value_t, ival) == 4 &&
 bcrt_acell_t bcrt_acache[BCRT_ACELLS];
 
 /* as eval_program_with starts a program */
+/* the program: bcm_main, s32-bc's -- run again from its start by RUN,
+ * which comes back here (QuickBASIC's RUN: the variables cleared, the
+ * files closed, the DATA read from the first again) */
+static jmp_buf bcrt_restart;
+int bcm_main(void);
+
+int main(void) {
+    setjmp(bcrt_restart);
+    return bcm_main();
+}
+
+void bcrt_rerun(void) {
+    fflush(stdout);
+    fileio_close_all();
+    while (bcrt_nactive > 0) {          /* (the procedures it was in) */
+        array_scope_pop();
+        eval_leave();
+        bcrt_nactive--;
+    }
+    bcrt_ngosub = 0;
+    bcrt_ngbase = 0;
+    bcrt_running = 0;
+    longjmp(bcrt_restart, 1);           /* (bcm_main's start zeroes every variable, bcrt_start the rest) */
+}
+
 void bcrt_start(void) {
     for (int i = 0; i < BCRT_ACELLS; i++) bcrt_acache[i].gen = ~0u;
     eval_reset();
