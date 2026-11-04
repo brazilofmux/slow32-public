@@ -104,6 +104,23 @@ def for_qbasic(src):
     return b'\r\n'.join(out) + b'\r\n'
 
 
+# what may stand before a program's first executable statement in QBasic:
+# DECLARE, COMMON, DEFtype, $ metacommands, comments, blank lines
+PROLOGUE_RE = re.compile(rb"^\s*(\d+\s+)?(DECLARE\b|COMMON\b|DEF(INT|LNG|SNG|DBL|STR)\b|REM\b|'|$)", re.I)
+
+
+def load_probe(src):
+    """src with SYSTEM as its first executable statement: QBasic, given
+    it, ends at once if it loads the program, and shows the load-time
+    error if not.  (SYSTEM before a DECLARE or COMMON would itself be
+    the error: "COMMON and DECLARE must precede executable statements".)"""
+    lines = src.replace(b'\r\n', b'\n').split(b'\n')
+    k = 0
+    while k < len(lines) and PROLOGUE_RE.match(lines[k]):
+        k += 1
+    return b'\r\n'.join(lines[:k] + [b'SYSTEM'] + lines[k:])
+
+
 def dialog_message(screen):
     """QBasic's error dialog on the final screen: the text inside its box
     above the <  OK  > row, or None when there is no dialog"""

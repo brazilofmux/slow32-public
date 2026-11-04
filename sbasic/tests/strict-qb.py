@@ -13,7 +13,7 @@ the compiler takes.  For each .bas program in the directories given:
     HOISTED      QBasic's "Function not defined", taken here on purpose
 
 QBasic runs through nbs.py (dos-monster, its cache), each program with
-SYSTEM put first: one that loads ends at once, one that does not shows
+SYSTEM its first statement (nbs.load_probe): one that loads ends at once, one that does not shows
 QBasic's load-time error.
 
     strict-qb.py DIR [DIR ...]     the disagreements, then the counts
@@ -29,10 +29,10 @@ spec.loader.exec_module(survey)
 
 def qb_refuses(src, exe):
     """QBasic's load-time error for src, or None when it loads: the program
-    run with SYSTEM put first, so a program that loads ends at once, and
+    run with SYSTEM its first statement, so a program that loads ends at once, and
     one that does not shows the error dialog.  No keys, no output, and no
     telling a load-time message from the same message at run time."""
-    v = nbs.run_qbasic(b'SYSTEM\r\n' + src, b'', exe)
+    v = nbs.run_qbasic(nbs.load_probe(src), b'', exe)
     if isinstance(v, str) and v.startswith('ERROR('):
         return v[6:-1]
     # (a file QBasic will not open at all says so before any program
