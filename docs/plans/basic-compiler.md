@@ -418,13 +418,21 @@ way.  68 compile.  Seen and left: A! under DEFINT is SINGLE in QBasic
 (the lexer drops the !, so here it is A); SCREEN 0 after SCREEN 7 keeps
 40 columns there.
 
+Then the small ones (3b4a1bee/5e9a060a): the loader's 2048-line limit
+(it went on with what it had: "DO without LOOP" 4,000 lines on), a
+label only at a line's start, FUNCTION f% named f, GET #/PUT # and
+MID$ = of elements and records, PMAP, VARSEG; BSAVE, BLOAD and CALL
+ABSOLUTE known (QB's "Advanced feature unavailable" here: PEEK and POKE
+reach a flat 64K, not the machine's memory -- DEF SEG = &HA000 is
+Illegal function call); the checker's array parameters, ERASEd arrays,
+and RESTORE in a SUB.  72 compile, no checker refusals left.
+
 Left, by count: WINDOW/VIEW and SCREEN
 with arguments left out, CIRCLE's arcs and aspect, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
 commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
-whole array as an argument, PUT #/GET # and MID$ = on an element, the
-checker not knowing PMAP, VARSEG, BSAVE (it takes them for an array or
-a SUB), a DEFtype after a use, ELSEIF on a line
+whole array as an argument (the parser now notes array parameters),
+GOSUB in a SUB, a DEFtype after a use, ELSEIF on a line
 of its own after a single-line THEN, SCREEN() as a function.  Also
 from QBasic: a FUNCTION f% may be named f, inside and out (the
 interpreter makes f a variable).
