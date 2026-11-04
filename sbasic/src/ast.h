@@ -308,6 +308,7 @@ typedef struct stmt {
             char (*params)[64];     /* 16, made at the first */
             val_type_t param_types[16];
             int nparams;
+            unsigned param_arrays;  /* bit i: parameter i is an array, name() */
             val_type_t return_type; /* FUNC_DEF only */
             struct stmt *body;
         } proc_def;
@@ -466,6 +467,8 @@ typedef struct stmt {
             struct expr *position;     /* NULL = current pos */
             char varname[64];
             val_type_t vartype;
+            struct expr *target;       /* an element or a field (varname its
+                                          array's or record's name); NULL: a variable */
         } get_put_stmt;
 
         /* STMT_SEEK */
@@ -507,6 +510,8 @@ typedef struct stmt {
             struct expr *start;
             struct expr *length;  /* NULL if omitted */
             struct expr *value;
+            struct expr *target;  /* an element or a field (var_name its array's
+                                     or record's name); NULL: the variable */
         } mid_assign;
 
         /* STMT_ON_ERROR */
@@ -740,6 +745,13 @@ stmt_t *stmt_on_gosub(expr_t *index, int line);
 /* a NEXT's variable, a DEF FN's parameter: 0 past the most there may be */
 /* src into a 64-byte name field, cut at 63 */
 void ast_name_copy(char *dst, const char *src);
+/* name without its type suffix (% & # $) into bare: 1 when it had one.
+ * A FUNCTION f% is f too, named without it (QuickBASIC) */
+int ast_name_bare(const char *name, char *bare);
+/* QuickBASIC's statements of the machine's memory and code, which a
+ * program calls as it calls a SUB (BSAVE, BLOAD, CALL ABSOLUTE): known,
+ * and "Advanced feature unavailable" here */
+int ast_machine_sub(const char *name);
 int stmt_next_add_var(stmt_t *s, const char *name);
 int stmt_def_fn_add_param(stmt_t *s, const char *name, val_type_t type);
 void stmt_on_branch_add_label(stmt_t *s, const char *label);

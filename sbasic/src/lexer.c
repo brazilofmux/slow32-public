@@ -196,6 +196,7 @@ void lexer_init(lexer_t *lex, const char *src, int start_line) {
     lex->pos = 0;
     lex->line = start_line;
     lex->has_cur = 0;
+    lex->at_line_start = 1;
 }
 
 static char peek_char(lexer_t *lex) {
@@ -214,7 +215,17 @@ static void skip_spaces(lexer_t *lex) {
 }
 
 /* the next token, into *tok (the lexer's own: no copies) */
+static void scan_token_raw(lexer_t *lex, token_t *tok);
+
+/* the next token, marked when it begins a line */
 static void scan_token(lexer_t *lex, token_t *tok) {
+    int first = lex->at_line_start;
+    scan_token_raw(lex, tok);
+    tok->first = (char)first;
+    lex->at_line_start = tok->type == TOK_EOL;
+}
+
+static void scan_token_raw(lexer_t *lex, token_t *tok) {
     tok->type = (token_type_t)0;
     tok->dval = 0;
     tok->text[0] = '\0';
@@ -418,7 +429,7 @@ static void scan_token(lexer_t *lex, token_t *tok) {
             if (peek_char(lex) == '\r') next_char(lex);
             if (peek_char(lex) == '\n') next_char(lex);
             lex->line++;
-            scan_token(lex, tok); return; /* recurse to get next real token */
+            scan_token_raw(lex, tok); return; /* recurse to get next real token */
         }
         /* Not a continuation — restore and fall through to identifier */
         lex->pos = save_pos;
@@ -588,6 +599,7 @@ token_t lexer_next(lexer_t *lex) {
     t.line = lex->cur.line;
     t.dval = lex->cur.dval;     /* ival or dval: the bits (no NaN either way) */
     t.suffix = lex->cur.suffix;
+    t.first = lex->cur.first;
     {   /* a few characters, as a rule: copied here, not by two calls */
         char *d = t.text;
         const char *q = lex->cur.text;

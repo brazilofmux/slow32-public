@@ -255,10 +255,21 @@ static unsigned proc_bucket(const char *s) {
     return h & (PROC_HASH - 1);
 }
 
+/* a SUB's or FUNCTION's name without its suffix (FUNCTION f% named f,
+ * as QuickBASIC lets it be), the same way */
+static unsigned char proc_alias_hash[PROC_HASH];
+static int proc_naliases;
+
 static proc_entry_t *find_proc(const char *name) {
     for (unsigned b = proc_bucket(name); proc_hash[b]; b = (b + 1) & (PROC_HASH - 1))
         if (strcmp(proc_table[proc_hash[b] - 1].name, name) == 0)
             return &proc_table[proc_hash[b] - 1];
+    if (proc_naliases)
+        for (unsigned b = proc_bucket(name); proc_alias_hash[b]; b = (b + 1) & (PROC_HASH - 1)) {
+            char bare[64];
+            proc_entry_t *p = &proc_table[proc_alias_hash[b] - 1];
+            if (ast_name_bare(p->name, bare) && strcmp(bare, name) == 0) return p;
+        }
     return NULL;
 }
 
@@ -279,6 +290,16 @@ static error_t proc_register(const char *name, stmt_t *def) {
     unsigned b = proc_bucket(p->name);
     while (proc_hash[b]) b = (b + 1) & (PROC_HASH - 1);
     proc_hash[b] = (unsigned char)(proc_count + 1);
+    {
+        char bare[64];
+        if ((def->type == STMT_FUNC_DEF || def->type == STMT_SUB_DEF) &&
+            ast_name_bare(p->name, bare) && !find_proc(bare)) {
+            b = proc_bucket(bare);
+            while (proc_alias_hash[b]) b = (b + 1) & (PROC_HASH - 1);
+            proc_alias_hash[b] = (unsigned char)(proc_count + 1);
+            proc_naliases++;
+        }
+    }
     proc_count++;
     return ERR_NONE;
 }
@@ -695,6 +716,15 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
         if (dup) env_set(local, pname, &arg_vals[i]);
         else env_bind(local, pname, &arg_vals[i]);
         val_clear(&arg_vals[i]);
+    }
+
+    /* FUNCTION f%'s value is f's too (QuickBASIC: f = 1 in it sets it) */
+    if (is_function) {
+        char bare[64];
+        if (ast_name_bare(def->proc_def.name, bare) && !env_has_local(local, bare)) {
+            value_t *rv = env_get(local, def->proc_def.name);
+            if (rv) env_link(local, bare, rv, 0);
+        }
     }
 
     /* SHARED variables: the global ones, linked */
@@ -2644,7 +2674,7 @@ static error_t exec_const(env_t *env, stmt_t *s) {
 static error_t exec_call_stmt(env_t *env, stmt_t *s) {
     proc_entry_t *proc = find_proc(s->call_stmt.name);
     if (!proc)
-        return ERR_UNDEFINED_PROC;
+        return ast_machine_sub(s->call_stmt.name) ? ERR_ADVANCED : ERR_UNDEFINED_PROC;
 
     if (proc->def->type == STMT_FUNC_DEF) {
         value_t result;
@@ -3308,13 +3338,25 @@ static error_t exec_get(env_t *env, stmt_t *s) {
         EVAL_CHECK(eval_file_pos(handle, fp, pos));
     }
 
-    /* Read based on variable type */
-    value_t result, *sv = env_get(env, s->get_put_stmt.varname);
-    EVAL_CHECK(eval_get_value(fp, s->get_put_stmt.vartype,
-                              sv && sv->type == VAL_STRING ? sv->sval->len : 0, &result));
-    env_set(env, s->get_put_stmt.varname, &result);
+    /* Read as the variable, element or field is typed (a record field
+     * by field, a STRING * n its n bytes) */
+    value_t *sv;
+    int fl;
+    if (s->get_put_stmt.target) {
+        EVAL_CHECK(resolve_lvalue(env, s->get_put_stmt.target, &sv));
+        fl = lvalue_fixlen(env, s->get_put_stmt.target);
+    } else {
+        sv = env_get(env, s->get_put_stmt.varname);
+        fl = env_fixlen(env, s->get_put_stmt.varname);
+    }
+    if (!sv) return ERR_OUT_OF_MEMORY;
+    if (sv->type == VAL_RECORD)
+        return eval_get_record(fp, sv->rval);
+    value_t result;
+    EVAL_CHECK(eval_get_value(fp, sv->type, sv->type == VAL_STRING ? sv->sval->len : 0, &result));
+    err = store_fixed(sv, &result, fl);
     val_clear(&result);
-    return ERR_NONE;
+    return err;
 }
 
 /* GET's value of type vt (a string's len bytes, at least 1) */
@@ -3374,10 +3416,36 @@ static error_t exec_put(env_t *env, stmt_t *s) {
         EVAL_CHECK(eval_file_pos(handle, fp, pos));
     }
 
-    /* Write based on variable type */
-    value_t *v = env_get(env, s->get_put_stmt.varname);
+    /* Write as the variable, element or field is typed (a record field
+     * by field) */
+    value_t *v;
+    if (s->get_put_stmt.target) EVAL_CHECK(resolve_lvalue(env, s->get_put_stmt.target, &v));
+    else v = env_get(env, s->get_put_stmt.varname);
     if (!v) return ERR_UNDEFINED_VAR;
+    if (v->type == VAL_RECORD)
+        return eval_put_record(fp, v->rval);
     return eval_put_value(fp, v);
+}
+
+/* GET # and PUT # of a record: field by field, each as its type reads
+ * and writes it, a string (a STRING * n: QuickBASIC's TYPEs have no
+ * other) its length's bytes -- for compiled code too */
+error_t eval_get_record(FILE *fp, sb_record_t *r) {
+    for (int i = 0; i < r->nfields; i++) {
+        value_t *fv = &r->fields[i], f;
+        int n = fv->type == VAL_STRING ? fv->sval->len : 0;
+        EVAL_CHECK(eval_get_value(fp, fv->type, n, &f));
+        error_t err = store_fixed(fv, &f, n);
+        val_clear(&f);
+        if (err != ERR_NONE) return err;
+    }
+    return ERR_NONE;
+}
+
+error_t eval_put_record(FILE *fp, const sb_record_t *r) {
+    for (int i = 0; i < r->nfields; i++)
+        EVAL_CHECK(eval_put_value(fp, &r->fields[i]));
+    return ERR_NONE;
 }
 
 /* PUT's value, as its type writes it */
@@ -3520,10 +3588,16 @@ static error_t exec_field_assign(env_t *env, stmt_t *s) {
 /* --- MID$ l-value assignment --- */
 
 static error_t exec_mid_assign(env_t *env, stmt_t *s) {
-    if (env_is_const(env, s->mid_assign.var_name))
-        return ERR_CONST_REASSIGN;
-
-    value_t *sv = env_get(env, s->mid_assign.var_name);
+    value_t *sv;
+    unsigned gen;
+    if (s->mid_assign.target)           /* an element's string, or a field's */
+        EVAL_CHECK(resolve_lvalue(env, s->mid_assign.target, &sv));
+    else {
+        if (env_is_const(env, s->mid_assign.var_name))
+            return ERR_CONST_REASSIGN;
+        sv = env_get(env, s->mid_assign.var_name);
+    }
+    gen = array_generation;
     if (!sv) return ERR_UNDEFINED_VAR;
     if (sv->type != VAL_STRING) return ERR_TYPE_MISMATCH;
 
@@ -3558,9 +3632,15 @@ static error_t exec_mid_assign(env_t *env, stmt_t *s) {
     err = eval_mid_set(sv->sval, start, slen, maxlen, &rep_v, &result);
     val_clear(&rep_v);
     if (err != ERR_NONE) return err;
-    env_set(env, s->mid_assign.var_name, &result);
+    if (s->mid_assign.target) {
+        /* (the element found again only if an array moved meanwhile: a
+         * REDIM in a FUNCTION the value called) */
+        if (array_generation != gen) err = resolve_lvalue(env, s->mid_assign.target, &sv);
+        if (err == ERR_NONE) val_assign(sv, &result);
+    } else
+        env_set(env, s->mid_assign.var_name, &result);
     val_clear(&result);
-    return ERR_NONE;
+    return err;
 }
 
 /* MID$ = rep's new string: slen bytes of old, rep's over them from start
@@ -4460,6 +4540,8 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
     memset(proc_hash, 0, sizeof proc_hash);
+    memset(proc_alias_hash, 0, sizeof proc_alias_hash);
+    proc_naliases = 0;
     label_count = 0;
 
     ndim_shared = 0;

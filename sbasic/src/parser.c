@@ -1163,8 +1163,11 @@ static int parse_params(parser_t *p, stmt_t *s) {
                  strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
                 lexer_skip(&p->lex);
             token_t param = lexer_next(&p->lex);
-            /* Skip optional () for array params */
-            if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
+            /* name(): an array (noted; the interpreter passes none yet) */
+            if (lexer_match(&p->lex, TOK_LPAREN)) {
+                lexer_match(&p->lex, TOK_RPAREN);
+                if (s->proc_def.nparams < 16) s->proc_def.param_arrays |= 1u << s->proc_def.nparams;
+            }
             val_type_t ptype = var_type_from_name(param.text);
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
@@ -1786,17 +1789,22 @@ static stmt_t *parse_get_put(parser_t *p, int is_put) {
         parser_error(p, ERR_SYNTAX);
         expr_free(handle); expr_free(position); return NULL;
     }
-    /* Variable name */
+    /* a variable, an array's element, or a field */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX);
         expr_free(handle); expr_free(position); return NULL;
     }
-    token_t var = lexer_next(&p->lex);
-    val_type_t vt = var_type_from_name(var.text);
-    if (is_put)
-        return stmt_put(handle, position, var.text, vt, line);
-    else
-        return stmt_get(handle, position, var.text, vt, line);
+    expr_t *t = parse_primary(p);
+    if (!t) { expr_free(handle); expr_free(position); return NULL; }
+    const char *name = t->type == EXPR_VARIABLE ? t->var.name :
+                       t->type == EXPR_FIELD_ACCESS ? t->field.var_name : t->call.name;
+    val_type_t vt = var_type_from_name(name);
+    stmt_t *s = is_put ? stmt_put(handle, position, name, vt, line)
+                       : stmt_get(handle, position, name, vt, line);
+    if (!s) { expr_free(t); return NULL; }
+    if (t->type == EXPR_VARIABLE) expr_free(t);
+    else s->get_put_stmt.target = t;
+    return s;
 }
 
 /* SEEK #h, pos */
@@ -2085,24 +2093,33 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
 
     /* MID$ l-value assignment: MID$(var$, start [, length]) = expr */
     if (strcmp(name, "MID$") == 0 && lexer_check(&p->lex, TOK_EQ)) {
-        if (nargs < 2 || nargs > 3 || args[0]->type != EXPR_VARIABLE) {
+        /* (the string a variable, an array's element, or a field) */
+        expr_t *a0 = nargs ? args[0] : NULL;
+        if (nargs < 2 || nargs > 3 || (a0->type != EXPR_VARIABLE && a0->type != EXPR_FIELD_ACCESS &&
+                                       !(a0->type == EXPR_CALL && a0->call.nargs > 0))) {
             parser_error(p, ERR_SYNTAX);
             for (int i = 0; i < nargs; i++) expr_free(args[i]);
             return NULL;
         }
         lexer_skip(&p->lex); /* consume = */
+        const char *vn = a0->type == EXPR_VARIABLE ? a0->var.name :
+                         a0->type == EXPR_FIELD_ACCESS ? a0->field.var_name : a0->call.name;
         char var_name[64];
-        strncpy(var_name, args[0]->var.name, 63);
+        strncpy(var_name, vn, 63);
         var_name[63] = '\0';
         expr_t *start = args[1];
         expr_t *length = (nargs == 3) ? args[2] : NULL;
-        expr_free(args[0]); /* free the variable expr node */
+        expr_t *target = a0->type == EXPR_VARIABLE ? NULL : a0;
+        if (!target) expr_free(a0); /* free the variable expr node */
         expr_t *value = parse_expr(p);
         if (!value) {
-            expr_free(start); expr_free(length);
+            expr_free(start); expr_free(length); expr_free(target);
             return NULL;
         }
-        return stmt_mid_assign(var_name, start, length, value, line);
+        stmt_t *ms = stmt_mid_assign(var_name, start, length, value, line);
+        if (ms) ms->mid_assign.target = target;
+        else expr_free(target);
+        return ms;
     }
 
     /* Array assignment: ident(indices) = expr */
@@ -2744,8 +2761,9 @@ static stmt_t *parse_stmt(parser_t *p) {
             if (lexer_check(&p->lex, TOK_EQ) || lexer_check(&p->lex, TOK_DOT) ||
                 lexer_check(&p->lex, TOK_LPAREN))
                 return parse_assignment(p, &var);
-            /* Label: ident: */
-            if (lexer_check(&p->lex, TOK_COLON)) {
+            /* Label: ident: at the start of a line (elsewhere a SUB
+             * called with no arguments, the : between statements) */
+            if (var.first && lexer_check(&p->lex, TOK_COLON)) {
                 lexer_skip(&p->lex);
                 return stmt_label(var.text, var.line);
             }

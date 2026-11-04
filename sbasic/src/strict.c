@@ -44,6 +44,7 @@ typedef struct {
     refs_t fndefs, fnuses;      /* DEF FN, program-wide */
     refs_t dimshared;           /* arrays the main program DIMs SHARED */
     refs_t modconsts;           /* the main program's CONSTs, every unit's */
+    refs_t restores;            /* RESTORE label's, anywhere: the main program's labels */
     unit_t *u;                  /* the unit being walked */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
     int depth;                  /* statement lists open inside the unit's own */
@@ -76,6 +77,16 @@ static ref_t *find(refs_t *r, const char *name) {
     for (int i = 0; i < r->n; i++)
         if (strcmp(r->v[i].name, name) == 0) return &r->v[i];
     return NULL;
+}
+
+/* a SUB or FUNCTION by name, or by its name without a suffix (QB:
+ * FUNCTION f% is f too) */
+static ref_t *find_proc_ref(refs_t *procs, const char *name) {
+    ref_t *p = find(procs, name);
+    char bare[64];
+    for (int i = 0; !p && i < procs->n; i++)
+        if (ast_name_bare(procs->v[i].name, bare) && strcmp(bare, name) == 0) p = &procs->v[i];
+    return p;
 }
 
 static void finding(check_t *c, int line, const char *code, const char *detail) {
@@ -132,7 +143,7 @@ static void scan_expr(expr_t *e, void *vc) {
             if (a && a->type == EXPR_VARIABLE) push(&c->u->bounds, a->var.name, c->seq, e->line, 0);
             if (a && a->type == EXPR_CALL && a->call.nargs == 0)
                 push(&c->u->bounds, a->call.name, c->seq, e->line, 0);
-        } else if (e->call.nargs > 0 && !find(&c->procs, e->call.name)) {
+        } else if (e->call.nargs > 0 && !find_proc_ref(&c->procs, e->call.name)) {
             push(&c->u->uses, e->call.name, c->seq, e->line, 0);
             c->u->uses.v[c->u->uses.n - 1].n = e->call.nargs;
         }
@@ -339,9 +350,9 @@ static void walk_list(check_t *c, stmt_t *s) {
             else if (s->resume_stmt.resume_next == 1) c->info[STRICT_RESUME_NEXT]++;
             else push(&c->u->jumps, s->resume_stmt.label, seq, s->line, 1);
             break;
-        case STMT_RESTORE:
+        case STMT_RESTORE:      /* (DATA is the module's: a SUB's RESTORE names its label) */
             if (s->restore_stmt.label[0])
-                push(&c->u->jumps, s->restore_stmt.label, seq, s->line, 0);
+                push(&c->restores, s->restore_stmt.label, seq, s->line, 0);
             break;
         case STMT_CLEAR:
             c->info[STRICT_CLEAR]++;
@@ -410,7 +421,9 @@ static void walk_list(check_t *c, stmt_t *s) {
             walk_unit(c, s->proc_def.body, s);
             break;
         case STMT_CALL: {               /* CALL name, or name args alone */
-            ref_t *p = find(&c->procs, s->call_stmt.name);
+            ref_t *p = find_proc_ref(&c->procs, s->call_stmt.name);
+            if (!p && ast_machine_sub(s->call_stmt.name))
+                break;                  /* (QB's own: BSAVE, BLOAD, CALL ABSOLUTE) */
             if (!p) {
                 snprintf(d, sizeof d, "%s is no SUB of the program", s->call_stmt.name);
                 finding(c, s->line, "sub-undefined", d);
@@ -463,6 +476,9 @@ static int array_shared(check_t *c, stmt_t *proc, const char *name) {
     char a[68];
     if (!proc) return 0;
     if (find(&c->dimshared, name)) return 1;
+    for (int i = 0; i < proc->proc_def.nparams && i < 16; i++)     /* (an array parameter, name()) */
+        if ((proc->proc_def.param_arrays >> i & 1) && strcmp(proc->proc_def.params[i], name) == 0)
+            return 1;
     snprintf(a, sizeof a, "%s()", name);
     for (stmt_t *s = proc->proc_def.body; s; s = s->next)
         if (s->type == STMT_SHARED || s->type == STMT_STATIC)
@@ -481,6 +497,12 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     c->depth = -1;                      /* the unit's own list is depth 0 */
     walk_list(c, body);
     c->depth = depth;
+    if (!proc)                          /* (every procedure walked by now: they are in its text) */
+        for (int i = 0; i < c->restores.n; i++)
+            if (!find(&u.labels, c->restores.v[i].name)) {
+                snprintf(d, sizeof d, "label %s is not defined", c->restores.v[i].name);
+                finding(c, c->restores.v[i].line, "label-undefined", d);
+            }
     for (int i = 0; i < u.jumps.n; i++) {
         ref_t *j = &u.jumps.v[i];
         ref_t *l = find(&u.labels, j->name);
@@ -505,7 +527,7 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     for (int k = 0; k < u.uses.n; k++) {
         ref_t *use = &u.uses.v[k];
         if (!proc || find(&u.dims, use->name) || find(&u.redims, use->name) ||
-            array_shared(c, proc, use->name)) continue;
+            find(&u.erased, use->name) || array_shared(c, proc, use->name)) continue;
         int again = 0;
         for (int i = 0; i < k; i++) if (strcmp(u.uses.v[i].name, use->name) == 0) again = 1;
         if (again) continue;
@@ -515,7 +537,7 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     for (int k = 0; k < u.bounds.n; k++) {
         ref_t *b = &u.bounds.v[k];
         if (!proc || find(&u.dims, b->name) || find(&u.redims, b->name) ||
-            array_shared(c, proc, b->name)) continue;
+            find(&u.erased, b->name) || array_shared(c, proc, b->name)) continue;
         snprintf(d, sizeof d, "%s is no array of this procedure (DIM it, or SHARED %s())", b->name, b->name);
         finding(c, b->line, "array-undefined", d);
     }
@@ -618,6 +640,6 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
-    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.st);
+    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.restores.v); free(c.st);
     return c.findings;
 }

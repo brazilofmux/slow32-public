@@ -4,6 +4,18 @@
 
 /* Safe copy into 64-byte AST name field (always null-terminates; the
  * rest of the field left as it is, unlike strncpy) */
+int ast_machine_sub(const char *name) {
+    return strcmp(name, "BSAVE") == 0 || strcmp(name, "BLOAD") == 0 || strcmp(name, "ABSOLUTE") == 0;
+}
+
+int ast_name_bare(const char *name, char *bare) {
+    size_t n = strlen(name);
+    if (n < 2 || n > 63 || !strchr("%&#$", name[n - 1])) return 0;
+    memcpy(bare, name, n - 1);
+    bare[n - 1] = '\0';
+    return 1;
+}
+
 void ast_name_copy(char *dst, const char *src) {
     int i = 0;
     while (i < 63 && src[i]) { dst[i] = src[i]; i++; }
@@ -647,6 +659,7 @@ void stmt_free(stmt_t *s) {
             case STMT_PUT:
                 expr_free(s->get_put_stmt.handle_num);
                 expr_free(s->get_put_stmt.position);
+                expr_free(s->get_put_stmt.target);
                 break;
             case STMT_SEEK:
                 expr_free(s->seek_stmt.seek_handle);
@@ -665,6 +678,7 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->field_assign.elem);
                 break;
             case STMT_MID_ASSIGN:
+                expr_free(s->mid_assign.target);
                 expr_free(s->mid_assign.start);
                 expr_free(s->mid_assign.length);
                 expr_free(s->mid_assign.value);
@@ -1256,10 +1270,12 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_KILL: X(s->kill_stmt.filename); break;
     case STMT_NAME: X(s->name_stmt.oldname); X(s->name_stmt.newname); break;
     case STMT_GET:
-    case STMT_PUT: X(s->get_put_stmt.handle_num); X(s->get_put_stmt.position); break;
+    case STMT_PUT: X(s->get_put_stmt.handle_num); X(s->get_put_stmt.position); X(s->get_put_stmt.target); break;
     case STMT_SEEK: X(s->seek_stmt.seek_handle); X(s->seek_stmt.seek_position); break;
     case STMT_FIELD_ASSIGN: X(s->field_assign.elem); X(s->field_assign.value); break;
-    case STMT_MID_ASSIGN: X(s->mid_assign.start); X(s->mid_assign.length); X(s->mid_assign.value); break;
+    case STMT_MID_ASSIGN:
+        X(s->mid_assign.target); X(s->mid_assign.start); X(s->mid_assign.length); X(s->mid_assign.value);
+        break;
     case STMT_ERROR_RAISE: X(s->error_raise.errnum); break;
     case STMT_ON_GOTO:
     case STMT_ON_GOSUB: X(s->on_branch.index); break;

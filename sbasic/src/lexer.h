@@ -88,6 +88,7 @@ typedef struct {
     };
     char text[256];     /* original text (for idents, strings) */
     char suffix;        /* type suffix: '%', '#', '$', or '\0' */
+    char first;         /* the line's first token (a name then : is a label) */
 } token_t;
 
 typedef struct {
@@ -96,6 +97,7 @@ typedef struct {
     int line;           /* current line number */
     token_t cur;        /* current (peeked) token */
     int has_cur;        /* whether cur is valid */
+    int at_line_start;  /* the next token begins a line */
 } lexer_t;
 
 /* Initialize lexer with source text */

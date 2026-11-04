@@ -56,6 +56,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Argument-count mismatch",
     "Function not defined",
     "Parameter type mismatch",
+    "Advanced feature unavailable",
 };
 
 int error_qb_code(error_t err) {
@@ -89,6 +90,7 @@ int error_qb_code(error_t err) {
     case ERR_FILE_NOT_FOUND:         return 53;
     case ERR_FILE_ALREADY_OPEN:      return 55;
     case ERR_INPUT_PAST_END:         return 62;
+    case ERR_ADVANCED:               return 73;
     default:                         return 5;
     }
 }

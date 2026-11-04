@@ -154,6 +154,8 @@ error_t eval_getput_file(int handle, FILE **fp);
 error_t eval_file_pos(int handle, FILE *fp, int pos);
 error_t eval_get_value(FILE *fp, val_type_t vt, int len, value_t *out);
 error_t eval_put_value(FILE *fp, const value_t *v);
+error_t eval_get_record(FILE *fp, sb_record_t *r);
+error_t eval_put_record(FILE *fp, const sb_record_t *r);
 error_t eval_lrset(int curlen, const value_t *nv, int left, value_t *out);
 typedef struct {
     int type, x1, y1, x2, y2, color, aux;

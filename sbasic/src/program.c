@@ -7,8 +7,6 @@
 
 /* --- Program storage --- */
 
-#define MAX_PROGRAM_LINES 2048
-
 static char **program_lines = NULL;
 static int program_count = 0;
 static int program_capacity = 0;
@@ -20,13 +18,8 @@ void program_clear(void) {
 }
 
 void program_add_line(const char *line) {
-    if (program_count >= MAX_PROGRAM_LINES) {
-        printf("Program too large\n");
-        return;
-    }
     if (program_count >= program_capacity) {
         int newcap = program_capacity ? program_capacity * 2 : 64;
-        if (newcap > MAX_PROGRAM_LINES) newcap = MAX_PROGRAM_LINES;
         char **newlines = realloc(program_lines, newcap * sizeof(char *));
         if (!newlines) { printf("Out of memory\n"); return; }
         program_lines = newlines;

@@ -1170,6 +1170,21 @@ static error_t fn_point(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* PMAP(c, n): a coordinate mapped between the world's (WINDOW) and the
+ * screen's (VIEW), n 0 and 1 to the screen's x and y, 2 and 3 back;
+ * with neither, the coordinate rounded as CINT rounds */
+static error_t fn_pmap(value_t *args, int nargs, value_t *out) {
+    double c, n;
+    if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    EVAL_CHECK(get_num(&args[0], &c));
+    EVAL_CHECK(get_num(&args[1], &n));
+    if (n < 0 || n > 3 || (!sb_gfx_active() && !sb_gfx_degraded()))
+        return ERR_ILLEGAL_FUNCTION_CALL;          /* (QBasic: in text mode too) */
+    if (!(fabs(c) < 32767.5)) return ERR_OVERFLOW;
+    *out = val_integer((int)rint(c));           /* (QBasic: CINT's rounding, either way) */
+    return ERR_NONE;
+}
+
 /* DIR$([pattern$]) - directory listing with simple wildcard matching */
 static DIR *dir_handle = NULL;
 static char dir_pattern[256] = "";
