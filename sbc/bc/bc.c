@@ -473,6 +473,14 @@ static int is_builtin_call(const char *name) {
            strcmp(name, "LBOUND") != 0 && strcmp(name, "UBOUND") != 0 && strcmp(name, "JOIN$") != 0;
 }
 
+/* a name alone that calls a builtin: one that takes no arguments (RND,
+ * TIMER); MIN alone is a variable (eval_variable_impl: the call fails,
+ * the variable is read) */
+static int bare_builtin(const char *name) {
+    int mn, mx;
+    return is_builtin_call(name) && builtin_arity(name, &mn, &mx) && mn == 0;
+}
+
 static var_t **bc_vars;         /* (each its own allocation: a pointer to one stays good) */
 static int bc_nvars, bc_capvars;
 static var_t *bc_proc_result;   /* the FUNCTION being lowered's own variable */
@@ -1522,7 +1530,7 @@ static bv_t expr(expr_t *e) {
         if (st_int(e->literal.type)) return kint(e->literal.ival, e->literal.type);
         return kdbl(e->literal.dval, e->literal.type);
     case EXPR_VARIABLE:
-        if (is_builtin_call(e->var.name))       /* RND, TIMER... with no ( ) */
+        if (bare_builtin(e->var.name))       /* RND, TIMER... with no ( ) */
             return builtin_fn(e, e->var.name, 0, NULL);
         if (strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name))
             return def_fn_call(e, e->var.name, 0, NULL);  /* DEF FNM = 123: FNM calls it */
@@ -2545,7 +2553,7 @@ static var_t *temp_var(int ty) {
 }
 
 static int is_plain_var(const expr_t *e) {
-    return e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) && !is_errvar(e->var.name) &&
+    return e->type == EXPR_VARIABLE && !bare_builtin(e->var.name) && !is_errvar(e->var.name) &&
            strncmp(e->var.name, "FN", 2) != 0 && !calls_function0(e->var.name);
 }
 
@@ -2872,7 +2880,7 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
     lv->v = NULL;
     lv->ea = -1;
     lv->flen = 0;
-    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) && strncmp(e->var.name, "FN", 2) != 0) {
+    if (e->type == EXPR_VARIABLE && !bare_builtin(e->var.name) && strncmp(e->var.name, "FN", 2) != 0) {
         lv->v = var_get(e->var.name, e->var.var_type, line);
         lv->ty = lv->v->type;
         lv->flen = lv->v->fixlen;
@@ -2941,10 +2949,6 @@ static void bc_stmt(stmt_t *s) {
         break;
     default:
         op_here();
-    }
-    if (bc_proc && (s->type == STMT_GOSUB || s->type == STMT_RETURN || s->type == STMT_ON_GOSUB)) {
-        bc_not_yet(s->line, "GOSUB in a SUB or FUNCTION");
-        return;
     }
     switch (s->type) {
     case STMT_REM:
@@ -3500,7 +3504,7 @@ static void bc_stmts(stmt_t *s) {
  * block, before anything runs -- wherever its first mention falls. */
 static void prescan_expr(expr_t *e, void *ctx) {
     (void)ctx;
-    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
+    if (e->type == EXPR_VARIABLE && !bare_builtin(e->var.name) &&
         !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)) &&
         !calls_function0(e->var.name) && !is_errvar(e->var.name))
         var_get(e->var.name, e->var.var_type, e->line);
@@ -3871,6 +3875,7 @@ static void proc_func(proc_t *p, Node *fn) {
     call_void("bcrt_leave");
     hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
+    ret_dispatch();             /* (GOSUB in it: its own return points) */
     fail_blocks();
     fn->locals_size = bc_frame;
     bc_proc = NULL;

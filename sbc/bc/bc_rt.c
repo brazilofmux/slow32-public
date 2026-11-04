@@ -65,6 +65,11 @@ static jmp_buf bcrt_jb;
 static int bcrt_running;        /* inside bcrt_run's body */
 static int trap_handler = -1, trap_active, trap_op, trap_code, trap_line;
 static int bcrt_nactive;        /* procedures entered (bcrt_enter) and not left */
+static int bcrt_ngosub;         /* GOSUBs pending (bcrt_gosubs, below) */
+/* each procedure activation's GOSUBs above its caller's: its RETURN
+ * pops only its own, and its return drops what it left (the
+ * interpreter's gosub_base) */
+static int *bcrt_gbase, bcrt_ngbase, bcrt_capgbase;
 
 static int bcrt_nusing;
 static void bcrt_trap(int code) {
@@ -103,6 +108,10 @@ void bcrt_run(void (*body)(int)) {
             array_scope_pop();
             eval_leave();
             bcrt_nactive--;
+        }
+        if (bcrt_ngbase) {              /* (and their GOSUBs) */
+            bcrt_ngosub = bcrt_gbase[0];
+            bcrt_ngbase = 0;
         }
         at = 1;
     }
@@ -269,7 +278,14 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
 /* a SUB's or FUNCTION's activation, counted as the interpreter counts
  * them (eval_enter: Out of stack space past its depth) */
 void bcrt_enter(int proc) {
-    error_t e = eval_enter();
+    error_t e;
+    if (bcrt_ngbase == bcrt_capgbase) {
+        bcrt_capgbase = bcrt_capgbase ? bcrt_capgbase * 2 : 64;
+        bcrt_gbase = realloc(bcrt_gbase, (size_t)bcrt_capgbase * sizeof(int));
+        if (!bcrt_gbase) bcrt_fail(ERR_OUT_OF_MEMORY);
+    }
+    bcrt_gbase[bcrt_ngbase++] = bcrt_ngosub;
+    e = eval_enter();
     if (e != ERR_NONE) bcrt_fail(e);
     e = array_scope_push(proc, NULL, NULL);
     if (e != ERR_NONE) { eval_leave(); bcrt_fail(e); }
@@ -277,6 +293,7 @@ void bcrt_enter(int proc) {
 }
 
 void bcrt_leave(void) {
+    if (bcrt_ngbase) bcrt_ngosub = bcrt_gbase[--bcrt_ngbase];
     array_scope_pop();          /* (its own arrays erased) */
     eval_leave();
     bcrt_nactive--;
@@ -806,7 +823,7 @@ pair_t bcrt_fn(const char *name, int n, int alo, int ahi, int at, int blo, int b
  * errors */
 #define BCRT_GOSUB_DEPTH 256
 static int bcrt_gosubs[BCRT_GOSUB_DEPTH];
-static int bcrt_ngosub;
+
 
 void bcrt_gosub(int k) {
     if (bcrt_ngosub >= BCRT_GOSUB_DEPTH) bcrt_fail(ERR_STACK_OVERFLOW);
@@ -814,7 +831,7 @@ void bcrt_gosub(int k) {
 }
 
 int bcrt_return(void) {
-    if (bcrt_ngosub <= 0) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
+    if (bcrt_ngosub <= (bcrt_ngbase ? bcrt_gbase[bcrt_ngbase - 1] : 0)) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
     return bcrt_gosubs[--bcrt_ngosub];
 }
 
