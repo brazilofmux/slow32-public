@@ -3449,11 +3449,14 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_WIDTH: {
-        int w = coerce(expr(s->width_stmt.columns), VAL_LONG).lo, cb;
+        /* (WIDTH , rows: the columns left out, and kept) */
+        int w = s->width_stmt.columns ? coerce(expr(s->width_stmt.columns), VAL_LONG).lo : -1, cb;
         int r = s->width_stmt.rows ? handle_of(s->width_stmt.rows) : -1;
-        cb = h_ncarg;
-        carg(w, 0);
-        call_end(cb, 1, "bcrt_width", NULL);
+        if (s->width_stmt.columns) {
+            cb = h_ncarg;
+            carg(w, 0);
+            call_end(cb, 1, "bcrt_width", NULL);
+        }
         if (s->width_stmt.rows) {       /* (its rows: the text screen's, eval_width_rows) */
             cb = h_ncarg;
             carg(r, 0);

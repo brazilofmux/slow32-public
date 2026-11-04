@@ -2379,9 +2379,31 @@ error_t eval_draw(const value_t *v) {
 }
 
 /* SCREEN mode -- for compiled code too */
+/* a mode's text, as QBasic sets it on a VGA (probed): 40 columns in the
+ * 320-pixel modes, 80 in the rest; 30 rows at 480 lines, 25 elsewhere.
+ * SCREEN 0 from a graphics mode takes that mode's columns and 25 rows,
+ * from text keeps the text's.  Every SCREEN clears it, cursor home. */
+static int mode_cols(int mode) { return mode == 1 || mode == 7 || mode == 13 ? 40 : 80; }
+
+static void screen_text(int mode, int prev) {
+    extern int console_width;
+    if (mode || prev) {
+        console_width = mode_cols(mode ? mode : prev);
+        scr_rows = mode == 11 || mode == 12 ? 30 : 25;
+    }
+    view_top = 1;
+    view_bottom = scr_rows - 1;
+    if (!mode) sb_term_cls();
+    scr_clear_rows(1, scr_rows);
+    print_col = 0;
+    print_row = 1;
+}
+
 error_t eval_screen(int mode) {
-    if (sb_gfx_screen(mode) == -2)
+    int prev = sb_gfx_mode(), r = sb_gfx_screen(mode);
+    if (r == -2)
         return ERR_ILLEGAL_FUNCTION_CALL;
+    if (r == 0) screen_text(mode, prev);
     return ERR_NONE;    /* denied tube already printed its message */
 }
 
@@ -2527,10 +2549,14 @@ static error_t exec_locate(env_t *env, stmt_t *s) {
 
 /* the cursor: a LOCATE's row or column left out keeps it */
 /* (a line filled to its last column: the next line's start, as QBasic
- * reports it -- the bottom of the viewport still its bottom) */
+ * reports it -- the bottom of the viewport still its bottom, and from
+ * the last row, below the viewport, the viewport's bottom) */
 int eval_cursor_row(void) {
     extern int console_width;
-    if (console_width > 0 && print_col >= console_width && print_row < view_bottom) return print_row + 1;
+    if (console_width > 0 && print_col >= console_width) {
+        if (print_row < view_bottom) return print_row + 1;
+        if (print_row > view_bottom) return view_bottom;
+    }
     return print_row;
 }
 int eval_cursor_col(void) {
@@ -2584,8 +2610,13 @@ error_t eval_view_print(int has, int top, int bottom) {
 
 /* WIDTH's rows (25, 43, 50 ...): the screen cleared, the viewport all of
  * it but the last row -- for compiled code too */
+/* WIDTH's rows: what a VGA's text has -- 25, 43 or 50, and at 480
+ * lines (SCREEN 11, 12) 30 or 60 too (QBasic, probed) */
 error_t eval_width_rows(int rows) {
-    if (rows < 1 || rows > SCR_ROWS) return ERR_ILLEGAL_FUNCTION_CALL;
+    int m = sb_gfx_mode();
+    if (rows != 25 && rows != 43 && rows != 50 &&
+        !((rows == 30 || rows == 60) && (m == 11 || m == 12)))
+        return ERR_ILLEGAL_FUNCTION_CALL;
     if (rows == scr_rows) return ERR_NONE;
     scr_rows = rows;
     view_top = 1;
@@ -2597,7 +2628,7 @@ error_t eval_width_rows(int rows) {
 /* LOCATE row, col, made integers -- for compiled code too: a row in the
  * text viewport, or the last (QBasic) */
 error_t eval_locate(int row, int col) {
-    if (row < 1 || col < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (row < 1 || col < 1 || col > eval_text_cols()) return ERR_ILLEGAL_FUNCTION_CALL;
     if ((row < view_top || row > view_bottom) && row != scr_rows) return ERR_ILLEGAL_FUNCTION_CALL;
     sb_term_locate(row, col);
     print_col = col - 1;
@@ -3553,9 +3584,14 @@ error_t eval_sleep(const value_t *v) {
 }
 
 /* WIDTH w, made an integer -- for compiled code too */
-void eval_width(int w) {
+/* WIDTH's columns (20 to 255 kept, for the dialects that set a line's
+ * length so) -- but 40 in SCREEN 11 or 12 is refused, as QBasic does */
+error_t eval_width(int w) {
     extern int console_width;
+    int m = sb_gfx_mode();
+    if (w == 40 && (m == 11 || m == 12)) return ERR_ILLEGAL_FUNCTION_CALL;
     if (w >= 20 && w <= 255) console_width = w;
+    return ERR_NONE;
 }
 
 static error_t exec_kill(env_t *env, stmt_t *s) {
@@ -4183,15 +4219,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_WIDTH: {
-            extern int console_width;
-            value_t v;
-            EVAL_CHECK(eval_expr(env, s->width_stmt.columns, &v));
             int w, rows;
-            error_t err = val_to_integer(&v, &w);
-            val_clear(&v);
-            if (err != ERR_NONE) return err;
+            if (s->width_stmt.columns) EVAL_CHECK(eval_int_of(env, s->width_stmt.columns, &w));
             if (s->width_stmt.rows) EVAL_CHECK(eval_int_of(env, s->width_stmt.rows, &rows));
-            eval_width(w);
+            if (s->width_stmt.columns) EVAL_CHECK(eval_width(w));
             return s->width_stmt.rows ? eval_width_rows(rows) : ERR_NONE;
         }
 

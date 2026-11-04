@@ -2736,9 +2736,11 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_WIDTH: {
             int line = tok->line;
             lexer_skip(&p->lex);
-            expr_t *cols = parse_expr(p), *rows = NULL;
-            if (!cols) return NULL;
+            /* WIDTH cols[, rows], or WIDTH , rows: the columns kept */
+            expr_t *cols = NULL, *rows = NULL;
+            if (!lexer_check(&p->lex, TOK_COMMA) && !(cols = parse_expr(p))) return NULL;
             if (lexer_match(&p->lex, TOK_COMMA) && !(rows = parse_expr(p))) { expr_free(cols); return NULL; }
+            if (!cols && !rows) { parser_error(p, ERR_SYNTAX); return NULL; }
             stmt_t *s = stmt_alloc(STMT_WIDTH, line);
             if (!s) { expr_free(cols); expr_free(rows); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             s->width_stmt.columns = cols;

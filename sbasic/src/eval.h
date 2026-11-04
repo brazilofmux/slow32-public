@@ -132,7 +132,7 @@ void eval_color(int fg, int bg, int has_fg, int has_bg);
 error_t eval_line_input(const char *prompt, value_t *out);
 void eval_write_value(const value_t *v);
 error_t eval_sleep(const value_t *v);
-void eval_width(int w);
+error_t eval_width(int w);
 error_t eval_mid_set(const sb_string_t *old, int start, int slen, int maxlen,
                      const value_t *rep, value_t *out);
 typedef struct {

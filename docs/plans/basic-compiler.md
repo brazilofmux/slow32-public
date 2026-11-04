@@ -470,10 +470,24 @@ interpreter's objects):
 sbasic/tests/pcmem.bas is held to QBasic byte for byte (text mode);
 so is sbc/tests/native/vgaports.bas (SCREEN 13, the DAC, A000), since
 the DOS emulator's VGA (2026-11-04), which also showed the BIOS's 40
-columns in modes 1, 7 and 13.  Open from it: SCREEN 0 after a 40-column
-mode keeps 40 columns in QBasic (the test says WIDTH 80).  Not done, and
+columns in modes 1, 7 and 13.  Not done, and
 not asked: arrays at addresses (VARPTR/VARSEG into a model of DGROUP,
 BSAVE/BLOAD of an array), CP437 output, DOS paths.
+
+The text screen on a VGA (2026-11-04, the emulator's VGA): 43 and 50
+rows, and text in the graphics modes, each probed and pinned in
+sbasic/tests/textrows.bas and screenmodes.bas (both byte for byte with
+QBasic).  WIDTH's rows are 25, 43 or 50, and 30 or 60 in SCREEN 11 and
+12; anything else is Illegal function call; WIDTH , rows is a form.  A
+line filled on the last row, below the viewport, leaves the cursor at
+the viewport's bottom and scrolls nothing.  LOCATE past the columns is
+refused.  Every SCREEN clears the text and homes the cursor; a mode's
+text is 40 columns in 1, 7 and 13 and 80 in the rest, 30 rows in 11 and
+12; SCREEN 0 after a graphics mode takes its columns, 25 rows; WIDTH 40
+in SCREEN 11 or 12 is refused.  SCREEN 11 is there (12's size, 2's
+one-bit image layout).  Left: WIDTH 80 in SCREEN 1, 7 or 13 switches
+QBasic to the 80-column mode (2, 8; the pixels change) -- ours changes
+only the text's columns.
 
 Older list, by count: SCREEN
 with arguments left out, names with a dot

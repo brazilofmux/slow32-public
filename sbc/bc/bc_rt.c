@@ -437,7 +437,10 @@ void bcrt_sleep(int lo, int hi, int t, int has) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
-void bcrt_width(int w) { eval_width(w); }
+void bcrt_width(int w) {
+    error_t e = eval_width(w);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
 
 void bcrt_width_rows(int r) {
     error_t e = eval_width_rows(r);

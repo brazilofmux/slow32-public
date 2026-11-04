@@ -2,7 +2,7 @@
 ' ports 3C7/3C8/3C9, the mode-13 frame at A000, the BIOS data area's
 ' video mode and columns, the text screen at B800, WAIT on the retrace
 ' bit, and the errors (a value past a byte, a port past an integer).
-' (WIDTH 80: QBasic's SCREEN 0 after 13 keeps 40 columns; ours does not yet)
+' (WIDTH 80: SCREEN 0 after 13 keeps its 40 columns)
 DEFINT A-Z
 DIM got(20), errs(5)
 ON ERROR GOTO trapped

@@ -137,7 +137,7 @@ int sb_gfx_screen(int mode) {
         case 1: case 7:  w = 320; h = 200; colors = 16;  break;
         case 2: case 8:  w = 640; h = 200; colors = 16;  break;
         case 9:          w = 640; h = 350; colors = 16;  break;
-        case 12:         w = 640; h = 480; colors = 16;  break;
+        case 11: case 12: w = 640; h = 480; colors = 16; break;
         case 13:         w = 320; h = 200; colors = 256; break;
         default:         return -2;
     }
@@ -698,7 +698,7 @@ static void image_layout(int *bits, int *planes) {
     switch (scr_mode) {
         case 13: *bits = 8; *planes = 1; break;
         case 1:  *bits = 2; *planes = 1; break;
-        case 2:  *bits = 1; *planes = 1; break;
+        case 2: case 11: *bits = 1; *planes = 1; break;
         default: *bits = 1; *planes = 4; break;     /* 7, 8, 9, 12 */
     }
 }

@@ -56,19 +56,10 @@ static unsigned long bios_ticks(void) {
 static int video_mode(void) {
     switch (sb_gfx_mode()) {
         case 1: return 4;    case 2: return 6;    case 7: return 0x0D;
-        case 8: return 0x0E; case 9: return 0x10; case 12: return 0x12;
+        case 8: return 0x0E; case 9: return 0x10; case 11: return 0x11;
+        case 12: return 0x12;
         case 13: return 0x13;
         default: return 3;
-    }
-}
-
-/* the BIOS's columns: the text width, or in graphics the mode's own --
- * 40 in the 320-pixel modes (1, 7, 13), 80 in the rest (QBasic on a VGA) */
-static int bios_cols(void) {
-    switch (sb_gfx_mode()) {
-        case 0: return eval_text_cols();
-        case 1: case 7: case 13: return 40;
-        default: return 80;
     }
 }
 
@@ -76,8 +67,8 @@ static int bios_byte(int k) {
     switch (k) {
         case 0x17: return bios_kept[0x17];          /* the shift flags: none held */
         case 0x49: return video_mode();
-        case 0x4A: return bios_cols() & 0xFF;
-        case 0x4B: return bios_cols() >> 8;
+        case 0x4A: return eval_text_cols() & 0xFF;
+        case 0x4B: return eval_text_cols() >> 8;
         case 0x84: return eval_text_rows() - 1;
         case 0x6C: case 0x6D: case 0x6E: case 0x6F:
             return (int)(bios_ticks() >> (8 * (k - 0x6C)) & 0xFF);
