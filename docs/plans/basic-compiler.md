@@ -431,6 +431,9 @@ Then VIEW and WINDOW (with PMAP, POINT both ways, CLS n), checked in
 SCREEN 7: 77 compile.  QBasic's CIRCLE keeps the mode's aspect (a
 radius of 20 is about 17 pixels up and down in SCREEN 7); ours is round
 in pixels -- the CIRCLE item below is every program's, not only arcs.
+Then CIRCLE fitted to QBasic's pixels (arcs, aspect; 79 compile).  Its
+LINE breaks ties otherwise than ours, in both directions -- a single
+Bresenham offset does not fit the four lines measured; open.
 
 Left, by count: SCREEN
 with arguments left out, CIRCLE's arcs and aspect, names with a dot
