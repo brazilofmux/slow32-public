@@ -545,11 +545,22 @@ fixed-length string, or a number.  All three take e first there
 (reading s$ does nothing else): the interpreter's EXPR_BINARY,
 s32-sbc's and s32-bc's lazy_concat.
 
-Where it stands (2026-11-04): 94 of the 100 corpus programs QBasic
-loads compile, and the six left are the four that run machine code
-(CALL ABSOLUTE, BLOADed code: not to be done, W^X) and two that only
-load because QB64's _ continues a line.  Everything QBasic was asked
-along the way is pinned in a test that prints what QBasic prints.
+The load-probe fix (above) found three corpus programs QBasic loads
+that had been counted out.  For them: records as parameters (x AS a
+TYPE, a() AS a TYPE -- the interpreter had refused both, and s32-bc
+copied a record element out and back where the callee changes it in
+place); arrays of four to eight dimensions in s32-bc (bcrt_dim_n,
+bcrt_elem_n, bcrt_elem_back_n: the subscripts in a block); the
+checker's DIM twice only where QBasic refuses it (the main program,
+constant bounds); and LBOUND/UBOUND with no DEFtype suffix
+(dims4.bas, recparams.bas).
+
+Where it stands (2026-11-04): 96 of the 103 corpus programs QBasic
+loads compile.  The seven left are five that use the machine itself
+(CALL ABSOLUTE, and BLOAD/BSAVE of code or of an array's memory --
+not to be done, W^X) and two that only load because QB64's _
+continues a line.  Everything QBasic was asked along the way is
+pinned in a test that prints what QBasic prints.
 
 Older list, by count: SCREEN
 with arguments left out, names with a dot

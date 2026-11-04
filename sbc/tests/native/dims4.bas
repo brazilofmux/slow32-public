@@ -1,8 +1,9 @@
 ' arrays of four and five dimensions, compiled: DIM with lo TO hi and
 ' without, elements read and written, LBOUND and UBOUND of each
 ' dimension, REDIM, ERASE, a SUB given one, records, a subscript out of
-' range
+' range, an element passed by reference and changed
 DECLARE SUB tally (h%())
+DECLARE SUB bump (v%)
 TYPE pt
   v AS INTEGER
 END TYPE
@@ -17,6 +18,8 @@ q#(2, 1, 0, 2, 1) = 1.25: q#(0, 0, 0, 0, 0) = q#(2, 1, 0, 2, 1) * 4
 PRINT q#(0, 0, 0, 0, 0); UBOUND(q#, 5)
 r(1, 0, 1, 0).v = 77: PRINT r(1, 0, 1, 0).v
 tally h%()
+bump h%(2, 2, 1, 3): bump h%(2, 2, 1, 3)
+PRINT h%(2, 2, 1, 3)
 x = h%(4, 1, 0, 2)
 PRINT "after"
 REDIM s$(1 TO 2, 3, 1, 1)
@@ -29,6 +32,9 @@ END
 oops:
 PRINT "err"; ERR
 RESUME NEXT
+SUB bump (v%)
+v% = v% + 1
+END SUB
 SUB tally (h%())
 FOR a = LBOUND(h%, 1) TO UBOUND(h%, 1)
   t& = t& + h%(a, 2, 1, 3)

@@ -442,6 +442,18 @@ void bcrt_elem_back(const char *name, int n, int i0, int i1, int i2, int lo, int
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* (an element of more than three dimensions: its subscripts in ix) */
+void bcrt_elem_back_n(const char *name, int n, const int *ix, int lo, int hi, int t, int mode) {
+    value_t x = take(lo, hi, t), *slot;
+    char kb[ARRAY_KEY_MAX];
+    sb_array_t *arr = array_find(name = akey(name, mode, kb));
+    error_t e = ERR_NONE;
+    if (arr && arr->ndims == n && array_get(name, ix, n, &slot) == ERR_NONE)
+        e = eval_store_fixed(slot, &x, arr->fixlen);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* LBOUND or UBOUND (upper) of array name's dimension dim */
 pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
     value_t r;

@@ -2722,11 +2722,9 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
         } else if (!e->paren && is_array_ref(e) && e->call.nargs > 0) {
             bv_t a[8];
             int ea, ty = arr_type(e->call.name);
-            if (e->call.nargs > 3 && ty != VAL_RECORD)
-                bc_not_yet(line, "an element of more than three dimensions passed by reference");
             sub_args(line, e->call.nargs, e->call.args, a);
             ea = array_elem_ix(line, e->call.name, e->call.nargs, a, ix[i]);
-            nix[i] = e->call.nargs > 3 ? 0 : e->call.nargs;
+            nix[i] = e->call.nargs;
             if (ty != pt) {
                 int c2 = h_ncarg;
                 carg(iconst(ERR_PARAM_MISMATCH), 0);
@@ -2788,6 +2786,18 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
             ? mk(hi_emit(HI_LOAD, TY_INT, VA(tmp[i]), -1, 0, NULL), -1, -1, VAL_STRING)
             : var_load(tmp[i]);
         x = dynv(x);
+        if (nix[i] > 3) {           /* (its subscripts in a block) */
+            int blk = alloca_of(TY_INT, 4 * nix[i]);
+            for (int j = 0; j < nix[i]; j++) st(blk, 4 * j, ix[i][j]);
+            c2 = h_ncarg;
+            carg(saddr(args[i]->call.name, (int)strlen(args[i]->call.name)), 0);
+            carg(iconst(nix[i]), 0);
+            carg(blk, 0);
+            carg_bv(x);
+            carg(iconst(arr_mode(args[i]->call.name)), 0);
+            call_end(c2, 7, "bcrt_elem_back_n", NULL);
+            continue;
+        }
         c2 = h_ncarg;
         carg(saddr(args[i]->call.name, (int)strlen(args[i]->call.name)), 0);
         carg(iconst(nix[i]), 0);
