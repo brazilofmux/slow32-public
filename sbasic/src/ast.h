@@ -174,6 +174,8 @@ typedef enum {
     STMT_PAINT,
     STMT_PALETTE,
     STMT_NEXT,
+    STMT_GFX_GET,       /* GET (x1, y1)-(x2, y2), array: the gfx node */
+    STMT_GFX_PUT,       /* PUT (x, y), array[, action]: the gfx node */
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -598,11 +600,16 @@ typedef struct stmt {
             struct expr *aux;       /* PAINT border color */
             int step1, step2;       /* STEP prefixes */
             int has_from;           /* LINE: first point present */
-            int box;                /* LINE: 0=line 1=B 2=BF */
+            int box;                /* LINE: 0=line 1=B 2=BF; PUT: its action (GFX_XOR...) */
             int preset;             /* PSET vs PRESET */
+            struct expr *target;    /* GET/PUT: the array (an EXPR_CALL, no
+                                       subscripts for the array's start) */
         } gfx;
     };
 } stmt_t;
+
+/* PUT's actions (gfx.box) */
+enum { GFX_XOR, GFX_PSET, GFX_PRESET, GFX_AND, GFX_OR };
 
 /* Expression constructors */
 expr_t *expr_literal(value_t val, int line);

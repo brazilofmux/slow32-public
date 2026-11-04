@@ -811,55 +811,30 @@ static error_t fn_fileexists(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* HEX$(n) - hexadecimal string */
-static error_t fn_hex(value_t *args, int nargs, value_t *out) {
+/* HEX$(n), OCT$(n): n's digits in base 16 or 8, as QuickBASIC prints
+ * them -- a negative INTEGER's 16 bits (HEX$(-1) is FFFF), anything
+ * else's 32 (HEX$(-1&), HEX$(-1!): FFFFFFFF) */
+static error_t radix_string(value_t *args, int nargs, int shift, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     int v;
     EVAL_CHECK(val_to_integer(&args[0], &v));
-    char buf[16];
-    /* Print as unsigned hex */
     unsigned int uv = (unsigned int)v;
-    int pos = 0;
-    if (uv == 0) {
-        buf[pos++] = '0';
-    } else {
-        char tmp[16];
-        int tpos = 0;
-        while (uv > 0) {
-            int d = uv & 0xF;
-            tmp[tpos++] = d < 10 ? '0' + d : 'A' + d - 10;
-            uv >>= 4;
-        }
-        while (tpos > 0) buf[pos++] = tmp[--tpos];
-    }
+    if (args[0].type == VAL_INTEGER) uv &= 0xFFFF;
+    char tmp[16], buf[16];
+    int tpos = 0, pos = 0;
+    do {
+        int d = uv & ((1u << shift) - 1);
+        tmp[tpos++] = (char)(d < 10 ? '0' + d : 'A' + d - 10);
+        uv >>= shift;
+    } while (uv > 0);
+    while (tpos > 0) buf[pos++] = tmp[--tpos];
     buf[pos] = '\0';
     *out = val_string_cstr(buf);
     return ERR_NONE;
 }
 
-/* OCT$(n) - octal string */
-static error_t fn_oct(value_t *args, int nargs, value_t *out) {
-    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    int v;
-    EVAL_CHECK(val_to_integer(&args[0], &v));
-    char buf[16];
-    unsigned int uv = (unsigned int)v;
-    int pos = 0;
-    if (uv == 0) {
-        buf[pos++] = '0';
-    } else {
-        char tmp[16];
-        int tpos = 0;
-        while (uv > 0) {
-            tmp[tpos++] = '0' + (uv & 7);
-            uv >>= 3;
-        }
-        while (tpos > 0) buf[pos++] = tmp[--tpos];
-    }
-    buf[pos] = '\0';
-    *out = val_string_cstr(buf);
-    return ERR_NONE;
-}
+static error_t fn_hex(value_t *args, int nargs, value_t *out) { return radix_string(args, nargs, 4, out); }
+static error_t fn_oct(value_t *args, int nargs, value_t *out) { return radix_string(args, nargs, 3, out); }
 
 /* BIN$(n) - binary string */
 static error_t fn_bin(value_t *args, int nargs, value_t *out) {

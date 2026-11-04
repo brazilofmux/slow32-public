@@ -2093,6 +2093,130 @@ static error_t exec_gfx(env_t *env, stmt_t *s) {
     return eval_gfx(&g);
 }
 
+/* an element's bytes, as QuickBASIC keeps a number: an INTEGER 2, a
+ * LONG and a SINGLE 4, a DOUBLE 8, little-endian -- a SINGLE's bits
+ * moved by hand, so a NaN's (a sprite's bytes may make one) are not
+ * quieted on the way */
+static int elem_bytes(val_type_t t) {
+    return t == VAL_INTEGER ? 2 : t == VAL_LONG || t == VAL_SINGLE ? 4 : t == VAL_DOUBLE ? 8 : 0;
+}
+
+static uint32_t single_bits(double d) {
+    uint64_t b;
+    uint32_t sign;
+    memcpy(&b, &d, 8);
+    sign = (uint32_t)(b >> 32) & 0x80000000u;
+    if (((b >> 52) & 0x7FF) == 0x7FF && (b & 0xFFFFFFFFFFFFFull))   /* a NaN: its payload */
+        return sign | 0x7F800000u | (uint32_t)((b >> 29) & 0x7FFFFF);
+    float f = (float)d;
+    uint32_t r;
+    memcpy(&r, &f, 4);
+    return r;
+}
+
+static double single_of_bits(uint32_t r) {
+    if ((r & 0x7F800000u) == 0x7F800000u && (r & 0x7FFFFF)) {
+        uint64_t b = ((uint64_t)(r & 0x80000000u) << 32) | 0x7FF0000000000000ull |
+                     ((uint64_t)(r & 0x7FFFFF) << 29);
+        double d;
+        memcpy(&d, &b, 8);
+        return d;
+    }
+    float f;
+    memcpy(&f, &r, 4);
+    return f;
+}
+
+static void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b) {
+    uint32_t w = 0;
+    if (t == VAL_DOUBLE) {
+        double d = v->type == VAL_DOUBLE || v->type == VAL_SINGLE ? v->dval : v->ival;
+        memcpy(b, &d, 8);               /* (SLOW-32 and its hosts: little-endian) */
+        return;
+    }
+    if (t == VAL_SINGLE) w = single_bits(v->type == VAL_SINGLE || v->type == VAL_DOUBLE ? v->dval : v->ival);
+    else w = (uint32_t)v->ival;
+    for (int i = 0; i < elem_bytes(t); i++) b[i] = (unsigned char)(w >> (8 * i));
+}
+
+static void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b) {
+    uint32_t w = 0;
+    if (t == VAL_DOUBLE) {
+        double d;
+        memcpy(&d, b, 8);
+        *v = val_double(d);
+        return;
+    }
+    for (int i = 0; i < elem_bytes(t); i++) w |= (uint32_t)b[i] << (8 * i);
+    if (t == VAL_INTEGER) *v = val_integer((short)w);
+    else if (t == VAL_LONG) *v = val_long((int)w);
+    else { v->type = VAL_SINGLE; v->dval = single_of_bits(w); }
+}
+
+error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int *idx) {
+    int x1 = g->x1, y1 = g->y1, x2 = g->x2, y2 = g->y2, start = 0, avail, sz, n;
+    sb_array_t *arr;
+    unsigned char *buf;
+    error_t err = ERR_NONE;
+    if (!sb_gfx_active())
+        return sb_gfx_degraded() ? ERR_NONE : ERR_ILLEGAL_FUNCTION_CALL;
+    if (nidx) {
+        value_t *e;
+        EVAL_CHECK(eval_array_for(name, nidx, &arr));
+        EVAL_CHECK(array_get(name, (int *)idx, nidx, &e));
+        start = (int)(e - arr->data);
+    } else if (!(arr = array_find(name)))
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    if (!(sz = elem_bytes(arr->elem_type))) return ERR_TYPE_MISMATCH;
+    avail = (arr->total - start) * sz;
+    if (g->step1) {
+        int lx, ly;
+        sb_gfx_last(&lx, &ly);
+        x1 += lx;
+        y1 += ly;
+    }
+    if (g->type == STMT_GFX_GET) {
+        if (g->step2) { x2 += x1; y2 += y1; }  /* (relative to the first, as LINE's) */
+        int lx = x1 < x2 ? x1 : x2, hx = x1 < x2 ? x2 : x1;
+        int ly = y1 < y2 ? y1 : y2, hy = y1 < y2 ? y2 : y1;
+        n = sb_gfx_image_size(hx - lx + 1, hy - ly + 1);
+        if (n > avail) return ERR_ILLEGAL_FUNCTION_CALL;
+        int ne = (n + sz - 1) / sz;
+        if (!(buf = calloc((size_t)ne, (size_t)sz))) return ERR_OUT_OF_MEMORY;
+        /* (the last element's bytes past the image kept as they are) */
+        elem_to_bytes(&arr->data[start + ne - 1], arr->elem_type, buf + (ne - 1) * sz);
+        sb_gfx_get(lx, ly, hx, hy, buf);
+        for (int i = 0; i < ne; i++) {
+            value_t nv;
+            elem_from_bytes(&nv, arr->elem_type, buf + i * sz);
+            val_clear(&arr->data[start + i]);
+            arr->data[start + i] = nv;
+        }
+        free(buf);
+        sb_gfx_set_last(x2, y2);
+        return ERR_NONE;
+    }
+    if (!(buf = malloc((size_t)avail + 1))) return ERR_OUT_OF_MEMORY;
+    for (int i = 0; start + i < arr->total; i++)
+        elem_to_bytes(&arr->data[start + i], arr->elem_type, buf + i * sz);
+    if (sb_gfx_put(x1, y1, buf, avail, g->box) < 0) err = ERR_ILLEGAL_FUNCTION_CALL;
+    free(buf);
+    return err;
+}
+
+static error_t exec_gfx_getput(env_t *env, stmt_t *s) {
+    int x1 = 0, y1 = 0, x2 = 0, y2 = 0, idx[MAX_ARRAY_DIMS];
+    expr_t *t = s->gfx.target;
+    EVAL_CHECK(gfx_eval_int(env, s->gfx.x1, &x1));
+    EVAL_CHECK(gfx_eval_int(env, s->gfx.y1, &y1));
+    if (s->gfx.x2) EVAL_CHECK(gfx_eval_int(env, s->gfx.x2, &x2));
+    if (s->gfx.y2) EVAL_CHECK(gfx_eval_int(env, s->gfx.y2, &y2));
+    for (int i = 0; i < t->call.nargs; i++) EVAL_CHECK(gfx_eval_int(env, t->call.args[i], &idx[i]));
+    gfx_op_t g = { s->type, x1, y1, x2, y2, -1, -1, 1, 0, 0, s->gfx.step1, s->gfx.step2, 1,
+                   s->gfx.box, 0 };
+    return eval_gfx_getput(&g, t->call.name, t->call.nargs, idx);
+}
+
 /* SCREEN mode -- for compiled code too */
 error_t eval_screen(int mode) {
     if (sb_gfx_screen(mode) == -2)
@@ -3706,6 +3830,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_PAINT:
         case STMT_PALETTE:
             return exec_gfx(env, s);
+
+        case STMT_GFX_GET:
+        case STMT_GFX_PUT:
+            return exec_gfx_getput(env, s);
 
         case STMT_CLEAR:
             env_clear(env);

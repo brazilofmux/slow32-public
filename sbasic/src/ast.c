@@ -729,6 +729,9 @@ void stmt_free(stmt_t *s) {
             case STMT_CIRCLE:
             case STMT_PAINT:
             case STMT_PALETTE:
+            case STMT_GFX_GET:
+            case STMT_GFX_PUT:
+                expr_free(s->gfx.target);
                 expr_free(s->gfx.x1);
                 expr_free(s->gfx.y1);
                 expr_free(s->gfx.x2);
@@ -1277,7 +1280,10 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_CIRCLE:
     case STMT_PAINT:
     case STMT_PALETTE:
+    case STMT_GFX_GET:
+    case STMT_GFX_PUT:
         X(s->gfx.x1); X(s->gfx.y1); X(s->gfx.x2); X(s->gfx.y2); X(s->gfx.color); X(s->gfx.aux);
+        X(s->gfx.target);
         break;
     default:
         break;

@@ -38,11 +38,32 @@ void sb_gfx_cls(void);
  * animates already-drawn pixels. */
 void sb_gfx_palette(int attr, int rgb);
 
+/* GET and PUT's images, laid out as QuickBASIC lays them out for the
+ * mode: two 16-bit words, the width times the bits a pixel has in one
+ * plane, and the height; then the rows, each a plane after another
+ * (EGA/VGA 7, 8, 9, 12: four planes of a bit; CGA 1: one of two bits;
+ * 2: one of one; 13: one of a byte), a plane's row a whole number of
+ * bytes, the leftmost pixel in the high bits. */
+
+/* the bytes an image of w by h pixels takes (its header too), 0 with no screen */
+int sb_gfx_image_size(int w, int h);
+
+/* the rectangle x1..x2, y1..y2 (in order) into buf (sb_gfx_image_size
+ * bytes): a pixel off the screen is 0 */
+void sb_gfx_get(int x1, int y1, int x2, int y2, unsigned char *buf);
+
+/* buf's image (len bytes there) drawn with its top left at x, y by
+ * action (0 XOR, 1 PSET, 2 PRESET, 3 AND, 4 OR); -1 when it is not all
+ * on the screen or len is short of it (QuickBASIC: Illegal function
+ * call), else 0 */
+int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action);
+
 /* POINT(x, y): pixel value, or -1 (no screen / out of range). */
 int sb_gfx_point(int x, int y);
 
 /* Last referenced point, for STEP and for LINE -(x,y). */
 void sb_gfx_last(int *x, int *y);
+void sb_gfx_set_last(int x, int y);
 
 /* Viewer key queue -> INKEY$: returns string length (1, or 2 with
  * out[0]=0 for extended scancodes, GW-style), 0 if no key. */

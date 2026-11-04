@@ -160,6 +160,10 @@ typedef struct {
     int has_x1, has_color, has_aux, step1, step2, has_from, box, preset;
 } gfx_op_t;
 error_t eval_gfx(const gfx_op_t *g);
+/* GET (x1, y1)-(x2, y2), a and PUT (x, y), a, action (g->type
+ * STMT_GFX_GET or _PUT, g->box the action): a, array name's elements
+ * from the one nidx subscripts (idx) name, or its first (nidx 0) */
+error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int *idx);
 error_t eval_screen(int mode);
 void eval_lprint_begin(print_redirect_t *saved);
 error_t eval_dir(int kind, const value_t *path);

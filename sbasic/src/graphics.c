@@ -124,6 +124,11 @@ int sb_gfx_degraded(void) { return tube_state == -1; }
 int sb_gfx_width(void)    { return scr_w; }
 int sb_gfx_height(void)   { return scr_h; }
 
+void sb_gfx_set_last(int x, int y) {
+    last_x = x;
+    last_y = y;
+}
+
 void sb_gfx_last(int *x, int *y) {
     *x = last_x;
     *y = last_y;
@@ -324,6 +329,86 @@ void sb_gfx_palette(int attr, int rgb) {
         palette[attr & (scr_colors - 1)] = (uint32_t)rgb & 0xFFFFFFu;
     }
     flip();
+}
+
+/* --- GET and PUT's images ------------------------------------------- */
+
+/* the mode's layout: bits a pixel has in a plane, and planes */
+static void image_layout(int *bits, int *planes) {
+    switch (scr_mode) {
+        case 13: *bits = 8; *planes = 1; break;
+        case 1:  *bits = 2; *planes = 1; break;
+        case 2:  *bits = 1; *planes = 1; break;
+        default: *bits = 1; *planes = 4; break;     /* 7, 8, 9, 12 */
+    }
+}
+
+static int image_row(int w, int bits) { return (w * bits + 7) / 8; }
+
+int sb_gfx_image_size(int w, int h) {
+    int bits, planes;
+    if (!scr_mode) return 0;
+    image_layout(&bits, &planes);
+    return 4 + image_row(w, bits) * planes * h;
+}
+
+void sb_gfx_get(int x1, int y1, int x2, int y2, unsigned char *buf) {
+    int bits, planes, w = x2 - x1 + 1, h = y2 - y1 + 1, row, mask;
+    image_layout(&bits, &planes);
+    row = image_row(w, bits);
+    mask = (1 << bits) - 1;
+    buf[0] = (unsigned char)(w * bits);
+    buf[1] = (unsigned char)((w * bits) >> 8);
+    buf[2] = (unsigned char)h;
+    buf[3] = (unsigned char)(h >> 8);
+    memset(buf + 4, 0, (size_t)row * planes * h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int sx = x1 + x, sy = y1 + y, c;
+            if (sx < 0 || sx >= scr_w || sy < 0 || sy >= scr_h) continue;
+            c = pixels[sy * scr_w + sx];
+            for (int p = 0; p < planes; p++) {
+                int v = planes > 1 ? (c >> p) & 1 : c & mask;
+                int bit = x * bits;
+                unsigned char *q = buf + 4 + (y * planes + p) * row + bit / 8;
+                *q |= (unsigned char)(v << (8 - bits - bit % 8));
+            }
+        }
+}
+
+int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action) {
+    int bits, planes, w, h, row, mask, all;
+    if (!scr_mode || len < 4) return -1;
+    image_layout(&bits, &planes);
+    w = (short)(buf[0] | buf[1] << 8) / bits;
+    h = (short)(buf[2] | buf[3] << 8);
+    row = image_row(w, bits);
+    if (w <= 0 || h <= 0 || 4 + row * planes * h > len) return -1;
+    if (x < 0 || y < 0 || x + w > scr_w || y + h > scr_h) return -1;
+    mask = (1 << bits) - 1;
+    all = planes > 1 ? 15 : mask;               /* a pixel's colors */
+    for (int yy = 0; yy < h; yy++)
+        for (int xx = 0; xx < w; xx++) {
+            int c = 0, bit = xx * bits, old, nv;
+            for (int p = 0; p < planes; p++) {
+                const unsigned char *q = buf + 4 + (yy * planes + p) * row + bit / 8;
+                int v = (*q >> (8 - bits - bit % 8)) & mask;
+                c |= planes > 1 ? v << p : v;
+            }
+            old = pixels[(y + yy) * scr_w + x + xx];
+            switch (action) {
+                case 1:  nv = c; break;
+                case 2:  nv = ~c & all; break;
+                case 3:  nv = old & c; break;
+                case 4:  nv = old | c; break;
+                default: nv = old ^ c; break;
+            }
+            pixels[(y + yy) * scr_w + x + xx] = (uint8_t)nv;
+        }
+    last_x = x;
+    last_y = y;
+    flip();
+    return 0;
 }
 
 int sb_gfx_point(int x, int y) {

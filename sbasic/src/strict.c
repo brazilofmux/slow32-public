@@ -228,6 +228,11 @@ static void walk_list(check_t *c, stmt_t *s) {
                      s->type == STMT_SPLIT ? "SPLIT" : s->type == STMT_TRACE ? "TRACE" : "OPTION EXPLICIT");
             finding(c, s->line, "not-qb", d);
             break;
+        case STMT_GFX_GET: case STMT_GFX_PUT:
+            /* (the array named alone: one that must be DIMmed, as LBOUND's) */
+            if (s->gfx.target && s->gfx.target->call.nargs == 0)
+                push(&c->u->bounds, s->gfx.target->call.name, seq, s->line, 0);
+            break;
         case STMT_TYPE_DEF:
             /* QuickBASIC's TYPEs hold fixed-length strings only */
             for (int i = 0; i < s->type_def.nfields; i++)

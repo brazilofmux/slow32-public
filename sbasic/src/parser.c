@@ -1719,10 +1719,58 @@ static stmt_t *parse_name_stmt(parser_t *p) {
     return stmt_name(oldname, newname, line);
 }
 
-/* GET #h, [pos], var / PUT #h, [pos], var */
+static int parse_gfx_coord(parser_t *p, expr_t **x, expr_t **y, int *step);
+
+/* GET [STEP](x1, y1)-[STEP](x2, y2), array[(subscripts)]
+ * PUT [STEP](x, y), array[(subscripts)][, PSET|PRESET|AND|OR|XOR]
+ * (GET or PUT consumed): the graphics forms, a screen's rectangle kept
+ * in a numeric array as QuickBASIC lays it out */
+static stmt_t *parse_gfx_get_put(parser_t *p, int is_put, int line) {
+    stmt_t *s = stmt_alloc(is_put ? STMT_GFX_PUT : STMT_GFX_GET, line);
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &s->gfx.step1)) { stmt_free(s); return NULL; }
+    if (!is_put) {
+        if (!expect(p, TOK_MINUS) ||
+            !parse_gfx_coord(p, &s->gfx.x2, &s->gfx.y2, &s->gfx.step2)) { stmt_free(s); return NULL; }
+    }
+    if (!expect(p, TOK_COMMA)) { stmt_free(s); return NULL; }
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error_detail(p, ERR_SYNTAX, "Expected an array");
+        stmt_free(s); return NULL;
+    }
+    expr_t *t = parse_primary(p);
+    if (!t) { stmt_free(s); return NULL; }
+    if (t->type == EXPR_VARIABLE) {     /* the array named alone: its first element */
+        expr_t *c = expr_call(t->var.name, t->line);
+        expr_free(t);
+        t = c;
+        if (!t) { parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL; }
+    }
+    s->gfx.target = t;
+    if (t->type != EXPR_CALL) {
+        parser_error_detail(p, ERR_SYNTAX, "Expected an array");
+        stmt_free(s); return NULL;
+    }
+    s->gfx.box = GFX_XOR;
+    if (is_put && lexer_match(&p->lex, TOK_COMMA)) {
+        token_type_t k = lexer_peek(&p->lex)->type;
+        s->gfx.box = k == TOK_PSET ? GFX_PSET : k == TOK_PRESET ? GFX_PRESET : k == TOK_AND ? GFX_AND :
+                     k == TOK_OR ? GFX_OR : k == TOK_XOR ? GFX_XOR : -1;
+        if (s->gfx.box < 0) {
+            parser_error_detail(p, ERR_SYNTAX, "Expected PSET, PRESET, AND, OR or XOR");
+            stmt_free(s); return NULL;
+        }
+        lexer_skip(&p->lex);
+    }
+    return s;
+}
+
+/* GET #h, [pos], var / PUT #h, [pos], var -- or the graphics forms */
 static stmt_t *parse_get_put(parser_t *p, int is_put) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex); /* consume GET or PUT */
+    if (lexer_check(&p->lex, TOK_LPAREN) || lexer_check(&p->lex, TOK_STEP))
+        return parse_gfx_get_put(p, is_put, line);
     expr_t *handle = parse_file_handle(p);
     if (!handle) return NULL;
     if (!lexer_match(&p->lex, TOK_COMMA)) {
