@@ -1,0 +1,5 @@
+PRINT "start"
+SELECT CASE "x"
+CASE 1: PRINT 1
+END SELECT
+PRINT "not reached"

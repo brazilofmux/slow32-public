@@ -108,6 +108,10 @@ void bcrt_unref(int p) {
     if (p) string_unref((sb_string_t *)(intptr_t)p);
 }
 
+/* the same for a value of a run-time type: only a string's counts */
+int bcrt_vref(int lo, int t) { return t == VAL_STRING ? bcrt_ref(lo) : lo; }
+void bcrt_vunref(int lo, int t) { if (t == VAL_STRING) bcrt_unref(lo); }
+
 /* a string variable's first value */
 int bcrt_str_empty(void) {
     value_t v = val_default(VAL_STRING);

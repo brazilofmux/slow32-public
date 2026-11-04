@@ -1599,6 +1599,180 @@ static void bc_read(stmt_t *s) {
     }
 }
 
+/* --- EXIT, SELECT CASE, SWAP ----------------------------------------- */
+
+/* the WHILEs and DOs being lowered, innermost last: their kind and the
+ * block after them */
+static struct { int kind, exit; } bc_loops[64];
+static int bc_nloops;
+
+static void loop_push(int kind, int blk) {
+    if (bc_nloops == 64) { fprintf(stderr, "s32-bc: loops nested past 64\n"); exit(1); }
+    bc_loops[bc_nloops].kind = kind;
+    bc_loops[bc_nloops++].exit = blk;
+}
+
+/* EXIT FOR: past the innermost open FOR's NEXT; EXIT WHILE or DO: past
+ * the innermost loop of its kind (lower_exit) */
+static void bc_exit(stmt_t *s) {
+    int k = s->exit_stmt.what;
+    if (k == EXIT_FOR && bc_nfors > 0) {
+        goto_blk(bc_fors[bc_nfors - 1].exit);
+        return;
+    }
+    if (k == EXIT_WHILE || k == EXIT_DO)
+        for (int d = bc_nloops - 1; d >= 0; d--)
+            if (bc_loops[d].kind == k) {
+                goto_blk(bc_loops[d].exit);
+                return;
+            }
+    bc_not_yet(s->line, k == EXIT_SUB || k == EXIT_FUNCTION ? "EXIT SUB and EXIT FUNCTION"
+                                                            : "an EXIT outside its loop");
+}
+
+/* a value kept across blocks (SELECT CASE's test): its words in slots;
+ * each read of it a value of its own (a string's reference taken),
+ * released once at the end */
+typedef struct { int st, a[3]; } held_t;
+
+static held_t hold(bv_t x) {
+    held_t h;
+    int n = x.st == ST_DYN ? 3 : st_flt(x.st) ? 2 : 1;
+    h.st = x.st;
+    h.a[0] = h.a[1] = h.a[2] = -1;
+    for (int i = 0; i < n; i++) {
+        h.a[i] = alloca_of(TY_INT, 4);
+        hi_emit(HI_STORE, TY_INT, h.a[i], i == 0 ? x.lo : i == 1 ? x.hi : x.t, 0, NULL);
+    }
+    return h;
+}
+
+static bv_t held(const held_t *h) {
+    int w[3] = { -1, -1, -1 }, cb;
+    for (int i = 0; i < 3; i++)
+        if (h->a[i] >= 0) w[i] = hi_emit(HI_LOAD, TY_INT, h->a[i], -1, 0, NULL);
+    if (h->st == VAL_STRING || h->st == ST_DYN) {
+        cb = h_ncarg;
+        carg(w[0], 0);
+        if (h->st == ST_DYN) carg(w[2], 0);
+        w[0] = call_end(cb, h->st == ST_DYN ? 2 : 1, h->st == ST_DYN ? "bcrt_vref" : "bcrt_ref", NULL);
+    }
+    return mk(w[0], w[1], w[2], h->st);
+}
+
+static void unhold(const held_t *h) {
+    int cb;
+    if (h->st != VAL_STRING && h->st != ST_DYN) return;
+    cb = h_ncarg;
+    carg(hi_emit(HI_LOAD, TY_INT, h->a[0], -1, 0, NULL), 0);
+    if (h->st == ST_DYN) carg(hi_emit(HI_LOAD, TY_INT, h->a[2], -1, 0, NULL), 0);
+    call_end(cb, h->st == ST_DYN ? 2 : 1, h->st == ST_DYN ? "bcrt_vunref" : "bcrt_unref", NULL);
+}
+
+/* SELECT CASE, as select_match: the test evaluated once; the clauses in
+ * order, each's matches in order until one holds (a range's bounds
+ * both evaluated, then both compared); CASE ELSE (the last one) when
+ * none does */
+static void bc_select(stmt_t *s) {
+    held_t t = hold(expr(s->select_stmt.test_expr));
+    int n = 0, k, else_k = -1, end = new_blk(), none = new_blk(), *hit;
+    case_clause_t *c;
+    for (c = s->select_stmt.clauses; c; c = c->next) n++;
+    hit = malloc((size_t)(n ? n : 1) * sizeof(int));
+    if (!hit) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    for (k = 0, c = s->select_stmt.clauses; c; c = c->next, k++) {
+        hit[k] = new_blk();
+        if (c->is_else) { else_k = k; continue; }
+        for (int i = 0; i < c->nmatches; i++) {
+            case_match_t *m = &c->matches[i];
+            int yes, next = new_blk();
+            if (m->match_type == 1) {
+                bv_t lo = expr(m->expr1), hi = expr(m->expr2);
+                int a = compare01(CMP_GE, held(&t), lo);
+                yes = bin(HI_AND, a, compare01(CMP_LE, held(&t), hi));
+            } else {
+                bv_t v = expr(m->expr1);
+                yes = compare01(m->match_type == 2 ? (int)m->is_op : CMP_EQ, held(&t), v);
+            }
+            hi_emit(HI_BRC, TY_VOID, yes, hit[k], next, NULL);
+            bc_live = 0;
+            begin_blk(next);
+        }
+    }
+    goto_blk(else_k >= 0 ? hit[else_k] : none);
+    for (k = 0, c = s->select_stmt.clauses; c; c = c->next, k++) {
+        begin_blk(hit[k]);
+        unhold(&t);
+        bc_stmts(c->body);
+        goto_blk(end);
+    }
+    begin_blk(none);
+    unhold(&t);
+    goto_blk(end);
+    begin_blk(end);
+    free(hit);
+}
+
+/* SWAP a, b: two variables or elements of one type, their values
+ * exchanged as they are (no conversion, no reference counted) */
+typedef struct { var_t *v; int ea, ty; } lval_t;
+
+static int lval_of(expr_t *e, int line, lval_t *lv) {
+    lv->v = NULL;
+    lv->ea = -1;
+    if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) && strncmp(e->var.name, "FN", 2) != 0) {
+        lv->v = var_get(e->var.name, e->var.var_type, line);
+        lv->ty = lv->v->type;
+        return 1;
+    }
+    if (e->type == EXPR_CALL && !is_builtin_call(e->call.name) && strncmp(e->call.name, "FN", 2) != 0) {
+        bv_t a[3];
+        sub_args(line, e->call.nargs, e->call.args, a);
+        lv->ea = array_elem(line, e->call.name, e->call.nargs, a);
+        lv->ty = arr_type(e->call.name);
+        return 1;
+    }
+    return 0;
+}
+
+/* its value's words, a SINGLE's as a double (a variable's float exact) */
+static bv_t lval_load(const lval_t *lv) {
+    if (lv->ea >= 0)
+        return mk(ld(lv->ea, 4), st_flt(lv->ty) ? ld(lv->ea, 8) : -1, -1, lv->ty);
+    if (lv->ty == VAL_STRING) return mk(hi_emit(HI_LOAD, TY_INT, lv->v->a, -1, 0, NULL), -1, -1, VAL_STRING);
+    return var_load(lv->v);
+}
+
+static void lval_store(const lval_t *lv, bv_t x) {
+    if (lv->ea >= 0) {
+        st(lv->ea, 4, x.lo);
+        if (st_flt(lv->ty)) st(lv->ea, 8, x.hi);
+        return;
+    }
+    if (lv->ty == VAL_SINGLE) {         /* (a single's value: its float exactly) */
+        int w = call_d1("__fp64_cvt_DtoF", x.lo, x.hi, NULL);
+        h_ty[w] = TY_FLOAT;
+        hi_emit(HI_STORE, TY_FLOAT, lv->v->a, w, 0, NULL);
+        return;
+    }
+    hi_emit(HI_STORE, TY_INT, lv->v->a, x.lo, 0, NULL);
+    if (lv->ty == VAL_DOUBLE) hi_emit(HI_STORE, TY_INT, lv->v->ahi, x.hi, 0, NULL);
+}
+
+static void bc_swap(stmt_t *s) {
+    lval_t a, b;
+    bv_t x, y;
+    if (!lval_of(s->swap_stmt.lhs, s->line, &a) || !lval_of(s->swap_stmt.rhs, s->line, &b)) {
+        bc_not_yet(s->line, "this SWAP");
+        return;
+    }
+    if (a.ty != b.ty) { bc_not_yet(s->line, "a SWAP of two types"); return; }
+    x = lval_load(&a);
+    y = lval_load(&b);
+    lval_store(&a, y);
+    lval_store(&b, x);
+}
+
 static void bc_stmt(stmt_t *s) {
     if (!bc_live && s->type != STMT_LABEL) dead_blk();
     switch (s->type) {
@@ -1662,7 +1836,9 @@ static void bc_stmt(stmt_t *s) {
         hi_emit(HI_BRC, TY_VOID, c, bb, bx, NULL);
         bc_live = 0;
         begin_blk(bb);
+        loop_push(EXIT_WHILE, bx);
         bc_stmts(s->while_stmt.body);
+        bc_nloops--;
         goto_blk(bh);
         begin_blk(bx);
         break;
@@ -1737,7 +1913,9 @@ static void bc_stmt(stmt_t *s) {
         }
         goto_blk(bb);
         begin_blk(bb);
+        loop_push(EXIT_DO, bx);
         bc_stmts(s->do_loop.body);
+        bc_nloops--;
         goto_blk(bt);
         begin_blk(bt);
         if (s->do_loop.post_cond) {
@@ -1750,6 +1928,15 @@ static void bc_stmt(stmt_t *s) {
         begin_blk(bx);
         break;
     }
+    case STMT_EXIT:
+        bc_exit(s);
+        break;
+    case STMT_SELECT:
+        bc_select(s);
+        break;
+    case STMT_SWAP:
+        bc_swap(s);
+        break;
     default:
         bc_not_yet(s->line, stmt_word(s->type));
         break;
@@ -1944,6 +2131,7 @@ static void hl_func(Node *fn) {
     bc_nrets = 0;
     bc_ret_blk = -1;
     bc_nfail = 0;
+    bc_nloops = 0;
     bc_nforslots = 0;
     bc_nanames = 0;
     entry = new_blk();
