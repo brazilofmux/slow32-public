@@ -1094,6 +1094,21 @@ static inline __attribute__((always_inline)) error_t eval_unary_in(unaryop_t op,
     return err;
 }
 
+/* a string variable QBasic concatenates by reference: one of the
+ * variable-length kind that exists (not a fixed-length string, an array's
+ * element, or anything not a variable) */
+static int lazy_string_var(env_t *env, const char *name) {
+    var_entry_t *v = env_entry(env, name);
+    const value_t *x;
+    if (!v) {                           /* (none yet: its name says what it will be) */
+        size_t n = strlen(name);
+        return n && name[n - 1] == '$';
+    }
+    if (v->fixlen) return 0;
+    x = v->link ? v->link : &v->value;
+    return x->type == VAL_STRING;
+}
+
 static inline __attribute__((always_inline)) error_t eval_binary_in(binop_t op, value_t *left, value_t *right, value_t *out) {
     error_t err = ERR_NONE;
     switch (op) {
@@ -1192,8 +1207,28 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
 
         case EXPR_BINARY: {
             value_t left, right;
+            error_t err;
+            if (e->binary.op == OP_ADD && e->binary.left->type == EXPR_VARIABLE &&
+                e->binary.right->type != EXPR_LITERAL &&
+                (e->binary.right->type != EXPR_VARIABLE || find_proc(e->binary.right->var.name)) &&
+                lazy_string_var(env, e->binary.left->var.name)) {
+                /* s$ + e: QBasic reads s$ as it concatenates, after e --
+                 * a FUNCTION in e that changes s$ is seen (s$ = s$ + f$
+                 * appends to s$ as f$ leaves it); reading s$ does nothing
+                 * else, so e first is the same */
+                EVAL_CHECK(eval_expr(env, e->binary.right, &right));
+                err = eval_expr(env, e->binary.left, &left);
+                if (err != ERR_NONE) {
+                    val_clear(&right);
+                    return err;
+                }
+                err = eval_binary_in(e->binary.op, &left, &right, out);
+                val_clear(&left);
+                val_clear(&right);
+                return err;
+            }
             EVAL_CHECK(eval_expr(env, e->binary.left, &left));
-            error_t err = eval_expr(env, e->binary.right, &right);
+            err = eval_expr(env, e->binary.right, &right);
             if (err != ERR_NONE) {
                 val_clear(&left);
                 return err;

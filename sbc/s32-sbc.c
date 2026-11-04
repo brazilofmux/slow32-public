@@ -205,6 +205,7 @@ static int is_function_call(const expr_t *e) {
  * is the caller's env, its parameters bound in a child of it) */
 static int is_const_name(const char *name);
 static int predict_name(const char *name);
+static int lazy_concat(const expr_t *e);
 static int deffn_index(const expr_t *e) {
     if (e->type != EXPR_CALL || nat_local || nfnctx >= 8 ||
         is_array_name(e->call.name) || proc_index(e->call.name) >= 0)
@@ -399,8 +400,14 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
             int bin = e->type == EXPR_BINARY;
             snprintf(l, sizeof l, "%s->%s.left", path, bin ? "binary" : "compare");
             snprintf(r, sizeof r, "%s->%s.right", path, bin ? "binary" : "compare");
-            int u = emit_expr(out, bin ? e->binary.left : e->compare.left, l);
-            int w = emit_expr(out, bin ? e->binary.right : e->compare.right, r);
+            int u, w;
+            if (bin && lazy_concat(e)) {        /* (s$ read after e, as QBasic reads it) */
+                w = emit_expr(out, e->binary.right, r);
+                u = emit_expr(out, e->binary.left, l);
+            } else {
+                u = emit_expr(out, bin ? e->binary.left : e->compare.left, l);
+                w = emit_expr(out, bin ? e->binary.right : e->compare.right, r);
+            }
             fprintf(out, "    err = eval_%s(%d, &T[%d], &T[%d], &T[%d]); VAL_CLEAR(&T[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n",
                     bin ? "binary" : "compare", bin ? (int)e->binary.op : (int)e->compare.op,
                     u, w, t, u, w);
@@ -483,6 +490,20 @@ static int emit_args(FILE *out, expr_t *const *args, int n, const char *base, in
  * A statement's native version runs when its guard holds -- every
  * variable it names cached, of the type its name predicts -- and its
  * generic version otherwise.  Types: */
+
+/* s$ + e, s$ a string variable of the variable-length kind and e more
+ * than a constant or a variable: QBasic reads s$ as it concatenates,
+ * after e (a FUNCTION in e that changes s$ is seen) -- the interpreter's
+ * EXPR_BINARY, which takes e first; reading s$ does nothing else */
+static int lazy_concat(const expr_t *e) {
+    const expr_t *l = e->binary.left, *r = e->binary.right;
+    if (e->binary.op != OP_ADD || l->type != EXPR_VARIABLE || r->type == EXPR_LITERAL) return 0;
+    if (r->type == EXPR_VARIABLE && proc_index(r->var.name) < 0) return 0;
+    if (predict_name(l->var.name) != N_STRING) return 0;
+    for (int j = 0; j < nfixeds; j++)
+        if (strcasecmp(fixeds[j], l->var.name) == 0) return 0;
+    return 1;
+}
 
 static int predict_name(const char *name) {
     size_t n = strlen(name);
@@ -879,8 +900,13 @@ static int nat_emit(FILE *out, const expr_t *e, char *name) {
                 fprintf(out, "    value_t %s = val_copy(%s);\n", name, var_ptr(e->var.name));
                 return t;
             case EXPR_BINARY: {             /* + of two strings */
-                nat_emit(out, e->binary.left, a);
-                nat_emit(out, e->binary.right, b);
+                if (lazy_concat(e)) {       /* (s$ read after e, as QBasic reads it) */
+                    nat_emit(out, e->binary.right, b);
+                    nat_emit(out, e->binary.left, a);
+                } else {
+                    nat_emit(out, e->binary.left, a);
+                    nat_emit(out, e->binary.right, b);
+                }
                 fprintf(out, "    value_t %s; err = val_add(&%s, &%s, &%s); VAL_CLEAR(&%s); VAL_CLEAR(&%s); " CHECK "\n",
                         name, a, b, name, a, b);
                 return t;

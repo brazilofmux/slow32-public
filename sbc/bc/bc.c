@@ -1539,6 +1539,21 @@ static int compare_expr(expr_t *e) {
     return compare01(e->compare.op, a, b);
 }
 
+
+/* s$ + e, s$ a string variable of the variable-length kind and e more
+ * than a constant or a variable: QBasic reads s$ as it concatenates,
+ * after e (a FUNCTION in e that changes s$ is seen) -- as the
+ * interpreter's EXPR_BINARY; reading s$ does nothing else */
+static int lazy_concat(const expr_t *e) {
+    const expr_t *l = e->binary.left, *r = e->binary.right;
+    var_t *v;
+    if (e->binary.op != OP_ADD || l->type != EXPR_VARIABLE || r->type == EXPR_LITERAL) return 0;
+    if (r->type == EXPR_VARIABLE && !is_function(r->var.name)) return 0;
+    if (name_type(l->var.name) != VAL_STRING) return 0;
+    v = var_find(l->var.name);
+    return !v || !v->fixlen;
+}
+
 static bv_t expr(expr_t *e) {
     switch (e->type) {
     case EXPR_LITERAL:
@@ -1575,7 +1590,14 @@ static bv_t expr(expr_t *e) {
             return var_load(v);
         }
     case EXPR_BINARY: {
-        bv_t a = expr(e->binary.left), b = expr(e->binary.right);
+        bv_t a, b;
+        if (lazy_concat(e)) {           /* (s$ read after e, as QBasic reads it) */
+            b = expr(e->binary.right);
+            a = expr(e->binary.left);
+        } else {
+            a = expr(e->binary.left);
+            b = expr(e->binary.right);
+        }
         return binary(e->binary.op, a, b);
     }
     case EXPR_COMPARE:          /* -1 or 0, an INTEGER */

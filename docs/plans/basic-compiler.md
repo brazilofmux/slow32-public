@@ -521,9 +521,22 @@ another label in the handler keeps it handling, GOTO 0 there stops the
 program with the error; out of stack in a procedure is not trapped; an
 untrapped ERROR n prints its error's message (it printed "ON ERROR
 GOTO"), "Unprintable error" for a number with none.  Open: COMMON
-SHARED a() (an array) is still passed over; and s$ = s$ + f$, where f$
-changes s$, appends to s$ as f$ leaves it in QBasic (an append in
-place), not as it was.
+SHARED a() (an array) is still passed over.
+
+Then the last of the order QBasic evaluates in (concatorder.bas): in
+s$ + e, a variable-length string variable s$ is read as the two are
+joined, after e -- so s$ = s$ + f$, f$ a FUNCTION that changes s$,
+appends to s$ as f$ leaves it, and s$ + f$ + ":" too; s$ + ":" + f$
+does not (s$ + ":" is made first), nor an array's element, a
+fixed-length string, or a number.  All three take e first there
+(reading s$ does nothing else): the interpreter's EXPR_BINARY,
+s32-sbc's and s32-bc's lazy_concat.
+
+Where it stands (2026-11-04): 94 of the 100 corpus programs QBasic
+loads compile, and the six left are the four that run machine code
+(CALL ABSOLUTE, BLOADed code: not to be done, W^X) and two that only
+load because QB64's _ continues a line.  Everything QBasic was asked
+along the way is pinned in a test that prints what QBasic prints.
 
 Older list, by count: SCREEN
 with arguments left out, names with a dot
