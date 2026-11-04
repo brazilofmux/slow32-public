@@ -382,6 +382,14 @@ pair_t bcrt_bound(const char *name, int dim, int upper, int mode) {
 
 void bcrt_cls(void) { eval_cls(); }
 
+/* DRAW s$ (eval_draw), the string taken */
+void bcrt_draw(int lo, int hi, int t) {
+    value_t v = take(lo, hi, t);
+    error_t e = eval_draw(&v);
+    val_clear(&v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* CLS mode (eval_cls_mode) */
 void bcrt_cls_mode(int m) {
     error_t e = eval_cls_mode(m);

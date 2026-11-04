@@ -3063,6 +3063,13 @@ static void bc_stmt(stmt_t *s) {
         if (bc_ret_blk < 0) bc_ret_blk = new_blk();
         goto_blk(bc_ret_blk);
         break;
+    case STMT_DRAW: {           /* DRAW s$ (eval_draw) */
+        bv_t x = dynv(expr(s->shell_stmt.command));
+        int cb = h_ncarg;
+        carg_bv(x);
+        call_end(cb, 3, "bcrt_draw", NULL);
+        break;
+    }
     case STMT_RUN:              /* the program again, all of it cleared (bcrt_rerun) */
         call_void("bcrt_rerun");
         goto_blk(new_blk());    /* (never taken: bcrt_rerun does not return) */
