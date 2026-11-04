@@ -52,10 +52,11 @@ SUB TestByval(BYVAL n AS INTEGER)
 END SUB
 CALL TestByval(99)
 
-' Test 6: Array param syntax in FUNCTION
+' Test 6: Array param syntax in FUNCTION (an array passed: name())
 FUNCTION SumTwo(a() AS INTEGER, b AS INTEGER)
-    SumTwo = b * 2
+    SumTwo = b * 2 + a(1)
 END FUNCTION
-PRINT "SumTwo:"; SumTwo(0, 7)
+DIM pairs(2) AS INTEGER
+PRINT "SumTwo:"; SumTwo(pairs(), 7)
 
 PRINT "Done"

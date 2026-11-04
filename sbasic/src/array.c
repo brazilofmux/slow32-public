@@ -17,12 +17,34 @@ unsigned array_generation = 0;
  * main program's, NAME; this activation's own, "id:NAME", erased when it
  * returns; the procedure's STATIC, "sP:NAME".  A key has a ':', so a
  * key is its own key (arr->name passed back in is found again). */
-typedef struct { unsigned id; int proc; array_mode_fn mode; void *ctx; } array_scope_t;
+/* an array parameter, name(): the caller's array, by its key (a main
+ * program's marked ":NAME", a key as every other is) */
+typedef struct { char name[64]; char key[ARRAY_KEY_MAX]; } array_alias_t;
+typedef struct {
+    unsigned id; int proc; array_mode_fn mode; void *ctx;
+    array_alias_t *alias; int nalias;
+} array_scope_t;
 static array_scope_t *scopes;
 static int nscopes, cap_scopes;
 static unsigned scope_next = 1;
 
+/* a parameter's array in the activation going on, or NULL */
+static const char *array_alias(const char *name) {
+    array_scope_t *t;
+    if (!nscopes) return NULL;
+    t = &scopes[nscopes - 1];
+    for (int i = 0; i < t->nalias; i++)
+        if (strcmp(t->alias[i].name, name) == 0) return t->alias[i].key;
+    return NULL;
+}
+
+/* a key as array_key leaves it: ":NAME" a main program's NAME */
+static const char *final_key(const char *key) { return key[0] == ':' ? key + 1 : key; }
+
 const char *array_key_mode(const char *name, int mode, char *buf, size_t cap) {
+    const char *al = array_alias(name);
+    if (al) return final_key(al);
+    if (name[0] == ':') return name + 1;
     if (!nscopes || mode == ARRAY_MODULE || strchr(name, ':')) return name;
     if (mode == ARRAY_STATIC) snprintf(buf, cap, "s%d:%s", scopes[nscopes - 1].proc, name);
     else snprintf(buf, cap, "%u:%s", scopes[nscopes - 1].id, name);
@@ -31,6 +53,9 @@ const char *array_key_mode(const char *name, int mode, char *buf, size_t cap) {
 
 static const char *array_key(const char *name, char *buf, size_t cap) {
     array_scope_t *t;
+    const char *al = array_alias(name);
+    if (al) return final_key(al);
+    if (name[0] == ':') return name + 1;
     if (!nscopes || strchr(name, ':')) return name;
     t = &scopes[nscopes - 1];
     return array_key_mode(name, t->mode ? t->mode(name, t->ctx) : ARRAY_MODULE, buf, cap);
@@ -56,6 +81,8 @@ error_t array_scope_push(int proc, array_mode_fn mode, void *ctx) {
     scopes[nscopes].proc = proc;
     scopes[nscopes].mode = mode;
     scopes[nscopes].ctx = ctx;
+    scopes[nscopes].alias = NULL;
+    scopes[nscopes].nalias = 0;
     nscopes++;
     array_generation++;
     return ERR_NONE;
@@ -74,8 +101,33 @@ void array_scope_pop(void) {
             free(arrays[i]->data);
             arrays[i]->active = 0;
         }
+    free(scopes[nscopes - 1].alias);
     nscopes--;
     array_generation++;
+}
+
+const char *array_ref_key(const char *name, char *buf, size_t cap) {
+    char kb[ARRAY_KEY_MAX];
+    const char *k = array_key(name, kb, sizeof kb);
+    snprintf(buf, cap, strchr(k, ':') ? "%s" : ":%s", k);
+    return buf;
+}
+
+error_t array_scope_alias(const char *name, const char *key) {
+    array_scope_t *t;
+    array_alias_t *a;
+    if (!nscopes) return ERR_INTERNAL;
+    t = &scopes[nscopes - 1];
+    a = realloc(t->alias, (size_t)(t->nalias + 1) * sizeof(*a));
+    if (!a) return ERR_OUT_OF_MEMORY;
+    t->alias = a;
+    strncpy(a[t->nalias].name, name, 63);
+    a[t->nalias].name[63] = '\0';
+    strncpy(a[t->nalias].key, key, ARRAY_KEY_MAX - 1);
+    a[t->nalias].key[ARRAY_KEY_MAX - 1] = '\0';
+    t->nalias++;
+    array_generation++;                 /* (compiled code's cells looked up again) */
+    return ERR_NONE;
 }
 
 void array_clear_all(void) {
@@ -183,6 +235,13 @@ static int calc_flat_index(sb_array_t *arr, int *indices, int nindices) {
         multiplier *= arr->dims[d];
     }
     return flat;
+}
+
+error_t array_elem_of(sb_array_t *arr, int *indices, int nindices, value_t **out) {
+    int flat = calc_flat_index(arr, indices, nindices);
+    if (flat < 0) return nindices != arr->ndims ? ERR_WRONG_DIMS : ERR_SUBSCRIPT_OUT_OF_RANGE;
+    *out = &arr->data[flat];
+    return ERR_NONE;
 }
 
 error_t array_get(const char *name, int *indices, int nindices,

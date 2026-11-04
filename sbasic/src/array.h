@@ -31,6 +31,12 @@ typedef int (*array_mode_fn)(const char *name, void *ctx);
 error_t array_scope_push(int proc, array_mode_fn mode, void *ctx);
 /* name (or a key) is a procedure's STATIC array */
 int array_is_static(const char *name);
+/* array name's key where it is now, made to name it from anywhere (a
+ * main program's ":NAME"): what an array passed as an argument is */
+const char *array_ref_key(const char *name, char *buf, size_t cap);
+/* the activation going on names the array at key name (an array
+ * parameter, name()) */
+error_t array_scope_alias(const char *name, const char *key);
 void array_scope_pop(void);
 /* name's key in the current scope by mode (for names compiled code scopes) */
 const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);
@@ -44,6 +50,10 @@ error_t array_dim(const char *name, val_type_t type,
 
 /* Find an array by name (NULL if not found) */
 sb_array_t *array_find(const char *name);
+
+/* the element of an array in hand (its name, a main program's key, is
+ * no key in a procedure that has it as a parameter) */
+error_t array_elem_of(sb_array_t *arr, int *indices, int nindices, value_t **out);
 
 /* Get pointer to element at indices (does NOT copy) */
 error_t array_get(const char *name, int *indices, int nindices,

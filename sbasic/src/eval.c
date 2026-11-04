@@ -671,6 +671,8 @@ typedef struct {
     const char *arr;            /* an element's array, by name ... */
     int nidx, idx[MAX_ARRAY_DIMS];
     int fixlen;                 /* a STRING * n variable's n: cut to it after */
+    int is_array;               /* a whole array, name(), for an array parameter: */
+    char akey[ARRAY_KEY_MAX];   /* its key (array_ref_key) */
 } arg_ref_t;
 
 /* A parameter's type: its AS, or its name's -- under DEF*, as the
@@ -706,6 +708,7 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
 
     for (int i = 0; i < nargs; i++) {
         const char *pname = def->proc_def.params[i];
+        if (refs && refs[i].is_array) continue;     /* (an array: aliased below) */
         if (refs && refs[i].ref) {
             env_link(local, pname, refs[i].ref, 0);   /* (a fixed string grows in here: cut when the call returns) */
             continue;
@@ -772,6 +775,9 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
     /* its arrays its own, but those it SHAREs or STATICs, or DIM SHARED */
     err = array_scope_push((int)(proc - proc_table), proc_array_mode, proc);
     if (err != ERR_NONE) { env_destroy(local); return err; }
+    for (int i = 0; refs && i < nargs && err == ERR_NONE; i++)   /* array parameters: the callers' */
+        if (refs[i].is_array) err = array_scope_alias(def->proc_def.params[i], refs[i].akey);
+    if (err != ERR_NONE) { array_scope_pop(); env_destroy(local); return err; }
     if (proc->compiled)
         err = proc->compiled->fn(local, proc->code);
     else
@@ -863,6 +869,20 @@ int eval_is_function0(const char *name) {
     return fp && fp->def->type == STMT_FUNC_DEF && fp->def->proc_def.nparams == 0;
 }
 
+/* an array parameter's argument: an array named with no subscripts,
+ * name() (QuickBASIC: "Parameter type mismatch" else), of the
+ * parameter's type; its key, for the callee's scope */
+static error_t eval_array_arg(expr_t *e, val_type_t pt, arg_ref_t *r) {
+    sb_array_t *arr;
+    memset(r, 0, sizeof(*r));
+    if (e->type != EXPR_CALL || e->call.nargs != 0 || e->paren) return ERR_PARAM_MISMATCH;
+    arr = array_find(e->call.name);
+    if (arr && arr->elem_type != pt) return ERR_PARAM_MISMATCH;
+    r->is_array = 1;
+    array_ref_key(e->call.name, r->akey, sizeof r->akey);
+    return ERR_NONE;
+}
+
 static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
                           expr_t **arg_exprs, int nargs, value_t *out) {
     stmt_t *def = proc->def;
@@ -878,6 +898,14 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     for (int i = 0; i < nargs; i++) {
         error_t err;
         arg_vals[i] = val_integer(0);
+        if (i < 16 && (def->proc_def.param_arrays >> i & 1)) {     /* name(): an array */
+            err = eval_array_arg(arg_exprs[i], param_type(def, i), &refs[i]);
+            if (err != ERR_NONE) {
+                for (int j = 0; j <= i; j++) val_clear(&arg_vals[j]);
+                return err;
+            }
+            continue;
+        }
         err = arg_by_ref(caller_env, arg_exprs[i], param_type(def, i), &refs[i], &arg_vals[i]);
         if (err == ERR_NONE && !refs[i].ref && !refs[i].arr)
             err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
@@ -2944,7 +2972,7 @@ error_t eval_array_read(sb_array_t *arr, int nidx, int *indices, value_t *out) {
     value_t *elem;
     if (nidx != arr->ndims)
         return ERR_WRONG_DIMS;
-    EVAL_CHECK(array_get(arr->name, indices, nidx, &elem));
+    EVAL_CHECK(array_elem_of(arr, indices, nidx, &elem));
     *out = val_copy(elem);
     return ERR_NONE;
 }
