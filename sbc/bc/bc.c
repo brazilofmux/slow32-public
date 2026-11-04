@@ -1029,7 +1029,7 @@ static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
 
 /* each array name's cell in bcrt_acache (bc_rt.c) */
 #define BC_ACELLS 256
-#define BC_ACELL 24             /* gen, data, base, dims[3] */
+#define BC_ACELL 32             /* gen, data, lower bounds[3], sizes[3] */
 #define BC_ELEM 12              /* a value_t: its type, then its number or string */
 static char bc_anames[BC_ACELLS][64];
 static int bc_nanames;
@@ -1088,9 +1088,8 @@ static int array_elem_ix(int line, const char *name, int n, bv_t *sub, int *ix) 
     goto_blk(fast);
     begin_blk(fast);
     {
-        int base = ld(cell, 8);
         for (int i = 0; i < n; i++) {
-            int dim = ld(cell, 12 + 4 * i), x = bin(HI_SUB, ix[i], base);
+            int dim = ld(cell, 20 + 4 * i), x = bin(HI_SUB, ix[i], ld(cell, 8 + 4 * i));
             guard(bin(HI_SLTU, x, dim), ERR_SUBSCRIPT_OUT_OF_RANGE);
             flat = i == 0 ? x : bin(HI_ADD, bin(HI_MUL, flat, dim), x);
         }
@@ -2138,23 +2137,33 @@ static int is_static_dim(stmt_t *s) {
     return 0;
 }
 
+/* DIM / REDIM, as exec_dim: each dimension's lower bound (lo TO, else the
+ * OPTION BASE: base's, made before the run, or the one in force) then
+ * its upper, made integers, its range checked before the next is
+ * evaluated; then the array */
 static void bc_dim(stmt_t *s, int is_static, int base) {
-    bv_t a[3];
-    int cb;
-    if (s->dim_stmt.ndims > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); return; }
-    for (int i = 0; i < 3; i++) a[i] = i < s->dim_stmt.ndims ? expr(s->dim_stmt.dims[i]) : zero();
-    for (int i = 0; i < 3; i++) a[i] = dynv(a[i]);
+    int lo[3], up[3], n = s->dim_stmt.ndims, cb;
+    if (n > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); return; }
+    for (int i = 0; i < 3; i++) {
+        if (i >= n) { lo[i] = up[i] = iconst(0); continue; }
+        if (s->dim_stmt.lower[i]) lo[i] = handle_of(s->dim_stmt.lower[i]);
+        else lo[i] = base >= 0 ? iconst(base) : call_end(h_ncarg, 0, "bcrt_option_base_now", NULL);
+        up[i] = handle_of(s->dim_stmt.dims[i]);
+        cb = h_ncarg;
+        carg(lo[i], 0); carg(up[i], 0);
+        call_end(cb, 2, "bcrt_dim_range", NULL);
+    }
     cb = h_ncarg;
     carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
     carg(iconst(arr_type(s->dim_stmt.name)), 0);
-    carg(iconst(s->dim_stmt.ndims), 0);
-    carg(iconst(is_static), 0);
-    carg(iconst(base), 0);
+    carg(iconst(n), 0);
+    carg(iconst(is_static && base < 0), 0);
     carg(iconst(s->dim_stmt.is_redim), 0);
     carg(iconst(s->dim_stmt.preserve), 0);
-    for (int i = 0; i < 3; i++) carg_bv(a[i]);
+    for (int i = 0; i < 3; i++) carg(lo[i], 0);
+    for (int i = 0; i < 3; i++) carg(up[i], 0);
     carg(iconst(arr_mode(s->dim_stmt.name)), 0);
-    call_end(cb, 17, "bcrt_dim", NULL);
+    call_end(cb, 13, "bcrt_dim", NULL);
 }
 
 static int bc_base;             /* the OPTION BASE of the text, as it is read */
@@ -2171,11 +2180,14 @@ static void hoist_dims(stmt_t *s) {
         if (s->type == STMT_DIM && !s->dim_stmt.is_redim && s->dim_stmt.ndims <= 3 &&
             !static_names_has(s->dim_stmt.name)) {
             int ok = 1;
-            for (int i = 0; i < s->dim_stmt.ndims && ok; i++) {
-                expr_t *d = s->dim_stmt.dims[i];
-                int upper;
-                if (!d || d->type != EXPR_LITERAL || d->literal.type == VAL_STRING ||
-                    val_to_integer(&d->literal, &upper) != ERR_NONE || upper - bc_base + 1 <= 0)
+            for (int i = 0; i < s->dim_stmt.ndims && ok; i++) {     /* (as scan_static_dim) */
+                expr_t *d = s->dim_stmt.dims[i], *l = s->dim_stmt.lower[i];
+                int upper, lower = bc_base;
+                if (l && (l->type != EXPR_LITERAL || l->literal.type == VAL_STRING ||
+                          val_to_integer(&l->literal, &lower) != ERR_NONE))
+                    ok = 0;
+                else if (!d || d->type != EXPR_LITERAL || d->literal.type == VAL_STRING ||
+                         val_to_integer(&d->literal, &upper) != ERR_NONE || upper - lower + 1 <= 0)
                     ok = 0;
             }
             if (ok) {

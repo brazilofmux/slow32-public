@@ -172,8 +172,8 @@ static pair_t give(const value_t *v) {
  * array_generation is the cell's (an array made, erased or
  * re-dimensioned bumps it).  bc.c knows the cell's layout and
  * value_t's: an element is 12 bytes, its number or string 4 in. */
-typedef struct { unsigned gen; value_t *data; int base, dims[3]; } bcrt_acell_t;
-_Static_assert(sizeof(bcrt_acell_t) == 24, "bc.c: the cell's layout");
+typedef struct { unsigned gen; value_t *data; int lbound[3], dims[3]; } bcrt_acell_t;
+_Static_assert(sizeof(bcrt_acell_t) == 32, "bc.c: the cell's layout");
 _Static_assert(sizeof(value_t) == 12 && offsetof(value_t, ival) == 4 &&
                offsetof(value_t, dval) == 4 && offsetof(value_t, sval) == 4, "bc.c: value_t's layout");
 #define BCRT_ACELLS 256
@@ -700,37 +700,26 @@ int bcrt_return(void) {
 
 #include "array.h"
 
-/* DIM / REDIM name(u0[, u1[, u2]]) AS type; base -1 is the OPTION BASE in
- * force (eval_option_base), a static DIM made before the run passes the
- * one of its place in the text.  A static DIM met when it runs is a
- * declaration, unless ERASE took the array away (exec_dim). */
-void bcrt_dim(const char *name, int type, int n, int is_static, int base, int redim, int preserve,
-              int alo, int ahi, int at, int blo, int bhi, int bt, int clo, int chi, int ct, int mode) {
-    value_t v[3];
-    int u[3];
-    error_t e;
+/* DIM / REDIM name(lo TO up, ...) AS type, its bounds integers checked
+ * (bcrt_dim_range).  in_place: a static DIM met when it runs, a
+ * declaration unless ERASE took the array away (exec_dim). */
+void bcrt_dim(const char *name, int type, int n, int in_place, int redim, int preserve,
+              int l0, int l1, int l2, int u0, int u1, int u2, int mode) {
+    int lo[3] = { l0, l1, l2 }, up[3] = { u0, u1, u2 };
     char kb[ARRAY_KEY_MAX];
+    error_t e;
     name = akey(name, mode, kb);
-    v[0] = take(alo, ahi, at);
-    v[1] = take(blo, bhi, bt);
-    v[2] = take(clo, chi, ct);
-    if (is_static && base < 0 && array_find(name)) {
-        for (int i = 0; i < 3; i++) val_clear(&v[i]);
-        return;
-    }
-    if (base < 0) base = eval_option_base();
-    for (int i = 0; i < n; i++) {
-        e = val_to_integer(&v[i], &u[i]);
-        if (e == ERR_NONE && u[i] - base + 1 <= 0) e = ERR_ILLEGAL_FUNCTION_CALL;
-        if (e != ERR_NONE) {
-            for (int j = 0; j < 3; j++) val_clear(&v[j]);
-            bcrt_fail(e);
-        }
-    }
-    for (int i = 0; i < 3; i++) val_clear(&v[i]);
-    e = eval_dim(name, (val_type_t)type, n, u, base, redim, preserve);
+    if (in_place && array_find(name)) return;
+    e = eval_dim(name, (val_type_t)type, n, lo, up, redim, preserve);
     if (e != ERR_NONE) bcrt_fail(e);
 }
+
+void bcrt_dim_range(int lower, int upper) {
+    error_t e = eval_dim_range(lower, upper);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+int bcrt_option_base_now(void) { return eval_option_base(); }
 
 /* cell id's array, name(n subscripts) (eval_array_for: an implicit one
  * made), of elements of type ty */
@@ -746,8 +735,10 @@ void bcrt_alook(const char *name, int n, int id, int ty, int mode) {
     }
     c->gen = array_generation;
     c->data = arr->data;
-    c->base = arr->base;
-    for (int i = 0; i < n && i < 3; i++) c->dims[i] = arr->dims[i];
+    for (int i = 0; i < n && i < 3; i++) {
+        c->lbound[i] = arr->lbound[i];
+        c->dims[i] = arr->dims[i];
+    }
 }
 
 void bcrt_option_base(int base) { eval_set_option_base(base); }
