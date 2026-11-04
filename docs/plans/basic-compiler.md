@@ -340,3 +340,32 @@ SGN, CINT, CLNG, CSNG, CDBL and RND computed in place; RANDOMIZE
 profile is the compiled code itself (variables of a large main live in
 the frame, the backend's own choice; the double helpers' register
 shuffles), string comparisons and builtins, PRINT.
+
+### The constructs (2026-11-03)
+
+DEFINT and its kind (26c97e8a): compiled where each DEFtype is in no
+block and comes before every name of its letters -- there the
+interpreter's types (made when a variable is first made) and
+QuickBASIC's (by the text) agree.  Three interpreter fixes on the way,
+each against QBasic: DIM after DEFINT made a SINGLE array; DEFSTR S:
+READ S was a Syntax error; an FN was typed by its F.  SELECT CASE, EXIT
+FOR/DO/WHILE and SWAP (15e6441d).  SUB, FUNCTION and CALL (e383baee):
+each procedure a function of its own, every parameter a pointer (the
+caller's variable, a copied element, or a temporary), SHARED and STATIC
+globals; and from QBasic, a FUNCTION of no parameters named alone is
+called, and two -check findings (proc-twice, call-function).
+`run-oracle.py --bc`: 388 agree, 20 refused alike, none differ.
+
+Open:
+- Arrays are global by name in the interpreter, as they were in
+  GW-BASIC; in QuickBASIC an array a SUB names without SHARED is the
+  SUB's own (REDIM A%(2) in a SUB leaves the main program's A% alone),
+  and DIM SHARED does not parse.  A dialect decision before it is
+  changed.
+- QuickBASIC refuses at load what it can type statically (Type
+  mismatch, Parameter type mismatch); -check does not yet (strict-qb's
+  DIFF-QB, 43 over the corpus).
+- Not yet: ON ERROR and RESUME, CONST, DIM AS (scalars), TYPE, PRINT
+  USING, the file and screen statements, GOSUB inside a procedure, a
+  whole array as an argument.
+
