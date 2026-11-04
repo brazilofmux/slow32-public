@@ -167,6 +167,7 @@ typedef struct {
 } gfx_op_t;
 error_t eval_gfx(const gfx_op_t *g);
 error_t eval_cls_mode(int mode);
+error_t eval_draw(const value_t *v);
 /* GET (x1, y1)-(x2, y2), a and PUT (x, y), a, action (g->type
  * STMT_GFX_GET or _PUT, g->box the action): a, array name's elements
  * from the one nidx subscripts (idx) name, or its first (nidx 0) */

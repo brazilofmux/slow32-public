@@ -34,6 +34,10 @@ void sb_gfx_line(int x0, int y0, int x1, int y1, int color,
  * from an end whose angle was negative */
 void sb_gfx_circle(int x, int y, int r, int color, double aspect,
                    int arc, double start, double end, int sline, int eline);
+/* DRAW's string, len bytes, from the last point: -1 for a command it
+ * has not (Illegal function call) */
+int sb_gfx_draw(const char *s, int len);
+
 /* the mode's aspect when CIRCLE gives none: 4/3 * height / width */
 double sb_gfx_aspect(void);
 void sb_gfx_paint(int x, int y, int paint, int border);

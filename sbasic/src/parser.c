@@ -2685,6 +2685,16 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_PRESET: return parse_pset(p, 1);
         case TOK_CIRCLE: return parse_circle(p);
         case TOK_PAINT:  return parse_paint(p);
+        case TOK_DRAW: {                /* DRAW s$: the drawing language's string */
+            int line = tok->line;
+            lexer_skip(&p->lex);
+            expr_t *e = parse_expr(p);
+            if (!e) return NULL;
+            stmt_t *s = stmt_alloc(STMT_DRAW, line);
+            if (!s) { expr_free(e); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->shell_stmt.command = e;
+            return s;
+        }
 
         case TOK_LSET: case TOK_RSET: {
             stmt_type_t stype = (tok->type == TOK_LSET) ? STMT_LSET : STMT_RSET;

@@ -2322,6 +2322,16 @@ static error_t exec_gfx_getput(env_t *env, stmt_t *s) {
     return eval_gfx_getput(&g, t->call.name, t->call.nargs, idx);
 }
 
+/* DRAW s$ -- for compiled code too: a string, else Type mismatch; a
+ * command it has not, Illegal function call; no screen, as the other
+ * graphics statements */
+error_t eval_draw(const value_t *v) {
+    if (v->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!sb_gfx_active())
+        return sb_gfx_degraded() ? ERR_NONE : ERR_ILLEGAL_FUNCTION_CALL;
+    return sb_gfx_draw(v->sval->data, v->sval->len) < 0 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
+}
+
 /* SCREEN mode -- for compiled code too */
 error_t eval_screen(int mode) {
     if (sb_gfx_screen(mode) == -2)
@@ -4011,6 +4021,14 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
                 def_seg = 0;
             }
             return ERR_NONE;
+        }
+
+        case STMT_DRAW: {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &v));
+            error_t err = eval_draw(&v);
+            val_clear(&v);
+            return err;
         }
 
         case STMT_SCREEN: {

@@ -180,6 +180,7 @@ typedef enum {
                            has_from: the points given, box: SCREEN, aux: border */
     STMT_WINDOW,        /* WINDOW [SCREEN] (x1, y1)-(x2, y2): gfx, as VIEW's */
     STMT_RUN,           /* RUN: the program again from its start */
+    STMT_DRAW,          /* DRAW s$: shell_stmt.command the string */
 } stmt_type_t;
 
 /* Print item: expression + separator */

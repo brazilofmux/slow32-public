@@ -124,6 +124,7 @@ static const keyword_t keywords[] = {
     { "PRESET", TOK_PRESET },
     { "CIRCLE", TOK_CIRCLE },
     { "PAINT",  TOK_PAINT },
+    { "DRAW",   TOK_DRAW },
     { "RUN",    TOK_RUN },
     /* (LIST, NEW, LOAD, SAVE, BYE: the REPL's, read as its text -- a
      * program may name a SUB so) */

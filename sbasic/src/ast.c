@@ -721,6 +721,7 @@ void stmt_free(stmt_t *s) {
             case STMT_MKDIR:
             case STMT_RMDIR:
             case STMT_SCREEN:
+            case STMT_DRAW:
             case STMT_DEF_SEG:
                 expr_free(s->shell_stmt.command);
                 break;
@@ -1294,6 +1295,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_MKDIR:
     case STMT_RMDIR:
     case STMT_SCREEN:
+    case STMT_DRAW:
     case STMT_DEF_SEG: X(s->shell_stmt.command); break;
     case STMT_POKE: X(s->poke_stmt.addr); X(s->poke_stmt.value); break;
     case STMT_LSET:

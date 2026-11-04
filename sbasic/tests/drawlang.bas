@@ -1,0 +1,49 @@
+' DRAW as QBasic 1.1 draws (SCREEN 7): where each string leaves the pen
+' (POINT(0), POINT(1)) -- moves, B and N, M absolute and relative, the
+' scale (whole pixels), the angle (A, TA: turned where a pixel is
+' square, the fraction kept), then a few pixels, a fill, the errors
+DIM r(80)
+ON ERROR GOTO caught
+SCREEN 7
+PSET (100, 100), 15: DRAW "U10": r(0) = POINT(0): r(1) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "R10": r(2) = POINT(0): r(3) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "E5": r(4) = POINT(0): r(5) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S8 R5": r(6) = POINT(0): r(7) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S2 R5": r(8) = POINT(0): r(9) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "BM50,50": r(10) = POINT(0): r(11) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "M+5,-7": r(12) = POINT(0): r(13) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "M-5,+0": r(14) = POINT(0): r(15) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA45 R10": r(16) = POINT(0): r(17) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA30 R10": r(18) = POINT(0): r(19) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "A1 R10": r(20) = POINT(0): r(21) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "A2 U10": r(22) = POINT(0): r(23) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "NU5 R5": r(24) = POINT(0): r(25) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "B U5": r(26) = POINT(0): r(27) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "U": r(28) = POINT(0): r(29) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA-90 R10": r(30) = POINT(0): r(31) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA90 U10": r(32) = POINT(0): r(33) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "A3 R10": r(34) = POINT(0): r(35) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S2 R5 R5": r(36) = POINT(0): r(37) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S3 R1 R1 R1": r(38) = POINT(0): r(39) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S8 M+5,+0": r(40) = POINT(0): r(41) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA90 M+10,+0": r(42) = POINT(0): r(43) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "TA45 R1 R1 R1 R1": r(44) = POINT(0): r(45) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "S4 R3 S2 R3": r(46) = POINT(0): r(47) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "m 120,80 d4": r(48) = POINT(0): r(49) = POINT(1): DRAW "TA0 A0 S4 C15"
+PSET (100, 100), 15: DRAW "C4 BR3 NL2 f2": r(50) = POINT(0): r(51) = POINT(1): DRAW "TA0 A0 S4 C15"
+CLS: PSET (100, 100), 15
+DRAW "C4 U10"
+r(52) = POINT(100, 90): r(53) = POINT(100, 89): r(54) = POINT(100, 95)
+DRAW "BM 120,100 C2 R10 D10 L10 U10 BM+3,+3 P5,2"
+r(55) = POINT(125, 105): r(56) = POINT(119, 100)
+DRAW "Q5"
+e = 0: SCREEN 0: WIDTH 80
+DRAW "R5"
+FOR i = 0 TO 51: PRINT r(i);: IF i MOD 2 THEN PRINT
+NEXT
+FOR i = 52 TO 56: PRINT r(i);: NEXT: PRINT
+PRINT errs$
+END
+caught:
+errs$ = errs$ + STR$(ERR)
+RESUME NEXT

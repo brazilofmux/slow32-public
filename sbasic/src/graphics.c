@@ -18,6 +18,7 @@ static uint8_t *pixels = NULL;
 static uint32_t palette[256];
 static uint32_t generation = 1;
 static int fg = 15;             /* default draw color */
+static void draw_reset(void);
 
 /* VIEW: the viewport, absolute and inclusive (the whole screen when
  * none); view_scr, VIEW SCREEN's absolute coordinates (and none's), else
@@ -132,6 +133,7 @@ int sb_gfx_screen(int mode) {
     fg = 15;
     view_reset();
     win_on = 0;
+    draw_reset();
     last_lx = w / 2;
     last_ly = h / 2;
     flip();
@@ -511,6 +513,138 @@ void sb_gfx_palette(int attr, int rgb) {
         palette[attr & (scr_colors - 1)] = (uint32_t)rgb & 0xFFFFFFu;
     }
     flip();
+}
+
+/* --- DRAW ----------------------------------------------------------- */
+
+/* DRAW's state between statements (QuickBASIC's): its color, its scale
+ * (S: a quarter pixel each), its angle in degrees (A: quarter turns, TA:
+ * any) */
+static int draw_color = -1, draw_scale = 4;
+static double draw_angle;
+
+static void draw_reset(void) { draw_color = -1; draw_scale = 4; draw_angle = 0; }
+
+/* a number at *q: its digits, a sign first if may_sign; *n it (none: 1,
+ * *given 0) */
+static int draw_num(const char **q, const char *end, int may_sign, long *n, int *given) {
+    const char *p = *q;
+    int neg = 0, any = 0;
+    long v = 0;
+    while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (may_sign && p < end && (*p == '+' || *p == '-')) neg = *p++ == '-';
+    while (p < end && *p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); any = 1; if (v > 100000) return 0; }
+    *q = p;
+    *given = any;
+    *n = any ? (neg ? -v : v) : 1;
+    return any || !neg;
+}
+
+int sb_gfx_draw(const char *s, int len) {
+    const char *q = s, *end = s + len;
+    double px, py, aspect = sb_gfx_aspect();
+    int ox = org_x(), oy = org_y();
+    if (!scr_mode) return 0;
+    /* (the view's pixels, fractional: QuickBASIC's turns leave a fraction) */
+    px = to_view(0, last_lx);
+    py = to_view(1, last_ly);
+    while (q < end) {
+        int c = *q++, nodraw = 0, back = 0, given, ix, iy, jx, jy;
+        long n;
+        double dx = 0, dy = 0;
+        if (c == ' ' || c == '\t' || c == ';') continue;
+        if (c >= 'a' && c <= 'z') c -= 32;
+        while (c == 'B' || c == 'N') {          /* move without drawing; return after */
+            if (c == 'B') nodraw = 1; else back = 1;
+            while (q < end && (*q == ' ' || *q == '\t')) q++;
+            if (q >= end) return -1;
+            c = *q++;
+            if (c >= 'a' && c <= 'z') c -= 32;
+        }
+        switch (c) {
+            case 'U': case 'D': case 'L': case 'R': case 'E': case 'F': case 'G': case 'H': {
+                static const char dirs[] = "UDLREFGH";
+                static const int vx[] = { 0, 0, -1, 1, 1, 1, -1, -1 }, vy[] = { -1, 1, 0, 0, -1, 1, 1, -1 };
+                int k = (int)(strchr(dirs, c) - dirs);
+                if (!draw_num(&q, end, 0, &n, &given)) return -1;
+                n = n * draw_scale / 4;            /* (whole pixels: QuickBASIC's S truncates) */
+                dx = vx[k] * (double)n;
+                dy = vy[k] * (double)n;
+                break;
+            }
+            case 'M': {
+                long y;
+                const char *p0 = q;
+                while (p0 < end && (*p0 == ' ' || *p0 == '\t')) p0++;
+                int rel = p0 < end && (*p0 == '+' || *p0 == '-');
+                if (!draw_num(&q, end, 1, &n, &given) || !given) return -1;
+                while (q < end && (*q == ' ' || *q == '\t')) q++;
+                if (q >= end || *q != ',') return -1;
+                q++;
+                if (!draw_num(&q, end, 1, &y, &given) || !given) return -1;
+                if (!rel) {                         /* M x,y: the point itself */
+                    double nx = (double)n - ox, ny = (double)y - oy;
+                    if (!nodraw)
+                        bresenham((int)rint(px) + ox, (int)rint(py) + oy, (int)n, (int)y, clamp_color(draw_color));
+                    if (!back) { px = nx; py = ny; }
+                    continue;
+                }
+                dx = (double)(n * draw_scale / 4);
+                dy = (double)(y * draw_scale / 4);
+                break;
+            }
+            case 'C':
+                if (!draw_num(&q, end, 0, &n, &given) || !given) return -1;
+                draw_color = (int)n;
+                continue;
+            case 'S':
+                if (!draw_num(&q, end, 0, &n, &given) || !given || n > 255) return -1;
+                draw_scale = n ? (int)n : 4;
+                continue;
+            case 'A':
+                if (q < end && (*q == 'T' || *q == 't')) {      /* TA n: degrees, -360..360 */
+                    q++;
+                    if (!draw_num(&q, end, 1, &n, &given) || !given || n < -360 || n > 360) return -1;
+                    draw_angle = (double)n;
+                } else {
+                    if (!draw_num(&q, end, 0, &n, &given) || !given || n > 3) return -1;
+                    draw_angle = 90.0 * (double)n;
+                }
+                continue;
+            case 'T':                               /* (TA, its T first) */
+                if (q >= end || (*q != 'A' && *q != 'a')) return -1;
+                q++;
+                if (!draw_num(&q, end, 1, &n, &given) || !given || n < -360 || n > 360) return -1;
+                draw_angle = (double)n;
+                continue;
+            case 'P': {
+                long b;
+                if (!draw_num(&q, end, 0, &n, &given) || !given) return -1;
+                while (q < end && (*q == ' ' || *q == '\t')) q++;
+                if (q >= end || *q != ',') return -1;
+                q++;
+                if (!draw_num(&q, end, 0, &b, &given) || !given) return -1;
+                sb_gfx_paint((int)rint(px) + ox, (int)rint(py) + oy, (int)n, (int)b);
+                continue;
+            }
+            default:                                /* (X, =: VARPTR$'s -- not here) */
+                return -1;
+        }
+        if (draw_angle != 0) {                      /* turned where a pixel is square */
+            double t = draw_angle * M_PI / 180, mx = dx, my = -dy / aspect;
+            double rx = mx * cos(t) - my * sin(t), ry = mx * sin(t) + my * cos(t);
+            dx = rx;
+            dy = -ry * aspect;
+        }
+        ix = (int)rint(px); iy = (int)rint(py);
+        jx = (int)rint(px + dx); jy = (int)rint(py + dy);
+        if (!nodraw) bresenham(ix + ox, iy + oy, jx + ox, jy + oy, clamp_color(draw_color));
+        if (!back) { px += dx; py += dy; }
+    }
+    last_lx = to_world(0, px);
+    last_ly = to_world(1, py);
+    flip();
+    return 0;
 }
 
 /* --- GET and PUT's images ------------------------------------------- */
