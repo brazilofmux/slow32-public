@@ -1719,13 +1719,24 @@ static error_t exec_print(env_t *env, stmt_t *s) {
 }
 
 /* LPRINT — like PRINT but output to stderr */
-static error_t exec_lprint(env_t *env, stmt_t *s) {
-    /* the printer: stderr, its own column, 80 wide */
-    FILE *saved_fp = col_output_fp;
-    int *saved_col = active_print_col;
-    error_t err;
+/* LPRINT's output: the printer -- stderr, its own column (80 wide) --
+ * until eval_print_file_end puts back what was; for compiled code too */
+void eval_lprint_begin(print_redirect_t *saved) {
+    saved->col = active_print_col;
+    saved->fp = col_output_fp;
     col_output_fp = stderr;
     active_print_col = &lprint_col;
+}
+
+static error_t exec_lprint(env_t *env, stmt_t *s) {
+    /* the printer: stderr, its own column, 80 wide */
+    print_redirect_t saved;
+    FILE *saved_fp;
+    int *saved_col;
+    error_t err;
+    eval_lprint_begin(&saved);
+    saved_fp = saved.fp;
+    saved_col = saved.col;
     if (s->print.using_fmt || s->print.using_expr) {
         const char *fmt;
         char fmt_buf[1024];
@@ -2855,6 +2866,23 @@ void eval_write_value(const value_t *v) {
     }
 }
 
+/* CHDIR, MKDIR or RMDIR (kind: the statement's) path -- for compiled code too */
+error_t eval_dir(int kind, const value_t *path) {
+    if (path->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    const char *p = path->sval ? path->sval->data : "";
+    int r = kind == STMT_CHDIR ? chdir(p) : kind == STMT_MKDIR ? mkdir(p, 0777) : rmdir(p);
+    return r != 0 ? ERR_FILE_NOT_FOUND : ERR_NONE;
+}
+
+/* POKE offset, v (in DEF SEG's segment) -- for compiled code too */
+error_t eval_poke(int offset, int val) {
+    extern int def_seg;
+    int addr = def_seg * 16 + offset;
+    if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
+    peek_poke_mem[addr] = (unsigned char)(val & 0xFF);
+    return ERR_NONE;
+}
+
 /* SLEEP seconds (v NULL: SLEEP alone) -- for compiled code too */
 error_t eval_sleep(const value_t *v) {
     double secs = 0.0;
@@ -3361,34 +3389,14 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_NONE;
         }
 
-        case STMT_CHDIR: {
-            value_t path;
-            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
-            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
-            int r = chdir(path.sval ? path.sval->data : "");
-            val_clear(&path);
-            if (r != 0) return ERR_FILE_NOT_FOUND;
-            return ERR_NONE;
-        }
-
-        case STMT_MKDIR: {
-            value_t path;
-            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
-            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
-            int r = mkdir(path.sval ? path.sval->data : "", 0777);
-            val_clear(&path);
-            if (r != 0) return ERR_FILE_NOT_FOUND;
-            return ERR_NONE;
-        }
-
+        case STMT_CHDIR:
+        case STMT_MKDIR:
         case STMT_RMDIR: {
             value_t path;
             EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
-            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
-            int r = rmdir(path.sval ? path.sval->data : "");
+            error_t err = eval_dir(s->type, &path);
             val_clear(&path);
-            if (r != 0) return ERR_FILE_NOT_FOUND;
-            return ERR_NONE;
+            return err;
         }
 
         case STMT_POKE: {
@@ -3402,10 +3410,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             if (err == ERR_NONE) err = val_to_integer(&vv, &val);
             val_clear(&av); val_clear(&vv);
             if (err != ERR_NONE) return err;
-            int addr = def_seg * 16 + offset;
-            if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
-            peek_poke_mem[addr] = (unsigned char)(val & 0xFF);
-            return ERR_NONE;
+            return eval_poke(offset, val);
         }
 
         case STMT_DEF_SEG: {

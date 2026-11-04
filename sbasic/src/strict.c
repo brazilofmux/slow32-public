@@ -195,6 +195,12 @@ static void walk_list(check_t *c, stmt_t *s) {
         int seq = ++c->seq;
         stmt_exprs(s, scan_top, c);
         switch (s->type) {
+        case STMT_OPTION_EXPLICIT: case STMT_SPLIT: case STMT_TRACE:
+            /* the interpreter's own; QuickBASIC will not load them */
+            snprintf(d, sizeof d, "%s is no QuickBASIC statement",
+                     s->type == STMT_SPLIT ? "SPLIT" : s->type == STMT_TRACE ? "TRACE" : "OPTION EXPLICIT");
+            finding(c, s->line, "not-qb", d);
+            break;
         case STMT_CONST: {
             const char *why = const_value(c, s->const_stmt.value);
             if (why) {

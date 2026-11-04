@@ -141,6 +141,9 @@ typedef struct {
 } gfx_op_t;
 error_t eval_gfx(const gfx_op_t *g);
 error_t eval_screen(int mode);
+void eval_lprint_begin(print_redirect_t *saved);
+error_t eval_dir(int kind, const value_t *path);
+error_t eval_poke(int offset, int val);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
 error_t eval_input_line(const char *prompt, int no_question, int same_line,

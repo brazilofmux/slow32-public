@@ -1,0 +1,3 @@
+REM OPTION EXPLICIT is no QB statement (Expected: BASE)
+OPTION EXPLICIT
+PRINT 1
