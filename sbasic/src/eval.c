@@ -2221,6 +2221,24 @@ error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out) {
     return ERR_NONE;
 }
 
+/* RANDOMIZE seed, or RANDOMIZE (no seed given: QuickBASIC asks for
+ * one) -- for compiled code too */
+error_t eval_randomize(int has_seed, double seed) {
+    if (!has_seed) {
+        char line[128];
+        col_puts("Random-number seed (-32768 to 32767)? ");
+        if (read_input_line(line, sizeof(line)) < 0) {
+            col_puts("\n");
+            return ERR_INPUT_PAST_END;
+        }
+        if (isatty(0)) print_col = 0;
+        else col_puts("\n");
+        seed = atof(line);
+    }
+    builtin_randomize(seed);
+    return ERR_NONE;
+}
+
 /* the array name(i, ...) reaches with nidx subscripts, read or
  * assigned: one DIMmed, or an implicit one made (subscripts to 10) */
 error_t eval_array_for(const char *name, int nidx, sb_array_t **out) {
@@ -3034,20 +3052,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
                 error_t cerr = val_to_double(&v, &seed);
                 val_clear(&v);
                 if (cerr != ERR_NONE) return cerr;
-            } else {
-                /* no seed given: QuickBASIC asks for one */
-                char line[128];
-                col_puts("Random-number seed (-32768 to 32767)? ");
-                if (read_input_line(line, sizeof(line)) < 0) {
-                    col_puts("\n");
-                    return ERR_INPUT_PAST_END;
-                }
-                if (isatty(0)) print_col = 0;
-                else col_puts("\n");
-                seed = atof(line);
             }
-            builtin_randomize(seed);
-            return ERR_NONE;
+            return eval_randomize(s->randomize.seed != NULL, seed);
         }
 
         case STMT_SLEEP: {

@@ -565,20 +565,126 @@ static int saddr(const char *s, int len) {
 /* the numeric zero, standing for an argument not given */
 static bv_t zero(void) { return kint(0, VAL_INTEGER); }
 
+static int is(const char *a, const char *b) { return strcmp(a, b) == 0; }
+
+/* the type of a builtin's result where builtin.c fixes it (a $ name's
+ * a string; INT, FIX and ABS their argument's; val_integer of a value
+ * that cannot pass 16 bits an INTEGER; a double a SINGLE unless a DOUBLE
+ * went in, as builtin_call makes it...); ST_DYN where it does not */
+static int builtin_type(const char *name, int n, const bv_t *a) {
+    size_t l = strlen(name);
+    if (l && name[l - 1] == '$') return VAL_STRING;
+    if (is(name, "INT") || is(name, "FIX") || is(name, "ABS"))
+        return n == 1 && st_num(a[0].st) ? a[0].st : ST_DYN;
+    if (is(name, "SGN") || is(name, "LEN") || is(name, "ASC") || is(name, "INSTR") ||
+        is(name, "INSTRREV") || is(name, "CINT")) return VAL_INTEGER;
+    if (is(name, "CLNG")) return VAL_LONG;
+    if (is(name, "RND") || is(name, "CSNG")) return VAL_SINGLE;
+    if (is(name, "CDBL")) return VAL_DOUBLE;
+    if (is(name, "SQR") || is(name, "SIN") || is(name, "COS") || is(name, "TAN") ||
+        is(name, "ATN") || is(name, "EXP") || is(name, "LOG"))
+        /* (builtin_call: a double result a SINGLE unless a DOUBLE went in) */
+        return n == 1 && st_num(a[0].st) ? (a[0].st == VAL_DOUBLE ? VAL_DOUBLE : VAL_SINGLE) : ST_DYN;
+    return ST_DYN;
+}
+
+/* a double of a double (floor, trunc: the interpreter's own) */
+static bv_t dbl_fn(const char *fn, bv_t x, int st) {
+    bv_t r = mk(0, 0, -1, st);
+    r.lo = call_d1(fn, x.lo, x.hi, &r.hi);
+    return r;
+}
+
+/* the builtins compiled code computes itself, as builtin.c does; the
+ * argument a number of a fixed type (else NULL: the runtime's) */
+static int builtin_native(const char *name, int n, bv_t *a, bv_t *r) {
+    bv_t x = a[0];
+    int lo, hi;
+    if (is(name, "RND")) {      /* sb_rnd_of, the interpreter's generator */
+        int cb;
+        if (n == 1 && !st_num(x.st)) return 0;
+        if (n == 1) dwords(x, &lo, &hi);
+        else lo = dconst(0, &hi);
+        cb = h_ncarg;
+        carg(lo, 1); carg(hi, 2);
+        carg(iconst(n), 0);
+        *r = mk(0, 0, -1, VAL_SINGLE);
+        r->lo = call_end(cb, 3, "bcrt_rnd", &r->hi);
+        return 1;
+    }
+    if (n != 1 || !st_num(x.st)) return 0;
+    if (is(name, "INT") || is(name, "FIX")) {
+        *r = st_int(x.st) ? x : dbl_fn(is(name, "INT") ? "bcrt_floor" : "bcrt_trunc", x, x.st);
+        return 1;
+    }
+    if (is(name, "ABS")) {
+        if (st_flt(x.st)) {
+            *r = mk(x.lo, bin(HI_AND, x.hi, iconst(0x7FFFFFFF)), -1, x.st);
+            return 1;
+        }
+        *r = mk(bin(HI_SUB, bin(HI_XOR, x.lo, bin(HI_SRA, x.lo, iconst(31))),
+                    bin(HI_SRA, x.lo, iconst(31))), -1, -1, x.st);
+        if (x.st == VAL_INTEGER) check16(r->lo);      /* ABS(-32768): Overflow */
+        else guard(bin(HI_SGE, r->lo, iconst(0)), ERR_OVERFLOW);
+        return 1;
+    }
+    if (is(name, "SGN")) {
+        int pos, neg;
+        if (st_int(x.st)) {
+            pos = bin(HI_SGT, x.lo, iconst(0));
+            neg = bin(HI_SLT, x.lo, iconst(0));
+        } else {
+            int zlo, zhi;
+            zlo = dconst(0, &zhi);
+            pos = call_d2("__fp64_lt", zlo, zhi, x.lo, x.hi, NULL);
+            neg = call_d2("__fp64_lt", x.lo, x.hi, zlo, zhi, NULL);
+        }
+        *r = mk(bin(HI_SUB, pos, neg), -1, -1, VAL_INTEGER);
+        return 1;
+    }
+    if (is(name, "CINT") || is(name, "CLNG")) {     /* val_rint, then the range */
+        int ty = is(name, "CINT") ? VAL_INTEGER : VAL_LONG;
+        *r = st_int(x.st) ? coerce(x, ty) : flt_to_int(x, ty);
+        return 1;
+    }
+    if (is(name, "CDBL")) {
+        dwords(x, &lo, &hi);
+        *r = mk(lo, hi, -1, VAL_DOUBLE);
+        return 1;
+    }
+    if (is(name, "CSNG")) {     /* single_round: no range of its own */
+        int w, cb;
+        if (st_int(x.st)) w = hi_emit(HI_FCVT_ItoF, TY_FLOAT, x.lo, -1, 0, NULL);
+        else {
+            w = call_d1("__fp64_cvt_DtoF", x.lo, x.hi, NULL);
+            h_ty[w] = TY_FLOAT;
+        }
+        cb = h_ncarg;
+        carg(w, 0);
+        *r = mk(0, 0, -1, VAL_SINGLE);
+        r->lo = call_end(cb, 1, "__fp64_cvt_ftoD", &r->hi);
+        return 1;
+    }
+    return 0;
+}
+
 static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
-    bv_t a[3];
-    int cb;
+    bv_t a[3], r;
+    int cb, ty;
     if (n > 3 || strcmp(name, "TAB") == 0 || strcmp(name, "SPC") == 0) {   /* (TAB, SPC in a PRINT list: bc_print) */
         bc_not_yet(e->line, n > 3 ? "a builtin of more than three arguments" : "TAB and SPC outside PRINT");
         n = 0;
     }
     for (int i = 0; i < 3; i++) a[i] = i < n ? expr(args[i]) : zero();
+    if (builtin_native(name, n, a, &r)) return r;
+    ty = builtin_type(name, n, a);
     for (int i = 0; i < 3; i++) a[i] = dynv(a[i]);
     cb = h_ncarg;
     carg(saddr(name, (int)strlen(name)), 0);
     carg(iconst(n), 0);
     for (int i = 0; i < 3; i++) carg_bv(a[i]);
-    return bv_call("bcrt_fn", cb, 11);
+    r = bv_call("bcrt_fn", cb, 11);
+    return ty == ST_DYN ? r : typed(r, ty);
 }
 
 static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
@@ -1556,6 +1662,20 @@ static void bc_stmt(stmt_t *s) {
         int cb = h_ncarg;
         carg(iconst(s->option_base.base), 0);
         call_end(cb, 1, "bcrt_option_base", NULL);
+        break;
+    }
+    case STMT_RANDOMIZE: {      /* the seed a double (val_to_double), or asked for */
+        int lo, hi, cb;
+        if (s->randomize.seed) {
+            bv_t x = expr(s->randomize.seed);
+            if (!st_num(x.st)) x = coerce(x, VAL_DOUBLE);
+            dwords(x, &lo, &hi);
+        } else
+            lo = dconst(0, &hi);
+        cb = h_ncarg;
+        carg(iconst(s->randomize.seed != NULL), 0);
+        carg(lo, 1); carg(hi, 2);
+        call_end(cb, 3, "bcrt_randomize", NULL);
         break;
     }
     case STMT_INPUT:

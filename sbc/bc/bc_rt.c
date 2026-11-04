@@ -21,6 +21,7 @@
  * string the variable held.
  */
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -165,6 +166,18 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
     if (e != ERR_NONE) bcrt_fail(e);
     return r.ival != 0;
 }
+
+void bcrt_randomize(int has_seed, double seed) {
+    error_t e = eval_randomize(has_seed, seed);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* RND(n) (has_n) or RND: the interpreter's generator (fn_rnd) */
+double bcrt_rnd(double n, int has_n) { return sb_rnd_of(n, has_n); }
+
+/* INT and FIX of a float (fn_int, fn_fix) */
+double bcrt_floor(double d) { return floor(d); }
+double bcrt_trunc(double d) { return trunc(d); }
 
 /* a float in range and not whole, rounded half to even (round_even) */
 int bcrt_rint(double d) {

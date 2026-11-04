@@ -98,6 +98,7 @@ error_t eval_dim(const char *name, val_type_t type, int ndims, const int *uppers
                  int base, int is_redim, int preserve);
 error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out);
 error_t eval_array_for(const char *name, int nidx, sb_array_t **out);
+error_t eval_randomize(int has_seed, double seed);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
 error_t eval_input_line(const char *prompt, int no_question, int same_line,
