@@ -581,6 +581,32 @@ void bcrt_gfx(int type, int flags, int box, int x1, int y1, int x2, int y2, int 
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* --- records (TYPE): the interpreter's sb_record_t ----------------------- */
+
+_Static_assert(offsetof(sb_record_t, fields) == 12, "bc.c: a record's fields 12 in");
+static unsigned char bcrt_types_ran[256];
+
+/* TYPE t has run: DIM AS t may make one */
+void bcrt_type_ran(int t) { if (t >= 0 && t < 256) bcrt_types_ran[t] = 1; }
+
+/* DIM v AS t: a record of n fields, of types ('A' + val_type_t each),
+ * each 0 or empty (exec_dim_as_type) */
+int bcrt_record_new(int t, const char *types, int n) {
+    sb_record_t *r;
+    if (t < 0 || t >= 256 || !bcrt_types_ran[t]) bcrt_fail(ERR_UNDEFINED_TYPE);
+    r = record_alloc(t, n);
+    if (!r) bcrt_fail(ERR_OUT_OF_MEMORY);
+    for (int i = 0; i < n; i++) {
+        val_clear(&r->fields[i]);
+        r->fields[i] = val_default((val_type_t)(types[i] - 'A'));
+    }
+    return (int)(intptr_t)r;
+}
+
+void bcrt_record_unref(int p) {
+    if (p) record_unref((sb_record_t *)(intptr_t)p);
+}
+
 /* a letter's DEFtype, set as the program starts (after bcrt_start) */
 void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
 

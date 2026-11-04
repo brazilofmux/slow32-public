@@ -1,0 +1,7 @@
+PRINT "start"
+TYPE T
+A AS INTEGER
+END TYPE
+DIM R AS T
+R.A = 40000
+PRINT "not reached"

@@ -428,6 +428,7 @@ typedef struct {
                                  * value; -1 for a global */
     const char *g;              /* a global's symbol (SHARED, STATIC), else NULL */
     int local;                  /* the frame's own, released as a procedure returns */
+    int rtype;                  /* a record's TYPE (VAL_RECORD: its slot the record), else -1 */
 } var_t;
 
 /* names the program uses as arrays (DIM, A(...) = , a call to no
@@ -491,6 +492,7 @@ static void var_init(var_t *v, const char *name, int type, const char *g) {
     v->type = type;
     v->g = g;
     v->local = g == NULL;
+    v->rtype = -1;
     v->a = g ? -1 : alloca_of(type == VAL_SINGLE ? TY_FLOAT : TY_INT, type == VAL_DOUBLE ? 8 : 4);
 }
 
@@ -558,6 +560,27 @@ static int name_type(const char *name) {
 typedef struct { char name[64]; int type; } atype_t;
 static atype_t *bc_atypes;
 static int bc_natypes, bc_capatypes;
+
+/* --- TYPE: records ----------------------------------------------------- */
+
+/* the program's TYPEs, in the order of the text */
+static stmt_t **bc_types;
+static int bc_ntypes;
+
+static int type_find(const char *name) {
+    for (int i = 0; i < bc_ntypes; i++)
+        if (strcmp(bc_types[i]->type_def.name, name) == 0) return i;
+    return -1;
+}
+
+/* field name's index in TYPE t, or -1 */
+static int field_find(int t, const char *name) {
+    for (int i = 0; i < bc_types[t]->type_def.nfields; i++)
+        if (strcmp(bc_types[t]->type_def.fields[i].name, name) == 0) return i;
+    return -1;
+}
+
+static int field_type(int t, int f) { return bc_types[t]->type_def.fields[f].type; }
 
 /* --- CONST ------------------------------------------------------------- */
 
@@ -640,9 +663,19 @@ static int decl_type(const stmt_t *s) {
  * its name's */
 static stmt_t *bc_program;
 static int main_type(const char *name) {
-    for (stmt_t *s = bc_program; s; s = s->next)
+    for (stmt_t *s = bc_program; s; s = s->next) {
         if (s->type == STMT_DIM_SCALAR && strcmp(s->dim_scalar.name, name) == 0) return decl_type(s);
+        if (s->type == STMT_DIM_AS_TYPE && strcmp(s->dim_as_type.name, name) == 0) return VAL_RECORD;
+    }
     return name_type(name);
+}
+
+/* a main-program record's TYPE (its DIM AS at the program's top), or -1 */
+static int main_rtype(const char *name) {
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_DIM_AS_TYPE && strcmp(s->dim_as_type.name, name) == 0)
+            return type_find(s->dim_as_type.type_name);
+    return -1;
 }
 
 static int arr_type(const char *name) {
@@ -1265,6 +1298,65 @@ static bv_t def_fn_call(expr_t *e, const char *name, int nargs, expr_t **args) {
     return coerce(r, name_type(name + 2));   /* (FNname: name's letter, as call_def_fn) */
 }
 
+/* var.field's value_t (exec_field_assign, eval_expr): var a record (one
+ * whose DIM has run: Undefined variable otherwise, as the interpreter
+ * says it), field one of its TYPE's (Undefined field); *ty its type */
+#define BC_RECORD_FIELDS 12     /* refcount, type_idx, nfields: then the fields */
+static int field_addr(int line, const char *var, const char *field, int *ty) {
+    var_t *v = var_find(var);
+    int f, rec, ok, cb;
+    if (!v || v->type != VAL_RECORD) {
+        bc_not_yet(line, "a field of no record DIMmed before it");
+        *ty = VAL_INTEGER;
+        return iconst(0);
+    }
+    f = field_find(v->rtype, field);
+    rec = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+    ok = bin(HI_SNE, rec, iconst(0));
+    guard(ok, ERR_UNDEFINED_VAR);
+    if (f < 0) {
+        cb = h_ncarg;
+        carg(iconst(ERR_UNDEFINED_FIELD), 0);
+        call_end(cb, 1, "bcrt_err", NULL);
+        *ty = VAL_INTEGER;
+        return rec;
+    }
+    *ty = field_type(v->rtype, f);
+    return hi_emit(HI_ADDI, TY_INT, rec, -1, BC_RECORD_FIELDS + f * BC_ELEM, NULL);
+}
+
+static bv_t field_read(expr_t *e) {
+    int ty, ea = field_addr(e->line, e->field.var_name, e->field.field_name, &ty);
+    if (ty == VAL_STRING) {
+        int cb = h_ncarg;
+        carg(ld(ea, 4), 0);
+        return mk(call_end(cb, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
+    }
+    return mk(ld(ea, 4), st_flt(ty) ? ld(ea, 8) : -1, -1, ty);
+}
+
+/* var.field = e: the record and the field first, then e, made the
+ * field's type as val_coerce makes it (a DOUBLE kept as it is) */
+static void field_assign(stmt_t *s) {
+    int ty, ea;
+    bv_t x;
+    ea = field_addr(s->line, s->field_assign.var_name, s->field_assign.field_name, &ty);
+    (void)ea;
+    x = expr(s->field_assign.value);
+    if (!(ty == VAL_DOUBLE && x.st == VAL_DOUBLE)) x = coerce(x, ty);
+    ea = field_addr(s->line, s->field_assign.var_name, s->field_assign.field_name, &ty);
+    if (ty == VAL_STRING) {
+        int old = ld(ea, 4), cb;
+        st(ea, 4, x.lo);
+        cb = h_ncarg;
+        carg(old, 0);
+        call_end(cb, 1, "bcrt_unref", NULL);
+        return;
+    }
+    st(ea, 4, x.lo);
+    if (st_flt(ty)) st(ea, 8, x.hi);
+}
+
 static bv_t array_read(expr_t *e) {
     bv_t a[3];
     int ty = arr_type(e->call.name), ea;
@@ -1335,7 +1427,11 @@ static bv_t expr(expr_t *e) {
             proc_call(e->line, proc_find(e->var.name), 0, NULL, &r);
             return r;
         }
-        return var_load(var_get(e->var.name, e->var.var_type, e->line));
+        {
+            var_t *v = var_get(e->var.name, e->var.var_type, e->line);
+            if (v->type == VAL_RECORD) { bc_not_yet(e->line, "a record as a value"); return zero(); }
+            return var_load(v);
+        }
     case EXPR_BINARY: {
         bv_t a = expr(e->binary.left), b = expr(e->binary.right);
         return binary(e->binary.op, a, b);
@@ -1344,6 +1440,8 @@ static bv_t expr(expr_t *e) {
         return mk(hi_emit(HI_NEG, TY_INT, compare_expr(e), -1, 0, NULL), -1, -1, VAL_INTEGER);
     case EXPR_UNARY:
         return unary(e->unary.op, expr(e->unary.operand));
+    case EXPR_FIELD_ACCESS:
+        return field_read(e);
     case EXPR_CALL:
         if (is_function(e->call.name)) {        /* (before an array or a builtin: as eval_expr) */
             bv_t r;
@@ -2552,6 +2650,10 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
         lv->ty = lv->v->type;
         return 1;
     }
+    if (e->type == EXPR_FIELD_ACCESS) {
+        lv->ea = field_addr(line, e->field.var_name, e->field.field_name, &lv->ty);
+        return 1;
+    }
     if (e->type == EXPR_CALL && !is_builtin_call(e->call.name) && strncmp(e->call.name, "FN", 2) != 0) {
         bv_t a[3];
         sub_args(line, e->call.nargs, e->call.args, a);
@@ -2669,9 +2771,12 @@ static void bc_stmt(stmt_t *s) {
     case STMT_PRINT:
         bc_print(s);
         break;
-    case STMT_ASSIGN:
-        var_store(var_get(s->assign.name, s->assign.var_type, s->line), expr(s->assign.value));
+    case STMT_ASSIGN: {
+        var_t *v = var_get(s->assign.name, s->assign.var_type, s->line);
+        if (v->type == VAL_RECORD) { bc_not_yet(s->line, "a record assigned"); break; }
+        var_store(v, expr(s->assign.value));
         break;
+    }
     case STMT_GOTO:
         goto_blk(label_blk(s->goto_stmt.label));
         break;
@@ -2994,10 +3099,10 @@ static void bc_stmt(stmt_t *s) {
     case STMT_CLEAR:            /* every variable as it started, every array gone */
         if (bc_proc) { bc_not_yet(s->line, "CLEAR in a SUB or FUNCTION"); break; }
         for (int i = 0; i < bc_nvars; i++) {
-            if (bc_vars[i]->type == VAL_STRING) {
+            if (bc_vars[i]->type == VAL_STRING || bc_vars[i]->type == VAL_RECORD) {
                 int cb = h_ncarg;
                 carg(hi_emit(HI_LOAD, TY_INT, VA(bc_vars[i]), -1, 0, NULL), 0);
-                call_end(cb, 1, "bcrt_unref", NULL);
+                call_end(cb, 1, bc_vars[i]->type == VAL_STRING ? "bcrt_unref" : "bcrt_record_unref", NULL);
             }
             var_zero(bc_vars[i]);
         }
@@ -3012,16 +3117,42 @@ static void bc_stmt(stmt_t *s) {
         if (v) var_store(v, x);
         break;
     }
-    case STMT_DIM_SCALAR: {     /* the variable made anew (env_set of its default) */
-        var_t *v = var_find(s->dim_scalar.name);
-        if (v && v->type == VAL_STRING) {
-            int cb = h_ncarg;
-            carg(hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL), 0);
-            call_end(cb, 1, "bcrt_unref", NULL);
-        }
-        if (v) var_zero(v);
+    case STMT_TYPE_DEF: {       /* (the TYPE known from here on: a DIM AS before is Undefined TYPE) */
+        int cb = h_ncarg;
+        carg(iconst(type_find(s->type_def.name)), 0);
+        call_end(cb, 1, "bcrt_type_ran", NULL);
         break;
     }
+    case STMT_DIM_AS_TYPE: {    /* a new record, its fields 0 or empty, if it has none */
+        var_t *v = var_find(s->dim_as_type.name);
+        int t = type_find(s->dim_as_type.type_name), cb, rec, old;
+        char types[33];
+        if (!v || t < 0) break;         /* (prescan refused it) */
+        for (int i = 0; i < bc_types[t]->type_def.nfields && i < 32; i++)
+            types[i] = (char)('A' + bc_types[t]->type_def.fields[i].type);
+        types[bc_types[t]->type_def.nfields < 32 ? bc_types[t]->type_def.nfields : 32] = '\0';
+        {                       /* (a declaration: the record made once, exec_dim_as_type) */
+            int make = new_blk(), done = new_blk();
+            old = hi_emit(HI_LOAD, TY_INT, VA(v), -1, 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, old, done, make, NULL);
+            bc_live = 0;
+            begin_blk(make);
+            cb = h_ncarg;
+            carg(iconst(t), 0);
+            carg(saddr(types, (int)strlen(types) ? (int)strlen(types) : 1), 0);
+            carg(iconst((int)strlen(types)), 0);
+            rec = call_end(cb, 3, "bcrt_record_new", NULL);
+            hi_emit(HI_STORE, TY_INT, VA(v), rec, 0, NULL);
+            goto_blk(done);
+            begin_blk(done);
+        }
+        break;
+    }
+    case STMT_FIELD_ASSIGN:
+        field_assign(s);
+        break;
+    case STMT_DIM_SCALAR:       /* a declaration (prescan typed the variable) */
+        break;
     case STMT_SUB_DEF:          /* (each a function of its own: hl_func) */
     case STMT_FUNC_DEF:
     case STMT_SHARED:           /* (proc_begin) */
@@ -3206,6 +3337,22 @@ static void prescan(stmt_t *s) {
         if (s->type == STMT_DEF_FN) continue;   /* (its parameters are no program variables) */
         stmt_exprs(s, prescan_top, NULL);
         switch (s->type) {
+        case STMT_DIM_AS_TYPE: {
+            /* a record from the start: the name's first use its DIM AS
+             * (the interpreter's variable is a record once that runs) */
+            int t = type_find(s->dim_as_type.type_name);
+            var_t *v = var_find(s->dim_as_type.name);
+            if (t < 0) { bc_not_yet(s->line, "a DIM AS of no TYPE of the program"); break; }
+            if (v) {
+                if (v->type != VAL_RECORD || v->rtype != t)
+                    bc_not_yet(s->line, "a DIM AS after its variable's use");
+                break;
+            }
+            v = var_push();
+            var_init(v, s->dim_as_type.name, VAL_RECORD, global_of(s->dim_as_type.name, VAL_RECORD));
+            v->rtype = t;
+            break;
+        }
         case STMT_CONST: {
             /* a CONST, a variable of its value's type from the start: in
              * no block, before any use (as exec_const makes it when it
@@ -3326,6 +3473,7 @@ static void proc_func(proc_t *p, Node *fn) {
                 global_sym(sym, sizeof sym, s->type == STMT_STATIC ? p : NULL, name);
                 v = var_push();
                 var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
+                v->rtype = main_rtype(name);
             }
     bc_nconsts = bc_nmodconsts;
     for (int i = 0; i < bc_nmodconsts; i++)   /* the main program's CONSTs: everywhere */
@@ -3336,14 +3484,18 @@ static void proc_func(proc_t *p, Node *fn) {
             var_init(v, bc_consts[i].name, bc_consts[i].type,
                      global_add(bc_consts[i].name, sym, bc_consts[i].type));
         }
-    for (int i = 0; i < bc_ndimshared; i++)   /* DIM SHARED's variables: everywhere */
-        if (bc_dimshared[i]->type == STMT_DIM_SCALAR && !var_find(bc_dimshared[i]->dim_scalar.name)) {
-            const char *name = bc_dimshared[i]->dim_scalar.name;
+    for (int i = 0; i < bc_ndimshared; i++) {  /* DIM SHARED's variables and records: everywhere */
+        stmt_t *d = bc_dimshared[i];
+        const char *name = d->type == STMT_DIM_SCALAR ? d->dim_scalar.name :
+                           d->type == STMT_DIM_AS_TYPE ? d->dim_as_type.name : NULL;
+        if (name && !var_find(name)) {
             char sym[96];
             var_t *v = var_push();
             global_sym(sym, sizeof sym, NULL, name);
             var_init(v, name, main_type(name), global_add(name, sym, main_type(name)));
+            v->rtype = main_rtype(name);
         }
+    }
     prescan(def->proc_def.body);
     for (int i = 0; i < bc_nvars; i++)
         if (bc_vars[i]->local) var_zero(bc_vars[i]);
@@ -3370,10 +3522,11 @@ static void proc_func(proc_t *p, Node *fn) {
         }
     }
     for (int i = 0; i < bc_nvars; i++)
-        if (bc_vars[i]->local && bc_vars[i]->type == VAL_STRING && bc_vars[i] != bc_proc_result) {
+        if (bc_vars[i]->local && (bc_vars[i]->type == VAL_STRING || bc_vars[i]->type == VAL_RECORD) &&
+            bc_vars[i] != bc_proc_result) {
             int cb = h_ncarg;
             carg(hi_emit(HI_LOAD, TY_INT, VA(bc_vars[i]), -1, 0, NULL), 0);
-            call_end(cb, 1, "bcrt_unref", NULL);
+            call_end(cb, 1, bc_vars[i]->type == VAL_STRING ? "bcrt_unref" : "bcrt_record_unref", NULL);
         }
     call_void("bcrt_leave");
     hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
@@ -3419,6 +3572,13 @@ static void program_prepare(void) {
     deftypes(bc_program, 0);
     bc_trap = 0;
     find_trap(bc_program);
+    bc_ntypes = 0;
+    for (stmt_t *s = bc_program; s; s = s->next)
+        if (s->type == STMT_TYPE_DEF && type_find(s->type_def.name) < 0) {
+            bc_types = realloc(bc_types, (size_t)(bc_ntypes + 1) * sizeof(stmt_t *));
+            if (!bc_types) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            bc_types[bc_ntypes++] = s;
+        }
     bc_nprocs = 0;
     for (stmt_t *s = bc_program; s; s = s->next)
         if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) bc_nprocs++;
@@ -3461,14 +3621,16 @@ static void program_prepare(void) {
     bc_ndimshared = 0;
     for (stmt_t *s = bc_program; s; s = s->next)
         if ((s->type == STMT_DIM && s->dim_stmt.shared) ||
-            (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared)) {
+            (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared) ||
+            (s->type == STMT_DIM_AS_TYPE && s->dim_as_type.shared)) {
             bc_dimshared = realloc(bc_dimshared, (size_t)(bc_ndimshared + 1) * sizeof(stmt_t *));
             if (!bc_dimshared) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
             bc_dimshared[bc_ndimshared++] = s;
-            if (s->type == STMT_DIM_SCALAR) {
+            if (s->type == STMT_DIM_SCALAR || s->type == STMT_DIM_AS_TYPE) {
+                const char *name = s->type == STMT_DIM_SCALAR ? s->dim_scalar.name : s->dim_as_type.name;
                 char sym[96];
-                global_sym(sym, sizeof sym, NULL, s->dim_scalar.name);
-                global_add(s->dim_scalar.name, sym, main_type(s->dim_scalar.name));
+                global_sym(sym, sizeof sym, NULL, name);
+                global_add(name, sym, main_type(name));
             }
         }
 }
