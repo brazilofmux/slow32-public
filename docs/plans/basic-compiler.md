@@ -296,7 +296,34 @@ CASE, EXIT, ON ERROR/RESUME, DEFINT and its kind, SWAP, PRINT USING.
 
 Speed, the 92 games both compilers take: interpreter 417M instructions,
 s32-sbc 137M, s32-bc 223M -- every operator still a call into the
-interpreter's code.  Native paths next: a static type for each
-expression where the program fixes one, integer arithmetic with QB's
-Overflow checks inline, doubles and singles through the hardware, each
-held to the runtime's answer.
+interpreter's code.
+
+### Native paths (2026-11-03)
+
+A value whose type the program fixes has it statically, and lives
+natively: an INTEGER or LONG its int, a SINGLE or DOUBLE its double
+(a SINGLE unrounded between operators, as the interpreter keeps one),
+a string its sb_string_t; the three words a runtime function takes are
+made only when one does.  + - * of integers are inline with value.c's
+Overflow (an INTEGER's sum checked to 16 bits, a LONG's by the sign
+rule, a LONG product by mulh); a float among them, and /, are the
+hardware's doubles (stage08's backend makes __fp64_* single
+instructions), / checked for zero; comparisons, AND/OR/XOR/IMP/EQV/NOT,
+negation, \ and MOD by a constant, and conditions, the same.  A store
+does store_into's work: INTEGER range, a SINGLE rounded after the
+FLT_MAX check, a DOUBLE's infinity an Overflow.  FOR keeps its limit
+and step in their own types, in words zeroed at the start (a NEXT whose
+FOR never ran sees QBasic's limit 0 and the step as written when it is
+a literal: NBS P055), and NEXT steps the variable as for_next does.
+Arrays stay the interpreter's (LBOUND, ERASE, REDIM see them), but an
+element is reached through a cell per name in the runtime -- data,
+base, dimensions -- good while array_generation is the cell's (as
+s32-sbc caches them), with the bounds checks inline.  What is not
+fixed still goes through the runtime (builtins' results, POW, strings'
+operators), and its type is set where value.c's rules make it one.
+
+sbc/tests/native holds the edges, each run-time error a program of its
+own that must end in it.  `run-oracle.py --bc`: 355 agree, 20 refused
+alike, none differ.  The 92 games: s32-bc 113.7M instructions, against
+s32-sbc's 137.3M and the interpreter's 417M (mastermind, near half of
+it, went from 79M to 48M when its arrays stopped being name lookups).

@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "value.h"
 #include "error.h"
 #include "ast.h"
@@ -70,8 +71,21 @@ static pair_t give(const value_t *v) {
     return (pair_t)(unsigned)u.w[0] | ((pair_t)(unsigned)u.w[1] << 32);
 }
 
+/* The arrays compiled code reaches itself: a cell for each array name
+ * of the program, what an element's address takes, good while
+ * array_generation is the cell's (an array made, erased or
+ * re-dimensioned bumps it).  bc.c knows the cell's layout and
+ * value_t's: an element is 12 bytes, its number or string 4 in. */
+typedef struct { unsigned gen; value_t *data; int base, dims[3]; } bcrt_acell_t;
+_Static_assert(sizeof(bcrt_acell_t) == 24, "bc.c: the cell's layout");
+_Static_assert(sizeof(value_t) == 12 && offsetof(value_t, ival) == 4 &&
+               offsetof(value_t, dval) == 4 && offsetof(value_t, sval) == 4, "bc.c: value_t's layout");
+#define BCRT_ACELLS 256
+bcrt_acell_t bcrt_acache[BCRT_ACELLS];
+
 /* as eval_program_with starts a program */
 void bcrt_start(void) {
+    for (int i = 0; i < BCRT_ACELLS; i++) bcrt_acache[i].gen = ~0u;
     eval_reset();
 }
 
@@ -114,15 +128,6 @@ pair_t bcrt_bin(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
     return give(&r);
 }
 
-pair_t bcrt_cmp(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
-    value_t x = take(alo, ahi, at), y = take(blo, bhi, bt), r;
-    error_t e = eval_compare((cmpop_t)op, &x, &y, &r);
-    val_clear(&x);
-    val_clear(&y);
-    if (e != ERR_NONE) bcrt_fail(e);
-    return give(&r);
-}
-
 pair_t bcrt_un(int op, int alo, int ahi, int at) {
     value_t x = take(alo, ahi, at), r;
     error_t e = eval_unary((unaryop_t)op, &x, &r);
@@ -141,34 +146,36 @@ pair_t bcrt_conv(int lo, int hi, int t, int to) {
     return give(&slot);
 }
 
+/* the same, as an INTEGER or LONG variable holds it: its int */
+int bcrt_convi(int lo, int hi, int t, int to) {
+    value_t slot = val_default((val_type_t)to), x = take(lo, hi, t);
+    error_t e = eval_store(&slot, &x);
+    val_clear(&x);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return slot.ival;
+}
+
+/* a comparison's truth, 0 or 1, where compiled code does not make it
+ * itself (a string among them) */
+int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
+    value_t x = take(alo, ahi, at), y = take(blo, bhi, bt), r;
+    error_t e = eval_compare((cmpop_t)op, &x, &y, &r);
+    val_clear(&x);
+    val_clear(&y);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return r.ival != 0;
+}
+
+/* an error compiled code finds itself (Overflow, Division by zero) */
+void bcrt_err(int e) {
+    bcrt_fail((error_t)e);
+}
+
 int bcrt_true(int lo, int hi, int t) {
     value_t x = take(lo, hi, t);
     int r = val_is_true(&x);
     val_clear(&x);
     return r;
-}
-
-/* FOR: whether the loop runs with the variable at v (for_in_range) */
-int bcrt_for_in(double v, double limit, double step) {
-    return step >= 0 ? v <= limit : v >= limit;
-}
-
-/* NEXT: the variable of type vt, at cur, stepped (for_next) */
-double bcrt_for_step(double cur, int vt, double step) {
-    double v;
-    if (vt == VAL_INTEGER || vt == VAL_LONG) {
-        v = cur + step;
-        if (!(v <= 2147483647.0 && v >= -2147483648.0) || v != (double)(int)v ||
-            (vt == VAL_INTEGER && !INT16_OK(v))) {
-            value_t slot = val_default((val_type_t)vt), x = val_double(v);
-            error_t e = eval_store(&slot, &x);
-            if (e != ERR_NONE) bcrt_fail(e);
-            return (double)slot.ival;
-        }
-        return v;
-    }
-    if (vt == VAL_SINGLE) return single_round(cur + step);
-    return cur + step;
 }
 
 void bcrt_print_val(int lo, int hi, int t) {
@@ -230,17 +237,6 @@ int bcrt_return(void) {
 
 #include "array.h"
 
-/* subscripts, as an expression's are made integers (val_to_integer) */
-static void subs(int n, value_t *v, int *ix) {
-    for (int i = 0; i < n; i++) {
-        error_t e = val_to_integer(&v[i], &ix[i]);
-        if (e != ERR_NONE) {
-            for (int j = 0; j < 3; j++) val_clear(&v[j]);
-            bcrt_fail(e);
-        }
-    }
-}
-
 /* DIM / REDIM name(u0[, u1[, u2]]) AS type; base -1 is the OPTION BASE in
  * force (eval_option_base), a static DIM made before the run passes the
  * one of its place in the text.  A static DIM met when it runs is a
@@ -271,35 +267,21 @@ void bcrt_dim(const char *name, int type, int n, int is_static, int base, int re
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
-pair_t bcrt_aget(const char *name, int n, int alo, int ahi, int at, int blo, int bhi, int bt,
-                 int clo, int chi, int ct) {
-    value_t v[3], out;
-    int ix[3];
-    error_t e;
-    v[0] = take(alo, ahi, at);
-    v[1] = take(blo, bhi, bt);
-    v[2] = take(clo, chi, ct);
-    subs(n, v, ix);
-    for (int i = 0; i < 3; i++) val_clear(&v[i]);
-    e = eval_array_get(name, n, ix, &out);
+/* cell id's array, name(n subscripts) (eval_array_for: an implicit one
+ * made), of elements of type ty */
+void bcrt_alook(const char *name, int n, int id, int ty) {
+    sb_array_t *arr;
+    bcrt_acell_t *c = &bcrt_acache[id];
+    error_t e = eval_array_for(name, n, &arr);
     if (e != ERR_NONE) bcrt_fail(e);
-    return give(&out);
-}
-
-void bcrt_aset(const char *name, int n, int alo, int ahi, int at, int blo, int bhi, int bt,
-               int clo, int chi, int ct, int xlo, int xhi, int xt) {
-    value_t v[3], x;
-    int ix[3];
-    error_t e;
-    v[0] = take(alo, ahi, at);
-    v[1] = take(blo, bhi, bt);
-    v[2] = take(clo, chi, ct);
-    x = take(xlo, xhi, xt);
-    subs(n, v, ix);
-    for (int i = 0; i < 3; i++) val_clear(&v[i]);
-    e = eval_array_store(name, n, ix, &x);
-    val_clear(&x);
-    if (e != ERR_NONE) bcrt_fail(e);
+    if ((int)arr->elem_type != ty) {
+        fprintf(stderr, "s32-bc: internal: %s has elements of type %d, not %d\n", name, arr->elem_type, ty);
+        exit(1);
+    }
+    c->gen = array_generation;
+    c->data = arr->data;
+    c->base = arr->base;
+    for (int i = 0; i < n && i < 3; i++) c->dims[i] = arr->dims[i];
 }
 
 void bcrt_option_base(int base) { eval_set_option_base(base); }

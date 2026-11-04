@@ -2213,25 +2213,31 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
  * implicit one made (subscripts to 10), then the element -- for
  * compiled code (s32-bc) */
 error_t eval_array_get(const char *name, int nidx, int *indices, value_t *out) {
-    sb_array_t *arr = array_find(name);
+    sb_array_t *arr;
     value_t *elem;
+    EVAL_CHECK(eval_array_for(name, nidx, &arr));
+    EVAL_CHECK(array_get(name, indices, nidx, &elem));
+    *out = val_copy(elem);
+    return ERR_NONE;
+}
+
+/* the array name(i, ...) reaches with nidx subscripts, read or
+ * assigned: one DIMmed, or an implicit one made (subscripts to 10) */
+error_t eval_array_for(const char *name, int nidx, sb_array_t **out) {
+    sb_array_t *arr = array_find(name);
     if (!arr) arr = array_implicit(name, nidx);
     if (!arr) return ERR_UNDEFINED_VAR;
     if (nidx != arr->ndims) return ERR_WRONG_DIMS;
-    EVAL_CHECK(array_get(name, indices, nidx, &elem));
-    *out = val_copy(elem);
+    *out = arr;
     return ERR_NONE;
 }
 
 /* A(i, ...) = v, the subscripts and the value evaluated (an array not
  * DIMmed yet is made) */
 error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v) {
-    sb_array_t *arr = array_find(name);
+    sb_array_t *arr;
     value_t *slot;
-    if (!arr)
-        arr = array_implicit(name, nidx);
-    if (!arr)
-        return ERR_UNDEFINED_VAR;
+    EVAL_CHECK(eval_array_for(name, nidx, &arr));
     EVAL_CHECK(array_get(name, indices, nidx, &slot));
     return store_into(slot, v);
 }

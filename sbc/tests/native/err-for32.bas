@@ -1,0 +1,3 @@
+PRINT "start"
+FOR L& = 2147483600 TO 2147483647 STEP 40: NEXT
+PRINT "not reached"

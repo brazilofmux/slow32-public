@@ -5,7 +5,9 @@ the same bytes.
 
     sbc/tests/run-oracle.py [-j N] [-v] [--bc] [DIR_OR_FILE ...]
 
-With no arguments the corpus is sbasic's own tests and, when they are
+With no arguments the corpus is sbasic's own tests, s32-bc's native
+paths' (tests/native: each err-* program ends in the run-time error it
+is named for) and, when they are
 there, the collections in ~/refs/basic/nbs-ecma55-test (NBS/,
 basic_computer_games/, fast/; not in this tree).  A program's keys are
 its sibling .in or .input.
@@ -125,7 +127,7 @@ def main():
         args = [a for a in args if a != '--bc']
         OUT, COMPILE, BUILD = os.path.join(SBC, 'out/oracle-bc'), 'compile-bc.sh', 'build-bc.sh' 
     if not args:
-        args = [os.path.join(ROOT, 'sbasic/tests')]
+        args = [os.path.join(ROOT, 'sbasic/tests'), os.path.join(HERE, 'native')]
         args += [os.path.join(REFS, d) for d in ('NBS', 'basic_computer_games', 'fast')
                  if os.path.isdir(os.path.join(REFS, d))]
     os.makedirs(OUT, exist_ok=True)

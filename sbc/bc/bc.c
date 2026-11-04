@@ -7,11 +7,14 @@
  *
  * The front end is sbasic's: its loader, lexer and parser (linked in
  * from sbasic/src), and its checker (strict.c) -- a program the
- * compiler takes is one QuickBASIC loads.  Values are computed the
- * interpreter's way by its own code, through bc_rt.c: a value crosses as
- * a double and a run-time type; variables, labels and loops are the
- * compiler's own.  What it does not do yet it says, and stops ("not
- * yet: ...").
+ * compiler takes is one QuickBASIC loads.  Where the program fixes a
+ * value's type, the compiler computes it itself, natively, as value.c
+ * does (an INTEGER's + with its Overflow inline, a SINGLE's * on the
+ * hardware's doubles), and reaches an array's elements through a cell
+ * of their address; elsewhere values are computed the interpreter's
+ * way by its own code, through bc_rt.c, a value crossing as a double
+ * and a run-time type.  Variables, labels and loops are the compiler's
+ * own.  What it does not do yet it says, and stops ("not yet: ...").
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,16 +130,139 @@ static int alloca_of(int ty, int size) {
  * A number's lo and hi are its double's words; a string's lo is its
  * sb_string_t, a reference this value owns -- whatever takes the value
  * (a bcrt_ function, a variable) takes the reference. */
-typedef struct { int lo, hi, t; } bv_t;
+/*
+ * Where the program fixes a value's type, it has a static one (st), and
+ * the value lives natively: an INTEGER or LONG is its int in lo, a
+ * SINGLE or DOUBLE its double's words in lo and hi (a SINGLE unrounded,
+ * as the interpreter keeps one between operators), a STRING its
+ * sb_string_t in lo.  Its type is then a constant, and t is not made
+ * until a runtime function wants the three words (dynv).  Where the
+ * type is the run time's (st == ST_DYN), the three words are the value.
+ * A constant (k) has its number in kv as well, so its conversions fold.
+ */
+#define ST_DYN (-1)
+typedef struct { int lo, hi, t; int st, k; double kv; } bv_t;
 
-static void carg_bv(bv_t x) { carg(x.lo, 0); carg(x.hi, 0); carg(x.t, 0); }
+static int st_int(int st) { return st == VAL_INTEGER || st == VAL_LONG; }
+static int st_flt(int st) { return st == VAL_SINGLE || st == VAL_DOUBLE; }
+static int st_num(int st) { return st_int(st) || st_flt(st); }
+
+static bv_t mk(int lo, int hi, int t, int st) {
+    bv_t r;
+    r.lo = lo; r.hi = hi; r.t = t; r.st = st; r.k = 0; r.kv = 0;
+    return r;
+}
+
+static bv_t kint(long long v, int st) {
+    bv_t r = mk(iconst((int)v), -1, -1, st);
+    r.k = 1; r.kv = (double)v;
+    return r;
+}
+
+static bv_t kdbl(double d, int st) {
+    bv_t r;
+    r = mk(0, 0, -1, st);
+    r.lo = dconst(d, &r.hi);
+    r.k = 1; r.kv = d;
+    return r;
+}
+
+/* a call to a two-word (double) result helper of two words */
+static int call_d1(const char *name, int a, int b, int *hi) {
+    int cb = h_ncarg;
+    carg(a, 0); carg(b, 0);
+    return call_end(cb, 2, name, hi);
+}
+
+static int call_d2(const char *name, int alo, int ahi, int blo, int bhi, int *hi) {
+    int cb = h_ncarg;
+    carg(alo, 0); carg(ahi, 0); carg(blo, 0); carg(bhi, 0);
+    return call_end(cb, 4, name, hi);
+}
+
+/* a number's double words (an integer's converted, a constant's folded) */
+static void dwords(bv_t x, int *lo, int *hi) {
+    if (st_int(x.st)) {
+        if (x.k) { *lo = dconst(x.kv, hi); return; }
+        int cb = h_ncarg;
+        carg(x.lo, 0);
+        *lo = call_end(cb, 1, "__fp64_cvt_itoD", hi);
+        return;
+    }
+    *lo = x.lo;
+    *hi = x.hi;
+}
+
+/* the three words a runtime function takes */
+static bv_t dynv(bv_t x) {
+    if (x.st == ST_DYN) return x;
+    if (st_int(x.st)) dwords(x, &x.lo, &x.hi);
+    else if (x.st == VAL_STRING) x.hi = iconst(0);
+    x.t = iconst(x.st);
+    x.st = ST_DYN;
+    x.k = 0;
+    return x;
+}
+
+/* (every argument made dynv before the call's first carg: a conversion
+ * is a call, and a call's arguments are contiguous) */
+static void carg_bv(bv_t x) {
+    if (x.st != ST_DYN) { fprintf(stderr, "s32-bc: internal: a typed value passed\n"); exit(1); }
+    carg(x.lo, 0); carg(x.hi, 0); carg(x.t, 0);
+}
 
 /* a call returning a value: its words in r1:r2, its type bcrt_type()'s */
 static bv_t bv_call(const char *name, int cb, int nwords) {
-    bv_t r;
+    bv_t r = mk(0, 0, 0, ST_DYN);
     r.lo = call_end(cb, nwords, name, &r.hi);
     r.t = call_end(h_ncarg, 0, "bcrt_type", NULL);
     return r;
+}
+
+/* a run-time function's result whose type the program fixes: st's */
+static bv_t typed(bv_t r, int st) {
+    if (st_int(st)) r.lo = call_d1("__fp64_cvt_DtoI", r.lo, r.hi, NULL);
+    r.st = st;
+    return r;
+}
+
+/* --- run-time errors: one block each, the program's end -------------- */
+
+static int bc_fail_err[4], bc_fail_blk[4], bc_nfail;
+
+static int fail_blk(int err) {
+    for (int i = 0; i < bc_nfail; i++)
+        if (bc_fail_err[i] == err) return bc_fail_blk[i];
+    bc_fail_err[bc_nfail] = err;
+    bc_fail_blk[bc_nfail] = new_blk();
+    return bc_fail_blk[bc_nfail++];
+}
+
+/* go on where ok is not 0; else the error */
+static void guard(int ok, int err) {
+    int cont = new_blk();
+    hi_emit(HI_BRC, TY_VOID, ok, cont, fail_blk(err), NULL);
+    bc_live = 0;
+    begin_blk(cont);
+}
+
+static void fail_blocks(void) {
+    for (int i = 0; i < bc_nfail; i++) {
+        int cb;
+        begin_blk(bc_fail_blk[i]);
+        cb = h_ncarg;
+        carg(iconst(bc_fail_err[i]), 0);
+        call_end(cb, 1, "bcrt_err", NULL);
+        hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
+        bc_live = 0;
+    }
+}
+
+static int bin(int op, int a, int b) { return hi_emit(op, TY_INT, a, b, 0, NULL); }
+
+/* an INTEGER's range, -32768..32767, else Overflow */
+static void check16(int r) {
+    guard(bin(HI_SLTU, bin(HI_ADD, r, iconst(32768)), iconst(65536)), ERR_OVERFLOW);
 }
 
 /* --- variables ---------------------------------------------------- */
@@ -250,55 +376,136 @@ static var_t *var_param(const char *name, int type) {
 }
 
 static bv_t var_load(var_t *v) {
-    bv_t r;
-    int cb, x;
-    r.t = iconst(v->type);
-    if (v->type == VAL_DOUBLE) {
-        r.lo = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
-        r.hi = hi_emit(HI_LOAD, TY_INT, v->ahi, -1, 0, NULL);
-        return r;
-    }
+    int x;
+    if (v->type == VAL_DOUBLE)
+        return mk(hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL),
+                  hi_emit(HI_LOAD, TY_INT, v->ahi, -1, 0, NULL), -1, VAL_DOUBLE);
     if (v->type == VAL_STRING) {        /* a reference of the value's own */
+        int cb;
         x = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
         cb = h_ncarg;
         carg(x, 0);
-        r.lo = call_end(cb, 1, "bcrt_ref", NULL);
-        r.hi = iconst(0);
+        return mk(call_end(cb, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
+    }
+    if (v->type == VAL_SINGLE) {
+        bv_t r = mk(0, 0, -1, VAL_SINGLE);
+        int cb;
+        x = hi_emit(HI_LOAD, TY_FLOAT, v->a, -1, 0, NULL);
+        cb = h_ncarg;
+        carg(x, 0);
+        r.lo = call_end(cb, 1, "__fp64_cvt_ftoD", &r.hi);
         return r;
     }
-    x = hi_emit(HI_LOAD, v->type == VAL_SINGLE ? TY_FLOAT : TY_INT, v->a, -1, 0, NULL);
-    cb = h_ncarg;
-    carg(x, 0);
-    r.lo = call_end(cb, 1, v->type == VAL_SINGLE ? "__fp64_cvt_ftoD" : "__fp64_cvt_itoD", &r.hi);
-    return r;
+    return mk(hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL), -1, -1, v->type);
 }
 
-/* x, of any type, stored as v holds it (bcrt_conv: rounding, Overflow,
- * Type mismatch); a string variable lets its old string go */
-static void var_store(var_t *v, bv_t x) {
-    int cb, lo, hi, w;
+/* whether a double's words are a finite number of at most m (hi:lo the
+ * largest's), as store_into's fabs(d) <= m */
+static int in_range(int lo, int hi, unsigned mhi, unsigned mlo) {
+    int a = bin(HI_AND, hi, iconst(0x7FFFFFFF));
+    int lt = bin(HI_SLTU, a, iconst((int)mhi));
+    if (mlo == 0xFFFFFFFFu) return lt;
+    return bin(HI_OR, lt, bin(HI_AND, bin(HI_SEQ, a, iconst((int)mhi)),
+                               bin(HI_SLEU, lo, iconst((int)mlo))));
+}
+#define FLT_MAX_HI 0x47EFFFFFu  /* 3.4028234663852886e38 */
+#define FLT_MAX_LO 0xE0000000u
+#define DBL_INF_HI 0x7FF00000u  /* below it: finite */
+
+/* x as a variable of type ty holds it (store_into: rounding, Overflow,
+ * Type mismatch), a value of static type ty.  A SINGLE's value is its
+ * float as a double. */
+static int to_float(bv_t x);
+static bv_t coerce(bv_t x, int ty) {
+    int cb, lo, hi;
+    if (st_int(ty) && st_int(x.st)) {
+        if (ty == VAL_INTEGER && x.st == VAL_LONG && !(x.k && INT16_OK(x.kv))) check16(x.lo);
+        x.st = ty;
+        return x;
+    }
+    if (ty == VAL_DOUBLE && st_num(x.st)) {
+        if (st_int(x.st)) {
+            int k = x.k;
+            double kv = x.kv;
+            dwords(x, &lo, &hi);
+            x = mk(lo, hi, -1, VAL_DOUBLE);
+            x.k = k; x.kv = kv;
+            return x;
+        }
+        if (x.st == VAL_DOUBLE && !x.k) guard(in_range(x.lo, x.hi, DBL_INF_HI, 0xFFFFFFFFu), ERR_OVERFLOW);
+        x.st = VAL_DOUBLE;
+        return x;
+    }
+    if (ty == VAL_SINGLE && st_num(x.st)) {
+        bv_t r;
+        if (x.k && x.kv <= 3.4028234663852886e38 && x.kv >= -3.4028234663852886e38)
+            return kdbl((double)(float)x.kv, VAL_SINGLE);
+        r = mk(0, 0, -1, VAL_SINGLE);
+        lo = to_float(x);       /* (a call of its own: before this one's cb) */
+        cb = h_ncarg;
+        carg(lo, 0);
+        r.lo = call_end(cb, 1, "__fp64_cvt_ftoD", &r.hi);
+        return r;
+    }
+    if (ty == VAL_STRING && x.st == VAL_STRING) return x;
+    x = dynv(x);                /* (a Type mismatch among them: bcrt_conv's) */
     cb = h_ncarg;
     carg_bv(x);
-    carg(iconst(v->type), 0);
+    carg(iconst(ty), 0);
+    if (st_int(ty)) return mk(call_end(cb, 4, "bcrt_convi", NULL), -1, -1, ty);
     lo = call_end(cb, 4, "bcrt_conv", &hi);
+    return mk(lo, hi, -1, ty);
+}
+
+/* x as a SINGLE variable's float */
+static int to_float(bv_t x) {
+    int w;
+    if (st_int(x.st)) {
+        if (x.k) {
+            float f = (float)x.kv;
+            int bits;
+            memcpy(&bits, &f, 4);
+            return hi_emit(HI_ICONST, TY_FLOAT, -1, -1, bits, NULL);
+        }
+        return hi_emit(HI_FCVT_ItoF, TY_FLOAT, x.lo, -1, 0, NULL);
+    }
+    if (st_flt(x.st)) {
+        if (x.k && x.kv <= 3.4028234663852886e38 && x.kv >= -3.4028234663852886e38) {
+            float f = (float)x.kv;
+            int bits;
+            memcpy(&bits, &f, 4);
+            return hi_emit(HI_ICONST, TY_FLOAT, -1, -1, bits, NULL);
+        }
+        guard(in_range(x.lo, x.hi, FLT_MAX_HI, FLT_MAX_LO), ERR_OVERFLOW);
+    } else
+        x = coerce(x, VAL_SINGLE);      /* (bcrt_conv: the run time's checks) */
+    w = call_d1("__fp64_cvt_DtoF", x.lo, x.hi, NULL);
+    h_ty[w] = TY_FLOAT;
+    return w;
+}
+
+/* x, of any type, stored as v holds it; a string variable lets its old
+ * string go */
+static void var_store(var_t *v, bv_t x) {
+    if (v->type == VAL_SINGLE) {
+        hi_emit(HI_STORE, TY_FLOAT, v->a, to_float(x), 0, NULL);
+        return;
+    }
+    x = coerce(x, v->type);
     if (v->type == VAL_DOUBLE) {
-        hi_emit(HI_STORE, TY_INT, v->a, lo, 0, NULL);
-        hi_emit(HI_STORE, TY_INT, v->ahi, hi, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, v->ahi, x.hi, 0, NULL);
         return;
     }
     if (v->type == VAL_STRING) {
-        int old = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL);
-        hi_emit(HI_STORE, TY_INT, v->a, lo, 0, NULL);
+        int old = hi_emit(HI_LOAD, TY_INT, v->a, -1, 0, NULL), cb;
+        hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
         cb = h_ncarg;
         carg(old, 0);
         call_end(cb, 1, "bcrt_unref", NULL);
         return;
     }
-    cb = h_ncarg;
-    carg(lo, 0); carg(hi, 0);
-    w = call_end(cb, 2, v->type == VAL_SINGLE ? "__fp64_cvt_DtoF" : "__fp64_cvt_DtoI", NULL);
-    h_ty[w] = v->type == VAL_SINGLE ? TY_FLOAT : TY_INT;
-    hi_emit(HI_STORE, v->type == VAL_SINGLE ? TY_FLOAT : TY_INT, v->a, w, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, v->a, x.lo, 0, NULL);
 }
 
 static void var_zero(var_t *v) {
@@ -324,12 +531,7 @@ static int saddr(const char *s, int len) {
 }
 
 /* the numeric zero, standing for an argument not given */
-static bv_t zero(void) {
-    bv_t r;
-    r.lo = dconst(0, &r.hi);
-    r.t = iconst(VAL_INTEGER);
-    return r;
-}
+static bv_t zero(void) { return kint(0, VAL_INTEGER); }
 
 static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
     bv_t a[3];
@@ -339,6 +541,7 @@ static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
         n = 0;
     }
     for (int i = 0; i < 3; i++) a[i] = i < n ? expr(args[i]) : zero();
+    for (int i = 0; i < 3; i++) a[i] = dynv(a[i]);
     cb = h_ncarg;
     carg(saddr(name, (int)strlen(name)), 0);
     carg(iconst(n), 0);
@@ -347,19 +550,239 @@ static bv_t builtin_fn(expr_t *e, const char *name, int n, expr_t **args) {
 }
 
 static bv_t bin_call(const char *name, int op, bv_t a, bv_t b) {
-    int cb = h_ncarg;
+    int cb;
+    a = dynv(a);
+    b = dynv(b);
+    cb = h_ncarg;
     carg(iconst(op), 0);
     carg_bv(a);
     carg_bv(b);
     return bv_call(name, cb, 7);
 }
 
-/* name(i[, j[, k]]): subscripts evaluated left to right, then the
- * element (bcrt_aget: the array, or an implicit one, as an expression
- * reads it) */
+/* name(i[, j[, k]]): the subscripts, evaluated left to right */
 static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
     if (n > 3) bc_not_yet(line, "arrays of more than three dimensions");
     for (int i = 0; i < 3; i++) a[i] = i < n && n <= 3 ? expr(ix[i]) : zero();
+}
+
+/* --- arrays: the interpreter's, their elements reached directly ----- */
+
+/* each array name's cell in bcrt_acache (bc_rt.c) */
+#define BC_ACELLS 256
+#define BC_ACELL 24             /* gen, data, base, dims[3] */
+#define BC_ELEM 12              /* a value_t: its type, then its number or string */
+static char bc_anames[BC_ACELLS][64];
+static int bc_nanames;
+
+static int array_id(const char *name, int line) {
+    for (int i = 0; i < bc_nanames; i++)
+        if (strcmp(bc_anames[i], name) == 0) return i;
+    if (bc_nanames == BC_ACELLS) { bc_not_yet(line, "more than 256 arrays"); return 0; }
+    strncpy(bc_anames[bc_nanames], name, 63);
+    bc_anames[bc_nanames][63] = '\0';
+    return bc_nanames++;
+}
+
+static int ld(int addr, int off) {
+    if (off) addr = hi_emit(HI_ADDI, TY_INT, addr, -1, off, NULL);
+    return hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+}
+
+static void st(int addr, int off, int v) {
+    if (off) addr = hi_emit(HI_ADDI, TY_INT, addr, -1, off, NULL);
+    hi_emit(HI_STORE, TY_INT, addr, v, 0, NULL);
+}
+
+/* the address of name(sub...)'s element, as array_get finds it: the
+ * subscripts made integers (val_to_integer), the array (or an implicit
+ * one, eval_array_for) through its cell, each subscript in its
+ * dimension (Subscript out of range) */
+static int array_elem(int line, const char *name, int n, bv_t *sub) {
+    int ix[3], id = array_id(name, line), cell, fast, slow, flat = 0, cb;
+    if (n > 3) n = 0;           /* (refused: sub_args) */
+    for (int i = 0; i < n; i++) ix[i] = coerce(sub[i], VAL_LONG).lo;
+    cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
+                   id * BC_ACELL, NULL);
+    fast = new_blk();
+    slow = new_blk();
+    hi_emit(HI_BRC, TY_VOID,
+            bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "array_generation"), 0), ld(cell, 0)),
+            fast, slow, NULL);
+    bc_live = 0;
+    begin_blk(slow);
+    cb = h_ncarg;
+    carg(saddr(name, (int)strlen(name)), 0);
+    carg(iconst(n), 0);
+    carg(iconst(id), 0);
+    carg(iconst(name_type(name)), 0);
+    call_end(cb, 4, "bcrt_alook", NULL);
+    goto_blk(fast);
+    begin_blk(fast);
+    {
+        int base = ld(cell, 8);
+        for (int i = 0; i < n; i++) {
+            int dim = ld(cell, 12 + 4 * i), x = bin(HI_SUB, ix[i], base);
+            guard(bin(HI_SLTU, x, dim), ERR_SUBSCRIPT_OUT_OF_RANGE);
+            flat = i == 0 ? x : bin(HI_ADD, bin(HI_MUL, flat, dim), x);
+        }
+    }
+    if (n == 0) flat = iconst(0);
+    return bin(HI_ADD, ld(cell, 4), bin(HI_MUL, flat, iconst(BC_ELEM)));
+}
+
+/* name(sub...) = x: the element found, then x made its type (store_into) */
+static void array_store(int line, const char *name, int n, bv_t *sub, bv_t x) {
+    int ty = name_type(name), ea = array_elem(line, name, n, sub);
+    x = coerce(x, ty);
+    if (ty == VAL_STRING) {
+        int old = ld(ea, 4), cb;
+        st(ea, 4, x.lo);
+        cb = h_ncarg;
+        carg(old, 0);
+        call_end(cb, 1, "bcrt_unref", NULL);
+        return;
+    }
+    st(ea, 4, x.lo);
+    if (st_flt(ty)) st(ea, 8, x.hi);
+}
+
+/* --- operators on values of fixed types: native, held to value.c ---- */
+
+/* + - * of two integers (val_add...: int_result), Overflow past the
+ * wider one's range */
+static bv_t int_arith(int op, bv_t a, bv_t b) {
+    int st = (a.st == VAL_LONG || b.st == VAL_LONG) ? VAL_LONG : VAL_INTEGER, r;
+    if (a.k && b.k) {
+        long long x = (long long)a.kv, y = (long long)b.kv;
+        long long z = op == OP_ADD ? x + y : op == OP_SUB ? x - y : x * y;
+        if (st == VAL_LONG ? (z >= -2147483648LL && z <= 2147483647LL) : INT16_OK(z))
+            return kint(z, st);
+    }
+    r = bin(op == OP_ADD ? HI_ADD : op == OP_SUB ? HI_SUB : HI_MUL, a.lo, b.lo);
+    if (st == VAL_INTEGER)              /* (16-bit operands: exact in 32) */
+        check16(r);
+    else if (op == OP_MUL)
+        guard(bin(HI_SEQ, bin(HI_MULH, a.lo, b.lo), bin(HI_SRA, r, iconst(31))), ERR_OVERFLOW);
+    else {
+        int x = op == OP_ADD ? bin(HI_AND, bin(HI_XOR, a.lo, r), bin(HI_XOR, b.lo, r))
+                             : bin(HI_AND, bin(HI_XOR, a.lo, b.lo), bin(HI_XOR, a.lo, r));
+        guard(bin(HI_SGE, x, iconst(0)), ERR_OVERFLOW);
+    }
+    return mk(r, -1, -1, st);
+}
+
+/* + - * / where a float is among them (or /): the double the
+ * interpreter computes (val_float: a DOUBLE if one is, else a SINGLE,
+ * unrounded) */
+static bv_t flt_arith(int op, bv_t a, bv_t b) {
+    int st = (a.st == VAL_DOUBLE || b.st == VAL_DOUBLE) ? VAL_DOUBLE : VAL_SINGLE;
+    int alo, ahi, blo, bhi;
+    bv_t r;
+    if (a.k && b.k && !(op == OP_DIV && b.kv == 0))
+        return kdbl(op == OP_ADD ? a.kv + b.kv : op == OP_SUB ? a.kv - b.kv :
+                    op == OP_MUL ? a.kv * b.kv : a.kv / b.kv, st);
+    dwords(a, &alo, &ahi);
+    dwords(b, &blo, &bhi);
+    if (op == OP_DIV && !(b.k && b.kv != 0))
+        guard(bin(HI_SNE, bin(HI_OR, blo, bin(HI_SLL, bhi, iconst(1))), iconst(0)),
+              ERR_DIVISION_BY_ZERO);
+    r = mk(0, 0, -1, st);
+    r.lo = call_d2(op == OP_ADD ? "__fp64_add" : op == OP_SUB ? "__fp64_sub" :
+                   op == OP_MUL ? "__fp64_mul" : "__fp64_div", alo, ahi, blo, bhi, &r.hi);
+    return r;
+}
+
+static bv_t binary(int op, bv_t a, bv_t b) {
+    if (st_int(a.st) && st_int(b.st)) {
+        int st = (a.st == VAL_LONG || b.st == VAL_LONG) ? VAL_LONG : VAL_INTEGER;
+        switch (op) {
+        case OP_ADD: case OP_SUB: case OP_MUL:
+            return int_arith(op, a, b);
+        case OP_AND: return mk(bin(HI_AND, a.lo, b.lo), -1, -1, st);
+        case OP_OR:  return mk(bin(HI_OR, a.lo, b.lo), -1, -1, st);
+        case OP_XOR: return mk(bin(HI_XOR, a.lo, b.lo), -1, -1, st);
+        case OP_IMP:
+            return mk(bin(HI_OR, hi_emit(HI_BNOT, TY_INT, a.lo, -1, 0, NULL), b.lo), -1, -1, st);
+        case OP_EQV:
+            return mk(hi_emit(HI_BNOT, TY_INT, bin(HI_XOR, a.lo, b.lo), -1, 0, NULL), -1, -1, st);
+        case OP_IDIV: case OP_MOD:      /* by a constant of neither 0 nor -1: in range */
+            if (b.k && b.kv != 0 && b.kv != -1)
+                return mk(bin(op == OP_IDIV ? HI_DIV : HI_REM, a.lo, b.lo), -1, -1, st);
+            return typed(bin_call("bcrt_bin", op, a, b), st);
+        default: break;
+        }
+    }
+    if (st_num(a.st) && st_num(b.st)) {
+        int fst = (a.st == VAL_DOUBLE || b.st == VAL_DOUBLE) ? VAL_DOUBLE : VAL_SINGLE;
+        if (op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV)
+            return flt_arith(op, a, b);
+        if (op == OP_POW) return typed(bin_call("bcrt_bin", op, a, b), fst);
+    }
+    if (op == OP_STRCAT || (op == OP_ADD && a.st == VAL_STRING && b.st == VAL_STRING))
+        return typed(bin_call("bcrt_bin", op, a, b), VAL_STRING);
+    return bin_call("bcrt_bin", op, a, b);
+}
+
+/* a comparison's truth, 0 or 1 (val_compare) */
+static int compare01(int op, bv_t a, bv_t b) {
+    int alo, ahi, blo, bhi, cb;
+    if (st_int(a.st) && st_int(b.st)) {
+        switch (op) {
+        case CMP_EQ: return bin(HI_SEQ, a.lo, b.lo);
+        case CMP_NE: return bin(HI_SNE, a.lo, b.lo);
+        case CMP_LT: return bin(HI_SLT, a.lo, b.lo);
+        case CMP_GT: return bin(HI_SGT, a.lo, b.lo);
+        case CMP_LE: return bin(HI_SLE, a.lo, b.lo);
+        default:     return bin(HI_SGE, a.lo, b.lo);
+        }
+    }
+    if (st_num(a.st) && st_num(b.st)) {
+        dwords(a, &alo, &ahi);
+        dwords(b, &blo, &bhi);
+        switch (op) {
+        case CMP_EQ: return call_d2("__fp64_eq", alo, ahi, blo, bhi, NULL);
+        case CMP_NE: return bin(HI_XOR, call_d2("__fp64_eq", alo, ahi, blo, bhi, NULL), iconst(1));
+        case CMP_LT: return call_d2("__fp64_lt", alo, ahi, blo, bhi, NULL);
+        case CMP_GT: return call_d2("__fp64_lt", blo, bhi, alo, ahi, NULL);
+        case CMP_LE: return call_d2("__fp64_le", alo, ahi, blo, bhi, NULL);
+        default:     return call_d2("__fp64_le", blo, bhi, alo, ahi, NULL);
+        }
+    }
+    a = dynv(a);
+    b = dynv(b);
+    cb = h_ncarg;
+    carg(iconst(op), 0);
+    carg_bv(a);
+    carg_bv(b);
+    return call_end(cb, 7, "bcrt_cmpi", NULL);
+}
+
+static bv_t unary(int op, bv_t a) {
+    if (op == OP_NEG && st_int(a.st)) {
+        if (a.k && (a.st == VAL_LONG ? a.kv != -2147483648.0 : a.kv != -32768)) return kint(-(long long)a.kv, a.st);
+        if (a.st == VAL_INTEGER) {
+            int r = hi_emit(HI_NEG, TY_INT, a.lo, -1, 0, NULL);
+            check16(r);
+            return mk(r, -1, -1, a.st);
+        }
+        guard(bin(HI_SNE, a.lo, iconst((int)0x80000000u)), ERR_OVERFLOW);
+        return mk(hi_emit(HI_NEG, TY_INT, a.lo, -1, 0, NULL), -1, -1, a.st);
+    }
+    if (op == OP_NEG && st_flt(a.st)) {
+        if (a.k) return kdbl(-a.kv, a.st);
+        return mk(a.lo, bin(HI_XOR, a.hi, iconst((int)0x80000000u)), -1, a.st);
+    }
+    if (op == OP_NOT && st_int(a.st))
+        return mk(hi_emit(HI_BNOT, TY_INT, a.lo, -1, 0, NULL), -1, -1, a.st);
+    {
+        int cb;
+        a = dynv(a);
+        cb = h_ncarg;
+        carg(iconst(op), 0);
+        carg_bv(a);
+        return bv_call("bcrt_un", cb, 4);
+    }
 }
 
 /* --- DEF FN, inlined where it is called --------------------------- */
@@ -385,7 +808,7 @@ static bv_t def_fn_call(expr_t *e, const char *name, int nargs, expr_t **args) {
     stmt_t *d = def_fn_find(name);
     var_t *params[8];
     bv_t r;
-    int cb, saved;
+    int saved;
     if (!d) { bc_not_yet(e->line, "a DEF FN that is not defined"); return zero(); }
     for (int i = 0; i < bc_nfn_open; i++)
         if (strcmp(bc_fn_open[i], name) == 0) {
@@ -406,62 +829,52 @@ static bv_t def_fn_call(expr_t *e, const char *name, int nargs, expr_t **args) {
     r = expr(d->def_fn.body);
     bc_nfn_open--;
     bc_nscope = saved;
-    cb = h_ncarg;
-    carg_bv(r);
-    carg(iconst(name_type(name)), 0);
-    r.lo = call_end(cb, 4, "bcrt_conv", &r.hi);
-    r.t = iconst(name_type(name));
-    if (name_type(name) == VAL_STRING) r.hi = iconst(0);
-    return r;
+    return coerce(r, name_type(name));
 }
 
 static bv_t array_read(expr_t *e) {
     bv_t a[3];
-    int cb;
+    int ty = name_type(e->call.name), ea;
     sub_args(e->line, e->call.nargs, e->call.args, a);
-    cb = h_ncarg;
-    carg(saddr(e->call.name, (int)strlen(e->call.name)), 0);
-    carg(iconst(e->call.nargs), 0);
-    for (int i = 0; i < 3; i++) carg_bv(a[i]);
-    return bv_call("bcrt_aget", cb, 11);
+    ea = array_elem(e->line, e->call.name, e->call.nargs, a);
+    if (ty == VAL_STRING) {
+        int cb = h_ncarg;
+        carg(ld(ea, 4), 0);
+        return mk(call_end(cb, 1, "bcrt_ref", NULL), -1, -1, VAL_STRING);
+    }
+    return mk(ld(ea, 4), st_flt(ty) ? ld(ea, 8) : -1, -1, ty);
+}
+
+static int compare_expr(expr_t *e) {
+    bv_t a = expr(e->compare.left), b = expr(e->compare.right);
+    return compare01(e->compare.op, a, b);
 }
 
 static bv_t expr(expr_t *e) {
-    bv_t r;
     switch (e->type) {
     case EXPR_LITERAL:
         if (e->literal.type == VAL_STRING) {
             int cb = h_ncarg;
             carg(saddr(e->literal.sval->data, e->literal.sval->len), 0);
             carg(iconst(e->literal.sval->len), 0);
-            r.lo = call_end(cb, 2, "bcrt_str_lit", NULL);
-            r.hi = iconst(0);
-            r.t = iconst(VAL_STRING);
-            return r;
-        } else {
-            double d = 0;
-            val_to_double(&e->literal, &d);
-            r.lo = dconst(d, &r.hi);
-            r.t = iconst(e->literal.type);
-            return r;
+            return mk(call_end(cb, 2, "bcrt_str_lit", NULL), -1, -1, VAL_STRING);
         }
+        if (st_int(e->literal.type)) return kint(e->literal.ival, e->literal.type);
+        return kdbl(e->literal.dval, e->literal.type);
     case EXPR_VARIABLE:
         if (is_builtin_call(e->var.name))       /* RND, TIMER... with no ( ) */
             return builtin_fn(e, e->var.name, 0, NULL);
         if (strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name))
             return def_fn_call(e, e->var.name, 0, NULL);  /* DEF FNM = 123: FNM calls it */
         return var_load(var_get(e->var.name, e->var.var_type, e->line));
-    case EXPR_BINARY:
-        return bin_call("bcrt_bin", e->binary.op, expr(e->binary.left), expr(e->binary.right));
-    case EXPR_COMPARE:
-        return bin_call("bcrt_cmp", e->compare.op, expr(e->compare.left), expr(e->compare.right));
-    case EXPR_UNARY: {
-        bv_t a = expr(e->unary.operand);
-        int cb = h_ncarg;
-        carg(iconst(e->unary.op), 0);
-        carg_bv(a);
-        return bv_call("bcrt_un", cb, 4);
+    case EXPR_BINARY: {
+        bv_t a = expr(e->binary.left), b = expr(e->binary.right);
+        return binary(e->binary.op, a, b);
     }
+    case EXPR_COMPARE:          /* -1 or 0, an INTEGER */
+        return mk(hi_emit(HI_NEG, TY_INT, compare_expr(e), -1, 0, NULL), -1, -1, VAL_INTEGER);
+    case EXPR_UNARY:
+        return unary(e->unary.op, expr(e->unary.operand));
     case EXPR_CALL:
         if (is_builtin_call(e->call.name))
             return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
@@ -474,10 +887,17 @@ static bv_t expr(expr_t *e) {
     return zero();
 }
 
-/* the condition's truth, an int */
+/* the condition's truth, an int (val_is_true) */
 static int cond(expr_t *e) {
-    bv_t c = expr(e);
-    int cb = h_ncarg;
+    bv_t c;
+    int cb;
+    if (e->type == EXPR_COMPARE) return compare_expr(e);
+    c = expr(e);
+    if (st_int(c.st)) return c.lo;
+    if (st_flt(c.st))           /* (0 and -0 false) */
+        return bin(HI_SNE, bin(HI_OR, c.lo, bin(HI_SLL, c.hi, iconst(1))), iconst(0));
+    c = dynv(c);
+    cb = h_ncarg;
     carg_bv(c);
     return call_end(cb, 3, "bcrt_true", NULL);
 }
@@ -506,9 +926,10 @@ static int label_blk(const char *name) {
 
 /* a FOR open in its block: its variable, its limit's and step's slots,
  * its body, and the block after its NEXT */
+typedef struct { int st, k; double kv; int a, ahi; } slot_t;
 typedef struct {
     var_t *v;
-    int lim, limhi, stp, stphi;
+    slot_t lim, stp;
     int body, exit;
 } for_t;
 
@@ -551,7 +972,7 @@ static void gosub_to(int blk) {
  * makes it; 1..n jumps (a GOSUB to the statement after), anything else
  * goes on */
 static void on_branch(stmt_t *s, int is_gosub) {
-    bv_t x = expr(s->on_branch.index);
+    bv_t x = dynv(expr(s->on_branch.index));
     int n = s->on_branch.nlabels, cb, i, k, ok, cont = new_blk(), tab = new_blk(), back = -1, rk = -1;
     int *targets = malloc((size_t)(n ? n : 1) * sizeof(int));
     if (!targets) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
@@ -660,13 +1081,13 @@ static void bc_print(stmt_t *s) {
             int cb;
             if (e->type == EXPR_CALL && e->call.nargs == 1 && is_builtin_call(e->call.name) &&
                 (strcmp(e->call.name, "TAB") == 0 || strcmp(e->call.name, "SPC") == 0)) {
-                bv_t a = expr(e->call.args[0]);
+                bv_t a = dynv(expr(e->call.args[0]));
                 cb = h_ncarg;
                 carg(saddr(e->call.name, 3), 0);
                 carg_bv(a);
                 call_end(cb, 4, "bcrt_print_tab", NULL);
             } else {
-                bv_t v = expr(e);
+                bv_t v = dynv(expr(e));
                 cb = h_ncarg;
                 carg_bv(v);
                 call_end(cb, 3, "bcrt_print_val", NULL);
@@ -683,29 +1104,79 @@ static void bc_print(stmt_t *s) {
 static for_t *bc_fors;
 static int bc_nfors, bc_capfors;
 
-static int dslot_store(bv_t x, int *hi) {
-    int lo = alloca_of(TY_INT, 4);
-    *hi = alloca_of(TY_INT, 4);
-    hi_emit(HI_STORE, TY_INT, lo, x.lo, 0, NULL);
-    hi_emit(HI_STORE, TY_INT, *hi, x.hi, 0, NULL);
-    return lo;
+/* Each FOR's limit and step have two words of their own, 0 from the
+ * start: a NEXT whose FOR has not run (a GOTO into its body) finds the
+ * limit 0, as QBasic's does, and the step as written when it is a
+ * literal (compiled into the NEXT), else 0 (eval.c OP_NEXT, NBS P055) */
+typedef struct { stmt_t *s; int w[4]; } forslots_t;
+static forslots_t *bc_forslots;
+static int bc_nforslots, bc_capforslots;
+
+static void forslots_add(stmt_t *s) {
+    forslots_t *f;
+    if (bc_nforslots == bc_capforslots) {
+        bc_capforslots = bc_capforslots ? bc_capforslots * 2 : 16;
+        bc_forslots = realloc(bc_forslots, (size_t)bc_capforslots * sizeof(forslots_t));
+        if (!bc_forslots) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    f = &bc_forslots[bc_nforslots++];
+    f->s = s;
+    for (int i = 0; i < 4; i++) f->w[i] = alloca_of(TY_INT, 4);
 }
 
-/* whether the loop runs with its variable at x (for_in_range) */
-static int for_runs(for_t *f, bv_t x) {
-    int cb = h_ncarg;
-    carg(x.lo, 1); carg(x.hi, 2);
-    carg(hi_emit(HI_LOAD, TY_INT, f->lim, -1, 0, NULL), 1);
-    carg(hi_emit(HI_LOAD, TY_INT, f->limhi, -1, 0, NULL), 2);
-    carg(hi_emit(HI_LOAD, TY_INT, f->stp, -1, 0, NULL), 1);
-    carg(hi_emit(HI_LOAD, TY_INT, f->stphi, -1, 0, NULL), 2);
-    return call_end(cb, 6, "bcrt_for_in", NULL);
+static void forslots_zero(void) {
+    for (int i = 0; i < bc_nforslots; i++)
+        for (int j = 0; j < 4; j++)
+            hi_emit(HI_STORE, TY_INT, bc_forslots[i].w[j], iconst(0), 0, NULL);
+}
+
+static int *forslots_of(stmt_t *s) {
+    for (int i = 0; i < bc_nforslots; i++)
+        if (bc_forslots[i].s == s) return bc_forslots[i].w;
+    fprintf(stderr, "s32-bc: internal: a FOR not prescanned\n");
+    exit(1);
+}
+
+/* a FOR's limit or step, kept as the interpreter keeps them (a double,
+ * val_to_double: a string a Type mismatch) -- here in its own type,
+ * which is the same number -- in its words; a literal step kept a
+ * constant (lit) */
+static slot_t slot_of(bv_t x, const int *w, int lit) {
+    slot_t s;
+    if (!st_num(x.st)) x = coerce(x, VAL_DOUBLE);
+    s.st = x.st; s.k = lit && x.k; s.kv = x.kv; s.a = w[0]; s.ahi = -1;
+    if (s.k) return s;
+    if (x.k && st_int(x.st)) x.lo = iconst((int)x.kv);
+    hi_emit(HI_STORE, TY_INT, s.a, x.lo, 0, NULL);
+    if (st_flt(x.st)) {
+        s.ahi = w[1];
+        hi_emit(HI_STORE, TY_INT, s.ahi, x.hi, 0, NULL);
+    }
+    return s;
+}
+
+static bv_t slot_load(const slot_t *s) {
+    if (s->k) return st_int(s->st) ? kint((long long)s->kv, s->st) : kdbl(s->kv, s->st);
+    return mk(hi_emit(HI_LOAD, TY_INT, s->a, -1, 0, NULL),
+              s->ahi < 0 ? -1 : hi_emit(HI_LOAD, TY_INT, s->ahi, -1, 0, NULL), -1, s->st);
+}
+
+/* whether the loop runs with its variable as it is (for_in_range) */
+static int for_runs(for_t *f) {
+    bv_t x = var_load(f->v), lim = slot_load(&f->lim), stp;
+    int up, le, ge;
+    if (f->stp.k) return compare01(f->stp.kv >= 0 ? CMP_LE : CMP_GE, x, lim);
+    stp = slot_load(&f->stp);
+    up = compare01(CMP_GE, stp, kint(0, VAL_INTEGER));
+    le = compare01(CMP_LE, x, lim);
+    ge = compare01(CMP_GE, x, lim);
+    return bin(HI_OR, bin(HI_AND, up, le), bin(HI_AND, bin(HI_XOR, up, iconst(1)), ge));
 }
 
 /* FOR v = start TO limit [STEP step], as the interpreter's for_start:
- * the three evaluated once, in that order; limit and step kept as
- * doubles in the FOR's own slots; the variable set as an assignment
- * sets it; the loop skipped when it starts out of range */
+ * the three evaluated once, in that order; limit and step kept in the
+ * FOR's own slots; the variable set as an assignment sets it; the loop
+ * skipped when it starts out of range */
 static void bc_for(stmt_t *s) {
     for_t *f;
     bv_t start, lim, stp;
@@ -719,14 +1190,14 @@ static void bc_for(stmt_t *s) {
     }
     start = expr(s->for_stmt.start);
     lim = expr(s->for_stmt.end);
-    if (s->for_stmt.step) stp = expr(s->for_stmt.step);
-    else { stp.lo = dconst(1.0, &stp.hi); stp.t = iconst(VAL_INTEGER); }
+    stp = s->for_stmt.step ? expr(s->for_stmt.step) : kint(1, VAL_INTEGER);
     f = &bc_fors[bc_nfors++];
     f->v = v;
-    f->lim = dslot_store(lim, &f->limhi);
-    f->stp = dslot_store(stp, &f->stphi);
+    f->lim = slot_of(lim, forslots_of(s), 0);
+    f->stp = slot_of(stp, forslots_of(s) + 2,
+                     !s->for_stmt.step || s->for_stmt.step->type == EXPR_LITERAL);
     var_store(v, start);
-    runs = for_runs(f, var_load(v));
+    runs = for_runs(f);
     f->body = new_blk();
     f->exit = new_blk();
     hi_emit(HI_BRC, TY_VOID, runs, f->body, f->exit, NULL);
@@ -736,24 +1207,39 @@ static void bc_for(stmt_t *s) {
 
 /* NEXT [v, ...]: each closes the innermost open FOR (the checker made
  * sure it is the one named), steps its variable where it lives
- * (for_next), and loops while it is in range */
+ * (for_next: an integer's sum stored if it is one in range, else
+ * stored as an assignment stores it; a SINGLE's rounded, a DOUBLE's as
+ * it is), and loops while it is in range */
 static void bc_next(stmt_t *s) {
     int k = s->next_stmt.nvars ? s->next_stmt.nvars : 1;
     for (int i = 0; i < k; i++) {
         for_t *f;
-        bv_t nv;
-        int cb, runs;
+        bv_t cur, stp, nv;
+        int runs;
         if (bc_nfors == 0) { bc_error(s->line, "NEXT without FOR"); return; }
         f = &bc_fors[--bc_nfors];
-        nv = var_load(f->v);
-        cb = h_ncarg;
-        carg(nv.lo, 1); carg(nv.hi, 2); carg(iconst(f->v->type), 0);
-        carg(hi_emit(HI_LOAD, TY_INT, f->stp, -1, 0, NULL), 1);
-        carg(hi_emit(HI_LOAD, TY_INT, f->stphi, -1, 0, NULL), 2);
-        nv.lo = call_end(cb, 5, "bcrt_for_step", &nv.hi);
-        nv.t = iconst(f->v->type);
-        var_store(f->v, nv);
-        runs = for_runs(f, nv);
+        cur = var_load(f->v);
+        stp = slot_load(&f->stp);
+        if (st_int(f->v->type)) {
+            if (st_int(stp.st)) {
+                stp.st = VAL_LONG;      /* (the sum in 32 bits, then the variable's range) */
+                nv = int_arith(OP_ADD, cur, stp);
+            } else
+                nv = flt_arith(OP_ADD, cur, stp);
+            var_store(f->v, nv);
+        } else {
+            int w;
+            nv = flt_arith(OP_ADD, cur, stp);
+            if (f->v->type == VAL_DOUBLE) {
+                hi_emit(HI_STORE, TY_INT, f->v->a, nv.lo, 0, NULL);
+                hi_emit(HI_STORE, TY_INT, f->v->ahi, nv.hi, 0, NULL);
+            } else {
+                w = call_d1("__fp64_cvt_DtoF", nv.lo, nv.hi, NULL);
+                h_ty[w] = TY_FLOAT;
+                hi_emit(HI_STORE, TY_FLOAT, f->v->a, w, 0, NULL);
+            }
+        }
+        runs = for_runs(f);
         hi_emit(HI_BRC, TY_VOID, runs, f->body, f->exit, NULL);
         bc_live = 0;
         begin_blk(f->exit);
@@ -778,6 +1264,7 @@ static void bc_dim(stmt_t *s, int is_static, int base) {
     int cb;
     if (s->dim_stmt.ndims > 3) { bc_not_yet(s->line, "arrays of more than three dimensions"); return; }
     for (int i = 0; i < 3; i++) a[i] = i < s->dim_stmt.ndims ? expr(s->dim_stmt.dims[i]) : zero();
+    for (int i = 0; i < 3; i++) a[i] = dynv(a[i]);
     cb = h_ncarg;
     carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
     carg(iconst(s->dim_stmt.elem_type), 0);
@@ -839,14 +1326,8 @@ static void hoist_dims(stmt_t *s) {
 static void store_target(int line, const char *name, int type, expr_t *target, bv_t x) {
     if (target && target->type == EXPR_CALL) {
         bv_t a[3];
-        int cb;
         sub_args(line, target->call.nargs, target->call.args, a);
-        cb = h_ncarg;
-        carg(saddr(target->call.name, (int)strlen(target->call.name)), 0);
-        carg(iconst(target->call.nargs), 0);
-        for (int i = 0; i < 3; i++) carg_bv(a[i]);
-        carg_bv(x);
-        call_end(cb, 14, "bcrt_aset", NULL);
+        array_store(line, target->call.name, target->call.nargs, a, x);
         return;
     }
     if (target) { bc_not_yet(line, "this INPUT or READ target"); return; }
@@ -862,7 +1343,7 @@ static dlabel_t *bc_dlabels;
 static int bc_ndlabels, bc_capdlabels, bc_ndata;
 
 static bv_t literal(const value_t *v) {
-    bv_t r;
+    bv_t r = mk(0, 0, 0, ST_DYN);
     if (v->type == VAL_STRING) {
         int cb = h_ncarg;
         carg(saddr(v->sval->data, v->sval->len), 0);
@@ -1034,15 +1515,9 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_ARRAY_ASSIGN: {
         bv_t a[3], x;
-        int cb;
         sub_args(s->line, s->array_assign.nindices, s->array_assign.indices, a);
         x = expr(s->array_assign.value);
-        cb = h_ncarg;
-        carg(saddr(s->array_assign.name, (int)strlen(s->array_assign.name)), 0);
-        carg(iconst(s->array_assign.nindices), 0);
-        for (int i = 0; i < 3; i++) carg_bv(a[i]);
-        carg_bv(x);
-        call_end(cb, 14, "bcrt_aset", NULL);
+        array_store(s->line, s->array_assign.name, s->array_assign.nindices, a, x);
         break;
     }
     case STMT_OPTION_BASE: {
@@ -1176,6 +1651,7 @@ static void prescan(stmt_t *s) {
         case STMT_ASSIGN: var_get(s->assign.name, s->assign.var_type, s->line); break;
         case STMT_FOR:
             var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
+            forslots_add(s);
             prescan(s->for_stmt.body);
             break;
         case STMT_IF: prescan(s->if_stmt.then_body); prescan(s->if_stmt.else_body); break;
@@ -1208,6 +1684,9 @@ static void hl_func(Node *fn) {
     bc_nfors = 0;
     bc_nrets = 0;
     bc_ret_blk = -1;
+    bc_nfail = 0;
+    bc_nforslots = 0;
+    bc_nanames = 0;
     entry = new_blk();
     begin_blk(entry);
     bc_nshadow = 0;
@@ -1218,6 +1697,7 @@ static void hl_func(Node *fn) {
     find_fns(bc_program);
     prescan(bc_program);
     for (int i = 0; i < bc_nvars; i++) var_zero(&bc_vars[i]);
+    forslots_zero();
     call_void("bcrt_start");
     /* the static arrays, then the OPTION BASE the text ends with in
      * force until an OPTION BASE runs (the interpreter's scan leaves it) */
@@ -1237,6 +1717,7 @@ static void hl_func(Node *fn) {
     if (bc_live) hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
     ret_dispatch();
+    fail_blocks();
     fn->locals_size = bc_frame;
 }
 
