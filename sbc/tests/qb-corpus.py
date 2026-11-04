@@ -16,7 +16,7 @@ Programs QBasic will not load (QB64's own extensions, and the like) are
 counted apart and not listed.  The reasons are then counted, the work
 list in the order it pays.
 
-    qb-corpus.py [-v] [DIR ...]
+    qb-corpus.py [-v] [-l] [DIR ...]      (-l: the source line each stops at)
 """
 import collections
 import os
@@ -45,15 +45,21 @@ def qb_loads(src, exe):
 
 
 def bc_verdict(path):
+    """(verdict, why, the line number it stops at or 0)"""
     try:
         r = subprocess.run([S32BC, path, os.devnull], capture_output=True, timeout=60)
     except subprocess.TimeoutExpired:
-        return 'OTHER', 'timeout'
+        return 'OTHER', 'timeout', 0
     msg = r.stderr.decode('latin-1').strip().split('\n')[0] if r.stderr else ''
     if r.returncode == 0 and not msg:
-        return 'COMPILES', ''
-    m = re.match(r's32-bc: line \d+: (.*)', msg)
-    why = m.group(1) if m else msg
+        return 'COMPILES', '', 0
+    m = re.match(r's32-bc: line (\d+): (.*)', msg)
+    line = int(m.group(1)) if m else 0
+    v, why = classify(m.group(2) if m else msg)
+    return v, why, line
+
+
+def classify(why):
     if why.startswith('not yet'):
         return 'NOT-YET', why
     if re.match(r'[a-z]+(-[a-z]+)+:', why) or re.match(r'[a-z]+-[a-z]+:', why):
@@ -65,8 +71,8 @@ def bc_verdict(path):
 
 def main():
     args = sys.argv[1:]
-    verbose = '-v' in args
-    dirs = [a for a in args if a != '-v'] or [DEFAULT]
+    verbose, lines = '-v' in args, '-l' in args
+    dirs = [a for a in args if a not in ('-v', '-l')] or [DEFAULT]
     exe = nbs.qbasic_exe()
     progs = []
     for d in dirs:
@@ -78,12 +84,16 @@ def main():
         if qb_loads(src, exe):
             notqb += 1
             continue
-        verdict, why = bc_verdict(p)
+        verdict, why, at = bc_verdict(p)
         counts[verdict] += 1
         if verdict != 'COMPILES':
             reasons['%-9s %s' % (verdict, why)] += 1
         if verbose or verdict not in ('COMPILES',):
             print('%-9s %s  %s' % (verdict, os.path.relpath(p, os.path.commonpath(dirs)), why))
+            if lines and at:
+                text = src.replace(b'\r', b'').split(b'\n')
+                if at <= len(text):
+                    print('          | ' + text[at - 1].decode('latin-1').strip()[:100])
     print('QBasic loads %d of %d: %s' % (sum(counts.values()), len(progs),
           ', '.join('%s %d' % (k, counts[k]) for k in ('COMPILES', 'PARSE', 'CHECK', 'NOT-YET', 'OTHER')
                     if counts[k])))
