@@ -244,8 +244,8 @@ statements with no colon between them (P194).
 The ruling of 2026-11-03 kept s32-sbc "for now" and said the two would
 be reconciled when the new compiler won -- a switch, auto-detection,
 or a build target.  It has won where it applies: on the 92 games both
-take, s32-bc runs 371M instructions to s32-sbc's 467M (the
-interpreter's 755M), the faster on 89 of them, and it compiles 96 of
+take, s32-bc runs 84.5M instructions to s32-sbc's 181M (the
+interpreter's 469M), the faster on 89 of them, and it compiles 96 of
 the 103 QB-corpus programs QBasic loads.  It does not apply
 everywhere, and was never meant to: it takes what QBasic loads, and
 the interpreter -- with s32-sbc -- stays friendly to the dialects that
@@ -271,6 +271,14 @@ description.  And slow32:basic ships both (2026-11-04): `s32bc`,
 built in the image's toolchain stage, both compilers linking
 libsbasic.s32a; s32-bc writes assembly, so its programs need no C
 compiler in the image at all.
+
+Those numbers are after a repair: the text-screen model (the SCREEN()
+work, 2026-11-03) copied 2 x 23 x 256 bytes on every scroll and cleared
+512 on each, and took every program from about 68M instructions to 371M
+(s32-bc; the interpreter 755M, s32-sbc 467M), with all the gates green,
+because all of them compare output.  A scroll now moves row numbers and a
+cleared row is a length of 0.  `compare-speed.py --check` holds the
+totals to speed-baseline.txt, within 5%.
 
 ## s32-bc (sbc/bc/, 2026-11-03)
 

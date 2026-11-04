@@ -1407,21 +1407,57 @@ int *active_print_col = &print_col;
  * to 24 at the start, the last row outside it (QBasic, checked) */
 #define SCR_ROWS 60
 #define SCR_COLS 256
+/* Every program prints, few read the screen back, so printing must pay
+ * almost nothing for it: a row on the screen is a row of cells through
+ * scr_map (a scroll moves numbers, not cells), and a cleared row is
+ * only a length of 0 and the attribute its blanks have -- cells past
+ * scr_len are written when one beyond them is. */
 static unsigned char scr_ch[SCR_ROWS][SCR_COLS], scr_at[SCR_ROWS][SCR_COLS];
+static unsigned char scr_map[SCR_ROWS] = {
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+};
+static short scr_len[SCR_ROWS];
+static unsigned char scr_blank[SCR_ROWS];
 static int scr_rows = 25, view_top = 1, view_bottom = 24;
 
 static void scr_clear_rows(int top, int bottom) {
     unsigned char a = (unsigned char)sb_term_attr();
     for (int r = top; r <= bottom && r <= SCR_ROWS; r++) {
-        memset(scr_ch[r - 1], ' ', SCR_COLS);
-        memset(scr_at[r - 1], a & 0x70 ? a : 7, SCR_COLS);
+        int p = scr_map[r - 1];
+        scr_len[p] = 0;
+        scr_blank[p] = a & 0x70 ? a : 7;
     }
 }
 
-static void scr_put(unsigned char c) {
+/* row and col from 0: the cell, as written or as a blank */
+static int scr_read_ch(int row, int col) {
+    int p = scr_map[row];
+    return col < scr_len[p] ? scr_ch[p][col] : ' ';
+}
+
+static int scr_read_at(int row, int col) {
+    int p = scr_map[row];
+    return col < scr_len[p] ? scr_at[p][col] : scr_blank[p];
+}
+
+/* the cell, made real, the row's blanks up to it with it */
+static void scr_extend(int p, int col) {
+    int len = scr_len[p];
+    if (col < len) return;
+    memset(scr_ch[p] + len, ' ', (size_t)(col + 1 - len));
+    memset(scr_at[p] + len, scr_blank[p], (size_t)(col + 1 - len));
+    scr_len[p] = (short)(col + 1);
+}
+
+static void scr_put_at(unsigned char c, unsigned char attr) {
     if (print_row >= 1 && print_row <= scr_rows && print_col >= 0 && print_col < SCR_COLS) {
-        scr_ch[print_row - 1][print_col] = c;
-        scr_at[print_row - 1][print_col] = (unsigned char)sb_term_attr();
+        int p = scr_map[print_row - 1];
+        if (print_col == scr_len[p]) scr_len[p]++;      /* (the common way: on the end) */
+        else scr_extend(p, print_col);
+        scr_ch[p][print_col] = c;
+        scr_at[p][print_col] = attr;
     }
 }
 
@@ -1432,9 +1468,10 @@ static void scr_newline(void) {
         print_row++;
         return;
     }
-    for (int r = view_top; r < view_bottom && r < SCR_ROWS; r++) {
-        memcpy(scr_ch[r - 1], scr_ch[r], SCR_COLS);
-        memcpy(scr_at[r - 1], scr_at[r], SCR_COLS);
+    if (view_top >= 1 && view_bottom <= SCR_ROWS && view_top < view_bottom) {
+        unsigned char first = scr_map[view_top - 1];
+        for (int r = view_top; r < view_bottom; r++) scr_map[r - 1] = scr_map[r];
+        scr_map[view_bottom - 1] = first;
     }
     scr_clear_rows(view_bottom, view_bottom);
     print_row = view_bottom;
@@ -1486,7 +1523,7 @@ static void screen_putc(char c) {
             scr_newline();
         }
         putchar(c);
-        scr_put((unsigned char)c);
+        scr_put_at((unsigned char)c, (unsigned char)sb_term_attr());
         print_col++;
     }
 }
@@ -1513,7 +1550,10 @@ static void screen_puts(const char *s) {
             int n = (int)(e - s);
             if (console_width > 0 && n > console_width - print_col) n = console_width - print_col;
             fwrite(s, 1, (size_t)n, stdout);
-            for (int i = 0; i < n; i++, print_col++) scr_put((unsigned char)s[i]);
+            {
+                unsigned char attr = (unsigned char)sb_term_attr();
+                for (int i = 0; i < n; i++, print_col++) scr_put_at((unsigned char)s[i], attr);
+            }
             s += n;
         }
     }
@@ -2640,7 +2680,7 @@ error_t eval_screen_at(int row, int col, int attr, value_t *out) {
     int cols = console_width > 0 ? console_width : 80;
     if (row < 1 || row > scr_rows || col < 1 || col > cols || col > SCR_COLS)
         return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_integer(attr ? scr_at[row - 1][col - 1] : scr_ch[row - 1][col - 1]);
+    *out = val_integer(attr ? scr_read_at(row - 1, col - 1) : scr_read_ch(row - 1, col - 1));
     return ERR_NONE;
 }
 
@@ -2652,10 +2692,14 @@ int eval_text_byte(int k, int v) {
     int cols = console_width > 0 && console_width <= SCR_COLS ? console_width : 80;
     int cell = k / 2, row = cell / cols, col = cell % cols;
     if (row >= scr_rows) return 0;
-    if (v < 0) return k & 1 ? scr_at[row][col] : scr_ch[row][col];
-    if (k & 1) scr_at[row][col] = (unsigned char)v;
-    else scr_ch[row][col] = (unsigned char)v;
-    sb_term_putat(row + 1, col + 1, scr_ch[row][col], scr_at[row][col], print_row, print_col + 1);
+    if (v < 0) return k & 1 ? scr_read_at(row, col) : scr_read_ch(row, col);
+    {
+        int p = scr_map[row];
+        scr_extend(p, col);
+        if (k & 1) scr_at[p][col] = (unsigned char)v;
+        else scr_ch[p][col] = (unsigned char)v;
+        sb_term_putat(row + 1, col + 1, scr_ch[p][col], scr_at[p][col], print_row, print_col + 1);
+    }
     return v;
 }
 
