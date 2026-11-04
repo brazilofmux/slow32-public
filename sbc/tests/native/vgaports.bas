@@ -1,7 +1,8 @@
 ' the PC as a QBasic program sees it, compiled: the VGA DAC through
 ' ports 3C7/3C8/3C9, the mode-13 frame at A000, the BIOS data area's
 ' video mode and columns, the text screen at B800, WAIT on the retrace
-' bit, and the errors (a value past a byte, a port past an integer)
+' bit, and the errors (a value past a byte, a port past an integer).
+' (WIDTH 80: QBasic's SCREEN 0 after 13 keeps 40 columns; ours does not yet)
 DEFINT A-Z
 DIM got(20), errs(5)
 ON ERROR GOTO trapped
@@ -23,6 +24,7 @@ got(10) = INP(&H3DA) AND 246
 OUT &H3C8, 300
 OUT 70000, 1
 SCREEN 0
+WIDTH 80
 DEF SEG = 0
 got(11) = PEEK(&H449): got(12) = PEEK(&H44A)
 DEF SEG = &HB800

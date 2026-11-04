@@ -468,8 +468,10 @@ interpreter's objects):
   (its low byte used), past them Overflow.
 
 sbasic/tests/pcmem.bas is held to QBasic byte for byte (text mode);
-sbc/tests/native/vgaports.bas (SCREEN 13, the DAC, A000) is held to
-the interpreter only until the DOS emulator has a VGA.  Not done, and
+so is sbc/tests/native/vgaports.bas (SCREEN 13, the DAC, A000), since
+the DOS emulator's VGA (2026-11-04), which also showed the BIOS's 40
+columns in modes 1, 7 and 13.  Open from it: SCREEN 0 after a 40-column
+mode keeps 40 columns in QBasic (the test says WIDTH 80).  Not done, and
 not asked: arrays at addresses (VARPTR/VARSEG into a model of DGROUP,
 BSAVE/BLOAD of an array), CP437 output, DOS paths.
 
