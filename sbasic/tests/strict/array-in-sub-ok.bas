@@ -1,0 +1,11 @@
+REM arrays a SUB may use: its DIM, SHARED A(), DIM SHARED
+DIM SHARED D(3)
+N = 2: DIM B(N)
+CALL T
+END
+SUB T
+SHARED B()
+DIM L(2)
+L(1) = B(1) + D(1)
+PRINT UBOUND(L); UBOUND(B)
+END SUB

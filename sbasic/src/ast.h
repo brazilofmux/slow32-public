@@ -349,6 +349,7 @@ typedef struct stmt {
             int is_static;       /* constant bounds: made before the run (QuickBASIC's static arrays) */
             int preserve;
             int typed;           /* a suffix or AS gave elem_type; else DEFtype's, when it runs */
+            int shared;          /* DIM SHARED: the main program's, in every SUB */
         } dim_stmt;
 
         /* STMT_ARRAY_ASSIGN */
@@ -530,6 +531,8 @@ typedef struct stmt {
         struct {
             char name[64];
             val_type_t scalar_type;
+            int typed;           /* AS or a suffix gave scalar_type; else DEFtype's */
+            int shared;          /* DIM SHARED */
         } dim_scalar;
 
         /* STMT_TRACE */

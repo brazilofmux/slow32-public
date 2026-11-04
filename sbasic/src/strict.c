@@ -23,6 +23,8 @@ typedef struct { int from, to; } range_t;   /* a FOR..NEXT, by seq */
 typedef struct {
     refs_t labels, jumps;
     refs_t dims, uses;          /* arrays: DIMs, and uses */
+    refs_t bounds;              /* arrays LBOUND or UBOUND names */
+    refs_t redims;              /* arrays REDIMmed (which declares one too) */
     refs_t erased;              /* arrays ERASEd, which may be DIMmed again */
     refs_t options;             /* OPTION BASE statements */
     int base;                   /* the OPTION BASE in force */
@@ -37,6 +39,7 @@ typedef struct {
     int info[STRICT_NINFO];
     refs_t procs;               /* SUB and FUNCTION names */
     refs_t fndefs, fnuses;      /* DEF FN, program-wide */
+    refs_t dimshared;           /* arrays the main program DIMs SHARED */
     unit_t *u;                  /* the unit being walked */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
     int depth;                  /* statement lists open inside the unit's own */
@@ -116,6 +119,10 @@ static void scan_expr(expr_t *e, void *vc) {
         } else if (strcmp(e->call.name, "LBOUND") == 0 || strcmp(e->call.name, "UBOUND") == 0 ||
                    strcmp(e->call.name, "JOIN$") == 0) {
             /* the interpreter's own functions (eval.c), on an array named */
+            expr_t *a = e->call.nargs ? e->call.args[0] : NULL;
+            if (a && a->type == EXPR_VARIABLE) push(&c->u->bounds, a->var.name, c->seq, e->line, 0);
+            if (a && a->type == EXPR_CALL && a->call.nargs == 0)
+                push(&c->u->bounds, a->call.name, c->seq, e->line, 0);
         } else if (e->call.nargs > 0 && !find(&c->procs, e->call.name)) {
             push(&c->u->uses, e->call.name, c->seq, e->line, 0);
             c->u->uses.v[c->u->uses.n - 1].n = e->call.nargs;
@@ -130,7 +137,7 @@ static void scan_top(expr_t *e, void *vc) { expr_walk(e, scan_expr, vc); }
 /* a FOR open in the text */
 typedef struct open_for { char var[64]; int seq; int line; } open_for_t;
 
-static void walk_unit(check_t *c, stmt_t *body);
+static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc);
 
 /* One statement list.  FOR and NEXT pair as QuickBASIC pairs them at load
  * time (QBasic 1.1 and QB64 agree, 2026-11-03): a NEXT closes the
@@ -216,6 +223,7 @@ static void walk_list(check_t *c, stmt_t *s) {
             c->info[STRICT_CLEAR]++;
             break;
         case STMT_DIM:
+            if (s->dim_stmt.is_redim) push(&c->u->redims, s->dim_stmt.name, seq, s->line, 0);
             if (!s->dim_stmt.is_redim) {
                 ref_t *prev = find(&c->u->dims, s->dim_stmt.name);
                 if (prev) {
@@ -269,7 +277,7 @@ static void walk_list(check_t *c, stmt_t *s) {
             break;
         case STMT_SUB_DEF:
         case STMT_FUNC_DEF:
-            walk_unit(c, s->proc_def.body);
+            walk_unit(c, s->proc_def.body, s);
             break;
         case STMT_CALL: {               /* CALL name, or name args alone */
             ref_t *p = find(&c->procs, s->call_stmt.name);
@@ -315,11 +323,26 @@ static void walk_list(check_t *c, stmt_t *s) {
 
 static void free_unit(unit_t *u) {
     free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v);
+    free(u->bounds.v); free(u->redims.v);
     free(u->options.v); free(u->fors);
 }
 
+/* in proc (NULL: the main program), name is an array of the main
+ * program's: SHARED name() there, or DIM SHARED */
+static int array_shared(check_t *c, stmt_t *proc, const char *name) {
+    char a[68];
+    if (!proc) return 0;
+    if (find(&c->dimshared, name)) return 1;
+    snprintf(a, sizeof a, "%s()", name);
+    for (stmt_t *s = proc->proc_def.body; s; s = s->next)
+        if (s->type == STMT_SHARED || s->type == STMT_STATIC)
+            for (int i = 0; i < s->shared.nvars; i++)
+                if (strcmp(s->shared.varnames[i], a) == 0) return 1;
+    return 0;
+}
+
 /* the main program, or a SUB's or FUNCTION's body: its own labels and arrays */
-static void walk_unit(check_t *c, stmt_t *body) {
+static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     unit_t u, *outer = c->u;
     char d[160];
     int depth = c->depth;
@@ -346,6 +369,25 @@ static void walk_unit(check_t *c, stmt_t *body) {
         }
         if (into) c->info[STRICT_GOTO_INTO_FOR]++;
         if (out) c->info[STRICT_GOTO_OUT_OF_FOR]++;
+    }
+    /* QB: "Array not defined" -- an array of a procedure that it does not
+     * DIM (none are made by use there, nor for LBOUND and UBOUND) */
+    for (int k = 0; k < u.uses.n; k++) {
+        ref_t *use = &u.uses.v[k];
+        if (!proc || find(&u.dims, use->name) || find(&u.redims, use->name) ||
+            array_shared(c, proc, use->name)) continue;
+        int again = 0;
+        for (int i = 0; i < k; i++) if (strcmp(u.uses.v[i].name, use->name) == 0) again = 1;
+        if (again) continue;
+        snprintf(d, sizeof d, "%s is no array of this procedure (DIM it, or SHARED %s())", use->name, use->name);
+        finding(c, use->line, "array-undefined", d);
+    }
+    for (int k = 0; k < u.bounds.n; k++) {
+        ref_t *b = &u.bounds.v[k];
+        if (!proc || find(&u.dims, b->name) || find(&u.redims, b->name) ||
+            array_shared(c, proc, b->name)) continue;
+        snprintf(d, sizeof d, "%s is no array of this procedure (DIM it, or SHARED %s())", b->name, b->name);
+        finding(c, b->line, "array-undefined", d);
     }
     for (int i = 0; i < u.dims.n; i++) {
         ref_t *dm = &u.dims.v[i];
@@ -420,7 +462,10 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
                 }
             push(&c.procs, s->proc_def.name, s->type == STMT_FUNC_DEF, s->line, s->proc_def.nparams);
         }
-    walk_unit(&c, program);
+    for (stmt_t *s = program; s; s = s->next)
+        if (s->type == STMT_DIM && s->dim_stmt.shared)
+            push(&c.dimshared, s->dim_stmt.name, 0, s->line, 0);
+    walk_unit(&c, program, NULL);
     for (int i = 0; i < c.fnuses.n; i++) {
         ref_t *use = &c.fnuses.v[i];
         ref_t *def = find(&c.fndefs, use->name);
@@ -440,6 +485,6 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
-    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.st);
+    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.st);
     return c.findings;
 }

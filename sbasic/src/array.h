@@ -5,10 +5,10 @@
 #include "error.h"
 
 #define MAX_ARRAY_DIMS 8
-#define MAX_ARRAYS 64
+#define ARRAY_KEY_MAX 96            /* a name with its scope: "id:NAME" */
 
 typedef struct {
-    char name[64];
+    char name[ARRAY_KEY_MAX];
     val_type_t elem_type;
     int ndims;
     int dims[MAX_ARRAY_DIMS];   /* size of each dimension */
@@ -22,6 +22,15 @@ typedef struct {
  * to an array (and to its data) stays good while it is unchanged
  * (compiled programs cache them) */
 extern unsigned array_generation;
+
+/* QuickBASIC's arrays of a procedure (array.c): how a name is scoped in
+ * one -- the main program's, the activation's own, the procedure's STATIC */
+enum { ARRAY_MODULE, ARRAY_LOCAL, ARRAY_STATIC };
+typedef int (*array_mode_fn)(const char *name, void *ctx);
+error_t array_scope_push(int proc, array_mode_fn mode, void *ctx);
+void array_scope_pop(void);
+/* name's key in the current scope by mode (for names compiled code scopes) */
+const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);
 
 /* Clear all arrays (call at program start) */
 void array_clear_all(void);

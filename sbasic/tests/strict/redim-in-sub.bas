@@ -1,0 +1,7 @@
+REM REDIM declares a SUB's array as DIM does
+CALL T
+END
+SUB T
+REDIM L(2)
+L(1) = 1: PRINT UBOUND(L)
+END SUB

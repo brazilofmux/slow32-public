@@ -1085,6 +1085,8 @@ static stmt_t *parse_const(parser_t *p) {
     return stmt_const(name.text, var_type_from_name(name.text), val, line);
 }
 
+static int list_name(parser_t *p, stmt_t *s, void (*add)(stmt_t *, const char *));
+
 static stmt_t *parse_shared(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex); /* consume SHARED */
@@ -1092,16 +1094,26 @@ static stmt_t *parse_shared(parser_t *p) {
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
-    token_t t = lexer_next(&p->lex);
-    stmt_shared_add(s, t.text);
-    while (lexer_match(&p->lex, TOK_COMMA)) {
+    do {
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
-        t = lexer_next(&p->lex);
-        stmt_shared_add(s, t.text);
-    }
+        if (!list_name(p, s, stmt_shared_add)) { stmt_free(s); return NULL; }
+    } while (lexer_match(&p->lex, TOK_COMMA));
     return s;
+}
+
+/* a SHARED or STATIC list's name: NAME, or an array's NAME() */
+static int list_name(parser_t *p, stmt_t *s, void (*add)(stmt_t *, const char *)) {
+    token_t t = lexer_next(&p->lex);
+    if (lexer_match(&p->lex, TOK_LPAREN)) {
+        char a[68];
+        if (!expect(p, TOK_RPAREN)) return 0;
+        snprintf(a, sizeof a, "%s()", t.text);
+        add(s, a);
+    } else
+        add(s, t.text);
+    return 1;
 }
 
 /* AS INTEGER | LONG | SINGLE | DOUBLE | STRING: 1 with *t set, or 0
@@ -1239,7 +1251,7 @@ static stmt_t *parse_implicit_call(parser_t *p, const char *name, int line) {
 
 /* --- Stage 3 parsing --- */
 
-static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line);
+static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared, int line);
 
 /* DIM a(...) [, b(...) ...]: one statement per name, chained */
 static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
@@ -1254,20 +1266,35 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
             preserve = 1;
         }
     }
+    /* DIM SHARED: the main program's, seen in every SUB and FUNCTION */
+    int shared = lexer_match(&p->lex, TOK_SHARED);
     stmt_t *head = NULL, *tail = NULL;
     do {
-        stmt_t *s = parse_dim_one(p, is_redim, preserve, line);
+        stmt_t *s = parse_dim_one(p, is_redim, preserve, shared, line);
         if (!s) { stmt_free(head); return NULL; }
         stmt_append(&head, &tail, s);
     } while (lexer_match(&p->lex, TOK_COMMA));
     return head;
 }
 
-static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) {
+static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared, int line) {
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable name after DIM"); return NULL;
     }
     token_t name = lexer_next(&p->lex);
+
+    /* DIM SHARED X: a variable, its type its name's */
+    if (shared && !lexer_check(&p->lex, TOK_AS) && !lexer_check(&p->lex, TOK_LPAREN)) {
+        stmt_t *s = stmt_alloc(STMT_DIM_SCALAR, line);
+        size_t n = strlen(name.text);
+        if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+        strncpy(s->dim_scalar.name, name.text, 63);
+        s->dim_scalar.name[63] = '\0';
+        s->dim_scalar.scalar_type = var_type_from_name(name.text);
+        s->dim_scalar.typed = n && strchr("$%&#!", name.text[n - 1]) != NULL;
+        s->dim_scalar.shared = 1;
+        return s;
+    }
 
     /* DIM var AS TypeName (no parens — user-defined type) */
     if (lexer_check(&p->lex, TOK_AS)) {
@@ -1284,6 +1311,8 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
             strncpy(s->dim_scalar.name, name.text, 63);
             s->dim_scalar.name[63] = '\0';
             s->dim_scalar.scalar_type = st;
+            s->dim_scalar.typed = 1;
+            s->dim_scalar.shared = shared;
             if (st == VAL_STRING) {
                 /* Accept STRING * n (fixed-length) syntax — treat as regular string */
                 if (lexer_match(&p->lex, TOK_STAR)) {
@@ -1344,7 +1373,10 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int line) 
     }
 
     stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
-    if (s) s->dim_stmt.typed = typed;
+    if (s) {
+        s->dim_stmt.typed = typed;
+        s->dim_stmt.shared = shared;
+    }
     return s;
 }
 
@@ -2066,18 +2098,12 @@ static stmt_t *parse_stmt(parser_t *p) {
             int line = tok->line;
             lexer_skip(&p->lex); /* consume STATIC */
             stmt_t *s = stmt_static_decl(line);
-            if (!lexer_check(&p->lex, TOK_IDENT)) {
-                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-            }
-            token_t t = lexer_next(&p->lex);
-            stmt_static_add(s, t.text);
-            while (lexer_match(&p->lex, TOK_COMMA)) {
+            do {
                 if (!lexer_check(&p->lex, TOK_IDENT)) {
                     parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
                 }
-                t = lexer_next(&p->lex);
-                stmt_static_add(s, t.text);
-            }
+                if (!list_name(p, s, stmt_static_add)) { stmt_free(s); return NULL; }
+            } while (lexer_match(&p->lex, TOK_COMMA));
             return s;
         }
         case TOK_SUB:      return parse_sub(p);

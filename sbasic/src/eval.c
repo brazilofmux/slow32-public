@@ -419,6 +419,45 @@ static const compiled_proc_t *find_compiled(const char *name) {
 
 /* --- User-defined procedure call --- */
 
+/* the main program's DIM SHARED names, an array's as NAME() (scan) */
+static char (*dim_shared)[68];
+static int ndim_shared, cap_dim_shared;
+
+static void dim_shared_add(const char *name, int is_array) {
+    if (ndim_shared == cap_dim_shared) {
+        int cap = cap_dim_shared ? cap_dim_shared * 2 : 16;
+        void *t = realloc(dim_shared, (size_t)cap * sizeof(*dim_shared));
+        if (!t) return;
+        dim_shared = t;
+        cap_dim_shared = cap;
+    }
+    snprintf(dim_shared[ndim_shared++], sizeof dim_shared[0], "%s%s", name, is_array ? "()" : "");
+}
+
+/* a SHARED or STATIC list's entry for an array: NAME() (the parser's) */
+static int is_array_entry(const char *e) {
+    size_t n = strlen(e);
+    return n > 2 && e[n - 2] == '(' && e[n - 1] == ')';
+}
+
+static int names_array(const char *e, const char *name) {
+    size_t n = strlen(name);
+    return is_array_entry(e) && strlen(e) == n + 2 && strncmp(e, name, n) == 0;
+}
+
+/* how proc's activation scopes array name (array.c): its STATIC, the main
+ * program's (SHARED, DIM SHARED), else the activation's own */
+static int proc_array_mode(const char *name, void *ctx) {
+    proc_entry_t *p = ctx;
+    for (int i = 0; i < p->nstatic; i++)
+        if (names_array(p->static_names[i], name)) return ARRAY_STATIC;
+    for (int i = 0; i < p->nshared; i++)
+        if (names_array(p->shared_names[i], name)) return ARRAY_MODULE;
+    for (int i = 0; i < ndim_shared; i++)
+        if (names_array(dim_shared[i], name)) return ARRAY_MODULE;
+    return ARRAY_LOCAL;
+}
+
 /* the first call's work for every call: lower the body, collect its
  * SHARED and STATIC names, find its C */
 static error_t proc_prepare(proc_entry_t *proc) {
@@ -518,8 +557,16 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
 
     /* SHARED variables: the global ones, linked */
     for (int i = 0; i < proc->nshared; i++) {
+        if (is_array_entry(proc->shared_names[i])) continue;    /* (A(): array.c's) */
         value_t *gv = env_get(program_global_env, proc->shared_names[i]);
         if (gv) env_link(local, proc->shared_names[i], gv);
+    }
+    /* DIM SHARED's variables: the main program's, everywhere -- but a
+     * parameter of the name is the parameter */
+    for (int i = 0; i < ndim_shared; i++) {
+        if (is_array_entry(dim_shared[i]) || env_lookup(local, dim_shared[i])) continue;
+        value_t *gv = env_get(program_global_env, dim_shared[i]);
+        if (gv) env_link(local, dim_shared[i], gv);
     }
 
     /* STATIC variables: linked to the procedure's persistent env */
@@ -528,15 +575,20 @@ static error_t call_proc_values(proc_entry_t *proc, value_t *arg_vals, const arg
             proc->static_env = env_create(NULL);
         for (int i = 0; i < proc->nstatic; i++) {
             /* env_get auto-creates with default on first access */
+            if (is_array_entry(proc->static_names[i])) continue;
             value_t *sv = env_get(proc->static_env, proc->static_names[i]);
             if (sv) env_link(local, proc->static_names[i], sv);
         }
     }
 
+    /* its arrays its own, but those it SHAREs or STATICs, or DIM SHARED */
+    err = array_scope_push((int)(proc - proc_table), proc_array_mode, proc);
+    if (err != ERR_NONE) { env_destroy(local); return err; }
     if (proc->compiled)
         err = proc->compiled->fn(local, proc->code);
     else
         err = run_code(local, proc->code, 0);
+    array_scope_pop();
 
     if (err == ERR_EXIT_SUB && !is_function) err = ERR_NONE;
     if (err == ERR_EXIT_FUNCTION && is_function) err = ERR_NONE;
@@ -3372,7 +3424,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_DIM_SCALAR: {
             /* Declare scalar variable with default value */
-            value_t def = val_default(s->dim_scalar.scalar_type);
+            value_t def = val_default(s->dim_scalar.typed ? s->dim_scalar.scalar_type
+                                                          : resolve_var_type(s->dim_scalar.name));
             env_set(env, s->dim_scalar.name, &def);
             val_clear(&def);
             return ERR_NONE;
@@ -3493,8 +3546,12 @@ static error_t scan_one_stmt(stmt_t *s) {
         option_base = s->option_base.base;
     if (s->type == STMT_DEFTYPE)        /* (in the text's order, as QuickBASIC reads them, for static DIMs) */
         exec_deftype(s);
-    if (s->type == STMT_DIM)
+    if (s->type == STMT_DIM) {
+        if (s->dim_stmt.shared) dim_shared_add(s->dim_stmt.name, 1);
         scan_static_dim(s);
+    }
+    if (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared)
+        dim_shared_add(s->dim_scalar.name, 0);
     if (s->type == STMT_LABEL) {
         if (label_count == label_cap) {
             int cap = label_cap ? label_cap * 2 : 256;
@@ -3885,6 +3942,7 @@ error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     memset(proc_hash, 0, sizeof proc_hash);
     label_count = 0;
 
+    ndim_shared = 0;
     result = scan_stmt_list(program);
     deftype_init();             /* (the scan's DEFtypes were for its static DIMs: the run makes its own) */
     if (result != ERR_NONE)
