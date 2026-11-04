@@ -427,7 +427,12 @@ reach a flat 64K, not the machine's memory -- DEF SEG = &HA000 is
 Illegal function call); the checker's array parameters, ERASEd arrays,
 and RESTORE in a SUB.  72 compile, no checker refusals left.
 
-Left, by count: WINDOW/VIEW and SCREEN
+Then VIEW and WINDOW (with PMAP, POINT both ways, CLS n), checked in
+SCREEN 7: 77 compile.  QBasic's CIRCLE keeps the mode's aspect (a
+radius of 20 is about 17 pixels up and down in SCREEN 7); ours is round
+in pixels -- the CIRCLE item below is every program's, not only arcs.
+
+Left, by count: SCREEN
 with arguments left out, CIRCLE's arcs and aspect, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
 commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
