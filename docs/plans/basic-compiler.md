@@ -436,7 +436,7 @@ LINE breaks ties otherwise than ours, in both directions -- a single
 Bresenham offset does not fit the four lines measured; open.
 
 Left, by count: SCREEN
-with arguments left out, CIRCLE's arcs and aspect, names with a dot
+with arguments left out, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as
 commands (BYE, SAVE, NEW, RUN), SUB ... STATIC, STATIC x AS type, a
 whole array as an argument (the parser now notes array parameters),
