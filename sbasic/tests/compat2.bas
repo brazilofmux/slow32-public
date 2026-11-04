@@ -32,7 +32,7 @@ PRINT "CVS:"; CVS(s$)
 ' 4. LPOS
 PRINT "LPOS:"; LPOS(0)
 
-' 5. VIEW PRINT (no-op, should not error)
+' 5. VIEW PRINT (the text viewport: all of it, then rows 1 to 25)
 VIEW PRINT
 VIEW PRINT 1 TO 25
 

@@ -223,6 +223,20 @@ static expr_t *parse_primary(parser_t *p) {
         }
         return expr_variable(t.text, var_type_from_name(t.text), t.line);
     }
+    /* SCREEN(row, col[, attribute]): the text screen's character there */
+    if (tok->type == TOK_SCREEN) {
+        token_t t = lexer_next(&p->lex);
+        if (!expect(p, TOK_LPAREN)) return NULL;
+        expr_t *call = expr_call("SCREEN", t.line);
+        if (!call) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+        do {
+            expr_t *arg = parse_expr(p);
+            if (!arg) { expr_free(call); return NULL; }
+            expr_call_add_arg(call, arg);
+        } while (lexer_match(&p->lex, TOK_COMMA));
+        if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
+        return call;
+    }
     /* PLAY(n): the notes left in the music queue (none here: 0) */
     if (tok->type == TOK_PLAY) {
         token_t t = lexer_next(&p->lex);
@@ -2886,18 +2900,18 @@ static stmt_t *parse_stmt(parser_t *p) {
             lexer_skip(&p->lex);
             if (!lexer_check(&p->lex, TOK_PRINT))
                 return parse_view_window(p, STMT_VIEW, line);
-            /* VIEW PRINT [top TO bottom] — no-op */
+            /* VIEW PRINT [top TO bottom]: the text viewport */
             lexer_match(&p->lex, TOK_PRINT);
-            /* Consume optional arguments (top TO bottom) */
+            stmt_t *vs = stmt_alloc(STMT_VIEW_PRINT, line);
+            if (!vs) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             if (!at_stmt_end(p)) {
-                expr_t *e = parse_expr(p);
-                if (e) expr_free(e);
-                if (lexer_match(&p->lex, TOK_TO)) {
-                    e = parse_expr(p);
-                    if (e) expr_free(e);
+                if (!(vs->width_stmt.columns = parse_expr(p)) || !expect(p, TOK_TO) ||
+                    !(vs->width_stmt.rows = parse_expr(p))) {
+                    stmt_free(vs);
+                    return NULL;
                 }
             }
-            return stmt_alloc(STMT_NOOP, line);
+            return vs;
         }
 
         case TOK_RUN: {                 /* RUN: the program again (QuickBASIC) */

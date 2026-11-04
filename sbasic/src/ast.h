@@ -181,6 +181,7 @@ typedef enum {
     STMT_WINDOW,        /* WINDOW [SCREEN] (x1, y1)-(x2, y2): gfx, as VIEW's */
     STMT_RUN,           /* RUN: the program again from its start */
     STMT_DRAW,          /* DRAW s$: shell_stmt.command the string */
+    STMT_VIEW_PRINT,    /* VIEW PRINT [top TO bottom]: width_stmt's columns, rows */
 } stmt_type_t;
 
 /* Print item: expression + separator */

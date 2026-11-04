@@ -734,6 +734,7 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->lrset.value);
                 break;
             case STMT_WIDTH:
+            case STMT_VIEW_PRINT:
                 expr_free(s->width_stmt.columns);
                 expr_free(s->width_stmt.rows);
                 break;
@@ -1300,7 +1301,8 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_POKE: X(s->poke_stmt.addr); X(s->poke_stmt.value); break;
     case STMT_LSET:
     case STMT_RSET: X(s->lrset.value); break;
-    case STMT_WIDTH: X(s->width_stmt.columns); X(s->width_stmt.rows); break;
+    case STMT_WIDTH:
+    case STMT_VIEW_PRINT: X(s->width_stmt.columns); X(s->width_stmt.rows); break;
     case STMT_PSET:
     case STMT_LINE_G:
     case STMT_CIRCLE:

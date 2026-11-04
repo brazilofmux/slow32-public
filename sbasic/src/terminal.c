@@ -87,6 +87,8 @@ void sb_term_locate(int row, int col) {
     fflush(stdout);
 }
 
+int sb_term_attr(void) { return (cur_fg & 15) | (cur_bg & 7) << 4; }
+
 void sb_term_color(int fg, int bg, int has_fg, int has_bg) {
     ensure_init();
 

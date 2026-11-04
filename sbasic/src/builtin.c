@@ -1012,7 +1012,7 @@ static error_t fn_lof(value_t *args, int nargs, value_t *out) {
 static error_t fn_csrlin(value_t *args, int nargs, value_t *out) {
     (void)args;
     if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_integer(print_row);
+    *out = val_integer(eval_cursor_row());     /* (a full line: the next one's start) */
     return ERR_NONE;
 }
 
@@ -1020,7 +1020,7 @@ static error_t fn_csrlin(value_t *args, int nargs, value_t *out) {
 static error_t fn_pos(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     (void)args; /* argument ignored, QBasic convention */
-    *out = val_integer(print_col + 1);
+    *out = val_integer(eval_cursor_col());
     return ERR_NONE;
 }
 
@@ -1180,6 +1180,16 @@ static error_t fn_point(value_t *args, int nargs, value_t *out) {
     if (sb_gfx_map(x, y, &ax, &ay) < 0) return ERR_OVERFLOW;
     *out = val_integer(sb_gfx_point(ax, ay));
     return ERR_NONE;
+}
+
+/* SCREEN(row, col[, attribute]): the text screen's (eval_screen_at) */
+static error_t fn_screen(value_t *args, int nargs, value_t *out) {
+    int r, c, a = 0;
+    if (nargs < 2 || nargs > 3) return ERR_ILLEGAL_FUNCTION_CALL;
+    EVAL_CHECK(val_to_integer(&args[0], &r));
+    EVAL_CHECK(val_to_integer(&args[1], &c));
+    if (nargs == 3) EVAL_CHECK(val_to_integer(&args[2], &a));
+    return eval_screen_at(r, c, a, out);
 }
 
 /* PLAY(n): the notes waiting to be played -- none: PLAY plays nothing here */

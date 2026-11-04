@@ -44,7 +44,7 @@ typedef struct {
     refs_t fndefs, fnuses;      /* DEF FN, program-wide */
     refs_t dimshared;           /* arrays the main program DIMs SHARED */
     refs_t modconsts;           /* the main program's CONSTs, every unit's */
-    refs_t restores;            /* RESTORE label's, anywhere: the main program's labels */
+    refs_t modjumps;            /* RESTORE's and ON ERROR GOTO's labels, anywhere: the main program's */
     unit_t *u;                  /* the unit being walked */
     stmt_t *proc;               /* its SUB or FUNCTION, NULL for the main program */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
@@ -363,8 +363,8 @@ static void walk_list(check_t *c, stmt_t *s) {
             break;
         case STMT_ON_ERROR:
             c->info[STRICT_ON_ERROR]++;
-            if (s->on_error.label[0])
-                push(&c->u->jumps, s->on_error.label, seq, s->line, 0);
+            if (s->on_error.label[0])   /* (its handler the module's, as RESTORE's label) */
+                push(&c->modjumps, s->on_error.label, seq, s->line, 0);
             break;
         case STMT_RESUME:
             if (s->resume_stmt.resume_next == 0) c->info[STRICT_RESUME]++;
@@ -373,7 +373,7 @@ static void walk_list(check_t *c, stmt_t *s) {
             break;
         case STMT_RESTORE:      /* (DATA is the module's: a SUB's RESTORE names its label) */
             if (s->restore_stmt.label[0])
-                push(&c->restores, s->restore_stmt.label, seq, s->line, 0);
+                push(&c->modjumps, s->restore_stmt.label, seq, s->line, 0);
             break;
         case STMT_CLEAR:
             c->info[STRICT_CLEAR]++;
@@ -521,10 +521,10 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     walk_list(c, body);
     c->depth = depth;
     if (!proc)                          /* (every procedure walked by now: they are in its text) */
-        for (int i = 0; i < c->restores.n; i++)
-            if (!find(&u.labels, c->restores.v[i].name)) {
-                snprintf(d, sizeof d, "label %s is not defined", c->restores.v[i].name);
-                finding(c, c->restores.v[i].line, "label-undefined", d);
+        for (int i = 0; i < c->modjumps.n; i++)
+            if (!find(&u.labels, c->modjumps.v[i].name)) {
+                snprintf(d, sizeof d, "label %s is not defined", c->modjumps.v[i].name);
+                finding(c, c->modjumps.v[i].line, "label-undefined", d);
             }
     for (int i = 0; i < u.jumps.n; i++) {
         ref_t *j = &u.jumps.v[i];
@@ -664,6 +664,6 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
         }
     }
     if (info) memcpy(info, c.info, sizeof c.info);
-    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.restores.v); free(c.st);
+    free(c.procs.v); free(c.fndefs.v); free(c.fnuses.v); free(c.dimshared.v); free(c.modconsts.v); free(c.modjumps.v); free(c.st);
     return c.findings;
 }

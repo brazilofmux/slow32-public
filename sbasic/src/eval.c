@@ -1363,6 +1363,45 @@ int print_col = 0;
 int print_row = 1;
 int *active_print_col = &print_col;
 
+/* The text screen, as QBasic keeps it, for SCREEN(row, col): each cell's
+ * character and attribute, written as PRINT writes the screen.  Its rows
+ * (WIDTH's), and the text viewport (VIEW PRINT's) that scrolls: rows 1
+ * to 24 at the start, the last row outside it (QBasic, checked) */
+#define SCR_ROWS 60
+#define SCR_COLS 256
+static unsigned char scr_ch[SCR_ROWS][SCR_COLS], scr_at[SCR_ROWS][SCR_COLS];
+static int scr_rows = 25, view_top = 1, view_bottom = 24;
+
+static void scr_clear_rows(int top, int bottom) {
+    unsigned char a = (unsigned char)sb_term_attr();
+    for (int r = top; r <= bottom && r <= SCR_ROWS; r++) {
+        memset(scr_ch[r - 1], ' ', SCR_COLS);
+        memset(scr_at[r - 1], a & 0x70 ? a : 7, SCR_COLS);
+    }
+}
+
+static void scr_put(unsigned char c) {
+    if (print_row >= 1 && print_row <= scr_rows && print_col >= 0 && print_col < SCR_COLS) {
+        scr_ch[print_row - 1][print_col] = c;
+        scr_at[print_row - 1][print_col] = (unsigned char)sb_term_attr();
+    }
+}
+
+/* a new line: the next row, or the viewport scrolled at its bottom (and
+ * from below it: the last row is outside) */
+static void scr_newline(void) {
+    if (print_row >= view_top && print_row < view_bottom) {
+        print_row++;
+        return;
+    }
+    for (int r = view_top; r < view_bottom && r < SCR_ROWS; r++) {
+        memcpy(scr_ch[r - 1], scr_ch[r], SCR_COLS);
+        memcpy(scr_at[r - 1], scr_at[r], SCR_COLS);
+    }
+    scr_clear_rows(view_bottom, view_bottom);
+    print_row = view_bottom;
+}
+
 /* Update a column counter by scanning a string (same logic as col_puts) */
 static void update_col(int *col, const char *s) {
     while (*s) {
@@ -1394,7 +1433,7 @@ static void screen_putc(char c) {
     if (c == '\n' || c == '\r') {
         putchar('\n');
         print_col = 0;
-        print_row++;
+        scr_newline();
     } else if (c == '\a') {
         if (screen_tty < 0) screen_tty = isatty(1);
         if (screen_tty) putchar(c);
@@ -1406,9 +1445,10 @@ static void screen_putc(char c) {
         if (console_width > 0 && print_col >= console_width) {
             putchar('\n');
             print_col = 0;
-            print_row++;
+            scr_newline();
         }
         putchar(c);
+        scr_put((unsigned char)c);
         print_col++;
     }
 }
@@ -1430,12 +1470,12 @@ static void screen_puts(const char *s) {
             if (console_width > 0 && print_col >= console_width) {
                 putchar('\n');
                 print_col = 0;
-                print_row++;
+                scr_newline();
             }
             int n = (int)(e - s);
             if (console_width > 0 && n > console_width - print_col) n = console_width - print_col;
             fwrite(s, 1, (size_t)n, stdout);
-            print_col += n;
+            for (int i = 0; i < n; i++, print_col++) scr_put((unsigned char)s[i]);
             s += n;
         }
     }
@@ -2130,7 +2170,13 @@ error_t eval_cls_mode(int m) {
     if (sb_gfx_active()) {
         if (m != 2) sb_gfx_cls();
         print_col = 0;
-        print_row = 1;
+        print_row = view_top;
+        return ERR_NONE;
+    }
+    if (m == 2) {                       /* the text viewport only */
+        scr_clear_rows(view_top, view_bottom);
+        print_col = 0;
+        print_row = view_top;
         return ERR_NONE;
     }
     eval_cls();
@@ -2144,6 +2190,7 @@ void eval_cls(void) {
         return;
     }
     sb_term_cls();
+    scr_clear_rows(1, scr_rows);
     print_col = 0;
     print_row = 1;
 }
@@ -2480,12 +2527,57 @@ static error_t exec_locate(env_t *env, stmt_t *s) {
 }
 
 /* the cursor: a LOCATE's row or column left out keeps it */
-int eval_cursor_row(void) { return print_row; }
-int eval_cursor_col(void) { return print_col + 1; }
+/* (a line filled to its last column: the next line's start, as QBasic
+ * reports it -- the bottom of the viewport still its bottom) */
+int eval_cursor_row(void) {
+    extern int console_width;
+    if (console_width > 0 && print_col >= console_width && print_row < view_bottom) return print_row + 1;
+    return print_row;
+}
+int eval_cursor_col(void) {
+    extern int console_width;
+    return console_width > 0 && print_col >= console_width ? 1 : print_col + 1;
+}
 
-/* LOCATE row, col, made integers -- for compiled code too */
+/* SCREEN(row, col[, attribute]): the character there, or (attribute not
+ * 0) its attribute -- for compiled code too */
+error_t eval_screen_at(int row, int col, int attr, value_t *out) {
+    extern int console_width;
+    int cols = console_width > 0 ? console_width : 80;
+    if (row < 1 || row > scr_rows || col < 1 || col > cols || col > SCR_COLS)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_integer(attr ? scr_at[row - 1][col - 1] : scr_ch[row - 1][col - 1]);
+    return ERR_NONE;
+}
+
+/* VIEW PRINT [top TO bottom] (none: all the rows) -- for compiled code too */
+error_t eval_view_print(int has, int top, int bottom) {
+    if (!has) { top = 1; bottom = scr_rows; }
+    if (top < 1 || bottom > scr_rows || top > bottom) return ERR_ILLEGAL_FUNCTION_CALL;
+    view_top = top;
+    view_bottom = bottom;
+    print_row = top;                    /* (the model's cursor: a terminal has no viewport to move in) */
+    print_col = 0;
+    return ERR_NONE;
+}
+
+/* WIDTH's rows (25, 43, 50 ...): the screen cleared, the viewport all of
+ * it but the last row -- for compiled code too */
+error_t eval_width_rows(int rows) {
+    if (rows < 1 || rows > SCR_ROWS) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (rows == scr_rows) return ERR_NONE;
+    scr_rows = rows;
+    view_top = 1;
+    view_bottom = rows > 1 ? rows - 1 : 1;
+    eval_cls();
+    return ERR_NONE;
+}
+
+/* LOCATE row, col, made integers -- for compiled code too: a row in the
+ * text viewport, or the last (QBasic) */
 error_t eval_locate(int row, int col) {
     if (row < 1 || col < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if ((row < view_top || row > view_bottom) && row != scr_rows) return ERR_ILLEGAL_FUNCTION_CALL;
     sb_term_locate(row, col);
     print_col = col - 1;
     print_row = row;
@@ -4023,6 +4115,15 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_NONE;
         }
 
+        case STMT_VIEW_PRINT: {         /* VIEW PRINT [top TO bottom] */
+            int top = 0, bottom = 0;
+            if (s->width_stmt.columns) {
+                EVAL_CHECK(eval_int_of(env, s->width_stmt.columns, &top));
+                EVAL_CHECK(eval_int_of(env, s->width_stmt.rows, &bottom));
+            }
+            return eval_view_print(s->width_stmt.columns != NULL, top, bottom);
+        }
+
         case STMT_DRAW: {
             value_t v;
             EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &v));
@@ -4065,7 +4166,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             if (err != ERR_NONE) return err;
             if (s->width_stmt.rows) EVAL_CHECK(eval_int_of(env, s->width_stmt.rows, &rows));
             eval_width(w);
-            return ERR_NONE;
+            return s->width_stmt.rows ? eval_width_rows(rows) : ERR_NONE;
         }
 
         case STMT_NOOP:
@@ -4682,6 +4783,10 @@ void eval_reset(void) {
     type_def_count = 0;
     print_col = 0;
     print_row = 1;
+    scr_rows = 25;                      /* (the text screen: 25 rows, 1 to 24 scroll) */
+    view_top = 1;
+    view_bottom = 24;
+    scr_clear_rows(1, SCR_ROWS);
     eval_depth = 0;
     on_error_label_idx = -1;
     on_error_active = 0;
