@@ -3128,6 +3128,10 @@ static error_t exec_type_def(stmt_t *s) {
 static error_t exec_dim_as_type(env_t *env, stmt_t *s) {
     int ti = find_type_def(s->dim_as_type.type_name);
     if (ti < 0) return ERR_UNDEFINED_TYPE;
+    /* a declaration: the record made once (QuickBASIC: a DIM in a loop
+     * keeps its fields) */
+    value_t *have = env_lookup(env, s->dim_as_type.name);
+    if (have && have->type == VAL_RECORD) return ERR_NONE;
     type_def_t *td = &type_defs[ti];
     sb_record_t *rec = record_alloc(ti, td->nfields);
     if (!rec) return ERR_OUT_OF_MEMORY;
@@ -3565,7 +3569,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_NONE;
 
         case STMT_DIM_SCALAR: {
-            /* Declare scalar variable with default value */
+            /* Declare scalar variable with default value -- once: DIM is
+             * a declaration (QuickBASIC: one in a loop does not reset it) */
+            if (env_lookup(env, s->dim_scalar.name)) return ERR_NONE;
             value_t def = val_default(s->dim_scalar.typed ? s->dim_scalar.scalar_type
                                                           : resolve_var_type(s->dim_scalar.name));
             env_set(env, s->dim_scalar.name, &def);
@@ -3694,6 +3700,8 @@ static error_t scan_one_stmt(stmt_t *s) {
     }
     if (s->type == STMT_DIM_SCALAR && s->dim_scalar.shared)
         dim_shared_add(s->dim_scalar.name, 0);
+    if (s->type == STMT_DIM_AS_TYPE && s->dim_as_type.shared)
+        dim_shared_add(s->dim_as_type.name, 0);
     if (s->type == STMT_CONST)          /* (a module CONST: every procedure's; the scan is the main program's) */
         dim_shared_add(s->const_stmt.name, 0);
     if (s->type == STMT_LABEL) {

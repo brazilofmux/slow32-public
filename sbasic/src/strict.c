@@ -26,6 +26,8 @@ typedef struct {
     refs_t bounds;              /* arrays LBOUND or UBOUND names */
     refs_t redims;              /* arrays REDIMmed (which declares one too) */
     refs_t consts;              /* its CONSTs */
+    refs_t vars;                /* names used as variables (and records) */
+    refs_t asdims;              /* DIM x AS type's names */
     refs_t erased;              /* arrays ERASEd, which may be DIMmed again */
     refs_t options;             /* OPTION BASE statements */
     int base;                   /* the OPTION BASE in force */
@@ -107,6 +109,9 @@ static void scan_expr(expr_t *e, void *vc) {
             finding(c, e->line, "builtin-args", d);
         }
         if (is_fn_name(e->var.name)) push(&c->fnuses, e->var.name, c->seq, e->line, 0);
+        else if (!find(&c->u->vars, e->var.name)) push(&c->u->vars, e->var.name, c->seq, e->line, 0);
+    } else if (e->type == EXPR_FIELD_ACCESS) {
+        if (!find(&c->u->vars, e->field.var_name)) push(&c->u->vars, e->field.var_name, c->seq, e->line, 0);
     } else if (e->type == EXPR_CALL) {
         int mn, mx;
         if (is_fn_name(e->call.name)) push(&c->fnuses, e->call.name, c->seq, e->line, e->call.nargs);
@@ -148,6 +153,26 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc);
  * open.  So `IF ... THEN PRINT X$;: NEXT Z` is "NEXT without FOR", and
  * so is a NEXT that would skip an inner FOR; a FOR left open is "FOR
  * without NEXT".  Jumps into and out of a FOR are allowed. */
+/* name used as a variable here (an assignment's, FOR's, INPUT's target) */
+static void var_use(check_t *c, const char *name, int line) {
+    if (!find(&c->u->vars, name)) push(&c->u->vars, name, c->seq, line, 0);
+}
+
+/* DIM x AS type: a declaration, before x is used, once (QB: "Duplicate
+ * definition" either way) */
+static void as_dim(check_t *c, const char *name, int line) {
+    char d[128];
+    ref_t *r;
+    if ((r = find(&c->u->asdims, name))) {
+        snprintf(d, sizeof d, "DIM %s AS again (first at line %d)", name, r->line);
+        finding(c, line, "dim-twice", d);
+    } else if ((r = find(&c->u->vars, name))) {
+        snprintf(d, sizeof d, "%s used at line %d before its DIM AS", name, r->line);
+        finding(c, line, "dim-after-use", d);
+    }
+    push(&c->u->asdims, name, c->seq, line, 0);
+}
+
 /* name, a CONST of this unit or the main program's, given a value: QB
  * refuses it at load ("Duplicate definition", "Variable required") */
 static void const_target(check_t *c, const char *name, int line) {
@@ -212,12 +237,28 @@ static void walk_list(check_t *c, stmt_t *s) {
         }
         case STMT_ASSIGN:
             const_target(c, s->assign.name, s->line);
+            var_use(c, s->assign.name, s->line);
             break;
         case STMT_INPUT:
-            for (int i = 0; i < s->input.nvars; i++) const_target(c, s->input.varnames[i], s->line);
+            for (int i = 0; i < s->input.nvars; i++) {
+                const_target(c, s->input.varnames[i], s->line);
+                if (!s->input.targets[i]) var_use(c, s->input.varnames[i], s->line);
+            }
             break;
         case STMT_READ:
-            for (int i = 0; i < s->read_stmt.nvars; i++) const_target(c, s->read_stmt.varnames[i], s->line);
+            for (int i = 0; i < s->read_stmt.nvars; i++) {
+                const_target(c, s->read_stmt.varnames[i], s->line);
+                if (!s->read_stmt.targets[i]) var_use(c, s->read_stmt.varnames[i], s->line);
+            }
+            break;
+        case STMT_FIELD_ASSIGN:
+            var_use(c, s->field_assign.var_name, s->line);
+            break;
+        case STMT_DIM_SCALAR:
+            as_dim(c, s->dim_scalar.name, s->line);
+            break;
+        case STMT_DIM_AS_TYPE:
+            as_dim(c, s->dim_as_type.name, s->line);
             break;
         case STMT_LABEL:
             if (find(&c->u->labels, s->label.name)) {
@@ -228,6 +269,7 @@ static void walk_list(check_t *c, stmt_t *s) {
             break;
         case STMT_FOR:
             const_target(c, s->for_stmt.var_name, s->line);
+            var_use(c, s->for_stmt.var_name, s->line);
             if (c->nst == c->capst) {
                 c->capst = c->capst ? c->capst * 2 : 8;
                 c->st = realloc(c->st, (size_t)c->capst * sizeof(open_for_t));
@@ -389,7 +431,7 @@ static void walk_list(check_t *c, stmt_t *s) {
 
 static void free_unit(unit_t *u) {
     free(u->labels.v); free(u->jumps.v); free(u->dims.v); free(u->uses.v); free(u->erased.v);
-    free(u->bounds.v); free(u->redims.v); free(u->consts.v);
+    free(u->bounds.v); free(u->redims.v); free(u->consts.v); free(u->vars.v); free(u->asdims.v);
     free(u->options.v); free(u->fors);
 }
 

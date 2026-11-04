@@ -480,6 +480,7 @@ typedef struct stmt {
         struct {
             char name[64];
             char type_name[64];
+            int shared;          /* DIM SHARED */
         } dim_as_type;
 
         /* STMT_FIELD_ASSIGN: var.field = expr */

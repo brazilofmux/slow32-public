@@ -1329,7 +1329,9 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
             }
             return s;
         }
-        return stmt_dim_as_type(name.text, tname.text, line);
+        stmt_t *rs = stmt_dim_as_type(name.text, tname.text, line);
+        if (rs) rs->dim_as_type.shared = shared;
+        return rs;
     }
 
     if (!expect(p, TOK_LPAREN)) return NULL;
