@@ -250,11 +250,25 @@ static int arr_mode(const char *name) {
     return dimshared_array(name) ? ARRAY_MODULE : ARRAY_LOCAL;
 }
 
-/* a main-program variable's global, where some SUB SHAREs it */
-static const char *global_of(const char *name) {
+/* the program traps errors (ON ERROR, RESUME, ERROR, ERR, ERL): its
+ * statements are a function of their own, bcm_body, entered again at the
+ * handler; what they keep between statements lives in memory -- every
+ * main-program variable a global, each FOR's words too */
+static int bc_trap;
+static int bc_body;             /* bcm_body is being lowered */
+
+/* a main-program variable's global, where some SUB SHAREs it (any, when
+ * the program traps errors) */
+static const char *global_of(const char *name, int type) {
     char sym[96];
     if (bc_proc) return NULL;
     mangle(sym, sizeof sym, "bcg_", name);
+    if (bc_trap) {
+        const char *g = global_add(name, sym, type);
+        for (int i = 0; i < bc_nglobals; i++)
+            if (bc_globals[i].sym == g) bc_globals[i].zeroed = 1;
+        return g;
+    }
     for (int i = 0; i < bc_nglobals; i++)
         if (strcmp(bc_globals[i].sym, sym) == 0) {
             bc_globals[i].zeroed = 1;   /* (main's own var_zero does it) */
@@ -439,6 +453,9 @@ static int shadowed(const char *name) {
     return 0;
 }
 
+/* ERR and ERL: the interpreter's, never variables */
+static int is_errvar(const char *name) { return strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0; }
+
 /* a builtin the interpreter would call for this name */
 static int is_builtin_call(const char *name) {
     return builtin_exists(name) && !shadowed(name) &&
@@ -463,7 +480,7 @@ static var_t *var_find(const char *name) {
 }
 
 static int name_type(const char *name);
-static const char *global_of(const char *name);
+static const char *global_of(const char *name, int type);
 
 /* a variable's storage: a global's symbol, else a slot in the frame (a
  * DOUBLE's two words together, so it can be passed by reference) */
@@ -509,7 +526,7 @@ static var_t *var_get(const char *name, int type, int line) {
         type = VAL_SINGLE;
     }
     v = var_push();
-    var_init(v, name, type, global_of(name));
+    var_init(v, name, type, global_of(name, type));
     return v;
 }
 
@@ -1226,6 +1243,11 @@ static bv_t expr(expr_t *e) {
             return builtin_fn(e, e->var.name, 0, NULL);
         if (strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name))
             return def_fn_call(e, e->var.name, 0, NULL);  /* DEF FNM = 123: FNM calls it */
+        if (strcmp(e->var.name, "ERR") == 0 || strcmp(e->var.name, "ERL") == 0) {
+            int cb = h_ncarg;
+            carg(iconst(e->var.name[2] == 'L'), 0);
+            return bv_call("bcrt_errvar", cb, 1);
+        }
         if (calls_function0(e->var.name)) {
             bv_t r;
             if (var_find(e->var.name)) {        /* (a variable too, here: which, when, is the run's) */
@@ -1497,7 +1519,15 @@ static void forslots_add(stmt_t *s) {
     }
     f = &bc_forslots[bc_nforslots++];
     f->s = s;
-    for (int i = 0; i < 4; i++) f->w[i] = alloca_of(TY_INT, 4);
+    for (int i = 0; i < 4; i++) {
+        if (bc_trap && !bc_proc) {      /* (the same words for main and bcm_body) */
+            char sym[32];
+            snprintf(sym, sizeof sym, "bcf_%d_%d", bc_nforslots - 1, i);
+            f->w[i] = hi_emit(HI_GADDR, TY_INT, -1, -1, 0,
+                              (char *)global_add("(for)", sym, VAL_INTEGER));
+        } else
+            f->w[i] = alloca_of(TY_INT, 4);
+    }
 }
 
 static void forslots_zero(void) {
@@ -1511,6 +1541,69 @@ static int *forslots_of(stmt_t *s) {
         if (bc_forslots[i].s == s) return bc_forslots[i].w;
     fprintf(stderr, "s32-bc: internal: a FOR not prescanned\n");
     exit(1);
+}
+
+/* --- bcm_body's ops, numbered as lower.c numbers the main program's ---
+ *
+ * Each op lower.c would emit has a block where it begins, so bcrt_target
+ * reaches it (the handler, RESUME, RESUME NEXT: the op after); the op and
+ * its line (ERL) are stored as it begins.  A jump lower.c makes an op of
+ * (past an ELSE, a loop's way back, the end of a CASE) is a block too. */
+static int *bc_op_blk;
+static int bc_nops, bc_capops;
+static int bc_basic_line;       /* the line number before here (lower.c's basic_line) */
+static int bc_dispatch;         /* bcm_body's block to bcrt_target's op */
+typedef struct { char name[64]; int op; } oplabel_t;
+static oplabel_t *bc_oplabels;
+static int bc_noplabels, bc_capoplabels;
+typedef struct { int inst; char label[64]; } opfix_t;   /* ON ERROR GOTO's label, its op later */
+static opfix_t *bc_opfix;
+static int bc_nopfix, bc_capopfix;
+
+static void op_add(int b) {
+    if (bc_nops == bc_capops) {
+        bc_capops = bc_capops ? bc_capops * 2 : 64;
+        bc_op_blk = realloc(bc_op_blk, (size_t)bc_capops * sizeof(int));
+        if (!bc_op_blk) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    bc_op_blk[bc_nops++] = b;
+}
+
+/* an op begins: a block of its own (in bcm_body) */
+static int op_block(void) {
+    int b = new_blk();
+    goto_blk(b);
+    begin_blk(b);
+    if (bc_body) {
+        op_add(b);
+        st(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_op"), 0, iconst(bc_nops - 1));
+        st(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_line"), 0, iconst(bc_basic_line));
+    }
+    return b;
+}
+
+static void op_here(void) { if (bc_body) op_block(); }
+
+/* an op that is a jump, to blk */
+static void op_jump(int blk) {
+    if (bc_body) {
+        int b = new_blk();
+        goto_blk(b);
+        begin_blk(b);
+        op_add(b);
+    }
+    goto_blk(blk);
+}
+
+static void oplabel_add(const char *name) {
+    if (bc_noplabels == bc_capoplabels) {
+        bc_capoplabels = bc_capoplabels ? bc_capoplabels * 2 : 32;
+        bc_oplabels = realloc(bc_oplabels, (size_t)bc_capoplabels * sizeof(oplabel_t));
+        if (!bc_oplabels) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    strncpy(bc_oplabels[bc_noplabels].name, name, 63);
+    bc_oplabels[bc_noplabels].name[63] = '\0';
+    bc_oplabels[bc_noplabels++].op = bc_nops;
 }
 
 /* a FOR's limit or step, kept as the interpreter keeps them (a double,
@@ -1557,6 +1650,7 @@ static void bc_for(stmt_t *s) {
     for_t *f;
     bv_t start, lim, stp;
     int runs;
+    op_here();
     var_t *v = var_get(s->for_stmt.var_name, s->for_stmt.var_type, s->line);
     if (s->for_stmt.body) { bc_not_yet(s->line, "a FOR with a body"); return; }
     if (bc_nfors == bc_capfors) {
@@ -1567,12 +1661,17 @@ static void bc_for(stmt_t *s) {
     start = expr(s->for_stmt.start);
     lim = expr(s->for_stmt.end);
     stp = s->for_stmt.step ? expr(s->for_stmt.step) : kint(1, VAL_INTEGER);
+    /* (all three numbers, then the variable set, then the limit and step
+     * kept: a start that overflows leaves them as they were -- QBasic's
+     * NEXT, resumed past it, has the limit 0) */
+    if (!st_num(lim.st)) lim = coerce(lim, VAL_DOUBLE);
+    if (!st_num(stp.st)) stp = coerce(stp, VAL_DOUBLE);
+    var_store(v, start);
     f = &bc_fors[bc_nfors++];
     f->v = v;
     f->lim = slot_of(lim, forslots_of(s), 0);
     f->stp = slot_of(stp, forslots_of(s) + 2,
                      !s->for_stmt.step || s->for_stmt.step->type == EXPR_LITERAL);
-    var_store(v, start);
     runs = for_runs(f);
     f->body = new_blk();
     f->exit = new_blk();
@@ -1593,6 +1692,7 @@ static void bc_next(stmt_t *s) {
         bv_t cur, stp, nv;
         int runs;
         if (bc_nfors == 0) { bc_error(s->line, "NEXT without FOR"); return; }
+        op_here();
         f = &bc_fors[--bc_nfors];
         cur = var_load(f->v);
         stp = slot_load(&f->stp);
@@ -1840,7 +1940,7 @@ static var_t *temp_var(int ty) {
 }
 
 static int is_plain_var(const expr_t *e) {
-    return e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
+    return e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) && !is_errvar(e->var.name) &&
            strncmp(e->var.name, "FN", 2) != 0 && !calls_function0(e->var.name);
 }
 
@@ -2052,8 +2152,12 @@ static void unhold(const held_t *h) {
  * both evaluated, then both compared); CASE ELSE (the last one) when
  * none does */
 static void bc_select(stmt_t *s) {
-    held_t t = hold(expr(s->select_stmt.test_expr));
-    int n = 0, k, else_k = -1, end = new_blk(), none = new_blk(), *hit;
+    held_t t;
+    int n = 0, k, else_k = -1, end, none, *hit;
+    op_here();
+    t = hold(expr(s->select_stmt.test_expr));
+    end = new_blk();
+    none = new_blk();
     case_clause_t *c;
     for (c = s->select_stmt.clauses; c; c = c->next) n++;
     hit = malloc((size_t)(n ? n : 1) * sizeof(int));
@@ -2082,7 +2186,7 @@ static void bc_select(stmt_t *s) {
         begin_blk(hit[k]);
         unhold(&t);
         bc_stmts(c->body);
-        goto_blk(end);
+        op_jump(end);
     }
     begin_blk(none);
     unhold(&t);
@@ -2153,6 +2257,13 @@ static void bc_swap(stmt_t *s) {
 
 static void bc_stmt(stmt_t *s) {
     if (!bc_live && s->type != STMT_LABEL) dead_blk();
+    switch (s->type) {          /* (lower.c's OP_STMT: every other statement is one op) */
+    case STMT_LABEL: case STMT_REM: case STMT_SUB_DEF: case STMT_FUNC_DEF: case STMT_IF:
+    case STMT_FOR: case STMT_NEXT: case STMT_WHILE: case STMT_DO_LOOP: case STMT_SELECT:
+        break;
+    default:
+        op_here();
+    }
     if (bc_proc && (s->type == STMT_GOSUB || s->type == STMT_RETURN || s->type == STMT_ON_GOSUB)) {
         bc_not_yet(s->line, "GOSUB in a SUB or FUNCTION");
         return;
@@ -2164,8 +2275,50 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_LABEL: {
         int b = label_blk(s->label.name);
+        const char *q = s->label.name;
         goto_blk(b);
         begin_blk(b);
+        if (bc_body) oplabel_add(s->label.name);
+        while (*q >= '0' && *q <= '9') q++;     /* (a line number: ERL's, as lower.c's) */
+        if (*q == '\0' && q != s->label.name) bc_basic_line = atoi(s->label.name);
+        break;
+    }
+    case STMT_ON_ERROR: {       /* the handler: its label's op (bcm_body patches it) */
+        int cb, k;
+        if (bc_proc) { bc_not_yet(s->line, "ON ERROR in a SUB or FUNCTION"); break; }
+        k = iconst(-1);
+        if (s->on_error.label[0]) {
+            if (bc_nopfix == bc_capopfix) {
+                bc_capopfix = bc_capopfix ? bc_capopfix * 2 : 8;
+                bc_opfix = realloc(bc_opfix, (size_t)bc_capopfix * sizeof(opfix_t));
+                if (!bc_opfix) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+            }
+            bc_opfix[bc_nopfix].inst = k;
+            strncpy(bc_opfix[bc_nopfix].label, s->on_error.label, 63);
+            bc_opfix[bc_nopfix++].label[63] = '\0';
+        }
+        cb = h_ncarg;
+        carg(k, 0);
+        call_end(cb, 1, "bcrt_on_error", NULL);
+        break;
+    }
+    case STMT_RESUME:
+        if (bc_proc) { bc_not_yet(s->line, "RESUME in a SUB or FUNCTION"); break; }
+        if (s->resume_stmt.resume_next == 2) {
+            call_void("bcrt_resume_label");
+            goto_blk(label_blk(s->resume_stmt.label));
+        } else {
+            int cb = h_ncarg;
+            carg(iconst(s->resume_stmt.resume_next), 0);
+            call_end(cb, 1, "bcrt_resume", NULL);
+            goto_blk(bc_dispatch);
+        }
+        break;
+    case STMT_ERROR_RAISE: {    /* ERROR n: n an integer (val_to_integer) */
+        int n = coerce(expr(s->error_raise.errnum), VAL_LONG).lo, cb = h_ncarg;
+        carg(n, 0);
+        call_end(cb, 1, "bcrt_error_raise", NULL);
+        bc_live = 0;
         break;
     }
     case STMT_PRINT:
@@ -2197,13 +2350,16 @@ static void bc_stmt(stmt_t *s) {
         goto_blk(new_blk());    /* (never taken: bcrt_end does not return) */
         break;
     case STMT_IF: {
-        int c = cond(s->if_stmt.condition);
-        int bt = new_blk(), be = new_blk(), bj = new_blk();
+        int c, bt, be, bj;
+        op_here();
+        c = cond(s->if_stmt.condition);
+        bt = new_blk(), be = new_blk(), bj = new_blk();
         hi_emit(HI_BRC, TY_VOID, c, bt, be, NULL);
         bc_live = 0;
         begin_blk(bt);
         bc_stmts(s->if_stmt.then_body);
-        goto_blk(bj);
+        if (s->if_stmt.else_body) op_jump(bj);
+        else goto_blk(bj);
         begin_blk(be);
         bc_stmts(s->if_stmt.else_body);
         goto_blk(bj);
@@ -2211,9 +2367,8 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_WHILE: {
-        int bh = new_blk(), bb = new_blk(), bx = new_blk(), c;
-        goto_blk(bh);
-        begin_blk(bh);
+        int bh, bb = new_blk(), bx = new_blk(), c;
+        bh = op_block();
         c = cond(s->while_stmt.condition);
         hi_emit(HI_BRC, TY_VOID, c, bb, bx, NULL);
         bc_live = 0;
@@ -2221,7 +2376,7 @@ static void bc_stmt(stmt_t *s) {
         loop_push(EXIT_WHILE, bx);
         bc_stmts(s->while_stmt.body);
         bc_nloops--;
-        goto_blk(bh);
+        op_jump(bh);
         begin_blk(bx);
         break;
     }
@@ -2285,9 +2440,13 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_DO_LOOP: {
         /* DO [WHILE|UNTIL c] ... LOOP [WHILE|UNTIL c] */
-        int bh = new_blk(), bb = new_blk(), bt = new_blk(), bx = new_blk(), c;
-        goto_blk(bh);
-        begin_blk(bh);
+        int bh, bb = new_blk(), bx = new_blk(), c;
+        if (s->do_loop.pre_cond) bh = op_block();
+        else {
+            bh = new_blk();
+            goto_blk(bh);
+            begin_blk(bh);
+        }
         if (s->do_loop.pre_cond) {
             c = cond(s->do_loop.pre_cond);
             if (s->do_loop.pre_until) hi_emit(HI_BRC, TY_VOID, c, bx, bb, NULL);
@@ -2299,15 +2458,14 @@ static void bc_stmt(stmt_t *s) {
         loop_push(EXIT_DO, bx);
         bc_stmts(s->do_loop.body);
         bc_nloops--;
-        goto_blk(bt);
-        begin_blk(bt);
         if (s->do_loop.post_cond) {
+            op_block();
             c = cond(s->do_loop.post_cond);
             if (s->do_loop.post_until) hi_emit(HI_BRC, TY_VOID, c, bx, bh, NULL);
             else hi_emit(HI_BRC, TY_VOID, c, bh, bx, NULL);
             bc_live = 0;
         } else
-            goto_blk(bh);
+            op_jump(bh);
         begin_blk(bx);
         break;
     }
@@ -2357,7 +2515,7 @@ static void prescan_expr(expr_t *e, void *ctx) {
     (void)ctx;
     if (e->type == EXPR_VARIABLE && !is_builtin_call(e->var.name) &&
         !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)) &&
-        !calls_function0(e->var.name))
+        !calls_function0(e->var.name) && !is_errvar(e->var.name))
         var_get(e->var.name, e->var.var_type, e->line);
     if (e->type == EXPR_CALL && !builtin_exists(e->call.name)) shadow_add(e->call.name);
 }
@@ -2518,7 +2676,7 @@ static void prescan(stmt_t *s) {
             if (bc_prescan_depth > 1) { bc_not_yet(s->line, "a DIM AS inside a block"); break; }
             if (var_find(s->dim_scalar.name)) { bc_not_yet(s->line, "a DIM AS after its variable's use"); break; }
             v = var_push();
-            var_init(v, s->dim_scalar.name, decl_type(s), global_of(s->dim_scalar.name));
+            var_init(v, s->dim_scalar.name, decl_type(s), global_of(s->dim_scalar.name, decl_type(s)));
             break;
         }
         case STMT_ASSIGN: var_get(s->assign.name, s->assign.var_type, s->line); break;
@@ -2651,11 +2809,40 @@ static void proc_func(proc_t *p, Node *fn) {
 
 /* what the whole program decides before any function is lowered: DEFtypes
  * and array types, the procedures, the globals SHARED and STATIC make */
+/* whether the program traps errors: ON ERROR, RESUME, ERROR, ERR, ERL */
+static void trap_expr(expr_t *e, void *ctx) {
+    (void)ctx;
+    if (e->type == EXPR_VARIABLE && is_errvar(e->var.name)) bc_trap = 1;
+}
+
+static void trap_top(expr_t *e, void *ctx) { expr_walk(e, trap_expr, ctx); }
+
+static void find_trap(stmt_t *s) {
+    for (; s; s = s->next) {
+        if (s->type == STMT_ON_ERROR || s->type == STMT_RESUME || s->type == STMT_ERROR_RAISE)
+            bc_trap = 1;
+        stmt_exprs(s, trap_top, NULL);
+        switch (s->type) {
+        case STMT_FOR: find_trap(s->for_stmt.body); break;
+        case STMT_IF: find_trap(s->if_stmt.then_body); find_trap(s->if_stmt.else_body); break;
+        case STMT_WHILE: find_trap(s->while_stmt.body); break;
+        case STMT_DO_LOOP: find_trap(s->do_loop.body); break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) find_trap(c->body);
+            break;
+        case STMT_SUB_DEF: case STMT_FUNC_DEF: find_trap(s->proc_def.body); break;
+        default: break;
+        }
+    }
+}
+
 static void program_prepare(void) {
     for (int i = 0; i < 26; i++) bc_deftype[i] = VAL_SINGLE;
     memset(bc_letter_used, 0, sizeof bc_letter_used);
     bc_natypes = 0;
     deftypes(bc_program, 0);
+    bc_trap = 0;
+    find_trap(bc_program);
     bc_nprocs = 0;
     for (stmt_t *s = bc_program; s; s = s->next)
         if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) bc_nprocs++;
@@ -2697,7 +2884,60 @@ static void program_prepare(void) {
         }
 }
 
+/* the program's statements, when it traps errors: bcm_body(at), from the
+ * start (at 0) or at bcrt_target's op (bcrt_run, again after an error) */
+static Node bc_bodynode;
+
+static void body_func(Node *fn) {
+    int pin, start, end, k, ok, tab;
+    func_begin();
+    bc_body = 1;
+    bc_nops = 0;
+    bc_basic_line = 0;
+    bc_noplabels = 0;
+    bc_nopfix = 0;
+    hl_param_room(1);
+    hl_param_nflat = 1;
+    hl_nparams = 1;
+    hi_abi_assign(hl_param_tags, hl_param_nflat, hl_param_map);
+    hl_param_stkord[0] = hl_param_map[0] < 0 ? 0 : -1;
+    pin = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
+    prescan(bc_program);        /* (main's variables: the same globals) */
+    start = new_blk();
+    bc_dispatch = new_blk();
+    hi_emit(HI_BRC, TY_VOID, pin, bc_dispatch, start, NULL);
+    bc_live = 0;
+    begin_blk(start);
+    bc_stmts(bc_program);
+    end = new_blk();            /* (the op past the last: the program's end) */
+    goto_blk(end);
+    begin_blk(end);
+    op_add(end);
+    hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
+    bc_live = 0;
+    begin_blk(bc_dispatch);
+    k = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_target"), -1, 0, NULL);
+    tab = new_blk();
+    ok = hi_emit(HI_SLTU, TY_INT, k, iconst(bc_nops), 0, NULL);
+    hi_emit(HI_BRC, TY_VOID, ok, tab, end, NULL);
+    bc_live = 0;
+    begin_blk(tab);
+    hi_emit_jmptab(k, end, bc_op_blk, bc_nops);
+    bc_live = 0;
+    for (int i = 0; i < bc_nopfix; i++) {      /* ON ERROR GOTO's labels, their ops */
+        int op = -1;
+        for (int j = 0; j < bc_noplabels; j++)
+            if (strcmp(bc_oplabels[j].name, bc_opfix[i].label) == 0) op = bc_oplabels[j].op;
+        h_val[bc_opfix[i].inst] = op;
+    }
+    ret_dispatch();
+    fail_blocks();
+    fn->locals_size = bc_frame;
+    bc_body = 0;
+}
+
 static void hl_func(Node *fn) {
+    if (fn == &bc_bodynode) { body_func(fn); return; }
     for (int k = 0; k < bc_nprocs; k++)
         if (fn == &bc_procs[k].node) { proc_func(&bc_procs[k], fn); return; }
     func_begin();
@@ -2736,7 +2976,12 @@ static void hl_func(Node *fn) {
         carg(iconst(bc_base), 0);
         call_end(cb, 1, "bcrt_option_base", NULL);
     }
-    bc_stmts(bc_program);
+    if (bc_trap) {              /* (the statements: bcm_body, run by bcrt_run) */
+        int cb = h_ncarg;
+        carg(hi_emit(HI_FADDR, TY_INT, -1, -1, 0, "bcm_body"), 0);
+        call_end(cb, 1, "bcrt_run", NULL);
+    } else
+        bc_stmts(bc_program);
     if (bc_live) call_void("bcrt_end");
     if (bc_live) hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
@@ -2781,6 +3026,12 @@ int main(int argc, char **argv) {
     program_prepare();
     bc_main.name = "main";
     bc_main.next = bc_nprocs ? &bc_procs[0].node : NULL;
+    if (bc_trap) {
+        bc_bodynode.name = "bcm_body";
+        bc_bodynode.nparams = 1;
+        bc_bodynode.next = bc_main.next;
+        bc_main.next = &bc_bodynode;
+    }
     for (int k = 0; k < bc_nprocs; k++)
         bc_procs[k].node.next = k + 1 < bc_nprocs ? &bc_procs[k + 1].node : NULL;
     bc_root.body = &bc_main;

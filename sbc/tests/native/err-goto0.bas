@@ -1,0 +1,7 @@
+PRINT "start"
+ON ERROR GOTO 9
+ON ERROR GOTO 0
+X = 1 / 0
+PRINT "not reached"
+END
+9 PRINT "handler": RESUME NEXT

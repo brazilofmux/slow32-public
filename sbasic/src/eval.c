@@ -140,6 +140,9 @@ static int is_trappable_error(error_t err) {
     }
 }
 
+/* an error ON ERROR GOTO's handler takes (compiled code's too) */
+int eval_trappable(error_t err) { return is_trappable_error(err); }
+
 /* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_SINGLE */
 static val_type_t deftype_map[26];
 

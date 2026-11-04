@@ -26,6 +26,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <setjmp.h>
 #include "value.h"
 #include "error.h"
 #include "ast.h"
@@ -40,11 +41,93 @@ typedef long long pair_t;       /* lo in the low word, hi in the high */
 
 static int bcrt_last;           /* the type of the last result */
 
+/* --- ON ERROR GOTO: the handler, entered from wherever the error is ---
+ *
+ * As act_transfer traps them: only while a handler is set and none is
+ * running, only an error that may be trapped (eval_trappable).  The
+ * program's statements are a function of their own (bcm_body), run by
+ * bcrt_run; an error longjmps back there, out of whatever runtime code
+ * or procedure it was in, and the body is entered again at the
+ * handler's op.  Ops are numbered as lower.c numbers the main program's;
+ * the body stores the one it is at (bcrt_op) and its line (bcrt_line,
+ * the ERL) as each begins.  RESUME goes to an op through bcrt_target. */
+int bcrt_op, bcrt_line, bcrt_target;
+static jmp_buf bcrt_jb;
+static int bcrt_running;        /* inside bcrt_run's body */
+static int trap_handler = -1, trap_active, trap_op, trap_code, trap_line;
+static int bcrt_nactive;        /* procedures entered (bcrt_enter) and not left */
+
+static void bcrt_trap(int code) {
+    trap_code = code;
+    trap_line = bcrt_line;
+    trap_active = 1;
+    trap_op = bcrt_op;
+    bcrt_target = trap_handler;
+    longjmp(bcrt_jb, 1);
+}
+
 static void bcrt_fail(error_t e) {
+    if (bcrt_running && trap_handler >= 0 && !trap_active && eval_trappable(e))
+        bcrt_trap(error_qb_code(e));
     error_print(e, 0);
     fflush(stdout);
     exit(0);
 }
+
+/* the program's statements, body(0) from the start and body(1) at
+ * bcrt_target, again after each error trapped */
+void bcrt_run(void (*body)(int)) {
+    int at = 0;
+    for (;;) {
+        if (setjmp(bcrt_jb) == 0) {
+            bcrt_running = 1;
+            body(at);
+            bcrt_running = 0;
+            return;
+        }
+        /* (the procedures it was in are left: their array scopes and
+         * their depth) */
+        while (bcrt_nactive > 0) {
+            array_scope_pop();
+            eval_leave();
+            bcrt_nactive--;
+        }
+        at = 1;
+    }
+}
+
+/* ON ERROR GOTO label (op: the label's), or ON ERROR GOTO 0 (op -1) */
+void bcrt_on_error(int op) {
+    trap_handler = op;
+    trap_active = 0;
+}
+
+/* RESUME (next 0) or RESUME NEXT (1): to the op the error was in, or the
+ * one after it, through bcrt_target */
+void bcrt_resume(int next) {
+    if (!trap_active) bcrt_fail(ERR_RESUME_WITHOUT_ERROR);
+    trap_active = 0;
+    bcrt_target = trap_op + (next ? 1 : 0);
+}
+
+/* RESUME label: the jump is compiled code's */
+void bcrt_resume_label(void) {
+    if (!trap_active) bcrt_fail(ERR_RESUME_WITHOUT_ERROR);
+    trap_active = 0;
+}
+
+/* ERROR n: n is ERR, the handler's if there is one (else "ON ERROR GOTO",
+ * as the interpreter reports it) */
+void bcrt_error_raise(int n) {
+    if (bcrt_running && trap_handler >= 0 && !trap_active)
+        bcrt_trap(n);
+    trap_code = n;
+    trap_line = bcrt_line;
+    bcrt_fail(ERR_ON_ERROR_GOTO);
+}
+
+/* ERR (which 0) and ERL (1) */
+
 
 /* a value from its three words, the string's reference passing to it */
 static value_t take(int lo, int hi, int t) {
@@ -175,13 +258,21 @@ int bcrt_cmpi(int op, int alo, int ahi, int at, int blo, int bhi, int bt) {
  * them (eval_enter: Out of stack space past its depth) */
 void bcrt_enter(int proc) {
     error_t e = eval_enter();
-    if (e == ERR_NONE) e = array_scope_push(proc, NULL, NULL);
     if (e != ERR_NONE) bcrt_fail(e);
+    e = array_scope_push(proc, NULL, NULL);
+    if (e != ERR_NONE) { eval_leave(); bcrt_fail(e); }
+    bcrt_nactive++;
 }
 
 void bcrt_leave(void) {
     array_scope_pop();          /* (its own arrays erased) */
     eval_leave();
+    bcrt_nactive--;
+}
+
+pair_t bcrt_errvar(int which) {
+    value_t v = val_integer(which ? trap_line : trap_code);
+    return give(&v);
 }
 
 /* an array's name as compiled code gives it, with how it is scoped
