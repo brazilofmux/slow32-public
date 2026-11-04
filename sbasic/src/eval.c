@@ -2073,8 +2073,24 @@ static error_t exec_input(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
-static error_t exec_cls(stmt_t *s) {
-    (void)s;
+static error_t gfx_eval_int(env_t *env, expr_t *e, int *out);
+
+static error_t exec_cls(env_t *env, stmt_t *s) {
+    int m = -1;
+    if (s->cls_stmt.mode) EVAL_CHECK(gfx_eval_int(env, s->cls_stmt.mode, &m));
+    return eval_cls_mode(m);
+}
+
+/* CLS [mode] (-1: none): 0 and 1 (and none) a graphics screen's
+ * viewport, 2 the text's -- QBasic, under VIEW -- for compiled code too */
+error_t eval_cls_mode(int m) {
+    if (m < -1 || m > 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (sb_gfx_active()) {
+        if (m != 2) sb_gfx_cls();
+        print_col = 0;
+        print_row = 1;
+        return ERR_NONE;
+    }
     eval_cls();
     return ERR_NONE;
 }
@@ -2106,15 +2122,25 @@ static error_t gfx_eval_color(env_t *env, expr_t *e, int *out) {
     return gfx_eval_int(env, e, out);
 }
 
+/* a coordinate's value as it is (eval_gfx rounds it, or maps it) */
+static error_t gfx_eval_num(env_t *env, expr_t *e, double *out) {
+    value_t v;
+    EVAL_CHECK(eval_expr(env, e, &v));
+    error_t err = val_to_double(&v, out);
+    val_clear(&v);
+    return err;
+}
+
 static error_t exec_gfx(env_t *env, stmt_t *s) {
-    int x1 = 0, y1 = 0, x2 = 0, y2 = 0, color, aux;
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    int color, aux;
 
     /* Evaluate operands even when degraded, so side effects and type
      * errors behave the same with or without a tube. */
-    if (s->gfx.x1) EVAL_CHECK(gfx_eval_int(env, s->gfx.x1, &x1));
-    if (s->gfx.y1) EVAL_CHECK(gfx_eval_int(env, s->gfx.y1, &y1));
-    if (s->gfx.x2) EVAL_CHECK(gfx_eval_int(env, s->gfx.x2, &x2));
-    if (s->gfx.y2) EVAL_CHECK(gfx_eval_int(env, s->gfx.y2, &y2));
+    if (s->gfx.x1) EVAL_CHECK(gfx_eval_num(env, s->gfx.x1, &x1));
+    if (s->gfx.y1) EVAL_CHECK(gfx_eval_num(env, s->gfx.y1, &y1));
+    if (s->gfx.x2) EVAL_CHECK(gfx_eval_num(env, s->gfx.x2, &x2));
+    if (s->gfx.y2) EVAL_CHECK(gfx_eval_num(env, s->gfx.y2, &y2));
     EVAL_CHECK(gfx_eval_color(env, s->gfx.color, &color));
     EVAL_CHECK(gfx_eval_color(env, s->gfx.aux, &aux));
     gfx_op_t g = { s->type, x1, y1, x2, y2, color, aux, s->gfx.x1 != NULL, s->gfx.color != NULL,
@@ -2183,8 +2209,12 @@ static void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b) {
     else { v->type = VAL_SINGLE; v->dval = single_of_bits(w); }
 }
 
+static error_t gfx_coord(double v, double *out);
+static error_t gfx_point(double x, double y, int step, double *lx, double *ly, int *ax, int *ay);
+
 error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int *idx) {
-    int x1 = g->x1, y1 = g->y1, x2 = g->x2, y2 = g->y2, start = 0, avail, sz, n;
+    int x1, y1, x2, y2, start = 0, avail, sz, n;
+    double lx, ly, mx = 0, my = 0;
     sb_array_t *arr;
     unsigned char *buf;
     error_t err = ERR_NONE;
@@ -2199,23 +2229,21 @@ error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int
         return ERR_ILLEGAL_FUNCTION_CALL;
     if (!(sz = elem_bytes(arr->elem_type))) return ERR_TYPE_MISMATCH;
     avail = (arr->total - start) * sz;
-    if (g->step1) {
-        int lx, ly;
-        sb_gfx_last(&lx, &ly);
-        x1 += lx;
-        y1 += ly;
-    }
+    EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &x1, &y1));
     if (g->type == STMT_GFX_GET) {
-        if (g->step2) { x2 += x1; y2 += y1; }  /* (relative to the first, as LINE's) */
-        int lx = x1 < x2 ? x1 : x2, hx = x1 < x2 ? x2 : x1;
-        int ly = y1 < y2 ? y1 : y2, hy = y1 < y2 ? y2 : y1;
-        n = sb_gfx_image_size(hx - lx + 1, hy - ly + 1);
+        EVAL_CHECK(gfx_coord(g->x2, &mx));
+        EVAL_CHECK(gfx_coord(g->y2, &my));
+        if (g->step2) { mx += lx; my += ly; }  /* (relative to the first, as LINE's) */
+        if (sb_gfx_map(mx, my, &x2, &y2) < 0) return ERR_OVERFLOW;
+        int left = x1 < x2 ? x1 : x2, right = x1 < x2 ? x2 : x1;
+        int top = y1 < y2 ? y1 : y2, bottom = y1 < y2 ? y2 : y1;
+        n = sb_gfx_image_size(right - left + 1, bottom - top + 1);
         if (n > avail) return ERR_ILLEGAL_FUNCTION_CALL;
         int ne = (n + sz - 1) / sz;
         if (!(buf = calloc((size_t)ne, (size_t)sz))) return ERR_OUT_OF_MEMORY;
         /* (the last element's bytes past the image kept as they are) */
         elem_to_bytes(&arr->data[start + ne - 1], arr->elem_type, buf + (ne - 1) * sz);
-        sb_gfx_get(lx, ly, hx, hy, buf);
+        sb_gfx_get(left, top, right, bottom, buf);
         for (int i = 0; i < ne; i++) {
             value_t nv;
             elem_from_bytes(&nv, arr->elem_type, buf + i * sz);
@@ -2223,24 +2251,26 @@ error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int
             arr->data[start + i] = nv;
         }
         free(buf);
-        sb_gfx_set_last(x2, y2);
+        sb_gfx_set_last(mx, my);
         return ERR_NONE;
     }
     if (!(buf = malloc((size_t)avail + 1))) return ERR_OUT_OF_MEMORY;
     for (int i = 0; start + i < arr->total; i++)
         elem_to_bytes(&arr->data[start + i], arr->elem_type, buf + i * sz);
     if (sb_gfx_put(x1, y1, buf, avail, g->box) < 0) err = ERR_ILLEGAL_FUNCTION_CALL;
+    else sb_gfx_set_last(lx, ly);
     free(buf);
     return err;
 }
 
 static error_t exec_gfx_getput(env_t *env, stmt_t *s) {
-    int x1 = 0, y1 = 0, x2 = 0, y2 = 0, idx[MAX_ARRAY_DIMS];
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    int idx[MAX_ARRAY_DIMS];
     expr_t *t = s->gfx.target;
-    EVAL_CHECK(gfx_eval_int(env, s->gfx.x1, &x1));
-    EVAL_CHECK(gfx_eval_int(env, s->gfx.y1, &y1));
-    if (s->gfx.x2) EVAL_CHECK(gfx_eval_int(env, s->gfx.x2, &x2));
-    if (s->gfx.y2) EVAL_CHECK(gfx_eval_int(env, s->gfx.y2, &y2));
+    EVAL_CHECK(gfx_eval_num(env, s->gfx.x1, &x1));
+    EVAL_CHECK(gfx_eval_num(env, s->gfx.y1, &y1));
+    if (s->gfx.x2) EVAL_CHECK(gfx_eval_num(env, s->gfx.x2, &x2));
+    if (s->gfx.y2) EVAL_CHECK(gfx_eval_num(env, s->gfx.y2, &y2));
     for (int i = 0; i < t->call.nargs; i++) EVAL_CHECK(gfx_eval_int(env, t->call.args[i], &idx[i]));
     gfx_op_t g = { s->type, x1, y1, x2, y2, -1, -1, 1, 0, 0, s->gfx.step1, s->gfx.step2, 1,
                    s->gfx.box, 0 };
@@ -2256,8 +2286,35 @@ error_t eval_screen(int mode) {
 
 /* PSET, PRESET, LINE, CIRCLE, PAINT, PALETTE, their operands evaluated
  * (an absent color -1) -- for compiled code too */
+/* a coordinate as a statement takes it: under a WINDOW the world's, as
+ * it is; else a pixel's, rounded as CINT rounds (each one, before STEP
+ * adds it) */
+static error_t gfx_coord(double v, double *out) {
+    int i;
+    value_t t;
+    if (sb_gfx_windowed()) { *out = v; return ERR_NONE; }
+    t = val_double(v);
+    EVAL_CHECK(val_to_integer(&t, &i));
+    *out = i;
+    return ERR_NONE;
+}
+
+/* [STEP](x, y): the world's point (STEP's from the last), and its pixel */
+static error_t gfx_point(double x, double y, int step, double *lx, double *ly, int *ax, int *ay) {
+    EVAL_CHECK(gfx_coord(x, lx));
+    EVAL_CHECK(gfx_coord(y, ly));
+    if (step) {
+        double px, py;
+        sb_gfx_last(&px, &py);
+        *lx += px;
+        *ly += py;
+    }
+    return sb_gfx_map(*lx, *ly, ax, ay) < 0 ? ERR_OVERFLOW : ERR_NONE;
+}
+
 error_t eval_gfx(const gfx_op_t *g) {
-    int x1 = g->x1, y1 = g->y1, x2 = g->x2, y2 = g->y2, color = g->color, aux = g->aux;
+    int color = g->color, aux = g->aux, ax, ay, bx, by;
+    double lx, ly, mx, my;
     if (!sb_gfx_active()) {
         if (g->type == STMT_PALETTE)
             return ERR_NONE;            /* legal in text mode (no-op) */
@@ -2266,41 +2323,68 @@ error_t eval_gfx(const gfx_op_t *g) {
         return ERR_ILLEGAL_FUNCTION_CALL;  /* no SCREEN yet */
     }
 
-    if (g->step1) {
-        int lx, ly;
-        sb_gfx_last(&lx, &ly);
-        x1 += lx;
-        y1 += ly;
-    }
-
     switch (g->type) {
-        case STMT_PSET:
-            /* PRESET without a color erases (background); with one it
-             * draws that color, same as PSET */
-            sb_gfx_pset(x1, y1, (g->preset && !g->has_color) ? 0 : color);
-            break;
-        case STMT_LINE_G: {
-            int fx = x1, fy = y1;
-            if (!g->has_from)
-                sb_gfx_last(&fx, &fy);
-            if (g->step2) {
-                /* STEP on the second point is relative to the first */
-                x2 += fx;
-                y2 += fy;
-            }
-            sb_gfx_line(fx, fy, x2, y2, color, g->box);
+        case STMT_VIEW: {
+            int v[4] = { 0, 0, 0, 0 };
+            double c[4] = { g->x1, g->y1, g->x2, g->y2 };
+            if (g->has_from)
+                for (int i = 0; i < 4; i++) {
+                    value_t t = val_double(c[i]);
+                    EVAL_CHECK(val_to_integer(&t, &v[i]));
+                }
+            if (sb_gfx_view(g->has_from, g->box, v[0], v[1], v[2], v[3],
+                            g->has_color ? color : -1, g->has_aux ? aux : -1) < 0)
+                return ERR_ILLEGAL_FUNCTION_CALL;
             break;
         }
-        case STMT_CIRCLE:
-            sb_gfx_circle(x1, y1, x2, color);
+        case STMT_WINDOW:
+            if (sb_gfx_window(g->has_from, g->box, g->x1, g->y1, g->x2, g->y2) < 0)
+                return ERR_ILLEGAL_FUNCTION_CALL;
             break;
+        case STMT_PSET:
+            EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
+            /* PRESET without a color erases (background); with one it
+             * draws that color, same as PSET */
+            sb_gfx_pset(ax, ay, (g->preset && !g->has_color) ? 0 : color);
+            sb_gfx_set_last(lx, ly);
+            break;
+        case STMT_LINE_G:
+            if (g->has_from)
+                EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
+            else {
+                sb_gfx_last(&lx, &ly);
+                if (sb_gfx_map(lx, ly, &ax, &ay) < 0) return ERR_OVERFLOW;
+            }
+            /* STEP on the second point is relative to the first */
+            EVAL_CHECK(gfx_coord(g->x2, &mx));
+            EVAL_CHECK(gfx_coord(g->y2, &my));
+            if (g->step2) { mx += lx; my += ly; }
+            if (sb_gfx_map(mx, my, &bx, &by) < 0) return ERR_OVERFLOW;
+            sb_gfx_line(ax, ay, bx, by, color, g->box);
+            sb_gfx_set_last(mx, my);
+            break;
+        case STMT_CIRCLE: {
+            int r;
+            value_t t;
+            EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
+            t = val_double(g->x2 * sb_gfx_xscale());   /* (the world's radius: across) */
+            EVAL_CHECK(val_to_integer(&t, &r));
+            sb_gfx_circle(ax, ay, r, color);
+            sb_gfx_set_last(lx, ly);
+            break;
+        }
         case STMT_PAINT:
-            sb_gfx_paint(x1, y1, color, g->has_aux ? aux : -1);
+            EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
+            sb_gfx_paint(ax, ay, color, g->has_aux ? aux : -1);
+            sb_gfx_set_last(lx, ly);
             break;
         case STMT_PALETTE:
-            if (g->has_x1)
-                sb_gfx_palette(x1, color);
-            else
+            if (g->has_x1) {
+                int attr;
+                value_t t = val_double(g->x1);
+                EVAL_CHECK(val_to_integer(&t, &attr));
+                sb_gfx_palette(attr, color);
+            } else
                 sb_gfx_palette(-1, 0);
             break;
         default:
@@ -3678,7 +3762,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_PRINT:        return exec_print(env, s);
         case STMT_LPRINT:       return exec_lprint(env, s);
         case STMT_INPUT:        return exec_input(env, s);
-        case STMT_CLS:          return exec_cls(s);
+        case STMT_CLS:          return exec_cls(env, s);
         case STMT_LOCATE:       return exec_locate(env, s);
         case STMT_COLOR:        return exec_color(env, s);
         case STMT_ASSIGN:       return exec_assign(env, s);
@@ -3909,6 +3993,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_CIRCLE:
         case STMT_PAINT:
         case STMT_PALETTE:
+        case STMT_VIEW:
+        case STMT_WINDOW:
             return exec_gfx(env, s);
 
         case STMT_GFX_GET:

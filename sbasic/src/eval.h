@@ -158,10 +158,13 @@ error_t eval_get_record(FILE *fp, sb_record_t *r);
 error_t eval_put_record(FILE *fp, const sb_record_t *r);
 error_t eval_lrset(int curlen, const value_t *nv, int left, value_t *out);
 typedef struct {
-    int type, x1, y1, x2, y2, color, aux;
+    int type;
+    double x1, y1, x2, y2;      /* as evaluated: the world's under a WINDOW */
+    int color, aux;
     int has_x1, has_color, has_aux, step1, step2, has_from, box, preset;
 } gfx_op_t;
 error_t eval_gfx(const gfx_op_t *g);
+error_t eval_cls_mode(int mode);
 /* GET (x1, y1)-(x2, y2), a and PUT (x, y), a, action (g->type
  * STMT_GFX_GET or _PUT, g->box the action): a, array name's elements
  * from the one nidx subscripts (idx) name, or its first (nidx 0) */

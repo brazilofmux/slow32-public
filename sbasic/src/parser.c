@@ -601,11 +601,12 @@ static stmt_t *parse_input(parser_t *p) {
 static stmt_t *parse_cls(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex); /* consume CLS */
-    if (!at_stmt_end(p)) {
-        parser_error(p, ERR_SYNTAX);
-        return NULL;
-    }
-    return stmt_cls(line);
+    expr_t *mode = NULL;
+    if (!at_stmt_end(p) && !(mode = parse_expr(p))) return NULL;
+    stmt_t *s = stmt_cls(line);
+    if (s) s->cls_stmt.mode = mode;
+    else expr_free(mode);
+    return s;
 }
 
 /* LOCATE [row] [, [col] [, cursor [, start [, stop]]]]: a row or a
@@ -685,6 +686,32 @@ static int parse_gfx_coord(parser_t *p, expr_t **x, expr_t **y, int *step) {
     if (!*y) return 0;
     if (!expect(p, TOK_RPAREN)) return 0;
     return 1;
+}
+
+/* VIEW [[SCREEN] (x1, y1)-(x2, y2)[, [color][, border]]] and WINDOW
+ * [[SCREEN] (x1, y1)-(x2, y2)] (the keyword consumed) */
+static stmt_t *parse_view_window(parser_t *p, stmt_type_t type, int line) {
+    stmt_t *s = stmt_alloc(type, line);
+    int step;
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    if (at_stmt_end(p)) return s;               /* (alone: the whole screen again) */
+    s->gfx.box = lexer_match(&p->lex, TOK_SCREEN);
+    s->gfx.has_from = 1;
+    if (!parse_gfx_coord(p, &s->gfx.x1, &s->gfx.y1, &step) || step || !expect(p, TOK_MINUS) ||
+        !parse_gfx_coord(p, &s->gfx.x2, &s->gfx.y2, &step) || step) {
+        if (step) parser_error(p, ERR_SYNTAX);
+        stmt_free(s);
+        return NULL;
+    }
+    if (type == STMT_VIEW && lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_COMMA) && !at_stmt_end(p) && !(s->gfx.color = parse_expr(p))) {
+            stmt_free(s); return NULL;
+        }
+        if (lexer_match(&p->lex, TOK_COMMA) && !(s->gfx.aux = parse_expr(p))) {
+            stmt_free(s); return NULL;
+        }
+    }
+    return s;
 }
 
 /* PSET/PRESET [STEP](x, y)[, color] */
@@ -2652,10 +2679,11 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_VIEW: {
-            /* VIEW PRINT [top TO bottom] — no-op */
             int line = tok->line;
             lexer_skip(&p->lex);
-            /* Consume PRINT keyword if present */
+            if (!lexer_check(&p->lex, TOK_PRINT))
+                return parse_view_window(p, STMT_VIEW, line);
+            /* VIEW PRINT [top TO bottom] — no-op */
             lexer_match(&p->lex, TOK_PRINT);
             /* Consume optional arguments (top TO bottom) */
             if (!at_stmt_end(p)) {
@@ -2757,6 +2785,10 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         case TOK_IDENT: {
             token_t var = lexer_next(&p->lex);
+            /* WINDOW [[SCREEN] (x1, y1)-(x2, y2)] (not a keyword: before name(...)) */
+            if (strcmp(var.text, "WINDOW") == 0 && (at_stmt_end(p) || lexer_check(&p->lex, TOK_SCREEN) ||
+                                                    lexer_check(&p->lex, TOK_LPAREN)))
+                return parse_view_window(p, STMT_WINDOW, var.line);
             /* ident = expr, ident.field = expr, ident(...) [= expr] */
             if (lexer_check(&p->lex, TOK_EQ) || lexer_check(&p->lex, TOK_DOT) ||
                 lexer_check(&p->lex, TOK_LPAREN))

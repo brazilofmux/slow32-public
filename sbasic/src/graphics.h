@@ -61,9 +61,27 @@ int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action);
 /* POINT(x, y): pixel value, or -1 (no screen / out of range). */
 int sb_gfx_point(int x, int y);
 
-/* Last referenced point, for STEP and for LINE -(x,y). */
-void sb_gfx_last(int *x, int *y);
-void sb_gfx_set_last(int x, int y);
+/* Last referenced point, for STEP and for LINE -(x,y): the world's
+ * (WINDOW's; without one, the viewport's pixel). */
+void sb_gfx_last(double *x, double *y);
+void sb_gfx_set_last(double x, double y);
+
+/* VIEW [SCREEN] (x1, y1)-(x2, y2)[, fill[, border]] (on 0: VIEW alone;
+ * fill, border -1 when left out); -1 for one off the screen or of no
+ * size (Illegal function call) */
+int sb_gfx_view(int on, int scr, int x1, int y1, int x2, int y2, int fill, int border);
+/* WINDOW [SCREEN] (x1, y1)-(x2, y2) (on 0: WINDOW alone); -1 for no width or height */
+int sb_gfx_window(int on, int scr, double x1, double y1, double x2, double y2);
+/* a world point's pixel on the screen, rounded as CINT rounds; -1 when
+ * it is past an int (Overflow) */
+int sb_gfx_map(double x, double y, int *ax, int *ay);
+int sb_gfx_windowed(void);
+/* a world length's pixels across (CIRCLE's radius) */
+double sb_gfx_xscale(void);
+/* PMAP(v, n): n 0, 1 the world's x, y as the view's pixel; 2, 3 back */
+int sb_gfx_pmap(double v, int n, double *out);
+/* POINT(n): the last point, n 0, 1 the view's pixel, 2, 3 the world's */
+int sb_gfx_point_n(int n, double *out);
 
 /* Viewer key queue -> INKEY$: returns string length (1, or 2 with
  * out[0]=0 for extended scancodes, GW-style), 0 if no key. */

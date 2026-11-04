@@ -1161,18 +1161,30 @@ static error_t fn_inkey(value_t *args, int nargs, value_t *out) {
 }
 
 /* POINT(x, y) - pixel value at (x, y), or -1 */
+/* POINT(x, y): the pixel's color at the world's point (-1 off the
+ * viewport); POINT(n): the last point, n 0 and 1 the view's pixel, 2
+ * and 3 the world's */
 static error_t fn_point(value_t *args, int nargs, value_t *out) {
+    double x, y, r;
+    int ax, ay;
+    if (nargs == 1) {
+        EVAL_CHECK(get_num(&args[0], &x));
+        if (x < 0 || x >= 4 || (!sb_gfx_active() && !sb_gfx_degraded())) return ERR_ILLEGAL_FUNCTION_CALL;
+        if (sb_gfx_point_n((int)x, &r) < 0) return ERR_OVERFLOW;
+        *out = x < 2 ? val_integer((int)r) : val_single(r);
+        return ERR_NONE;
+    }
     if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
-    double x, y;
     EVAL_CHECK(get_num(&args[0], &x));
     EVAL_CHECK(get_num(&args[1], &y));
-    *out = val_integer(sb_gfx_point((int)x, (int)y));
+    if (sb_gfx_map(x, y, &ax, &ay) < 0) return ERR_OVERFLOW;
+    *out = val_integer(sb_gfx_point(ax, ay));
     return ERR_NONE;
 }
 
 /* PMAP(c, n): a coordinate mapped between the world's (WINDOW) and the
- * screen's (VIEW), n 0 and 1 to the screen's x and y, 2 and 3 back;
- * with neither, the coordinate rounded as CINT rounds */
+ * view's pixels (VIEW), n 0 and 1 to the pixel's x and y (rounded as
+ * CINT rounds), 2 and 3 back (a SINGLE) */
 static error_t fn_pmap(value_t *args, int nargs, value_t *out) {
     double c, n;
     if (nargs != 2) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1180,8 +1192,8 @@ static error_t fn_pmap(value_t *args, int nargs, value_t *out) {
     EVAL_CHECK(get_num(&args[1], &n));
     if (n < 0 || n > 3 || (!sb_gfx_active() && !sb_gfx_degraded()))
         return ERR_ILLEGAL_FUNCTION_CALL;          /* (QBasic: in text mode too) */
-    if (!(fabs(c) < 32767.5)) return ERR_OVERFLOW;
-    *out = val_integer((int)rint(c));           /* (QBasic: CINT's rounding, either way) */
+    if (sb_gfx_pmap(c, (int)n, &c) < 0) return ERR_OVERFLOW;
+    *out = n < 2 ? val_integer((int)c) : val_single(c);
     return ERR_NONE;
 }
 

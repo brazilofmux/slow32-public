@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include <tube.h>
 
 static int tube_state = 0;      /* 0=untried, 1=granted, -1=denied */
@@ -14,7 +15,20 @@ static uint8_t *pixels = NULL;
 static uint32_t palette[256];
 static uint32_t generation = 1;
 static int fg = 15;             /* default draw color */
-static int last_x, last_y;
+
+/* VIEW: the viewport, absolute and inclusive (the whole screen when
+ * none); view_scr, VIEW SCREEN's absolute coordinates (and none's), else
+ * VIEW's, relative to the viewport's corner.  WINDOW: the world mapped
+ * onto it, y up unless WINDOW SCREEN.  The last point is the world's
+ * (QBasic keeps it so: STEP(.5, .5) from 1, 1 is 1.5, 1.5 exactly). */
+static int vx1, vy1, vx2, vy2, view_scr = 1;
+static int win_on, win_scr;
+static double wx1, wy1, wx2, wy2;
+static double last_lx, last_ly;
+
+static void view_reset(void) {
+    vx1 = 0; vy1 = 0; vx2 = scr_w - 1; vy2 = scr_h - 1; view_scr = 1;
+}
 
 /* The 16 RGBI colors every 80s screen agreed on. */
 static const uint32_t rgbi16[16] = {
@@ -113,8 +127,10 @@ int sb_gfx_screen(int mode) {
     }
     scr_mode = mode;
     fg = 15;
-    last_x = w / 2;
-    last_y = h / 2;
+    view_reset();
+    win_on = 0;
+    last_lx = w / 2;
+    last_ly = h / 2;
     flip();
     return 0;
 }
@@ -124,14 +140,128 @@ int sb_gfx_degraded(void) { return tube_state == -1; }
 int sb_gfx_width(void)    { return scr_w; }
 int sb_gfx_height(void)   { return scr_h; }
 
-void sb_gfx_set_last(int x, int y) {
-    last_x = x;
-    last_y = y;
+void sb_gfx_set_last(double x, double y) {
+    last_lx = x;
+    last_ly = y;
 }
 
-void sb_gfx_last(int *x, int *y) {
-    *x = last_x;
-    *y = last_y;
+void sb_gfx_last(double *x, double *y) {
+    *x = last_lx;
+    *y = last_ly;
+}
+
+static int clamp_color(int color);
+
+/* --- VIEW and WINDOW: the world's coordinates and the screen's ------- */
+
+/* the viewport's corner the coordinates count from */
+static int org_x(void) { return view_scr ? 0 : vx1; }
+static int org_y(void) { return view_scr ? 0 : vy1; }
+
+/* CINT's rounding, half to even; 0 when it does not fit an int */
+static int cint(double v, int *out) {
+    if (!(v > -2147483648.5 && v < 2147483647.5)) return 0;
+    *out = (int)rint(v);
+    return 1;
+}
+
+/* a world coordinate as the view's (PMAP 0 and 1), unrounded */
+static double to_view(int axis, double v) {
+    if (!win_on) return v;
+    if (axis == 0) return (v - wx1) * (vx2 - vx1) / (wx2 - wx1) + (vx1 - org_x());
+    return (win_scr ? v - wy1 : wy2 - v) * (vy2 - vy1) / (wy2 - wy1) + (vy1 - org_y());
+}
+
+/* a view coordinate as the world's (PMAP 2 and 3) */
+static double to_world(int axis, double p) {
+    if (!win_on) return p;
+    if (axis == 0) return wx1 + (p - (vx1 - org_x())) * (wx2 - wx1) / (vx2 - vx1);
+    double q = (p - (vy1 - org_y())) * (wy2 - wy1) / (vy2 - vy1);
+    return win_scr ? wy1 + q : wy2 - q;
+}
+
+int sb_gfx_map(double x, double y, int *ax, int *ay) {
+    int px, py;
+    if (!cint(to_view(0, x), &px) || !cint(to_view(1, y), &py)) return -1;
+    *ax = px + org_x();
+    *ay = py + org_y();
+    return 0;
+}
+
+int sb_gfx_windowed(void) { return win_on; }
+
+double sb_gfx_xscale(void) { return win_on ? (vx2 - vx1) / (wx2 - wx1) : 1.0; }
+
+int sb_gfx_pmap(double v, int n, double *out) {
+    int p;
+    if (n >= 2) {                       /* (a pixel: whole, first -- QBasic) */
+        if (!cint(v, &p)) return -1;
+        *out = to_world(n - 2, p);
+        return 0;
+    }
+    if (!cint(to_view(n, v), &p)) return -1;
+    *out = p;
+    return 0;
+}
+
+int sb_gfx_point_n(int n, double *out) {
+    if (n >= 2) { *out = n == 2 ? last_lx : last_ly; return 0; }
+    return sb_gfx_pmap(n == 0 ? last_lx : last_ly, n, out);
+}
+
+/* the screen's pixel x, y as the world's last point */
+static void last_at(int ax, int ay) {
+    last_lx = to_world(0, ax - org_x());
+    last_ly = to_world(1, ay - org_y());
+}
+
+int sb_gfx_view(int on, int scr, int x1, int y1, int x2, int y2, int fill, int border) {
+    int t;
+    if (!scr_mode) return 0;
+    if (!on) {
+        view_reset();
+    } else {
+        if (x1 > x2) { t = x1; x1 = x2; x2 = t; }
+        if (y1 > y2) { t = y1; y1 = y2; y2 = t; }
+        if (x1 < 0 || y1 < 0 || x2 >= scr_w || y2 >= scr_h || x1 == x2 || y1 == y2) return -1;
+        vx1 = x1; vy1 = y1; vx2 = x2; vy2 = y2; view_scr = scr;
+        if (fill >= 0)
+            for (int y = y1; y <= y2; y++)
+                memset(pixels + y * scr_w + x1, clamp_color(fill), (size_t)(x2 - x1 + 1));
+        if (border >= 0) {              /* (a pixel outside the viewport, on the screen) */
+            int c = clamp_color(border);
+            for (int x = x1 - 1; x <= x2 + 1; x++)
+                for (int y = y1 - 1; y <= y2 + 1; y += y2 - y1 + 2)
+                    if (x >= 0 && x < scr_w && y >= 0 && y < scr_h) pixels[y * scr_w + x] = (uint8_t)c;
+            for (int y = y1; y <= y2; y++)
+                for (int x = x1 - 1; x <= x2 + 1; x += x2 - x1 + 2)
+                    if (x >= 0 && x < scr_w) pixels[y * scr_w + x] = (uint8_t)c;
+        }
+    }
+    {                                   /* the last point the viewport's middle */
+        int cx, cy;
+        cint((vx2 - vx1) / 2.0, &cx);
+        cint((vy2 - vy1) / 2.0, &cy);
+        last_at(vx1 + cx, vy1 + cy);
+    }
+    flip();
+    return 0;
+}
+
+int sb_gfx_window(int on, int scr, double x1, double y1, double x2, double y2) {
+    int ax, ay;
+    double t;
+    if (!scr_mode) return 0;
+    if (on && (x1 == x2 || y1 == y2)) return -1;
+    if (sb_gfx_map(last_lx, last_ly, &ax, &ay) < 0) { ax = vx1; ay = vy1; }
+    win_on = on;
+    if (on) {
+        if (x1 > x2) { t = x1; x1 = x2; x2 = t; }
+        if (y1 > y2) { t = y1; y1 = y2; y2 = t; }
+        wx1 = x1; wy1 = y1; wx2 = x2; wy2 = y2; win_scr = scr;
+    }
+    last_at(ax, ay);                    /* (the same pixel, in the new world) */
+    return 0;
 }
 
 static int clamp_color(int color) {
@@ -141,7 +271,7 @@ static int clamp_color(int color) {
 }
 
 static void plot(int x, int y, int c) {
-    if (x < 0 || x >= scr_w || y < 0 || y >= scr_h)
+    if (x < vx1 || x > vx2 || y < vy1 || y > vy2)
         return;
     pixels[y * scr_w + x] = (uint8_t)c;
 }
@@ -150,8 +280,6 @@ void sb_gfx_pset(int x, int y, int color) {
     if (!scr_mode)
         return;
     plot(x, y, clamp_color(color));
-    last_x = x;
-    last_y = y;
     flip();
 }
 
@@ -196,8 +324,6 @@ void sb_gfx_line(int x0, int y0, int x1, int y1, int color, int box) {
         for (y = ylo; y <= yhi; y++)
             hspan(x0, x1, y, c);
     }
-    last_x = x1;
-    last_y = y1;
     flip();
 }
 
@@ -228,8 +354,6 @@ void sb_gfx_circle(int cx, int cy, int r, int color) {
             err += 2 * (y - x) + 1;
         }
     }
-    last_x = cx;
-    last_y = cy;
     flip();
 }
 
@@ -240,7 +364,7 @@ typedef struct { int x, y; } seed_t;
 
 static int fillable(int x, int y, int paint, int border) {
     uint8_t p;
-    if (x < 0 || x >= scr_w || y < 0 || y >= scr_h)
+    if (x < vx1 || x > vx2 || y < vy1 || y > vy2)
         return 0;
     p = pixels[y * scr_w + x];
     if (p == (uint8_t)border)
@@ -258,8 +382,6 @@ void sb_gfx_paint(int x, int y, int paint, int border) {
         return;
     paint = clamp_color(paint);
     border = (border < 0) ? paint : (border & (scr_colors - 1));
-    last_x = x;
-    last_y = y;
     if (!fillable(x, y, paint, border)) {
         flip();
         return;
@@ -316,7 +438,8 @@ void sb_gfx_paint(int x, int y, int paint, int border) {
 void sb_gfx_cls(void) {
     if (!scr_mode)
         return;
-    memset(pixels, 0, (size_t)scr_w * (size_t)scr_h);
+    for (int y = vy1; y <= vy2; y++)    /* (the viewport: QBasic's CLS, 0 and 1) */
+        memset(pixels + y * scr_w + vx1, 0, (size_t)(vx2 - vx1 + 1));
     flip();
 }
 
@@ -405,14 +528,12 @@ int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action) {
             }
             pixels[(y + yy) * scr_w + x + xx] = (uint8_t)nv;
         }
-    last_x = x;
-    last_y = y;
     flip();
     return 0;
 }
 
 int sb_gfx_point(int x, int y) {
-    if (!scr_mode || x < 0 || x >= scr_w || y < 0 || y >= scr_h)
+    if (!scr_mode || x < vx1 || x > vx2 || y < vy1 || y > vy2)
         return -1;
     return pixels[y * scr_w + x];
 }

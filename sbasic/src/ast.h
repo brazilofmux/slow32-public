@@ -176,6 +176,9 @@ typedef enum {
     STMT_NEXT,
     STMT_GFX_GET,       /* GET (x1, y1)-(x2, y2), array: the gfx node */
     STMT_GFX_PUT,       /* PUT (x, y), array[, action]: the gfx node */
+    STMT_VIEW,          /* VIEW [SCREEN] (x1, y1)-(x2, y2)[, color[, border]]: gfx;
+                           has_from: the points given, box: SCREEN, aux: border */
+    STMT_WINDOW,        /* WINDOW [SCREEN] (x1, y1)-(x2, y2): gfx, as VIEW's */
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -460,6 +463,11 @@ typedef struct stmt {
             struct expr *oldname;
             struct expr *newname;
         } name_stmt;
+
+        /* STMT_CLS: CLS [mode] */
+        struct {
+            struct expr *mode;      /* NULL: CLS alone */
+        } cls_stmt;
 
         /* STMT_GET / STMT_PUT */
         struct {

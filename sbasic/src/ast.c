@@ -521,6 +521,7 @@ void stmt_free(stmt_t *s) {
                 free_targets(s->input.targets, s->input.nvars);
                 break;
             case STMT_CLS:
+                expr_free(s->cls_stmt.mode);
                 break;
             case STMT_LOCATE:
                 expr_free(s->locate_stmt.row);
@@ -745,6 +746,8 @@ void stmt_free(stmt_t *s) {
             case STMT_PALETTE:
             case STMT_GFX_GET:
             case STMT_GFX_PUT:
+            case STMT_VIEW:
+            case STMT_WINDOW:
                 expr_free(s->gfx.target);
                 expr_free(s->gfx.x1);
                 expr_free(s->gfx.y1);
@@ -1269,6 +1272,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
         break;
     case STMT_KILL: X(s->kill_stmt.filename); break;
     case STMT_NAME: X(s->name_stmt.oldname); X(s->name_stmt.newname); break;
+    case STMT_CLS: X(s->cls_stmt.mode); break;
     case STMT_GET:
     case STMT_PUT: X(s->get_put_stmt.handle_num); X(s->get_put_stmt.position); X(s->get_put_stmt.target); break;
     case STMT_SEEK: X(s->seek_stmt.seek_handle); X(s->seek_stmt.seek_position); break;
@@ -1298,6 +1302,8 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_PALETTE:
     case STMT_GFX_GET:
     case STMT_GFX_PUT:
+    case STMT_VIEW:
+    case STMT_WINDOW:
         X(s->gfx.x1); X(s->gfx.y1); X(s->gfx.x2); X(s->gfx.y2); X(s->gfx.color); X(s->gfx.aux);
         X(s->gfx.target);
         break;
