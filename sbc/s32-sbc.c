@@ -99,7 +99,6 @@ static int is_array_name(const char *name) {
  * pointer to the interpreter's entry (P[j], for eval_call_proc) */
 static struct { const char *name; int nparams, is_function; } procs[1024];
 static int nprocs_known;
-static int has_deftype;         /* DEF*: a name's type is not its suffix's */
 static const char *consts[256]; /* the names CONST defines anywhere: never */
 static int nconsts;             /* stored natively (a store is the error) */
 static const char *fixeds[256]; /* the STRING * n variables (made n characters */
@@ -149,7 +148,6 @@ static void note_deffn(const stmt_t *s) {
 
 static void scan_program(const stmt_t *s, int top) {
     for (; s; s = s->next) {
-        if (s->type == STMT_DEFTYPE) has_deftype = 1;
         if (s->type == STMT_DEF_FN) note_deffn(s);
         if (s->type == STMT_CONST && nconsts < 256) consts[nconsts++] = s->const_stmt.name;
         /* (a STRING * n is stored by the interpreter too, which cuts or pads) */
@@ -202,13 +200,13 @@ static int is_function_call(const expr_t *e) {
 
 /* name(args) that is a call of a DEF FN to inline: one definition, as
  * many arguments as it takes, numbers in and out (types by their names:
- * no DEF*), not recursive; in the main program or an env procedure,
+ * the parser wrote DEFtype's into them), not recursive; in the main program or an env procedure,
  * where its body's other variables are the unit's (call_def_fn's scope
  * is the caller's env, its parameters bound in a child of it) */
 static int is_const_name(const char *name);
 static int predict_name(const char *name);
 static int deffn_index(const expr_t *e) {
-    if (e->type != EXPR_CALL || nat_local || has_deftype || nfnctx >= 8 ||
+    if (e->type != EXPR_CALL || nat_local || nfnctx >= 8 ||
         is_array_name(e->call.name) || proc_index(e->call.name) >= 0)
         return -1;
     for (int i = 0; i < ndeffns; i++) {
@@ -494,7 +492,7 @@ static int predict_name(const char *name) {
     if (last == '&') return N_LONG;
     if (last == '#') return N_DOUBLE;
     if (last == '$') return N_STRING;
-    return N_SINGLE;            /* the guard checks: DEF* may say otherwise */
+    return N_SINGLE;            /* (the guard checks it) */
 }
 
 static int nat_is_float(int t) { return t == N_SINGLE || t == N_DOUBLE; }
@@ -635,8 +633,8 @@ static int nat_type_(const expr_t *e) {
                 return rt_builtin_type(e);
             }
             if (is_function_call(e)) {
-                /* its value's type is its name's, unless DEF* is about */
-                if (has_deftype || !args_compilable(e->call.args, e->call.nargs)) return N_NONE;
+                /* its value's type is its name's (DEFtype's written into it) */
+                if (!args_compilable(e->call.args, e->call.nargs)) return N_NONE;
                 for (int i = 0; i < e->call.nargs; i++)
                     if (nat_type(e->call.args[i]) == N_NONE || nat_type(e->call.args[i]) == N_STRING)
                         return N_NONE;
@@ -1288,8 +1286,8 @@ static void nat_store(FILE *out, const char *slot, int st, const char *x, int t)
 
 /* --- Native procedures: a FUNCTION or SUB whose body is all native --
  * numeric assignments, conditions, FOR/NEXT, EXIT, calls -- gets a C
- * version with its variables in C (NF<j>), beside the env one.  No DEF*
- * in the program, numeric parameters, no GOTO, GOSUB, SHARED, STATIC,
+ * version with its variables in C (NF<j>), beside the env one.  Numeric
+ * parameters, no GOTO, GOSUB, SHARED, STATIC,
  * arrays, strings, I/O.  Native call sites run it when they may (no
  * TRACE, none of its variables named as a builtin), the env version
  * otherwise; what it does is what the env version does. --- */
@@ -1325,7 +1323,6 @@ static int names_used(const stmt_t *s, const char *name) {
 static int native_eligible(const stmt_t *def, const code_t *c) {
     int ok = 1;
     char bare[64];
-    if (has_deftype) return 0;
     /* (FUNCTION f% whose body names f: f% too, which its C locals are not) */
     if (ast_name_bare(def->proc_def.name, bare) && names_used(def->proc_def.body, bare)) return 0;
     for (int i = 0; i < def->proc_def.nparams; i++)

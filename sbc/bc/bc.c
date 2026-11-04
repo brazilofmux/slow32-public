@@ -3580,18 +3580,8 @@ static void dt_top(expr_t *e, void *ctx) { expr_walk(e, dt_expr, ctx); }
 
 static void deftypes(stmt_t *s, int depth) {
     for (; s; s = s->next) {
-        if (s->type == STMT_DEFTYPE) {
-            int from = s->deftype.from & ~0x20, to = s->deftype.to & ~0x20;
-            if (depth) { bc_not_yet(s->line, "a DEFtype inside a block"); continue; }
-            for (int c = from; c >= 'A' && c <= to && c <= 'Z'; c++) {
-                if (bc_letter_used[c - 'A']) {
-                    bc_not_yet(s->line, "a DEFtype after a name of its letters");
-                    break;
-                }
-                bc_deftype[c - 'A'] = s->deftype.def_type;
-            }
+        if (s->type == STMT_DEFTYPE)    /* (the parser's: it wrote the DEFtype into each name) */
             continue;
-        }
         stmt_exprs(s, dt_top, NULL);
         switch (s->type) {
         case STMT_ASSIGN: dt_use(s->assign.name); break;
