@@ -1500,52 +1500,81 @@ static int format_using_str(const char *fmt, const char *str, int slen) {
 }
 
 /* Execute PRINT USING — separated to reduce register pressure in exec_print */
-static error_t exec_print_using_items(env_t *env, print_item_t *items, int nitems, const char *fmt_str) {
-    int arg_idx = 0;
-    /* Outer loop: reuse format string when args remain */
+/* PRINT USING, item by item (for compiled code too): using_next says
+ * which item the format wants evaluated next (-1: done, the line ended),
+ * having written the format's text up to its field; using_put formats
+ * the value there -- or, if the field cannot take it, writes the field's
+ * character and leaves the item to the next field, where it is
+ * evaluated again.  The format is used again while items remain. */
+void using_begin(using_t *u, const char *fmt, int nitems, const unsigned char *has_expr) {
+    snprintf(u->fmt_str, sizeof u->fmt_str, "%s", fmt);
+    u->fmt = u->fmt_str;
+    u->nitems = nitems;
+    u->has_expr = has_expr;
+    u->arg_idx = 0;
+    u->args_this_pass = 0;
+}
+
+int using_next(using_t *u) {
     for (;;) {
-        const char *fmt = fmt_str;
-        int args_this_pass = 0;
-        while (*fmt) {
-            if (*fmt == '#' || *fmt == '+' || *fmt == '$' || *fmt == '*') {
-                /* Numeric format */
-                if (arg_idx < nitems && items[arg_idx].expr) {
-                    value_t v;
-                    EVAL_CHECK(eval_expr(env, items[arg_idx].expr, &v));
-                    double d = 0.0;
-                    val_to_double(&v, &d);
-                    val_clear(&v);
-                    int consumed = format_using_num(fmt, d);
-                    if (consumed > 0) { fmt += consumed; arg_idx++; args_this_pass++; continue; }
-                }
-                col_printf("%c", *fmt++);
-            } else if (*fmt == '!' || *fmt == '&' || *fmt == '\\') {
-                /* String format */
-                if (arg_idx < nitems && items[arg_idx].expr) {
-                    value_t v;
-                    EVAL_CHECK(eval_expr(env, items[arg_idx].expr, &v));
-                    const char *str = (v.type == VAL_STRING) ? v.sval->data : "";
-                    int slen = (v.type == VAL_STRING) ? v.sval->len : 0;
-                    int consumed = format_using_str(fmt, str, slen);
-                    val_clear(&v);
-                    if (consumed > 0) { fmt += consumed; arg_idx++; args_this_pass++; continue; }
-                }
-                col_printf("%c", *fmt++);
-            } else if (*fmt == '_') {
+        while (*u->fmt) {
+            char c = *u->fmt;
+            if (c == '#' || c == '+' || c == '$' || c == '*' || c == '!' || c == '&' || c == '\\') {
+                if (u->arg_idx < u->nitems && u->has_expr[u->arg_idx]) return u->arg_idx;
+                col_printf("%c", *u->fmt++);
+            } else if (c == '_') {
                 /* Literal next character */
-                fmt++;
-                if (*fmt) col_printf("%c", *fmt++);
+                u->fmt++;
+                if (*u->fmt) col_printf("%c", *u->fmt++);
             } else {
-                col_printf("%c", *fmt++);
+                col_printf("%c", *u->fmt++);
             }
         }
         /* If all args consumed, or no args consumed this pass, stop */
-        if (arg_idx >= nitems || args_this_pass == 0)
-            break;
+        if (u->arg_idx >= u->nitems || u->args_this_pass == 0) {
+            col_puts("\n");
+            return -1;
+        }
         /* More args remain — print newline and restart format */
         col_puts("\n");
+        u->fmt = u->fmt_str;
+        u->args_this_pass = 0;
     }
-    col_puts("\n");
+}
+
+void using_put(using_t *u, const value_t *v) {
+    char c = *u->fmt;
+    int consumed;
+    if (c == '#' || c == '+' || c == '$' || c == '*') {
+        double d = 0.0;
+        val_to_double(v, &d);
+        consumed = format_using_num(u->fmt, d);
+    } else {
+        const char *str = (v->type == VAL_STRING) ? v->sval->data : "";
+        int slen = (v->type == VAL_STRING) ? v->sval->len : 0;
+        consumed = format_using_str(u->fmt, str, slen);
+    }
+    if (consumed > 0) {
+        u->fmt += consumed;
+        u->arg_idx++;
+        u->args_this_pass++;
+    } else
+        col_printf("%c", *u->fmt++);
+}
+
+static error_t exec_print_using_items(env_t *env, print_item_t *items, int nitems, const char *fmt_str) {
+    using_t u;
+    unsigned char has[256];
+    int k;
+    if (nitems > 256) return ERR_SYNTAX;
+    for (int i = 0; i < nitems; i++) has[i] = items[i].expr != NULL;
+    using_begin(&u, fmt_str, nitems, has);
+    while ((k = using_next(&u)) >= 0) {
+        value_t v;
+        EVAL_CHECK(eval_expr(env, items[k].expr, &v));
+        using_put(&u, &v);
+        val_clear(&v);
+    }
     return ERR_NONE;
 }
 
@@ -1853,14 +1882,19 @@ static error_t exec_input(env_t *env, stmt_t *s) {
 
 static error_t exec_cls(stmt_t *s) {
     (void)s;
+    eval_cls();
+    return ERR_NONE;
+}
+
+/* CLS -- for compiled code too */
+void eval_cls(void) {
     if (sb_gfx_active()) {
         sb_gfx_cls();
-        return ERR_NONE;
+        return;
     }
     sb_term_cls();
     print_col = 0;
     print_row = 1;
-    return ERR_NONE;
 }
 
 /* --- Graphics statements --- */
@@ -1956,6 +1990,11 @@ static error_t exec_locate(env_t *env, stmt_t *s) {
     val_clear(&rv);
     val_clear(&cv);
     if (err != ERR_NONE) return err;
+    return eval_locate(row, col);
+}
+
+/* LOCATE row, col, made integers -- for compiled code too */
+error_t eval_locate(int row, int col) {
     if (row < 1 || col < 1) return ERR_ILLEGAL_FUNCTION_CALL;
     sb_term_locate(row, col);
     print_col = col - 1;
@@ -1972,7 +2011,7 @@ static error_t exec_color(env_t *env, stmt_t *s) {
         error_t err = val_to_integer(&fv, &fg);
         val_clear(&fv);
         if (err != ERR_NONE) return err;
-        if (fg < 0 || fg > 15) return ERR_ILLEGAL_FUNCTION_CALL;
+        EVAL_CHECK(eval_color_arg(fg));
     }
     if (s->color_stmt.has_bg) {
         value_t bv;
@@ -1980,10 +2019,19 @@ static error_t exec_color(env_t *env, stmt_t *s) {
         error_t err = val_to_integer(&bv, &bg);
         val_clear(&bv);
         if (err != ERR_NONE) return err;
-        if (bg < 0 || bg > 15) return ERR_ILLEGAL_FUNCTION_CALL;
+        EVAL_CHECK(eval_color_arg(bg));
     }
-    sb_term_color(fg, bg, s->color_stmt.has_fg, s->color_stmt.has_bg);
+    eval_color(fg, bg, s->color_stmt.has_fg, s->color_stmt.has_bg);
     return ERR_NONE;
+}
+
+/* COLOR's colors, each 0 to 15, then COLOR -- for compiled code too */
+error_t eval_color_arg(int c) {
+    return c < 0 || c > 15 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
+}
+
+void eval_color(int fg, int bg, int has_fg, int has_bg) {
+    sb_term_color(fg, bg, has_fg, has_bg);
 }
 
 /* Resolve an lvalue expression to a pointer to its storage.
@@ -2684,8 +2732,23 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
 
 /* LINE INPUT (console) — read full line without comma/quote parsing */
 static error_t exec_line_input_console(env_t *env, stmt_t *s) {
-    if (s->input.prompt)
-        col_puts(s->input.prompt);
+    value_t val;
+    EVAL_CHECK(eval_line_input(s->input.prompt, &val));
+    if (s->input.nvars > 0) {
+        if (env_is_const(env, s->input.varnames[0])) {
+            val_clear(&val);
+            return ERR_CONST_REASSIGN;
+        }
+        env_set(env, s->input.varnames[0], &val);
+    }
+    val_clear(&val);
+    return ERR_NONE;
+}
+
+/* LINE INPUT's line (its prompt first, if any) -- for compiled code too */
+error_t eval_line_input(const char *prompt, value_t *out) {
+    if (prompt)
+        col_puts(prompt);
 
     char line[1024];
     int pos = 0;
@@ -2699,14 +2762,7 @@ static error_t exec_line_input_console(env_t *env, stmt_t *s) {
 
     if (ch == EOF && pos == 0)
         return ERR_INPUT_PAST_END;
-
-    if (s->input.nvars > 0) {
-        if (env_is_const(env, s->input.varnames[0]))
-            return ERR_CONST_REASSIGN;
-        value_t val = val_string_cstr(line);
-        env_set(env, s->input.varnames[0], &val);
-        val_clear(&val);
-    }
+    *out = val_string_cstr(line);
     return ERR_NONE;
 }
 
@@ -2718,34 +2774,62 @@ static error_t exec_write_console(env_t *env, stmt_t *s) {
         if (item->expr) {
             value_t v;
             EVAL_CHECK(eval_expr(env, item->expr, &v));
-            switch (v.type) {
-                case VAL_INTEGER:
-                case VAL_LONG: {
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%d", v.ival);
-                    col_puts(buf);
-                    break;
-                }
-                case VAL_DOUBLE:
-                case VAL_SINGLE: {
-                    char buf[64];
-                    val_format_number(&v, buf, sizeof(buf));
-                    col_puts(buf);
-                    break;
-                }
-                case VAL_STRING: {
-                    col_puts("\"");
-                    col_puts(v.sval ? v.sval->data : "");
-                    col_puts("\"");
-                    break;
-                }
-                case VAL_RECORD: break;
-            }
+            eval_write_value(&v);
             val_clear(&v);
         }
     }
     col_puts("\n");
     return ERR_NONE;
+}
+
+/* a WRITE item's value, as WRITE writes it -- for compiled code too */
+void eval_write_value(const value_t *v) {
+    switch (v->type) {
+        case VAL_INTEGER:
+        case VAL_LONG: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%d", v->ival);
+            col_puts(buf);
+            break;
+        }
+        case VAL_DOUBLE:
+        case VAL_SINGLE: {
+            char buf[64];
+            val_format_number(v, buf, sizeof(buf));
+            col_puts(buf);
+            break;
+        }
+        case VAL_STRING:
+            col_puts("\"");
+            col_puts(v->sval ? v->sval->data : "");
+            col_puts("\"");
+            break;
+        case VAL_RECORD: break;
+    }
+}
+
+/* SLEEP seconds (v NULL: SLEEP alone) -- for compiled code too */
+error_t eval_sleep(const value_t *v) {
+    double secs = 0.0;
+    if (v) {
+        if (v->type == VAL_STRING) return ERR_TYPE_MISMATCH;
+        if (val_to_double(v, &secs) != ERR_NONE) secs = 0.0;
+        if (secs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    /* Fractional seconds sleep (SLEEP 0.03 paces animation) */
+    if (secs > 0) {
+        unsigned int whole = (unsigned int)secs;
+        unsigned int usecs = (unsigned int)((secs - whole) * 1e6);
+        if (whole > 0) sleep(whole);
+        if (usecs > 0) usleep(usecs);
+    }
+    return ERR_NONE;
+}
+
+/* WIDTH w, made an integer -- for compiled code too */
+void eval_width(int w) {
+    extern int console_width;
+    if (w >= 20 && w <= 255) console_width = w;
 }
 
 static error_t exec_kill(env_t *env, stmt_t *s) {
@@ -3021,25 +3105,32 @@ static error_t exec_mid_assign(env_t *env, stmt_t *s) {
     }
 
     /* Evaluate replacement string */
-    value_t rep_v;
+    value_t rep_v, result;
     EVAL_CHECK(eval_expr(env, s->mid_assign.value, &rep_v));
-    if (rep_v.type != VAL_STRING) { val_clear(&rep_v); return ERR_TYPE_MISMATCH; }
+    err = eval_mid_set(sv->sval, start, slen, maxlen, &rep_v, &result);
+    val_clear(&rep_v);
+    if (err != ERR_NONE) return err;
+    env_set(env, s->mid_assign.var_name, &result);
+    val_clear(&result);
+    return ERR_NONE;
+}
 
-    int rep_len = rep_v.sval->len;
+/* MID$ = rep's new string: slen bytes of old, rep's over them from start
+ * (0-based), maxlen at most -- for compiled code too */
+error_t eval_mid_set(const sb_string_t *old, int start, int slen, int maxlen,
+                     const value_t *rep, value_t *out) {
+    if (rep->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    int rep_len = rep->sval->len;
     int replace_count = (rep_len < maxlen) ? rep_len : maxlen;
 
     /* Build result: same length as original */
     char *buf = malloc(slen + 1);
-    if (!buf) { val_clear(&rep_v); return ERR_OUT_OF_MEMORY; }
-    memcpy(buf, sv->sval->data, slen);
-    memcpy(buf + start, rep_v.sval->data, replace_count);
+    if (!buf) return ERR_OUT_OF_MEMORY;
+    memcpy(buf, old->data, slen);
+    memcpy(buf + start, rep->sval->data, replace_count);
     buf[slen] = '\0';
-    val_clear(&rep_v);
-
-    value_t result = val_string(buf, slen);
+    *out = val_string(buf, slen);
     free(buf);
-    env_set(env, s->mid_assign.var_name, &result);
-    val_clear(&result);
     return ERR_NONE;
 }
 
@@ -3161,23 +3252,14 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_SLEEP: {
-            double secs = 0.0;
             if (s->sleep_stmt.duration) {
                 value_t v;
                 EVAL_CHECK(eval_expr(env, s->sleep_stmt.duration, &v));
-                if (v.type == VAL_STRING) { val_clear(&v); return ERR_TYPE_MISMATCH; }
-                if (val_to_double(&v, &secs) != ERR_NONE) secs = 0.0;
+                error_t err = eval_sleep(&v);
                 val_clear(&v);
-                if (secs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+                return err;
             }
-            /* Fractional seconds sleep (SLEEP 0.03 paces animation) */
-            if (secs > 0) {
-                unsigned int whole = (unsigned int)secs;
-                unsigned int usecs = (unsigned int)((secs - whole) * 1e6);
-                if (whole > 0) sleep(whole);
-                if (usecs > 0) usleep(usecs);
-            }
-            return ERR_NONE;
+            return eval_sleep(NULL);
         }
 
         case STMT_OPEN:         return exec_open(env, s);
@@ -3322,7 +3404,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             error_t err = val_to_integer(&v, &w);
             val_clear(&v);
             if (err != ERR_NONE) return err;
-            if (w >= 20 && w <= 255) console_width = w;
+            eval_width(w);
             return ERR_NONE;
         }
 

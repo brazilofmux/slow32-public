@@ -103,6 +103,26 @@ void eval_deftype(char letter, val_type_t t);
 error_t eval_bound(const char *name, int dim, int upper, value_t *out);
 int eval_is_function0(const char *name);
 int eval_trappable(error_t err);
+/* statements' actions, their operands evaluated -- for compiled code too */
+void eval_cls(void);
+error_t eval_locate(int row, int col);
+error_t eval_color_arg(int c);
+void eval_color(int fg, int bg, int has_fg, int has_bg);
+error_t eval_line_input(const char *prompt, value_t *out);
+void eval_write_value(const value_t *v);
+error_t eval_sleep(const value_t *v);
+void eval_width(int w);
+error_t eval_mid_set(const sb_string_t *old, int start, int slen, int maxlen,
+                     const value_t *rep, value_t *out);
+typedef struct {
+    char fmt_str[1024];
+    const char *fmt;
+    int nitems, arg_idx, args_this_pass;
+    const unsigned char *has_expr;
+} using_t;
+void using_begin(using_t *u, const char *fmt, int nitems, const unsigned char *has_expr);
+int using_next(using_t *u);
+void using_put(using_t *u, const value_t *v);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
 error_t eval_input_line(const char *prompt, int no_question, int same_line,
