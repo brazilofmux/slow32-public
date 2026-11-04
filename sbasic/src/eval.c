@@ -1924,48 +1924,64 @@ static error_t exec_gfx(env_t *env, stmt_t *s) {
     if (s->gfx.y2) EVAL_CHECK(gfx_eval_int(env, s->gfx.y2, &y2));
     EVAL_CHECK(gfx_eval_color(env, s->gfx.color, &color));
     EVAL_CHECK(gfx_eval_color(env, s->gfx.aux, &aux));
+    gfx_op_t g = { s->type, x1, y1, x2, y2, color, aux, s->gfx.x1 != NULL, s->gfx.color != NULL,
+                   s->gfx.aux != NULL, s->gfx.step1, s->gfx.step2, s->gfx.has_from, s->gfx.box,
+                   s->gfx.preset };
+    return eval_gfx(&g);
+}
 
+/* SCREEN mode -- for compiled code too */
+error_t eval_screen(int mode) {
+    if (sb_gfx_screen(mode) == -2)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    return ERR_NONE;    /* denied tube already printed its message */
+}
+
+/* PSET, PRESET, LINE, CIRCLE, PAINT, PALETTE, their operands evaluated
+ * (an absent color -1) -- for compiled code too */
+error_t eval_gfx(const gfx_op_t *g) {
+    int x1 = g->x1, y1 = g->y1, x2 = g->x2, y2 = g->y2, color = g->color, aux = g->aux;
     if (!sb_gfx_active()) {
-        if (s->type == STMT_PALETTE)
+        if (g->type == STMT_PALETTE)
             return ERR_NONE;            /* legal in text mode (no-op) */
         if (sb_gfx_degraded())
             return ERR_NONE;            /* no tube: statements no-op */
         return ERR_ILLEGAL_FUNCTION_CALL;  /* no SCREEN yet */
     }
 
-    if (s->gfx.step1) {
+    if (g->step1) {
         int lx, ly;
         sb_gfx_last(&lx, &ly);
         x1 += lx;
         y1 += ly;
     }
 
-    switch (s->type) {
+    switch (g->type) {
         case STMT_PSET:
             /* PRESET without a color erases (background); with one it
              * draws that color, same as PSET */
-            sb_gfx_pset(x1, y1, (s->gfx.preset && !s->gfx.color) ? 0 : color);
+            sb_gfx_pset(x1, y1, (g->preset && !g->has_color) ? 0 : color);
             break;
         case STMT_LINE_G: {
             int fx = x1, fy = y1;
-            if (!s->gfx.has_from)
+            if (!g->has_from)
                 sb_gfx_last(&fx, &fy);
-            if (s->gfx.step2) {
+            if (g->step2) {
                 /* STEP on the second point is relative to the first */
                 x2 += fx;
                 y2 += fy;
             }
-            sb_gfx_line(fx, fy, x2, y2, color, s->gfx.box);
+            sb_gfx_line(fx, fy, x2, y2, color, g->box);
             break;
         }
         case STMT_CIRCLE:
             sb_gfx_circle(x1, y1, x2, color);
             break;
         case STMT_PAINT:
-            sb_gfx_paint(x1, y1, color, s->gfx.aux ? aux : -1);
+            sb_gfx_paint(x1, y1, color, g->has_aux ? aux : -1);
             break;
         case STMT_PALETTE:
-            if (s->gfx.x1)
+            if (g->has_x1)
                 sb_gfx_palette(x1, color);
             else
                 sb_gfx_palette(-1, 0);
@@ -3411,9 +3427,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_SCREEN: {
             int mode;
             EVAL_CHECK(gfx_eval_int(env, s->shell_stmt.command, &mode));
-            if (sb_gfx_screen(mode) == -2)
-                return ERR_ILLEGAL_FUNCTION_CALL;
-            return ERR_NONE;    /* denied tube already printed its message */
+            return eval_screen(mode);
         }
 
         case STMT_LSET:

@@ -135,6 +135,12 @@ error_t eval_file_pos(int handle, FILE *fp, int pos);
 error_t eval_get_value(FILE *fp, val_type_t vt, int len, value_t *out);
 error_t eval_put_value(FILE *fp, const value_t *v);
 error_t eval_lrset(int curlen, const value_t *nv, int left, value_t *out);
+typedef struct {
+    int type, x1, y1, x2, y2, color, aux;
+    int has_x1, has_color, has_aux, step1, step2, has_from, box, preset;
+} gfx_op_t;
+error_t eval_gfx(const gfx_op_t *g);
+error_t eval_screen(int mode);
 int eval_option_base(void);
 void eval_reset(void);   /* a program's state as it starts */
 error_t eval_input_line(const char *prompt, int no_question, int same_line,
