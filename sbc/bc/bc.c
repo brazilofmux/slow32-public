@@ -170,7 +170,9 @@ static int is_function(const char *name) {
 }
 
 /* globals: a main-program variable a SUB SHAREs, a procedure's STATIC */
-typedef struct { char name[64]; char sym[96]; int type; int zeroed; } global_t;
+typedef struct { char name[64]; char *sym; int type; int zeroed; } global_t;   /* (sym its own
+                                * allocation: the backend's table and variables keep pointers to it
+                                * while this one grows) */
 static global_t *bc_globals;
 static int bc_nglobals, bc_capglobals;
 
@@ -186,8 +188,8 @@ static const char *global_add(const char *name, const char *sym, int type) {
     g = &bc_globals[bc_nglobals++];
     strncpy(g->name, name, 63);
     g->name[63] = '\0';
-    strncpy(g->sym, sym, 95);
-    g->sym[95] = '\0';
+    g->sym = strdup(sym);
+    if (!g->sym) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
     g->type = type;
     g->zeroed = 0;
     {                           /* (a .bss object gen_data writes) */
