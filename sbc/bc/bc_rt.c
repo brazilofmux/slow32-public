@@ -540,6 +540,21 @@ void bcrt_name(int alo, int ahi, int at, int blo, int bhi, int bt) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* --- graphics: the interpreter's (eval_gfx, eval_screen) --------------- */
+
+void bcrt_screen(int mode) {
+    error_t e = eval_screen(mode);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* flags: has_x1, has_color, has_aux, step1, step2, has_from, preset, from bit 0 */
+void bcrt_gfx(int type, int flags, int box, int x1, int y1, int x2, int y2, int color, int aux) {
+    gfx_op_t g = { type, x1, y1, x2, y2, color, aux, flags & 1, (flags >> 1) & 1, (flags >> 2) & 1,
+                   (flags >> 3) & 1, (flags >> 4) & 1, (flags >> 5) & 1, box, (flags >> 6) & 1 };
+    error_t e = eval_gfx(&g);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* a letter's DEFtype, set as the program starts (after bcrt_start) */
 void bcrt_deftype(int letter, int t) { eval_deftype((char)letter, (val_type_t)t); }
 

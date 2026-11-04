@@ -2831,6 +2831,27 @@ static void bc_stmt(stmt_t *s) {
     case STMT_OPEN:
         bc_open(s);
         break;
+    case STMT_SCREEN: {
+        int m = handle_of(s->shell_stmt.command), cb = h_ncarg;
+        carg(m, 0);
+        call_end(cb, 1, "bcrt_screen", NULL);
+        break;
+    }
+    case STMT_PSET: case STMT_LINE_G: case STMT_CIRCLE: case STMT_PAINT: case STMT_PALETTE: {
+        /* each operand made an integer as it comes; an absent one 0, an
+         * absent color -1 (exec_gfx) */
+        expr_t *op[6] = { s->gfx.x1, s->gfx.y1, s->gfx.x2, s->gfx.y2, s->gfx.color, s->gfx.aux };
+        int v[6], cb, flags;
+        for (int i = 0; i < 6; i++)
+            v[i] = op[i] ? handle_of(op[i]) : iconst(i < 4 ? 0 : -1);
+        flags = (s->gfx.x1 != NULL) | (s->gfx.color != NULL) << 1 | (s->gfx.aux != NULL) << 2 |
+                s->gfx.step1 << 3 | s->gfx.step2 << 4 | s->gfx.has_from << 5 | s->gfx.preset << 6;
+        cb = h_ncarg;
+        carg(iconst(s->type), 0); carg(iconst(flags), 0); carg(iconst(s->gfx.box), 0);
+        for (int i = 0; i < 6; i++) carg(v[i], 0);
+        call_end(cb, 9, "bcrt_gfx", NULL);
+        break;
+    }
     case STMT_CLOSE: {
         int h = s->close_stmt.handle_num ? handle_of(s->close_stmt.handle_num) : iconst(0), cb = h_ncarg;
         carg(h, 0);
