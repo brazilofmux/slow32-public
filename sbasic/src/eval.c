@@ -2145,7 +2145,10 @@ static error_t exec_gfx(env_t *env, stmt_t *s) {
     EVAL_CHECK(gfx_eval_color(env, s->gfx.aux, &aux));
     gfx_op_t g = { s->type, x1, y1, x2, y2, color, aux, s->gfx.x1 != NULL, s->gfx.color != NULL,
                    s->gfx.aux != NULL, s->gfx.step1, s->gfx.step2, s->gfx.has_from, s->gfx.box,
-                   s->gfx.preset };
+                   s->gfx.preset, 0, 0, 0, 0, 0, 0 };
+    if (s->gfx.start) { EVAL_CHECK(gfx_eval_num(env, s->gfx.start, &g.start)); g.has_start = 1; }
+    if (s->gfx.end) { EVAL_CHECK(gfx_eval_num(env, s->gfx.end, &g.end)); g.has_end = 1; }
+    if (s->gfx.aspect) { EVAL_CHECK(gfx_eval_num(env, s->gfx.aspect, &g.aspect)); g.has_aspect = 1; }
     return eval_gfx(&g);
 }
 
@@ -2364,12 +2367,20 @@ error_t eval_gfx(const gfx_op_t *g) {
             sb_gfx_set_last(mx, my);
             break;
         case STMT_CIRCLE: {
-            int r;
+            int r, arc = g->has_start || g->has_end;
+            double s = g->has_start ? g->start : 0, e = g->has_end ? g->end : 0;
             value_t t;
             EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
             t = val_double(g->x2 * sb_gfx_xscale());   /* (the world's radius: across) */
             EVAL_CHECK(val_to_integer(&t, &r));
-            sb_gfx_circle(ax, ay, r, color);
+            /* the arc's angles -2pi..2pi (a negative one's end joined to the
+             * center); no end: all the way round */
+            if (s < -2 * 3.1415926535897932 - 1e-6 || s > 2 * 3.1415926535897932 + 1e-6 ||
+                e < -2 * 3.1415926535897932 - 1e-6 || e > 2 * 3.1415926535897932 + 1e-6)
+                return ERR_ILLEGAL_FUNCTION_CALL;
+            if (arc && !g->has_end) e = 2 * 3.1415926535897932;
+            sb_gfx_circle(ax, ay, r, color, g->has_aspect ? g->aspect : sb_gfx_aspect(),
+                          arc, fabs(s), fabs(e), s < 0, e < 0);
             sb_gfx_set_last(lx, ly);
             break;
         }

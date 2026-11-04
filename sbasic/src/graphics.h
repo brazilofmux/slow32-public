@@ -29,7 +29,13 @@ int sb_gfx_height(void);
 void sb_gfx_pset(int x, int y, int color);          /* updates last point */
 void sb_gfx_line(int x0, int y0, int x1, int y1, int color,
                  int box);                          /* box: 0=line 1=B 2=BF */
-void sb_gfx_circle(int x, int y, int r, int color);
+/* CIRCLE: aspect the y radius over the x (over 1: x shrinks); an arc
+ * from start to end (radians, 0..2pi) when arc, a line to the center
+ * from an end whose angle was negative */
+void sb_gfx_circle(int x, int y, int r, int color, double aspect,
+                   int arc, double start, double end, int sline, int eline);
+/* the mode's aspect when CIRCLE gives none: 4/3 * height / width */
+double sb_gfx_aspect(void);
 void sb_gfx_paint(int x, int y, int paint, int border);
 void sb_gfx_cls(void);
 

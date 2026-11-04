@@ -774,7 +774,7 @@ static stmt_t *parse_line_graphics(parser_t *p, int line) {
     return s;
 }
 
-/* CIRCLE [STEP](x, y), r[, color] */
+/* CIRCLE [STEP](x, y), r[, [color][, [start][, [end][, aspect]]]] */
 static stmt_t *parse_circle(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex);
@@ -786,14 +786,11 @@ static stmt_t *parse_circle(parser_t *p) {
     if (!expect(p, TOK_COMMA)) { stmt_free(s); return NULL; }
     s->gfx.x2 = parse_expr(p);   /* radius */
     if (!s->gfx.x2) { stmt_free(s); return NULL; }
-    if (lexer_match(&p->lex, TOK_COMMA)) {
-        s->gfx.color = parse_expr(p);
-        if (!s->gfx.color) { stmt_free(s); return NULL; }
-    }
-    if (!at_stmt_end(p)) {
-        parser_error_detail(p, ERR_SYNTAX,
-                            "CIRCLE arcs/aspect not supported");
-        stmt_free(s); return NULL;
+    /* [, [color][, [start][, [end][, aspect]]]]: each may be left out */
+    expr_t **opt[4] = { &s->gfx.color, &s->gfx.start, &s->gfx.end, &s->gfx.aspect };
+    for (int i = 0; i < 4 && lexer_match(&p->lex, TOK_COMMA); i++) {
+        if (lexer_check(&p->lex, TOK_COMMA) || (i < 3 && at_stmt_end(p))) continue;
+        if (!(*opt[i] = parse_expr(p))) { stmt_free(s); return NULL; }
     }
     return s;
 }

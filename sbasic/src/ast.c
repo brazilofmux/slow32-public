@@ -749,6 +749,9 @@ void stmt_free(stmt_t *s) {
             case STMT_VIEW:
             case STMT_WINDOW:
                 expr_free(s->gfx.target);
+                expr_free(s->gfx.start);
+                expr_free(s->gfx.end);
+                expr_free(s->gfx.aspect);
                 expr_free(s->gfx.x1);
                 expr_free(s->gfx.y1);
                 expr_free(s->gfx.x2);
@@ -1305,6 +1308,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_VIEW:
     case STMT_WINDOW:
         X(s->gfx.x1); X(s->gfx.y1); X(s->gfx.x2); X(s->gfx.y2); X(s->gfx.color); X(s->gfx.aux);
+        X(s->gfx.start); X(s->gfx.end); X(s->gfx.aspect);
         X(s->gfx.target);
         break;
     default:

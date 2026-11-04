@@ -162,6 +162,8 @@ typedef struct {
     double x1, y1, x2, y2;      /* as evaluated: the world's under a WINDOW */
     int color, aux;
     int has_x1, has_color, has_aux, step1, step2, has_from, box, preset;
+    double start, end, aspect;  /* CIRCLE's, each when has_ says so */
+    int has_start, has_end, has_aspect;
 } gfx_op_t;
 error_t eval_gfx(const gfx_op_t *g);
 error_t eval_cls_mode(int mode);

@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <tube.h>
 
 static int tube_state = 0;      /* 0=untried, 1=granted, -1=denied */
@@ -327,25 +330,74 @@ void sb_gfx_line(int x0, int y0, int x1, int y1, int color, int box) {
     flip();
 }
 
-void sb_gfx_circle(int cx, int cy, int r, int color) {
-    int c, x, y, err;
+/* CIRCLE, as QBasic draws one (fitted to its pixels, SCREEN 7): the
+ * midpoint circle of radius r, one axis scaled by the aspect and
+ * rounded -- y by it when it is under 1, x by its inverse over 1.  An
+ * arc keeps the points from start to end counterclockwise, each end
+ * tested within its octant by the coordinate the octant steps (so the
+ * end's own rounded pixel is in); a negative angle's end is joined to
+ * the center. */
+
+/* a point's octant (math axes, y up), 0..7 counterclockwise */
+static int octant_of(int x, int y) {
+    double t = atan2((double)y, (double)x);
+    int k;
+    if (t < 0) t += 2 * M_PI;
+    k = (int)(t / (M_PI / 4));
+    return k > 7 ? 7 : k;
+}
+
+/* the coordinate octant k steps, growing with the angle */
+static int octant_step(int k, int x, int y) {
+    switch (k) {
+        case 0: case 7: return y;
+        case 1: case 2: return -x;
+        case 3: case 4: return -y;
+        default:        return x;
+    }
+}
+
+static int angle_octant(double t) {
+    int k = (int)(t / (M_PI / 4));
+    return k > 7 ? 7 : k;
+}
+
+static int on_arc(int x, int y, double s, double e, int sx, int sy, int ex, int ey) {
+    int k = octant_of(x, y), sk = angle_octant(s), ek = angle_octant(e);
+    int after = k != sk || octant_step(k, x, y) >= octant_step(k, sx, sy);
+    int before = k != ek || octant_step(k, x, y) <= octant_step(k, ex, ey);
+    if (k == 0 && y == 0 && x > 0 && e >= 2 * M_PI - 1e-9)
+        return 1;                       /* (an arc to 2pi ends where it began: 0) */
+    if (sk < ek || (sk == ek && s <= e)) return k >= sk && k <= ek && after && before;
+    if (sk == ek) return after || before;           /* (the arc round the long way) */
+    return (k == sk ? after : k > sk) || (k == ek ? before : k < ek);
+}
+
+/* rounded as CINT rounds, half to even (QBasic's ellipses are symmetric) */
+static int scaled(int v, double f) { return (int)rint(v * f); }
+
+void sb_gfx_circle(int cx, int cy, int r, int color, double aspect,
+                   int arc, double s, double e, int sline, int eline) {
+    int c, x, y, err, sx = 0, sy = 0, ex = 0, ey = 0;
+    double fx = aspect > 1 ? 1 / aspect : 1, fy = aspect > 1 ? 1 : aspect;
     if (!scr_mode)
         return;
     c = clamp_color(color);
     if (r < 0)
         r = -r;
+    if (arc) {
+        sx = scaled(1, r * cos(s)); sy = scaled(1, r * sin(s));
+        ex = scaled(1, r * cos(e)); ey = scaled(1, r * sin(e));
+    }
     x = r;
     y = 0;
     err = 1 - r;
     while (x >= y) {
-        plot(cx + x, cy + y, c);
-        plot(cx - x, cy + y, c);
-        plot(cx + x, cy - y, c);
-        plot(cx - x, cy - y, c);
-        plot(cx + y, cy + x, c);
-        plot(cx - y, cy + x, c);
-        plot(cx + y, cy - x, c);
-        plot(cx - y, cy - x, c);
+        int pt[8][2] = { { x, y }, { -x, y }, { x, -y }, { -x, -y },
+                         { y, x }, { -y, x }, { y, -x }, { -y, -x } };
+        for (int i = 0; i < 8; i++)     /* (pt: math axes, y up) */
+            if (!arc || on_arc(pt[i][0], pt[i][1], s, e, sx, sy, ex, ey))
+                plot(cx + scaled(pt[i][0], fx), cy - scaled(pt[i][1], fy), c);
         y++;
         if (err < 0) {
             err += 2 * y + 1;
@@ -354,7 +406,14 @@ void sb_gfx_circle(int cx, int cy, int r, int color) {
             err += 2 * (y - x) + 1;
         }
     }
+    if (sline) bresenham(cx, cy, cx + scaled(sx, fx), cy - scaled(sy, fy), c);
+    if (eline) bresenham(cx, cy, cx + scaled(ex, fx), cy - scaled(ey, fy), c);
     flip();
+}
+
+/* the mode's CIRCLE aspect when none is given: a 4:3 screen's pixels' */
+double sb_gfx_aspect(void) {
+    return scr_mode ? (float)(4.0 / 3.0 * scr_h / scr_w) : 1.0;   /* (a SINGLE, as QBasic's) */
 }
 
 /* PAINT: seed fill bounded by the border color. Painted pixels stop

@@ -617,6 +617,7 @@ typedef struct stmt {
             int preset;             /* PSET vs PRESET */
             struct expr *target;    /* GET/PUT: the array (an EXPR_CALL, no
                                        subscripts for the array's start) */
+            struct expr *start, *end, *aspect;  /* CIRCLE's arc and aspect, or NULL */
         } gfx;
     };
 } stmt_t;
