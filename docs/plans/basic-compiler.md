@@ -373,7 +373,23 @@ Open:
 - QuickBASIC refuses at load what it can type statically (Type
   mismatch, Parameter type mismatch); -check does not yet (strict-qb's
   DIFF-QB, 43 over the corpus).
-- Not yet: CONST, TYPE, PRINT USING, CLEAR, the file and screen
-  statements, GOSUB inside a procedure, ON ERROR and RESUME inside one,
-  a whole array as an argument.
+- Not yet: GOSUB inside a procedure, ON ERROR and RESUME inside one,
+  a whole array as an argument, a record as a whole (assigned, passed).
+
+Then (2026-11-03, "Let's continue"): CONST (2a39b385/c31245a3), the
+console statements and PRINT USING as a state machine both drive
+(2347da3a/42782dd0), files (f60ad3a8/27d226c0), graphics
+(76477a94/d728f5d6), LPRINT, directories, POKE (4e0f1818/950c9822),
+TYPE records (ee0c2b26/a513017c) -- each statement's action a function
+of the interpreter's that compiled code calls too.  QBasic showed, and
+the interpreter now follows: CONST lists, a module CONST in every SUB,
+EOF true when the next read finds nothing, DIM AS a declaration (not
+reset in a loop), DIM SHARED records.  -check gained const-assign,
+const-value, not-qb (TRACE, SPLIT, OPTION EXPLICIT), dim-after-use and
+dim-twice for DIM AS.  `run-oracle.py --bc`: 435 agree, 20 refused
+alike, none differ.
+
+Interpreter deviations from QuickBASIC seen and left: PRINT USING's
+signs and fields; a TYPE's STRING * n fields not fixed length; a name
+with a dot (TWO.PI#) does not lex; REDIM resizes a static array.
 
