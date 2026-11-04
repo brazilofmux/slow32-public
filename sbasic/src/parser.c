@@ -167,6 +167,16 @@ static expr_t *parse_primary(parser_t *p) {
         }
         return expr_variable(t.text, var_type_from_name(t.text), t.line);
     }
+    /* PLAY(n): the notes left in the music queue (none here: 0) */
+    if (tok->type == TOK_PLAY) {
+        token_t t = lexer_next(&p->lex);
+        if (!expect(p, TOK_LPAREN)) return NULL;
+        expr_t *call = expr_call("PLAY", t.line), *arg = parse_expr(p);
+        if (!call || !arg) { expr_free(call); expr_free(arg); return NULL; }
+        expr_call_add_arg(call, arg);
+        if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
+        return call;
+    }
     /* SEEK(#n) as function in expression context */
     if (tok->type == TOK_SEEK) {
         token_t t = lexer_next(&p->lex);
@@ -1199,6 +1209,10 @@ static stmt_t *parse_shared(parser_t *p) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         if (!list_name(p, s, stmt_shared_add)) { stmt_free(s); return NULL; }
+        if (lexer_match(&p->lex, TOK_AS)) {     /* SHARED a() AS INTEGER: the main program's, typed there */
+            token_t tn = lexer_next(&p->lex);
+            if (tn.type != TOK_IDENT) { parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL; }
+        }
     } while (lexer_match(&p->lex, TOK_COMMA));
     return s;
 }

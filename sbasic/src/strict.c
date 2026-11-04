@@ -46,6 +46,7 @@ typedef struct {
     refs_t modconsts;           /* the main program's CONSTs, every unit's */
     refs_t restores;            /* RESTORE label's, anywhere: the main program's labels */
     unit_t *u;                  /* the unit being walked */
+    stmt_t *proc;               /* its SUB or FUNCTION, NULL for the main program */
     struct open_for *st;        /* the FORs open in the text, the innermost last */
     int depth;                  /* statement lists open inside the unit's own */
     int nst, capst;
@@ -109,12 +110,24 @@ static void add_for(unit_t *u, int from, int to) {
 
 static int is_fn_name(const char *n) { return n[0] == 'F' && n[1] == 'N' && n[2]; }
 
+/* the interpreter's own functions, no QuickBASIC's: a program may name a
+ * variable MAX, as QuickBASIC lets it */
+static int extension_name(const char *n) {
+    static const char *const ext[] = {
+        "ATN2", "ASIN", "ACOS", "SINH", "COSH", "TANH", "ASINH", "ACOSH", "ATANH", "LOG10",
+        "LOG2", "ROUND", "MIN", "MAX", "FLOOR", "CEIL", "INSTRREV", "TRIM$", "BIN$",
+        "REPLACE$", "REVERSE$", "DIR$", "CURDIR$", "FILEEXISTS", NULL };
+    for (int i = 0; ext[i]; i++)
+        if (strcmp(ext[i], n) == 0) return 1;
+    return 0;
+}
+
 static void scan_expr(expr_t *e, void *vc) {
     check_t *c = vc;
     if (e->type == EXPR_VARIABLE) {
         int mn, mx;
         if (strcmp(e->var.name, "ERL") == 0) c->info[STRICT_ERL]++;
-        if (builtin_arity(e->var.name, &mn, &mx) && mn > 0) {   /* TAN for TAN(X): QB "Expected: (" */
+        if (builtin_arity(e->var.name, &mn, &mx) && mn > 0 && !extension_name(e->var.name)) {   /* TAN for TAN(X): QB "Expected: (" */
             char d[128];
             snprintf(d, sizeof d, "%s without its arguments", e->var.name);
             finding(c, e->line, "builtin-args", d);
@@ -334,6 +347,14 @@ static void walk_list(check_t *c, stmt_t *s) {
             c->info[STRICT_GOSUB]++;
             push(&c->u->jumps, s->goto_stmt.label, seq, s->line, 1);
             break;
+        case STMT_RETURN:               /* RETURN label: the main program's only */
+            if (!s->goto_stmt.label[0]) break;
+            if (c->proc) {
+                snprintf(d, sizeof d, "RETURN %s in a SUB or FUNCTION", s->goto_stmt.label);
+                finding(c, s->line, "not-in-proc", d);    /* (QB: Illegal in procedure or DEF FN) */
+            }
+            push(&c->u->jumps, s->goto_stmt.label, seq, s->line, 1);
+            break;
         case STMT_ON_GOTO:
         case STMT_ON_GOSUB:
             if (s->type == STMT_ON_GOSUB) c->info[STRICT_GOSUB]++;
@@ -490,10 +511,12 @@ static int array_shared(check_t *c, stmt_t *proc, const char *name) {
 /* the main program, or a SUB's or FUNCTION's body: its own labels and arrays */
 static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     unit_t u, *outer = c->u;
+    stmt_t *outer_proc = c->proc;
     char d[160];
     int depth = c->depth;
     memset(&u, 0, sizeof u);
     c->u = &u;
+    c->proc = proc;
     c->depth = -1;                      /* the unit's own list is depth 0 */
     walk_list(c, body);
     c->depth = depth;
@@ -586,6 +609,7 @@ static void walk_unit(check_t *c, stmt_t *body, stmt_t *proc) {
     }
     free_unit(&u);
     c->u = outer;
+    c->proc = outer_proc;
 }
 
 /* a and b one name but for a type suffix */

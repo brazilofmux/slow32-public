@@ -1182,6 +1182,15 @@ static error_t fn_point(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* PLAY(n): the notes waiting to be played -- none: PLAY plays nothing here */
+static error_t fn_play(value_t *args, int nargs, value_t *out) {
+    double n;
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    EVAL_CHECK(get_num(&args[0], &n));
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
 /* PMAP(c, n): a coordinate mapped between the world's (WINDOW) and the
  * view's pixels (VIEW), n 0 and 1 to the pixel's x and y (rounded as
  * CINT rounds), 2 and 3 back (a SINGLE) */
