@@ -422,9 +422,9 @@ Then the small ones (3b4a1bee/5e9a060a): the loader's 2048-line limit
 (it went on with what it had: "DO without LOOP" 4,000 lines on), a
 label only at a line's start, FUNCTION f% named f, GET #/PUT # and
 MID$ = of elements and records, PMAP, VARSEG; BSAVE, BLOAD and CALL
-ABSOLUTE known (QB's "Advanced feature unavailable" here: PEEK and POKE
-reach a flat 64K, not the machine's memory -- DEF SEG = &HA000 is
-Illegal function call); the checker's array parameters, ERASEd arrays,
+ABSOLUTE known (QB's "Advanced feature unavailable" here; PEEK and POKE
+then reached a flat 64K -- the machine's addresses came later, below);
+the checker's array parameters, ERASEd arrays,
 and RESTORE in a SUB.  72 compile, no checker refusals left.
 
 Then VIEW and WINDOW (with PMAP, POINT both ways, CLS n), checked in
@@ -440,11 +440,38 @@ STATIC, STATIC x AS type, one-line ELSEIF, label 1.1, SCREEN , , p, p)
 and GOSUB in procedures (s32-bc): 84 compile.  Then whole arrays as
 arguments (87 compile), DEFtype as the text's: the parser writes each
 name's suffix, the run-time DEFtype gone (89); RUN in s32-bc (91); DRAW (92); the text screen -- SCREEN(), VIEW PRINT,
-WIDTH's rows -- (93).  Left: ON ERROR in a SUB (s32-bc), the machine's
-memory (not to be done unasked), and two QB64 programs.  Left: DEFtype after a use (done), RUN in s32-bc (2), SCREEN()
-the function (2: needs a model of the text screen), DRAW, the machine's
-memory (CALL ABSOLUTE, BSAVE), a name's ! under DEFINT (mooncr), and two
-QB64 programs QBasic loads only because its _ continues a line.
+WIDTH's rows -- (93).  Left: ON ERROR in a SUB (s32-bc), the four
+programs of the machine's memory, and two QB64 programs QBasic loads
+only because its _ continues a line.
+
+The machine's memory, reviewed (2026-11-04): what is DOS and x86 in
+QuickBASIC splits in two.  Machine code -- CALL ABSOLUTE, CALL
+INTERRUPT, code BLOADed or POKEd and run -- is not done and will not
+be: SLOW-32 is W^X, and running it would mean another processor's
+interpreter inside; it stays "Advanced feature unavailable".  The
+PC's well-known places a program reads and writes as data are done
+(sbasic/src/machine.c, shared by both compilers through the
+interpreter's objects):
+
+- PEEK/POKE at DEF SEG * 16 + offset, wrapped at 1MB; an offset past
+  -32768..65535 is Overflow.  The first 640K keeps what is POKEd
+  (made at the first POKE); A000 is the mode-13 frame (POINT and PSET
+  see it); B800 the text screen's cells, character then attribute
+  (SCREEN() sees them); 0:400 the BIOS data area -- shift flags kept,
+  the video mode, columns and rows, the tick count; the rest reads 0.
+- OUT/INP/WAIT: the VGA DAC (3C7 read index, 3C8 write index, 3C9 the
+  components, six bits each, three to a colour -- PALETTE's table
+  changes with it), 3DA's retrace bit by the clock at 70 a second, so
+  WAIT &H3DA, 8 waits a frame; any other port reads 255 and takes
+  nothing, and WAIT there looks once rather than hang.  QBasic's
+  ranges, probed: a port -65536..65535, a value or mask an INTEGER
+  (its low byte used), past them Overflow.
+
+sbasic/tests/pcmem.bas is held to QBasic byte for byte (text mode);
+sbc/tests/native/vgaports.bas (SCREEN 13, the DAC, A000) is held to
+the interpreter only until the DOS emulator has a VGA.  Not done, and
+not asked: arrays at addresses (VARPTR/VARSEG into a model of DGROUP,
+BSAVE/BLOAD of an array), CP437 output, DOS paths.
 
 Older list, by count: SCREEN
 with arguments left out, names with a dot
