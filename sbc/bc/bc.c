@@ -114,8 +114,18 @@ static void dead_blk(void) {
     begin_blk(new_blk());
 }
 
+/* a procedure's body is being lowered (bcb_NAME): its variables are
+ * words of area, its first parameter, from bc_area on (area[0] the op it
+ * is at, then the arguments' pointers) */
+static int bc_pbody, bc_area_param, bc_area;
+
 static int alloca_of(int ty, int size) {
     int a;
+    if (bc_pbody) {
+        a = hi_emit(HI_ADDI, TY_INT, bc_area_param, -1, bc_area, NULL);
+        bc_area += (size + 3) & ~3;
+        return a;
+    }
     bc_frame = bc_frame + size;
     a = hi_emit(HI_ALLOCA, ty, -1, -1, 0 - bc_frame, NULL);
     hl_alloca_room(1);
@@ -144,7 +154,10 @@ static void mangle(char *out, size_t cap, const char *pre, const char *name) {
 
 /* the program's procedures, each a function of its own: bcp_NAME(result
  * if a FUNCTION, then a pointer per parameter) */
-typedef struct { stmt_t *def; Node node; char sym[96]; } proc_t;
+/* (in a program that traps errors, bcp_NAME passes its arguments to
+ * bcb_NAME(area, at) through bcrt_proc_run: the body, its variables in
+ * area, entered again at an op after the handler RESUMEs into it) */
+typedef struct { stmt_t *def; Node node; char sym[96]; Node bnode; char bsym[100]; int area; } proc_t;
 static proc_t *bc_procs;
 static int bc_nprocs;
 static proc_t *bc_proc;         /* the one being lowered; NULL for the main program */
@@ -2157,19 +2170,19 @@ static int op_block(void) {
     int b = new_blk();
     goto_blk(b);
     begin_blk(b);
-    if (bc_body) {
+    if (bc_body || bc_pbody) {
         op_add(b);
-        st(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_op"), 0, iconst(bc_nops - 1));
+        st(bc_body ? hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_op") : bc_area_param, 0, iconst(bc_nops - 1));
         st(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_line"), 0, iconst(bc_basic_line));
     }
     return b;
 }
 
-static void op_here(void) { if (bc_body) op_block(); }
+static void op_here(void) { if (bc_body || bc_pbody) op_block(); }
 
 /* an op that is a jump, to blk */
 static void op_jump(int blk) {
-    if (bc_body) {
+    if (bc_body || bc_pbody) {
         int b = new_blk();
         goto_blk(b);
         begin_blk(b);
@@ -2187,6 +2200,27 @@ static void oplabel_add(const char *name) {
     strncpy(bc_oplabels[bc_noplabels].name, name, 63);
     bc_oplabels[bc_noplabels].name[63] = '\0';
     bc_oplabels[bc_noplabels++].op = bc_nops;
+}
+
+/* a main-program label's op, a constant: in bcm_body patched when its
+ * ops are all known (ON ERROR GOTO's, RESUME's); in a procedure's body,
+ * lowered after bcm_body, known (-1: no such label) */
+static int label_op(const char *label) {
+    int k = iconst(-1);
+    if (!bc_body) {
+        for (int j = 0; j < bc_noplabels; j++)
+            if (strcmp(bc_oplabels[j].name, label) == 0) h_val[k] = bc_oplabels[j].op;
+        return k;
+    }
+    if (bc_nopfix == bc_capopfix) {
+        bc_capopfix = bc_capopfix ? bc_capopfix * 2 : 8;
+        bc_opfix = realloc(bc_opfix, (size_t)bc_capopfix * sizeof(opfix_t));
+        if (!bc_opfix) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
+    }
+    bc_opfix[bc_nopfix].inst = k;
+    strncpy(bc_opfix[bc_nopfix].label, label, 63);
+    bc_opfix[bc_nopfix++].label[63] = '\0';
+    return k;
 }
 
 /* a FOR's limit or step, kept as the interpreter keeps them (a double,
@@ -2990,20 +3024,8 @@ static void bc_stmt(stmt_t *s) {
         if (*q == '\0' && q != s->label.name) bc_basic_line = atoi(s->label.name);
         break;
     }
-    case STMT_ON_ERROR: {       /* the handler: its label's op (bcm_body patches it) */
-        int cb, k;
-        if (bc_proc) { bc_not_yet(s->line, "ON ERROR in a SUB or FUNCTION"); break; }
-        k = iconst(-1);
-        if (s->on_error.label[0]) {
-            if (bc_nopfix == bc_capopfix) {
-                bc_capopfix = bc_capopfix ? bc_capopfix * 2 : 8;
-                bc_opfix = realloc(bc_opfix, (size_t)bc_capopfix * sizeof(opfix_t));
-                if (!bc_opfix) { fprintf(stderr, "s32-bc: out of memory\n"); exit(1); }
-            }
-            bc_opfix[bc_nopfix].inst = k;
-            strncpy(bc_opfix[bc_nopfix].label, s->on_error.label, 63);
-            bc_opfix[bc_nopfix++].label[63] = '\0';
-        }
+    case STMT_ON_ERROR: {       /* the handler: its label's op */
+        int cb, k = s->on_error.label[0] ? label_op(s->on_error.label) : iconst(-1);
         cb = h_ncarg;
         carg(k, 0);
         call_end(cb, 1, "bcrt_on_error", NULL);
@@ -3012,7 +3034,9 @@ static void bc_stmt(stmt_t *s) {
     case STMT_RESUME:
         if (bc_proc) { bc_not_yet(s->line, "RESUME in a SUB or FUNCTION"); break; }
         if (s->resume_stmt.resume_next == 2) {
-            call_void("bcrt_resume_label");
+            int cb = h_ncarg;
+            carg(label_op(s->resume_stmt.label), 0);
+            call_end(cb, 1, "bcrt_resume_label", NULL);
             goto_blk(label_blk(s->resume_stmt.label));
         } else {
             int cb = h_ncarg;
@@ -3818,6 +3842,7 @@ static void func_begin(void) {
     bc_nfn_open = 0;
     bc_proc = NULL;
     bc_proc_result = NULL;
+    bc_pbody = 0;
     begin_blk(new_blk());
 }
 
@@ -3826,11 +3851,9 @@ static void func_begin(void) {
  * pointer first; SHARED names the main program's variables (globals),
  * STATIC its own globals; every other name a variable of the frame,
  * made 0 or empty as it starts and let go as it returns */
-static void proc_func(proc_t *p, Node *fn) {
-    stmt_t *def = p->def;
-    int fnc = def->type == STMT_FUNC_DEF, n = def->proc_def.nparams + fnc, pin[17], ord = 0;
-    func_begin();
-    bc_proc = p;
+/* the parameters' slots, n of them (the ABI's) */
+static void func_params(int n) {
+    int ord = 0;
     hl_param_room(n);
     hl_param_nflat = n;
     hl_nparams = n;
@@ -3839,7 +3862,32 @@ static void proc_func(proc_t *p, Node *fn) {
         if (hl_param_map[i] < 0) { hl_param_stkord[i] = ord; ord += 4; }
         else hl_param_stkord[i] = -1;
     }
-    for (int i = 0; i < n; i++) pin[i] = hi_emit(HI_PARAM, TY_INT, -1, -1, i, NULL);
+}
+
+/* body: in a program that traps errors, the procedure's body bcb_NAME
+ * (area, at) -- its arguments' pointers from area, from the start (at 0)
+ * or at bcrt_ptarget's op (at 1, the handler RESUMEd into it) */
+static void proc_func(proc_t *p, Node *fn, int body) {
+    stmt_t *def = p->def;
+    int fnc = def->type == STMT_FUNC_DEF, n = def->proc_def.nparams + fnc, pin[17];
+    int at = -1, start = -1, disp = -1;
+    func_begin();
+    bc_proc = p;
+    if (body) {
+        func_params(2);
+        bc_area_param = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
+        at = hi_emit(HI_PARAM, TY_INT, -1, -1, 1, NULL);
+        for (int i = 0; i < n; i++)
+            pin[i] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, TY_INT, bc_area_param, -1, 4 + 4 * i, NULL),
+                             -1, 0, NULL);
+        bc_area = 4 + 4 * n;
+        bc_pbody = 1;
+        bc_nops = 0;
+        bc_basic_line = 0;
+    } else {
+        func_params(n);
+        for (int i = 0; i < n; i++) pin[i] = hi_emit(HI_PARAM, TY_INT, -1, -1, i, NULL);
+    }
     for (int i = 0; i < def->proc_def.nparams; i++) {
         var_t *v = var_push();
         char an[68];
@@ -3899,6 +3947,13 @@ static void proc_func(proc_t *p, Node *fn) {
         }
     }
     prescan(def->proc_def.body);
+    if (body) {                 /* (entered again: on at its op, its variables as they are) */
+        start = new_blk();
+        disp = new_blk();
+        hi_emit(HI_BRC, TY_VOID, at, disp, start, NULL);
+        bc_live = 0;
+        begin_blk(start);
+    }
     for (int i = 0; i < bc_nvars; i++)
         if (bc_vars[i]->local) var_zero(bc_vars[i]);
     forslots_zero();
@@ -3922,6 +3977,7 @@ static void proc_func(proc_t *p, Node *fn) {
     bc_lowering = 0;
     goto_blk(bc_proc_exit);
     begin_blk(bc_proc_exit);
+    if (body) op_add(bc_proc_exit);     /* (the op past the last: its return) */
     if (fnc) {                  /* its value into the caller's slot, a string's reference with it */
         var_t *r = bc_proc_result;
         if (r->type == VAL_SINGLE)
@@ -3942,10 +3998,43 @@ static void proc_func(proc_t *p, Node *fn) {
     call_void("bcrt_leave");
     hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
     bc_live = 0;
+    if (body) {
+        int k, ok, tab;
+        begin_blk(disp);
+        k = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_ptarget"), -1, 0, NULL);
+        tab = new_blk();
+        ok = hi_emit(HI_SLTU, TY_INT, k, iconst(bc_nops), 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, ok, tab, bc_proc_exit, NULL);
+        bc_live = 0;
+        begin_blk(tab);
+        hi_emit_jmptab(k, bc_proc_exit, bc_op_blk, bc_nops);
+        bc_live = 0;
+        p->area = (bc_area + 7) & ~7;
+        bc_pbody = 0;
+    }
     ret_dispatch();             /* (GOSUB in it: its own return points) */
     fail_blocks();
     fn->locals_size = bc_frame;
     bc_proc = NULL;
+}
+
+/* bcp_NAME in a program that traps errors: its arguments' pointers into
+ * an area of its frame, which bcrt_proc_run gives its body, bcb_NAME */
+static void proc_wrapper(proc_t *p, Node *fn) {
+    stmt_t *def = p->def;
+    int n = def->proc_def.nparams + (def->type == STMT_FUNC_DEF), area, cb;
+    func_begin();
+    func_params(n);
+    area = alloca_of(TY_INT, p->area);
+    for (int i = 0; i < n; i++)
+        st(area, 4 + 4 * i, hi_emit(HI_PARAM, TY_INT, -1, -1, i, NULL));
+    cb = h_ncarg;
+    carg(hi_emit(HI_FADDR, TY_INT, -1, -1, 0, p->bsym), 0);
+    carg(area, 0);
+    call_end(cb, 2, "bcrt_proc_run", NULL);
+    hi_emit(HI_RET, TY_INT, iconst(0), -1, 0, NULL);
+    bc_live = 0;
+    fn->locals_size = bc_frame;
 }
 
 /* what the whole program decides before any function is lowered: DEFtypes
@@ -4006,6 +4095,10 @@ static void program_prepare(void) {
             p->node.is_static = 0;  /* (global: the backend's dead-function pass reopens its
                                      * output with selfhost libc's open() flags, wrong on a host) */
             p->node.nparams = s->proc_def.nparams + (s->type == STMT_FUNC_DEF);
+            mangle(p->bsym, sizeof p->bsym, "bcb_", s->proc_def.name);
+            p->bnode.name = p->bsym;
+            p->bnode.is_static = 0;
+            p->bnode.nparams = 2;
         }
     for (int k = 0; k < bc_nprocs; k++)       /* (main zeroes them all, first) */
         for (stmt_t *s = bc_procs[k].def->proc_def.body; s; s = s->next)
@@ -4104,7 +4197,12 @@ static void body_func(Node *fn) {
 static void hl_func(Node *fn) {
     if (fn == &bc_bodynode) { body_func(fn); return; }
     for (int k = 0; k < bc_nprocs; k++)
-        if (fn == &bc_procs[k].node) { proc_func(&bc_procs[k], fn); return; }
+        if (fn == &bc_procs[k].bnode) { proc_func(&bc_procs[k], fn, 1); return; }
+        else if (fn == &bc_procs[k].node) {
+            if (bc_trap) proc_wrapper(&bc_procs[k], fn);
+            else proc_func(&bc_procs[k], fn, 0);
+            return;
+        }
     func_begin();
     bc_nanames = 0;
     bc_nshadow = 0;
@@ -4202,6 +4300,13 @@ int main(int argc, char **argv) {
     }
     for (int k = 0; k < bc_nprocs; k++)
         bc_procs[k].node.next = k + 1 < bc_nprocs ? &bc_procs[k + 1].node : NULL;
+    if (bc_trap)                /* (each body before its wrapper: the wrapper takes its area's size) */
+        for (int k = 0; k < bc_nprocs; k++) {
+            Node *pk = k ? &bc_procs[k - 1].node : NULL;
+            bc_procs[k].bnode.next = &bc_procs[k].node;
+            if (pk) pk->next = &bc_procs[k].bnode;
+            else bc_bodynode.next = &bc_procs[0].bnode;
+        }
     bc_root.body = &bc_main;
     cg_fd = fd;
     cg_outpath = argv[2];

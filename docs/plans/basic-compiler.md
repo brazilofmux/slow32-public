@@ -500,6 +500,31 @@ at VGA (11, 12, 13) blue * 65536 + green * 256 + red, six bits each;
 -1 leaves it.  graphics.bas had PALETTE 4, &HFF8000 in SCREEN 1, which
 QBasic refuses twice over, and colors past 3 that it draws as 3.
 
+Then errors in procedures (cr.bas: ON ERROR in a SUB; 94 compile).
+QBasic's handler is the main program's code, but an error in a SUB or
+FUNCTION runs it with the procedure still there, and RESUME and RESUME
+NEXT go back into the procedure; RESUME label leaves it.  The
+interpreter had RESUME land after the CALL.  Now act_transfer runs the
+handler (the main program's activation, from its label) where the
+error is; RESUME label unwinds with ERR_RESUME_LABEL.  s32-bc: in a
+program that traps, each procedure is a wrapper (bcp_NAME, the ABI's)
+and a body, bcb_NAME(area, at), whose variables are words of an area
+the wrapper keeps in its frame -- area[0] the op it is at -- run by
+bcrt_proc_run, which setjmps in C; RESUME longjmps there and the body
+is entered again at the op, as bcm_body is.  (Not a setjmp in compiled
+code: HIR keeps frame slots in registers.)  s32-sbc makes no native
+procedures in such a program.  On the way, each checked in QBasic
+(procerr.bas, errstate.bas, errgoto0.bas, native/trapprocs.bas):
+COMMON SHARED shares (it was ignored: four corpus programs lost every
+SUB's changes); ERR is 0 after any RESUME, ERL stays; ON ERROR GOTO
+another label in the handler keeps it handling, GOTO 0 there stops the
+program with the error; out of stack in a procedure is not trapped; an
+untrapped ERROR n prints its error's message (it printed "ON ERROR
+GOTO"), "Unprintable error" for a number with none.  Open: COMMON
+SHARED a() (an array) is still passed over; and s$ = s$ + f$, where f$
+changes s$, appends to s$ as f$ leaves it in QBasic (an append in
+place), not as it was.
+
 Older list, by count: SCREEN
 with arguments left out, names with a dot
 (SUB summer.day, GOSUB LOAD.SPRITES), SUB names the interpreter has as

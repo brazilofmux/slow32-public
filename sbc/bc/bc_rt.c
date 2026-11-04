@@ -72,8 +72,34 @@ static int bcrt_ngosub;         /* GOSUBs pending (bcrt_gosubs, below) */
  * interpreter's gosub_base) */
 static int *bcrt_gbase, bcrt_ngbase, bcrt_capgbase;
 
+/* A procedure of a program that traps errors runs as bcrt_proc_run
+ * runs it: its body (area, at), its variables in area, area[0] the op
+ * it is at.  An error in it runs the handler -- the main program's
+ * statements, bcm_body at the handler's op -- with the procedure still
+ * there under it, as QuickBASIC does; RESUME and RESUME NEXT come back
+ * into it (a longjmp to its bcrt_proc_run, its body entered again at
+ * bcrt_ptarget's op), RESUME label goes out to the main program. */
+typedef struct pframe { jmp_buf jb; int *area; struct pframe *prev; } pframe_t;
+static pframe_t *bcrt_ptop;     /* the innermost procedure running */
+static pframe_t *trap_frame;    /* the procedure the handler is for, while it runs */
+static void (*bcrt_body)(int);
+void bcrt_end(void);
+static int trap_saved_op, trap_saved_line;
+int bcrt_ptarget;
+
+void bcrt_proc_run(void (*body)(int *, int), int *area) {
+    pframe_t f;
+    f.area = area;
+    f.prev = bcrt_ptop;
+    bcrt_ptop = &f;
+    body(area, setjmp(f.jb) ? 1 : 0);
+    bcrt_ptop = f.prev;
+}
+
 static int bcrt_nusing;
+static void bcrt_trap_proc(int code);
 static void bcrt_trap(int code) {
+    if (bcrt_ptop) bcrt_trap_proc(code);
     while (bcrt_nredirect > 0) eval_print_file_end(&bcrt_redirect[--bcrt_nredirect]);
     bcrt_nusing = 0;
     trap_code = code;
@@ -85,6 +111,8 @@ static void bcrt_trap(int code) {
 }
 
 static void bcrt_fail(error_t e) {
+    /* (out of stack in a procedure: QBasic does not trap it, and stops) */
+    if (e == ERR_STACK_OVERFLOW && bcrt_ptop) trap_handler = -1;
     if (bcrt_running && trap_handler >= 0 && !trap_active && eval_trappable(e))
         bcrt_trap(error_qb_code(e));
     error_print(e, 0);
@@ -96,6 +124,7 @@ static void bcrt_fail(error_t e) {
  * bcrt_target, again after each error trapped */
 void bcrt_run(void (*body)(int)) {
     int at = 0;
+    bcrt_body = body;
     for (;;) {
         if (setjmp(bcrt_jb) == 0) {
             bcrt_running = 1;
@@ -114,14 +143,22 @@ void bcrt_run(void (*body)(int)) {
             bcrt_ngosub = bcrt_gbase[0];
             bcrt_ngbase = 0;
         }
+        bcrt_ptop = NULL;
+        trap_frame = NULL;
         at = 1;
     }
 }
 
 /* ON ERROR GOTO label (op: the label's), or ON ERROR GOTO 0 (op -1) */
+/* (in the handler, as QBasic: GOTO 0 stops the program with the error
+ * being handled; another label is the handler from now, and this one
+ * still RESUMEs) */
 void bcrt_on_error(int op) {
     trap_handler = op;
-    trap_active = 0;
+    if (op < 0 && trap_active) {
+        error_raised_code = trap_code;
+        bcrt_fail(ERR_ON_ERROR_GOTO);
+    }
 }
 
 /* RESUME (next 0) or RESUME NEXT (1): to the op the error was in, or the
@@ -129,13 +166,47 @@ void bcrt_on_error(int op) {
 void bcrt_resume(int next) {
     if (!trap_active) bcrt_fail(ERR_RESUME_WITHOUT_ERROR);
     trap_active = 0;
+    trap_code = 0;                      /* (ERR is 0 after a RESUME, QBasic) */
+    if (trap_frame) {                   /* (back into the procedure) */
+        pframe_t *f = trap_frame;
+        trap_frame = NULL;
+        bcrt_ptop = f;
+        bcrt_op = trap_saved_op;
+        bcrt_line = trap_saved_line;
+        bcrt_ptarget = trap_op + (next ? 1 : 0);
+        longjmp(f->jb, 1);
+    }
     bcrt_target = trap_op + (next ? 1 : 0);
 }
 
-/* RESUME label: the jump is compiled code's */
-void bcrt_resume_label(void) {
+/* RESUME label (op: the label's): the jump is compiled code's -- but
+ * from a procedure's error, out to the main program at the label */
+void bcrt_resume_label(int op) {
     if (!trap_active) bcrt_fail(ERR_RESUME_WITHOUT_ERROR);
     trap_active = 0;
+    trap_code = 0;
+    if (trap_frame) {
+        bcrt_target = op;
+        longjmp(bcrt_jb, 1);
+    }
+}
+
+/* an error in a procedure, the handler set: the handler runs here; a
+ * RESUME leaves it (above), and if it reaches the program's end instead,
+ * the program ends */
+static void bcrt_trap_proc(int code) {
+    while (bcrt_nredirect > 0) eval_print_file_end(&bcrt_redirect[--bcrt_nredirect]);
+    bcrt_nusing = 0;
+    trap_code = code;
+    trap_line = bcrt_line;
+    trap_active = 1;
+    trap_frame = bcrt_ptop;
+    trap_op = bcrt_ptop->area[0];
+    trap_saved_op = bcrt_op;
+    trap_saved_line = bcrt_line;
+    bcrt_target = trap_handler;
+    bcrt_body(1);
+    bcrt_end();
 }
 
 /* ERROR n: n is ERR, the handler's if there is one (else "ON ERROR GOTO",
@@ -144,6 +215,7 @@ void bcrt_error_raise(int n) {
     if (bcrt_running && trap_handler >= 0 && !trap_active)
         bcrt_trap(n);
     trap_code = n;
+    error_raised_code = n;
     trap_line = bcrt_line;
     bcrt_fail(ERR_ON_ERROR_GOTO);
 }
