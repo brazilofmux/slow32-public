@@ -102,6 +102,8 @@ static int nprocs_known;
 static int has_deftype;         /* DEF*: a name's type is not its suffix's */
 static const char *consts[256]; /* the names CONST defines anywhere: never */
 static int nconsts;             /* stored natively (a store is the error) */
+static const char *fixeds[256]; /* the STRING * n variables (made n characters */
+static int nfixeds;             /* again after a call passed them by reference) */
 static int nat_local;           /* writing a native procedure (see below) */
 static const stmt_t *ldef;      /* that procedure */
 static int native_ok_proc[1024];        /* procs[j] has a native version */
@@ -150,6 +152,11 @@ static void scan_program(const stmt_t *s, int top) {
         if (s->type == STMT_DEFTYPE) has_deftype = 1;
         if (s->type == STMT_DEF_FN) note_deffn(s);
         if (s->type == STMT_CONST && nconsts < 256) consts[nconsts++] = s->const_stmt.name;
+        /* (a STRING * n is stored by the interpreter too, which cuts or pads) */
+        if (s->type == STMT_DIM_SCALAR && s->dim_scalar.fixlen && nconsts < 256)
+            consts[nconsts++] = s->dim_scalar.name;
+        if (s->type == STMT_DIM_SCALAR && s->dim_scalar.fixlen && nfixeds < 256)
+            fixeds[nfixeds++] = s->dim_scalar.name;
         if (top && (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) && nprocs_known < 1024) {
             procs[nprocs_known].name = s->proc_def.name;
             procs[nprocs_known].nparams = s->proc_def.nparams;
@@ -318,6 +325,22 @@ static void emit_cstring(FILE *out, const char *p, int n) {
 
 #define CHECK "if (err != ERR_NONE) goto fail;"
 
+/* after a call: each STRING * n variable passed by reference cut or
+ * padded again (eval_refix) */
+static void emit_refix(FILE *out, expr_t *const *args, int n) {
+    for (int i = 0; i < n; i++) {
+        if (args[i]->type != EXPR_VARIABLE || args[i]->paren) continue;
+        for (int j = 0; j < nfixeds; j++)
+            if (strcasecmp(fixeds[j], args[i]->var.name) == 0) {
+                fprintf(out, "    err = eval_refix(env, ");
+                emit_cstring(out, args[i]->var.name, (int)strlen(args[i]->var.name));
+                fprintf(out, "); " CHECK "\n");
+                break;
+            }
+    }
+}
+
+
 static int emit_expr(FILE *out, const expr_t *e, const char *path);
 
 /* name(args): an array read when eval_call_array says it is one */
@@ -419,6 +442,7 @@ static int emit_expr(FILE *out, const expr_t *e, const char *path) {
                 fprintf(out, "      err = eval_call_proc(");
                 emit_cstring(out, e->call.name, (int)strlen(e->call.name));
                 fprintf(out, ", &P[%d], av, R%d, %d, &T[%d]); " CHECK " }\n", proc_index(e->call.name), rid, n, t);
+                emit_refix(out, e->call.args, n);
                 return t;
             }
             if (e->call.nargs >= 1 && e->call.nargs <= 8)
@@ -1468,6 +1492,14 @@ static void emit_generic_assign(FILE *out, const stmt_t *s, int k) {
             fprintf(out, "); " CHECK " }\n");
             snprintf(path, sizeof path, "c->ops[%d].s->assign.value", k);
             int t = emit_expr(out, s->assign.value, path);
+            if (is_const_name(s->assign.name)) {
+                /* (V[] may hold it from a read: a CONST, a STRING * n,
+                 * is stored by eval_assign_store every time) */
+                fprintf(out, "    err = eval_assign_store(env, ");
+                emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
+                fprintf(out, ", &T[%d]);\n    VAL_CLEAR(&T[%d]); " CHECK "\n", t, t);
+                return;
+            }
             fprintf(out, "    if (VG[%d] != env_generation || !V[%d]) { V[%d] = eval_assign_slot(env, ", v, v, v);
             emit_cstring(out, s->assign.name, (int)strlen(s->assign.name));
             fprintf(out, "); VG[%d] = env_generation; }\n", v);
@@ -1482,13 +1514,15 @@ static void emit_generic_array_assign(FILE *out, const stmt_t *s, int k) {
     {
             int n = s->array_assign.nindices;
             fprintf(out, "    { int ix[8];\n");
+            /* the value, then the subscripts (QBasic's order, exec_array_assign) */
+            snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
+            int t = emit_expr(out, s->array_assign.value, path);
             for (int i = 0; i < n; i++) {
                 snprintf(path, sizeof path, "c->ops[%d].s->array_assign.indices[%d]", k, i);
                 int u = emit_expr(out, s->array_assign.indices[i], path);
-                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); " CHECK "\n", u, i, u);
+                fprintf(out, "    err = val_to_integer(&T[%d], &ix[%d]); VAL_CLEAR(&T[%d]); "
+                        "if (err != ERR_NONE) { VAL_CLEAR(&T[%d]); } " CHECK "\n", u, i, u, t);
             }
-            snprintf(path, sizeof path, "c->ops[%d].s->array_assign.value", k);
-            int t = emit_expr(out, s->array_assign.value, path);
             fprintf(out, "    err = eval_array_store(");
             emit_cstring(out, s->array_assign.name, (int)strlen(s->array_assign.name));
             fprintf(out, ", %d, ix, &T[%d]); VAL_CLEAR(&T[%d]); " CHECK " }\n", n, t, t);
@@ -1539,7 +1573,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     nat_type(s->array_assign.indices[i]) == N_STRING) native = 0;
             emit_preamble(out, op, k);
             if (native) {
-                /* the subscripts, then the value, then the bounds, as
+                /* the value, then the subscripts, then the bounds, as
                  * exec_array_assign and eval_array_store */
                 uses_t u;
                 u.nv = u.na = u.nf = 0;
@@ -1555,11 +1589,12 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                     fprintf(out, ") {\n");
                     fprintf(out, "    unsigned sg = env_generation, sa = array_generation; (void)sg; (void)sa;\n");
                     cur_uses = &u;
-                    /* each subscript converted as it is evaluated, all before
-                     * the value */
+                    /* the value, then each subscript converted as it is
+                     * evaluated (QBasic's order, exec_array_assign) */
                     char cv[8][40];
                     const char *cix[8];
                     int cixt[8];
+                    int t = nat_emit(out, s->array_assign.value, x);
                     for (int i = 0; i < n; i++) {
                         ixt[i] = nat_emit(out, s->array_assign.indices[i], ixs[i]);
                         ix[i] = ixs[i];
@@ -1567,7 +1602,6 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
                         cix[i] = cv[i];
                         cixt[i] = N_LONG;
                     }
-                    int t = nat_emit(out, s->array_assign.value, x);
                     sprintf(flat, "fa%d", k);
                     nat_index(out, j, cix, cixt, n, flat);
                     sprintf(slot, "(&AR[%d]->data[%s])", j, flat);
@@ -1673,6 +1707,7 @@ static int emit_stmt(FILE *out, const code_t *c, const op_t *op, int k) {
             fprintf(out, "      err = eval_call_proc(");
             emit_cstring(out, s->call_stmt.name, (int)strlen(s->call_stmt.name));
             fprintf(out, ", &P[%d], av, R%d, %d, NULL); " CHECK " }\n", j, rid, n);
+            emit_refix(out, s->call_stmt.args, n);
             return 1;
         }
         case STMT_GOTO:
