@@ -21,11 +21,63 @@ static void parser_error(parser_t *p, error_t err) {
 
 /* a line number as a label's name (snprintf "%d", which a program's
  * every GOTO and numbered line paid for) */
+/* a name that keeps its spelling whatever the DEFtype: a CONST's, or
+ * one declared AS a type */
+static void plain_note(parser_t *p, const char *name) {
+    for (int i = 0; i < p->nplain; i++)
+        if (strcmp(p->plain[i], name) == 0) return;
+    if (p->nplain == p->capplain) {
+        int cap = p->capplain ? p->capplain * 2 : 64;
+        char (*t)[64] = realloc(p->plain, (size_t)cap * sizeof *t);
+        if (!t) return;
+        p->plain = t;
+        p->capplain = cap;
+    }
+    ast_name_copy(p->plain[p->nplain++], name);
+}
+
+static int is_record_name(parser_t *p, const char *name);
+
+/* a variable's, an array's or a FUNCTION's name t as QuickBASIC reads it
+ * here: with no suffix (and no !), the DEFtype's in force (an FN's, by
+ * the letter after FN) -- not a builtin's, a record's, a CONST's, nor
+ * one declared AS a type */
+static void canon_tok(parser_t *p, token_t *t) {
+    size_t n = strlen(t->text);
+    int letter;
+    static const char sfx[] = { [VAL_INTEGER] = '%', [VAL_LONG] = '&', [VAL_DOUBLE] = '#', [VAL_STRING] = '$' };
+    if (t->suffix || !n || n > 60 || builtin_exists(t->text) || is_record_name(p, t->text) ||
+        strcmp(t->text, "ERR") == 0 || strcmp(t->text, "ERL") == 0)
+        return;
+    for (int i = 0; i < p->nplain; i++)
+        if (strcmp(p->plain[i], t->text) == 0) return;
+    letter = strncmp(t->text, "FN", 2) == 0 && t->text[2] ? t->text[2] : t->text[0];
+    if (letter < 'A' || letter > 'Z') return;
+    val_type_t ty = p->deftype[letter - 'A'];
+    if (ty == VAL_SINGLE || (int)ty >= (int)sizeof sfx || !sfx[ty]) return;
+    t->text[n] = sfx[ty];
+    t->text[n + 1] = '\0';
+    t->suffix = sfx[ty];
+}
+
+/* FUNCTION f$ (declared or defined with its suffix): f, written alone,
+ * is it (QuickBASIC), whatever the DEFtype -- f kept as it is written */
+static void func_note(parser_t *p, const token_t *t) {
+    char bare[64];
+    if (t->suffix && t->suffix != '!' && ast_name_bare(t->text, bare)) plain_note(p, bare);
+}
+
 /* a name a DIM ... AS TYPE made a record */
 static void record_note(parser_t *p, const char *name) {
     for (int i = 0; i < p->nrecords; i++)
         if (strcmp(p->records[i], name) == 0) return;
     if (p->nrecords < 256) ast_name_copy(p->records[p->nrecords++], name);
+}
+
+static int is_record_name(parser_t *p, const char *name) {
+    for (int i = 0; i < p->nrecords; i++)
+        if (strcmp(p->records[i], name) == 0) return 1;
+    return 0;
 }
 
 /* rec.field, read as one name: a record's field when rec is one (then
@@ -121,6 +173,10 @@ static expr_t *parse_primary(parser_t *p) {
     }
     if (tok->type == TOK_IDENT) {
         token_t t = lexer_next(&p->lex);
+        {
+            char rec[64], field[64];
+            if (!record_split(p, t.text, rec, field)) canon_tok(p, &t);
+        }
         if (lexer_check(&p->lex, TOK_LPAREN)) {
             lexer_skip(&p->lex);
             expr_t *call = expr_call(t.text, t.line);
@@ -959,6 +1015,7 @@ static stmt_t *parse_for(parser_t *p) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable after FOR"); return NULL;
     }
     token_t var = lexer_next(&p->lex);
+    canon_tok(p, &var);
     val_type_t vt = var_type_from_name(var.text);
     if (!expect(p, TOK_EQ)) return NULL;
     expr_t *start = parse_expr(p);
@@ -988,6 +1045,7 @@ static stmt_t *parse_next(parser_t *p) {
                 parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
             }
             token_t v = lexer_next(&p->lex);
+            canon_tok(p, &v);
             stmt_next_add_var(s, v.text);
         } while (lexer_match(&p->lex, TOK_COMMA));
     }
@@ -1185,6 +1243,7 @@ static stmt_t *parse_const(parser_t *p) {
             parser_error(p, ERR_SYNTAX); stmt_free(head); return NULL;
         }
         token_t name = lexer_next(&p->lex);
+        plain_note(p, name.text);           /* (typed by its value, not by DEFtype) */
         if (!expect(p, TOK_EQ)) { stmt_free(head); return NULL; }
         expr_t *val = parse_expr(p);
         if (!val) { stmt_free(head); return NULL; }
@@ -1220,9 +1279,12 @@ static stmt_t *parse_shared(parser_t *p) {
 /* a SHARED or STATIC list's name: NAME, or an array's NAME() */
 static int list_name(parser_t *p, stmt_t *s, void (*add)(stmt_t *, const char *)) {
     token_t t = lexer_next(&p->lex);
-    if (lexer_match(&p->lex, TOK_LPAREN)) {
+    int arr = lexer_match(&p->lex, TOK_LPAREN);
+    if (arr && !expect(p, TOK_RPAREN)) return 0;
+    if (lexer_check(&p->lex, TOK_AS)) plain_note(p, t.text);   /* (x AS type: as written) */
+    else canon_tok(p, &t);
+    if (arr) {
         char a[68];
-        if (!expect(p, TOK_RPAREN)) return 0;
         snprintf(a, sizeof a, "%s()", t.text);
         add(s, a);
     } else
@@ -1258,10 +1320,15 @@ static int parse_params(parser_t *p, stmt_t *s) {
                 lexer_match(&p->lex, TOK_RPAREN);
                 if (s->proc_def.nparams < 16) s->proc_def.param_arrays |= 1u << s->proc_def.nparams;
             }
-            val_type_t ptype = var_type_from_name(param.text);
+            val_type_t ptype;
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
+                ptype = var_type_from_name(param.text);
                 if (!as_type(tn.text, &ptype)) record_note(p, param.text);   /* (a record, by reference) */
+                else plain_note(p, param.text);
+            } else {
+                canon_tok(p, &param);
+                ptype = var_type_from_name(param.text);
             }
             stmt_proc_add_param(s, param.text, ptype);
         } while (lexer_match(&p->lex, TOK_COMMA));
@@ -1278,11 +1345,13 @@ static stmt_t *parse_sub(parser_t *p) {
     }
     token_t name = lexer_next(&p->lex);
     stmt_t *s = stmt_proc_def(STMT_SUB_DEF, name.text, line);
+    int plain_mark = p->nplain;
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
     s->proc_def.is_static = lexer_match(&p->lex, TOK_STATIC);
 
     stmt_t *body = parse_block(p, BLK_END_SUB);
+    p->nplain = plain_mark;             /* (its CONSTs and AS names its own) */
     stmt_proc_set_body(s, body);
     return s;
 }
@@ -1295,13 +1364,17 @@ static stmt_t *parse_function(parser_t *p) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
     token_t name = lexer_next(&p->lex);
+    func_note(p, &name);
+    canon_tok(p, &name);
     stmt_t *s = stmt_proc_def(STMT_FUNC_DEF, name.text, line);
+    int plain_mark = p->nplain;
     s->proc_def.return_type = var_type_from_name(name.text);
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
     s->proc_def.is_static = lexer_match(&p->lex, TOK_STATIC);
 
     stmt_t *body = parse_block(p, BLK_END_FUNC);
+    p->nplain = plain_mark;             /* (its CONSTs and AS names its own) */
     stmt_proc_set_body(s, body);
     return s;
 }
@@ -1336,10 +1409,13 @@ static stmt_t *parse_declare(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_skip(&p->lex); /* consume DECLARE */
     /* Skip SUB/FUNCTION name(params) */
-    if (lexer_check(&p->lex, TOK_SUB) || lexer_check(&p->lex, TOK_FUNCTION))
+    int fn = lexer_check(&p->lex, TOK_FUNCTION);
+    if (lexer_check(&p->lex, TOK_SUB) || fn)
         lexer_skip(&p->lex);
-    if (lexer_check(&p->lex, TOK_IDENT))
-        lexer_skip(&p->lex);
+    if (lexer_check(&p->lex, TOK_IDENT)) {
+        token_t t = lexer_next(&p->lex);
+        if (fn) func_note(p, &t);
+    }
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         /* Skip parameter list */
         int depth = 1;
@@ -1421,6 +1497,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     /* DIM [SHARED] X: a variable, its type its name's */
     if (!is_redim && !lexer_check(&p->lex, TOK_AS) && !lexer_check(&p->lex, TOK_LPAREN)) {
+        canon_tok(p, &name);
         stmt_t *s = stmt_alloc(STMT_DIM_SCALAR, line);
         size_t n = strlen(name.text);
         if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
@@ -1434,6 +1511,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     /* DIM var AS TypeName (no parens — user-defined type) */
     if (lexer_check(&p->lex, TOK_AS)) {
+        plain_note(p, name.text);           /* (its name as written, whatever the DEFtype) */
         lexer_skip(&p->lex);
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); return NULL;
@@ -1499,8 +1577,9 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     /* Optional AS INTEGER/DOUBLE/STRING, or AS a TYPE */
     token_t tn;
-    int rec = 0, fixlen = 0;
+    int rec = 0, fixlen = 0, typed_as = 0;
     if (lexer_match(&p->lex, TOK_AS)) {
+        typed_as = 1;
         typed = 1;
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX);
@@ -1517,6 +1596,9 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
         }
     }
 
+    if (!typed_as) canon_tok(p, &name);    /* (DIM a(n) AS type: a as written) */
+    else plain_note(p, name.text);
+    if (!typed_as) type = var_type_from_name(name.text);
     stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
     if (s && rec)
         ast_name_copy(s->dim_stmt.rec_type, tn.text);
@@ -1537,12 +1619,14 @@ static stmt_t *parse_erase(parser_t *p) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
+    canon_tok(p, &t);
     stmt_erase_add(s, t.text);
     while (lexer_match(&p->lex, TOK_COMMA)) {
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         t = lexer_next(&p->lex);
+        canon_tok(p, &t);
         stmt_erase_add(s, t.text);
     }
     return s;
@@ -2128,13 +2212,15 @@ static stmt_t *parse_deftype(parser_t *p, val_type_t type) {
         }
         stmt_t *s = stmt_deftype(type, from, to, line);
         if (!s) { stmt_free(head); return NULL; }
+        for (int c = from; c <= to; c++)        /* (the text from here on) */
+            if (c >= 'A' && c <= 'Z') p->deftype[c - 'A'] = type;
         stmt_append(&head, &tail, s);
     } while (lexer_match(&p->lex, TOK_COMMA));
     return head;
 }
 
 /* Handle ident(...) which could be array assignment or call */
-static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
+static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, const char *aname, int line) {
     lexer_skip(&p->lex); /* consume ( */
 
     expr_t *args[16];
@@ -2167,7 +2253,7 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
     /* an element's field: name(subscripts).field = expr */
     if (lexer_check(&p->lex, TOK_DOT)) {
         lexer_skip(&p->lex);
-        expr_t *elem = expr_call(name, line);
+        expr_t *elem = expr_call(aname, line);
         if (!elem || nargs > 8 || !lexer_check(&p->lex, TOK_IDENT)) {
             for (int i = 0; i < nargs; i++) expr_free(args[i]);
             expr_free(elem);
@@ -2178,7 +2264,7 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
         token_t field = lexer_next(&p->lex);
         expr_t *val = NULL;
         if (!expect(p, TOK_EQ) || !(val = parse_expr(p))) { expr_free(elem); return NULL; }
-        stmt_t *fs = stmt_field_assign(name, field.text, val, line);
+        stmt_t *fs = stmt_field_assign(aname, field.text, val, line);
         if (fs) fs->field_assign.elem = elem;
         else expr_free(elem);
         return fs;
@@ -2223,7 +2309,7 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
             for (int i = 0; i < nargs; i++) expr_free(args[i]);
             return NULL;
         }
-        return stmt_array_assign(name, var_type_from_name(name),
+        return stmt_array_assign(aname, var_type_from_name(aname),
                                  args, nargs, value, line);
     }
 
@@ -2246,8 +2332,11 @@ static stmt_t *parse_assignment(parser_t *p, token_t *var) {
         if (!val) return NULL;
         return stmt_field_assign(rec, field, val, var->line);
     }
-    if (lexer_check(&p->lex, TOK_EQ))
-        return parse_assign(p, var->text);
+    if (lexer_check(&p->lex, TOK_EQ)) {
+        token_t c = *var;
+        canon_tok(p, &c);
+        return parse_assign(p, c.text);
+    }
     if (lexer_check(&p->lex, TOK_DOT)) {
         lexer_skip(&p->lex); /* consume . */
         if (!lexer_check(&p->lex, TOK_IDENT)) {
@@ -2260,7 +2349,11 @@ static stmt_t *parse_assignment(parser_t *p, token_t *var) {
         return stmt_field_assign(var->text, field.text, val, var->line);
     }
     if (lexer_check(&p->lex, TOK_LPAREN))
-        return parse_paren_dispatch(p, var->text, var->line);
+    {
+        token_t c = *var;               /* (an array assigned is the DEFtype's; a SUB called is not) */
+        canon_tok(p, &c);
+        return parse_paren_dispatch(p, var->text, c.text, var->line);
+    }
     return NULL;
 }
 
@@ -2497,6 +2590,7 @@ static stmt_t *parse_stmt(parser_t *p) {
             }
             /* DEF FNname(params) = expr */
             token_t fname = lexer_next(&p->lex);
+            canon_tok(p, &fname);
             stmt_t *s = stmt_alloc(STMT_DEF_FN, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             strncpy(s->def_fn.name, fname.text, 63);
@@ -2510,6 +2604,7 @@ static stmt_t *parse_stmt(parser_t *p) {
                             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
                         }
                         token_t param = lexer_next(&p->lex);
+                        canon_tok(p, &param);
                         if (!stmt_def_fn_add_param(s, param.text, var_type_from_name(param.text))) {
                             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
                         }
@@ -2599,6 +2694,10 @@ static stmt_t *parse_stmt(parser_t *p) {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
             token_t var = lexer_next(&p->lex);
+            {
+                char rec[64], field[64];
+                if (!record_split(p, var.text, rec, field)) canon_tok(p, &var);
+            }
             if (!expect(p, TOK_EQ)) return NULL;
             expr_t *val = parse_expr(p);
             if (!val) return NULL;
@@ -2940,6 +3039,9 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error_line = 0;
     p->error_detail[0] = '\0';
     p->nrecords = 0;
+    for (int i = 0; i < 26; i++) p->deftype[i] = VAL_SINGLE;
+    p->plain = NULL;
+    p->nplain = p->capplain = 0;
 }
 
 /* --- SUB ... STATIC: every variable of its own kept, as a STATIC list

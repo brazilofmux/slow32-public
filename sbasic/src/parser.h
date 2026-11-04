@@ -15,6 +15,13 @@ typedef struct {
      * name (QuickBASIC's, TWO.PI#, SUB summer.day) */
     char records[256][64];
     int nrecords;
+    /* QuickBASIC's DEFtype is the text's: a name with no suffix takes the
+     * suffix of the DEFtype in force where it is written (x under DEFINT
+     * is x%, and x! another variable) -- the parser writes it so; the
+     * names a CONST or an AS gave keep theirs */
+    val_type_t deftype[26];
+    char (*plain)[64];          /* CONSTs' and AS-declared names */
+    int nplain, capplain;
 } parser_t;
 
 /* Initialize parser */

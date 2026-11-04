@@ -166,17 +166,15 @@ static val_type_t resolve_var_type(const char *name);
 
 /* letter's type for names without a suffix: compiled code (s32-bc) sets
  * the program's as it starts */
+/* DEFtype is the text's (QuickBASIC's): the parser wrote each name with
+ * the suffix of the DEFtype in force where it stands, so a name with none
+ * is a SINGLE wherever it runs, and DEFtype does nothing as it runs */
 void eval_deftype(char letter, val_type_t t) {
-    if (letter >= 'A' && letter <= 'Z') deftype_map[letter - 'A'] = t;
+    (void)letter; (void)t;
 }
 
 static void exec_deftype(const stmt_t *s) {
-    char from = s->deftype.from;
-    char to = s->deftype.to;
-    if (from >= 'A' && from <= 'Z' && to >= 'A' && to <= 'Z') {
-        for (char c = from; c <= to; c++)
-            deftype_map[c - 'A'] = s->deftype.def_type;
-    }
+    (void)s;
 }
 
 /* A DIM's elements: its suffix's or AS type, else DEFtype's as it runs
