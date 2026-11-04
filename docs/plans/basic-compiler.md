@@ -356,16 +356,24 @@ globals; and from QBasic, a FUNCTION of no parameters named alone is
 called, and two -check findings (proc-twice, call-function).
 `run-oracle.py --bc`: 388 agree, 20 refused alike, none differ.
 
+Then (user, 2026-11-03: "QuickBASIC-style per-procedure arrays, then ON
+ERROR/RESUME"): a procedure's arrays are its own unless SHARED A(), DIM
+SHARED or STATIC (d7e2bce9: array.c scopes, an activation's arrays
+erased as it returns; -check array-undefined, QB's "Array not defined";
+s32-bc 3051012c, with DIM SHARED and scalar DIM AS); ON ERROR GOTO,
+RESUME, ERROR n, ERR, ERL in s32-bc (fa4c1880: the statements a
+function of their own, re-entered at the handler after a longjmp; ops
+numbered as lower.c's so RESUME and RESUME NEXT land where the
+interpreter's do).  `run-oracle.py --bc`: 399 agree, 20 refused alike,
+none differ.
+
 Open:
-- Arrays are global by name in the interpreter, as they were in
-  GW-BASIC; in QuickBASIC an array a SUB names without SHARED is the
-  SUB's own (REDIM A%(2) in a SUB leaves the main program's A% alone),
-  and DIM SHARED does not parse.  A dialect decision before it is
-  changed.
+- A DIM with constant bounds makes a static array in QuickBASIC, which
+  REDIM refuses; the interpreter resizes it.
 - QuickBASIC refuses at load what it can type statically (Type
   mismatch, Parameter type mismatch); -check does not yet (strict-qb's
   DIFF-QB, 43 over the corpus).
-- Not yet: ON ERROR and RESUME, CONST, DIM AS (scalars), TYPE, PRINT
-  USING, the file and screen statements, GOSUB inside a procedure, a
-  whole array as an argument.
+- Not yet: CONST, TYPE, PRINT USING, CLEAR, the file and screen
+  statements, GOSUB inside a procedure, ON ERROR and RESUME inside one,
+  a whole array as an argument.
 
