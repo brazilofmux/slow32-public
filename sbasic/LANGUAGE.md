@@ -2,9 +2,10 @@
 
 SLOW BASIC is the BASIC of QBasic 1.1 (QuickBASIC 4.5's interpreter),
 with GW-BASIC's line-numbered habits and a few extensions of its own.
-This file says which, rule by rule.  It is what a compiler for the
-language (planned: `s32-sbc`) is to agree with, and what the
-interpreter is held to.
+This file says which, rule by rule.  It is what the compilers agree
+with -- s32-sbc, the SLOW BASIC compiler, for all of it; s32-bc, the
+QuickBASIC compiler, for the part QBasic 1.1 loads (sbc/README.md) --
+and what the interpreter is held to.
 
 ## Authority
 

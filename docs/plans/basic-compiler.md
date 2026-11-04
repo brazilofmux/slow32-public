@@ -239,6 +239,37 @@ number goes, 10 programs), a literal out of range (`3E-99999`, NBS
 P034), and syntax -- empty parentheses (`RND()`, `FNP()`) and two
 statements with no colon between them (P194).
 
+## The two compilers, reconciled (2026-11-04)
+
+The ruling of 2026-11-03 kept s32-sbc "for now" and said the two would
+be reconciled when the new compiler won -- a switch, auto-detection,
+or a build target.  It has won where it applies: on the 92 games both
+take, s32-bc runs 371M instructions to s32-sbc's 467M (the
+interpreter's 755M), the faster on 89 of them, and it compiles 96 of
+the 103 QB-corpus programs QBasic loads.  It does not apply
+everywhere, and was never meant to: it takes what QBasic loads, and
+the interpreter -- with s32-sbc -- stays friendly to the dialects that
+do not structure or type their code.  Of the 97 games the interpreter
+runs (GW-BASIC programs, line-numbered), s32-bc takes 92 as they are;
+the 5 it refuses QBasic refuses too -- a FOR and its NEXT in different
+blocks (animal, awari, checkers), a DEF FN inside a FOR (salvo), a word
+after a line number that QBasic reads as a SUB's call (sinewave).
+
+So they are two compilers for two languages, named for them:
+
+- **s32-bc, the QuickBASIC compiler** -- the compilable dialect, what
+  QBasic 1.1 loads (the checker its definition, held to QBasic by
+  strict-qb.py), compiled up front through HIR;
+- **s32-sbc, the SLOW BASIC compiler** -- everything the interpreter
+  runs, compiled to C with the interpreter's executor beside it.
+
+The reconciliation is auto-detection: `sbc/compile.sh prog.bas` tries
+s32-bc and, when it refuses, compiles with s32-sbc and says why
+(`--qb` and `--any` choose one).  sbc/README.md is their common
+description.  What is not done: s32-bc in the slow32:basic image (it
+is a host program, as s32-sbc is, but its run time bc_rt.s32o is built
+by clang; the image builds with the toolchain stage already).
+
 ## s32-bc (sbc/bc/, 2026-11-03)
 
 The compiler that decides up front, begun.  `sbc/compile-bc.sh

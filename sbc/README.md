@@ -1,7 +1,56 @@
-# s32-sbc — the SLOW BASIC compiler
+# sbc — the BASIC compilers
 
-A `.bas` becomes a `.s32x`: SLOW BASIC ([sbasic/LANGUAGE.md](../sbasic/LANGUAGE.md))
-compiled for SLOW-32.  The plan: [docs/plans/basic-compiler.md](../docs/plans/basic-compiler.md).
+A `.bas` becomes a `.s32x`.  There are two compilers, for two
+languages, and one interpreter both are held to (`sbasic`; its
+language, [sbasic/LANGUAGE.md](../sbasic/LANGUAGE.md)).  The plan and its
+history: [docs/plans/basic-compiler.md](../docs/plans/basic-compiler.md).
+
+| | **s32-bc** — the QuickBASIC compiler | **s32-sbc** — the SLOW BASIC compiler |
+|---|---|---|
+| takes | what QBasic 1.1 loads: the checker (`sbasic -check`, `sbasic/src/strict.c`) passes it -- typed, every FOR its NEXT, every label there | anything the interpreter runs: GW-BASIC's line numbers and habits, ECMA-55, the interpreter's own statements |
+| how | decides the program's shape before it runs and writes native code through HIR (stage08's back end, `bc/hir/`); values the run time types go through the interpreter's own code (`bc/bc_rt.c`) | writes the interpreter's lowered ops as C, native behind guards, the interpreter's executor running the rest; C by clang or stage08 |
+| speed (the 92 games both take, instructions; `tests/compare-speed.py`) | 371M | 467M (the interpreter: 755M) -- s32-bc the faster on 89 of the 92 |
+| sources | `bc/bc.c`, `bc/bc_rt.c`, `build-bc.sh`, `compile-bc.sh` | `s32-sbc.c`, `runtime/`, `build.sh`, `compile-bas.sh`, `build-lib.sh` |
+| shipped | not yet in an image | `slow32:basic` (`s32sbc`, stage08 cc on the emulator, no LLVM) |
+| gate | `tests/run-oracle.py --bc`, `tests/qb-corpus.py` (QBasic's programs), `sbasic/tests/strict-qb.py` (the checker against QBasic) | `tests/run-oracle.py`, `tests/run-stage08.sh`, `tests/fuzz.py` |
+
+Both print what the interpreter prints, byte for byte: that is each
+one's gate.  The interpreter runs every program either compiler takes.
+
+```bash
+./compile.sh prog.bas [prog.s32x]        # s32-bc if it takes the program, else s32-sbc (it says which, and why)
+./compile.sh --qb prog.bas               # s32-bc only: a refusal is an error
+./compile.sh --any prog.bas              # s32-sbc only
+```
+
+`compile.sh` is the reconciliation the plan ruled for when s32-bc had
+won (2026-11-03: "a switch, auto-detection, a build target"):
+auto-detection by trying s32-bc, whose refusal -- a checker finding,
+QBasic's own reason, or a "not yet" -- names the line.  As of
+2026-11-04 s32-bc compiles 96 of the 103 QB-corpus programs QBasic
+loads; the seven left use the machine itself (CALL ABSOLUTE, BLOAD,
+BSAVE) or are QB64's.
+
+## s32-bc — the QuickBASIC compiler
+
+`compile-bc.sh prog.bas [prog.s32x]`; `build-bc.sh` builds `s32-bc` (a
+host program: sbasic's loader, lexer, parser and checker, and the HIR
+back end) and `out/bc_rt.s32o`.  It compiles a program only if the
+checker passes it -- the compilable dialect is what QuickBASIC loads,
+with one difference on purpose (a DEF FN may be used before its
+definition) -- and says "not yet: ..." for what it does not do.  The
+run time is the interpreter's: every operator, conversion, PRINT item,
+file, graphics and error goes through the interpreter's own code, so
+the program computes and prints what the interpreter does by
+construction; native code covers the common cases, held to it.
+Variables, labels and control flow are native.  In a program that
+traps errors the main program's statements are a function entered
+again at an op (bcm_body), and so is each procedure's body (bcb_NAME,
+its variables in an area its wrapper keeps), so RESUME returns into a
+SUB as QuickBASIC's does.  The design and its steps:
+[docs/plans/basic-compiler.md](../docs/plans/basic-compiler.md) ("s32-bc").
+
+## s32-sbc — the SLOW BASIC compiler
 
 s32-sbc loads, parses and lowers the program with the interpreter's own
 front end (`sbasic/src`: `program.c`, the parser, `lower.c`) and writes
