@@ -114,7 +114,7 @@ sb_array_t *array_find(const char *name) {
 }
 
 error_t array_dim(const char *name, val_type_t type,
-                  int *sizes, int ndims, int base) {
+                  int *sizes, int ndims, const int *lbounds) {
     char kb[ARRAY_KEY_MAX];
     if (array_find(name))
         return ERR_DUPLICATE_DIM;
@@ -151,9 +151,10 @@ error_t array_dim(const char *name, val_type_t type,
     strncpy(arr->name, name, sizeof arr->name - 1);
     arr->elem_type = type;
     arr->ndims = ndims;
-    for (int i = 0; i < ndims; i++)
+    for (int i = 0; i < ndims; i++) {
         arr->dims[i] = sizes[i];
-    arr->base = base;
+        arr->lbound[i] = lbounds[i];
+    }
     arr->total = total;
     arr->data = calloc(total, sizeof(value_t));
     if (!arr->data) return ERR_OUT_OF_MEMORY;
@@ -170,7 +171,7 @@ static int calc_flat_index(sb_array_t *arr, int *indices, int nindices) {
     int flat = 0;
     int multiplier = 1;
     for (int d = nindices - 1; d >= 0; d--) {
-        int idx = indices[d] - arr->base;
+        int idx = indices[d] - arr->lbound[d];
         if (idx < 0 || idx >= arr->dims[d]) return -1;
         flat += idx * multiplier;
         multiplier *= arr->dims[d];
@@ -210,10 +211,10 @@ void array_erase(const char *name) {
 }
 
 error_t array_redim(const char *name, val_type_t type,
-                    int *sizes, int ndims, int base, int preserve) {
+                    int *sizes, int ndims, const int *lbounds, int preserve) {
     sb_array_t *arr = array_find(name);
     if (!arr)
-        return array_dim(name, type, sizes, ndims, base);
+        return array_dim(name, type, sizes, ndims, lbounds);
     array_generation++;
 
     int new_total = 1;
@@ -284,9 +285,10 @@ error_t array_redim(const char *name, val_type_t type,
 
     arr->elem_type = type;
     arr->ndims = ndims;
-    for (int i = 0; i < ndims; i++)
+    for (int i = 0; i < ndims; i++) {
         arr->dims[i] = sizes[i];
-    arr->base = base;
+        arr->lbound[i] = lbounds[i];
+    }
     arr->total = new_total;
 
     return ERR_NONE;

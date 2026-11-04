@@ -345,6 +345,7 @@ typedef struct stmt {
             val_type_t elem_type;
             int ndims;
             struct expr *dims[8];   /* upper bound per dimension */
+            struct expr *lower[8];  /* lower bound (lo TO hi), NULL: OPTION BASE */
             int is_redim;
             int is_static;       /* constant bounds: made before the run (QuickBASIC's static arrays) */
             int preserve;

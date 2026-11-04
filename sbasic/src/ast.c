@@ -561,8 +561,10 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->const_stmt.value);
                 break;
             case STMT_DIM:
-                for (int i = 0; i < s->dim_stmt.ndims; i++)
+                for (int i = 0; i < s->dim_stmt.ndims; i++) {
                     expr_free(s->dim_stmt.dims[i]);
+                    expr_free(s->dim_stmt.lower[i]);
+                }
                 break;
             case STMT_ARRAY_ASSIGN:
                 for (int i = 0; i < s->array_assign.nindices; i++)
@@ -1197,7 +1199,9 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
         break;
     case STMT_CALL: exprs_n(s->call_stmt.args, s->call_stmt.nargs, fn, ctx); break;
     case STMT_CONST: X(s->const_stmt.value); break;
-    case STMT_DIM: exprs_n(s->dim_stmt.dims, s->dim_stmt.ndims, fn, ctx); break;
+    case STMT_DIM:
+        for (int i = 0; i < s->dim_stmt.ndims; i++) { X(s->dim_stmt.lower[i]); X(s->dim_stmt.dims[i]); }
+        break;
     case STMT_ARRAY_ASSIGN:
         exprs_n(s->array_assign.indices, s->array_assign.nindices, fn, ctx);
         X(s->array_assign.value);

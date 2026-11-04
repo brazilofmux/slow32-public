@@ -330,9 +330,12 @@ static sb_array_t *array_implicit(const char *name, int ndims) {
         strcmp(name, "JOIN$") == 0 ||
         strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0)
         return NULL;
-    for (int i = 0; i < ndims; i++)
+    int lb[MAX_ARRAY_DIMS];
+    for (int i = 0; i < ndims; i++) {
         sizes[i] = 11 - option_base;
-    if (array_dim(name, resolve_var_type(name), sizes, ndims, option_base) != ERR_NONE)
+        lb[i] = option_base;
+    }
+    if (array_dim(name, resolve_var_type(name), sizes, ndims, lb) != ERR_NONE)
         return NULL;
     return array_find(name);
 }
@@ -2341,40 +2344,52 @@ static error_t exec_call_stmt(env_t *env, stmt_t *s) {
 
 /* --- Stage 3 statement handlers --- */
 
-/* DIM or REDIM name(uppers...) with the given OPTION BASE: the
- * interpreter's DIM, and compiled code's (s32-bc) */
-error_t eval_dim(const char *name, val_type_t type, int ndims, const int *uppers,
-                 int base, int is_redim, int preserve) {
+/* DIM or REDIM name(lowers TO uppers...): the interpreter's DIM, and
+ * compiled code's (s32-bc) */
+error_t eval_dim(const char *name, val_type_t type, int ndims, const int *lowers,
+                 const int *uppers, int is_redim, int preserve) {
     int sizes[MAX_ARRAY_DIMS];
     for (int i = 0; i < ndims; i++) {
-        sizes[i] = uppers[i] - base + 1;
-        if (sizes[i] <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
+        sizes[i] = uppers[i] - lowers[i] + 1;
+        if (sizes[i] <= 0) return ERR_SUBSCRIPT_OUT_OF_RANGE;
     }
     if (is_redim)
-        return array_redim(name, type, sizes, ndims, base, preserve);
-    return array_dim(name, type, sizes, ndims, base);
+        return array_redim(name, type, sizes, ndims, lowers, preserve);
+    return array_dim(name, type, sizes, ndims, lowers);
+}
+
+/* a DIM's bounds of one dimension, made integers: a range with nothing
+ * in it is Subscript out of range (QBasic, DIM A(-1) and A(5 TO 1) both)
+ * -- checked before the next dimension's are evaluated */
+error_t eval_dim_range(int lower, int upper) {
+    return upper - lower + 1 <= 0 ? ERR_SUBSCRIPT_OUT_OF_RANGE : ERR_NONE;
 }
 
 int eval_option_base(void) { return option_base; }
 void eval_set_option_base(int base) { option_base = base; }
 
+static error_t eval_int_of(env_t *env, expr_t *e, int *out) {
+    value_t dv;
+    EVAL_CHECK(eval_expr(env, e, &dv));
+    error_t err = val_to_integer(&dv, out);
+    val_clear(&dv);
+    return err;
+}
+
 static error_t exec_dim(env_t *env, stmt_t *s) {
-    int uppers[MAX_ARRAY_DIMS];
+    int lowers[MAX_ARRAY_DIMS], uppers[MAX_ARRAY_DIMS];
     /* a static array was made before the run; DIM is then a declaration
      * (unless ERASE took it away) */
     if (s->dim_stmt.is_static && array_find(s->dim_stmt.name))
         return ERR_NONE;
     for (int i = 0; i < s->dim_stmt.ndims; i++) {
-        value_t dv;
-        EVAL_CHECK(eval_expr(env, s->dim_stmt.dims[i], &dv));
-        error_t err = val_to_integer(&dv, &uppers[i]);
-        val_clear(&dv);
-        if (err != ERR_NONE) return err;
-        /* (a bound below the base fails before the next is evaluated) */
-        if (uppers[i] - option_base + 1 <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
+        lowers[i] = option_base;
+        if (s->dim_stmt.lower[i]) EVAL_CHECK(eval_int_of(env, s->dim_stmt.lower[i], &lowers[i]));
+        EVAL_CHECK(eval_int_of(env, s->dim_stmt.dims[i], &uppers[i]));
+        EVAL_CHECK(eval_dim_range(lowers[i], uppers[i]));
     }
-    return eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, uppers,
-                    option_base, s->dim_stmt.is_redim, s->dim_stmt.preserve);
+    return eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, lowers, uppers,
+                    s->dim_stmt.is_redim, s->dim_stmt.preserve);
 }
 
 /* name(indices) read as an expression reads an array: the array, or an
@@ -2413,7 +2428,7 @@ error_t eval_bound(const char *name, int dim, int upper, value_t *out) {
     if (!a) return ERR_UNDEFINED_VAR;
     if (dim < 1 || dim > a->ndims)
         return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_integer(upper ? a->base + a->dims[dim - 1] - 1 : a->base);
+    *out = val_integer(upper ? a->lbound[dim - 1] + a->dims[dim - 1] - 1 : a->lbound[dim - 1]);
     return ERR_NONE;
 }
 
@@ -3601,10 +3616,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             }
 
             /* REDIM the target array */
-            int sizes[1] = { count };
+            int sizes[1] = { count }, lb[1] = { option_base };
             array_erase(s->split.array_name);
             error_t aerr = array_dim(s->split.array_name, VAL_STRING,
-                                      sizes, 1, option_base);
+                                      sizes, 1, lb);
             if (aerr != ERR_NONE) { val_clear(&sv); val_clear(&dv); return aerr; }
 
             /* Split and store */
@@ -3671,21 +3686,27 @@ static error_t scan_stmt_list(stmt_t *s);
 /* DIM with constant bounds in the main program: QuickBASIC makes such an
  * array when it compiles, so it exists from the start and a reference
  * may come before the DIM.  OPTION BASE counts in source order. */
+/* a bound written as a number (a static DIM's): its value */
+static int literal_int(const expr_t *d, int *out) {
+    return d && d->type == EXPR_LITERAL && d->literal.type != VAL_STRING &&
+           val_to_integer(&d->literal, out) == ERR_NONE;
+}
+
 static void scan_static_dim(stmt_t *s) {
-    int sizes[MAX_ARRAY_DIMS];
+    int sizes[MAX_ARRAY_DIMS], lowers[MAX_ARRAY_DIMS];
     s->dim_stmt.is_static = 0;
     if (s->dim_stmt.is_redim) return;
     for (int i = 0; i < s->dim_stmt.ndims; i++) {
-        expr_t *d = s->dim_stmt.dims[i];
         int upper;
-        if (!d || d->type != EXPR_LITERAL || d->literal.type == VAL_STRING) return;
-        if (val_to_integer(&d->literal, &upper) != ERR_NONE) return;
-        sizes[i] = upper - option_base + 1;
+        lowers[i] = option_base;
+        if (s->dim_stmt.lower[i] && !literal_int(s->dim_stmt.lower[i], &lowers[i])) return;
+        if (!literal_int(s->dim_stmt.dims[i], &upper)) return;
+        sizes[i] = upper - lowers[i] + 1;
         if (sizes[i] <= 0) return;
     }
     if (array_find(s->dim_stmt.name)) return;
     if (array_dim(s->dim_stmt.name, dim_type(s), sizes,
-                  s->dim_stmt.ndims, option_base) == ERR_NONE)
+                  s->dim_stmt.ndims, lowers) == ERR_NONE)
         s->dim_stmt.is_static = 1;
 }
 

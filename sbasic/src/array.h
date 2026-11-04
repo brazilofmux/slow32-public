@@ -12,7 +12,7 @@ typedef struct {
     val_type_t elem_type;
     int ndims;
     int dims[MAX_ARRAY_DIMS];   /* size of each dimension */
-    int base;                    /* lower bound (OPTION BASE) */
+    int lbound[MAX_ARRAY_DIMS];  /* each dimension's lower bound (lo TO hi, or OPTION BASE) */
     int total;                   /* total number of elements */
     value_t *data;              /* flat row-major storage */
     int active;                  /* 1 if allocated */
@@ -37,7 +37,7 @@ void array_clear_all(void);
 
 /* Create an array. sizes[] are dimension sizes (not upper bounds). */
 error_t array_dim(const char *name, val_type_t type,
-                  int *sizes, int ndims, int base);
+                  int *sizes, int ndims, const int *lbounds);
 
 /* Find an array by name (NULL if not found) */
 sb_array_t *array_find(const char *name);
@@ -55,6 +55,6 @@ void array_erase(const char *name);
 
 /* Redimension (preserve=1 keeps data) */
 error_t array_redim(const char *name, val_type_t type,
-                    int *sizes, int ndims, int base, int preserve);
+                    int *sizes, int ndims, const int *lbounds, int preserve);
 
 #endif

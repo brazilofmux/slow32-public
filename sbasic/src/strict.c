@@ -343,12 +343,18 @@ static void walk_list(check_t *c, stmt_t *s) {
                     c->u->dims.v[c->u->dims.n - 1].n = s->dim_stmt.ndims;
                 }
                 for (int i = 0; i < s->dim_stmt.ndims; i++) {
-                    expr_t *b = s->dim_stmt.dims[i];
-                    double v;
+                    /* (written as numbers: an upper bound below its lower, or below
+                     * OPTION BASE where there is no lower) */
+                    expr_t *b = s->dim_stmt.dims[i], *lo = s->dim_stmt.lower[i];
+                    double v, l = c->u->base;
+                    if (lo && !(lo->type == EXPR_LITERAL && lo->literal.type != VAL_STRING &&
+                                val_to_double(&lo->literal, &l) == ERR_NONE))
+                        continue;
                     if (b && b->type == EXPR_LITERAL && b->literal.type != VAL_STRING &&
-                        val_to_double(&b->literal, &v) == ERR_NONE && v < c->u->base) {
-                        snprintf(d, sizeof d, "DIM %s with an upper bound below OPTION BASE %d",
-                                 s->dim_stmt.name, c->u->base);
+                        val_to_double(&b->literal, &v) == ERR_NONE && v < l) {
+                        if (lo) snprintf(d, sizeof d, "DIM %s with an upper bound below its lower", s->dim_stmt.name);
+                        else snprintf(d, sizeof d, "DIM %s with an upper bound below OPTION BASE %d",
+                                      s->dim_stmt.name, c->u->base);
                         finding(c, s->line, "dim-bound", d);
                         break;
                     }

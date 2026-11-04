@@ -1336,27 +1336,31 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     if (!expect(p, TOK_LPAREN)) return NULL;
 
-    expr_t *dims[8];
+    /* each dimension's upper bound, or lo TO hi */
+    expr_t *dims[8], *lower[8];
     int ndims = 0;
-    dims[0] = parse_expr(p);
-    if (!dims[0]) return NULL;
-    ndims = 1;
-    while (lexer_match(&p->lex, TOK_COMMA)) {
+    do {
         if (ndims >= 8) {
             parser_error(p, ERR_SYNTAX);
-            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            for (int i = 0; i < ndims; i++) { expr_free(dims[i]); expr_free(lower[i]); }
             return NULL;
         }
+        lower[ndims] = NULL;
         dims[ndims] = parse_expr(p);
+        if (dims[ndims] && lexer_match(&p->lex, TOK_TO)) {
+            lower[ndims] = dims[ndims];
+            dims[ndims] = parse_expr(p);
+        }
         if (!dims[ndims]) {
-            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            expr_free(lower[ndims]);
+            for (int i = 0; i < ndims; i++) { expr_free(dims[i]); expr_free(lower[i]); }
             return NULL;
         }
         ndims++;
-    }
+    } while (lexer_match(&p->lex, TOK_COMMA));
 
     if (!expect(p, TOK_RPAREN)) {
-        for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+        for (int i = 0; i < ndims; i++) { expr_free(dims[i]); expr_free(lower[i]); }
         return NULL;
     }
 
@@ -1383,6 +1387,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
 
     stmt_t *s = stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
     if (s) {
+        for (int i = 0; i < ndims; i++) s->dim_stmt.lower[i] = lower[i];
         s->dim_stmt.typed = typed;
         s->dim_stmt.shared = shared;
     }

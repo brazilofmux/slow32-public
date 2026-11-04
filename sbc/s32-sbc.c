@@ -1225,9 +1225,9 @@ static void nat_index(FILE *out, int j, const char **ix, const int *ixt, int n, 
     }
     fprintf(out, "    int %s = 0;\n    { int mul = 1;\n", flat);
     for (int d = n - 1; d >= 0; d--)
-        fprintf(out, "      { int x = %s_i%d - AR[%d]->base; if (x < 0 || x >= AR[%d]->dims[%d]) { err = ERR_SUBSCRIPT_OUT_OF_RANGE; goto fail; }\n"
+        fprintf(out, "      { int x = %s_i%d - AR[%d]->lbound[%d]; if (x < 0 || x >= AR[%d]->dims[%d]) { err = ERR_SUBSCRIPT_OUT_OF_RANGE; goto fail; }\n"
                      "        %s += x * mul; mul *= AR[%d]->dims[%d]; }\n",
-                flat, d, j, j, d, flat, j, d);
+                flat, d, j, d, j, d, flat, j, d);
     fprintf(out, "    }\n");
 }
 
