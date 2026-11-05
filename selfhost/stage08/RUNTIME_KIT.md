@@ -105,6 +105,10 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-05 a third time (tree at `c44ba897`).  The BASIC side only:
+`RUN` line and file, `LINE`, its style, `PAINT` and tiles, `COLOR` in graphics,
+`PLAY`, `SOUND` and `VARPTR$`.
+
 Rebuilt 2026-11-05 again (tree at `bd88ebde`).  The BASIC side only: `'$DYNAMIC`,
 event traps, `CHAIN` and `COMMON`.
 
