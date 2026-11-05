@@ -105,6 +105,11 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-05 (tree at `7d1b9e7e`).  The BASIC side only: `sbasic.s32x`,
+`s32-bc.s32x`, `s32-sbc.s32x` and `basic/` (VARSEG, VARPTR, SADD, BSAVE, BLOAD;
+two arrays of a procedure kept apart; a CONST argument a value).  The compiler,
+the tools and the C library are unchanged.
+
 Rebuilt 2026-11-04 again.  `cc.s32x` only, and the BASIC compilers built by
 it: a loop with hundreds of invariants no longer takes half a minute to compile
 (selfhost ISSUES-109).
