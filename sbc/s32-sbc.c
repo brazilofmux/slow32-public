@@ -1349,10 +1349,12 @@ static int names_used(const stmt_t *s, const char *name) {
 /* an ON ERROR GOTO anywhere in s: a program that sets a handler has no
  * native procedures -- an error in one runs the handler with it still
  * there, and RESUME returns into it, which only the env version does */
+static int sets_trap;           /* the program sets a handler or a trap */
 static int sets_handler(const stmt_t *s) {
     for (; s; s = s->next) {
         switch (s->type) {
             case STMT_ON_ERROR: if (s->on_error.label[0]) return 1; break;
+            case STMT_EVENT_ON: return 1;       /* (a trap's handler, with it still there, likewise) */
             case STMT_IF: if (sets_handler(s->if_stmt.then_body) || sets_handler(s->if_stmt.else_body)) return 1; break;
             case STMT_FOR: if (sets_handler(s->for_stmt.body)) return 1; break;
             case STMT_WHILE: if (sets_handler(s->while_stmt.body)) return 1; break;
@@ -1878,6 +1880,10 @@ static void emit_unit(FILE *out, const code_t *c, const char *fname, int is_main
         fflush(b);
         off[k] = (long)blen;
         fprintf(b, "L%d:\n", k);
+        /* (a trap's chance, between statements: the executor's act_step
+         * looks too, but not every op goes there) */
+        if (sets_trap && !nat_local)
+            fprintf(b, "    if (eval_events_armed) { err = act_event_poll(); " CHECK " }\n");
         if (op->kind == OP_JUMP) {
             fprintf(b, "    ");
             emit_goto(b, c, op->target);
@@ -2093,6 +2099,7 @@ int main(int argc, char **argv) {
     code_t *pcodes[1024];
     {
         int jx = 0, traps = sets_handler(program);
+        sets_trap = traps;
         for (stmt_t *d = program; d; d = d->next) {
             if (d->type != STMT_SUB_DEF && d->type != STMT_FUNC_DEF) continue;
             if (jx >= 1024) break;

@@ -165,6 +165,10 @@ typedef enum {
     STMT_LSET,
     STMT_RSET,
     STMT_WIDTH,
+    STMT_EVENT_ON,      /* ON TIMER(n) GOSUB label, and KEY, PLAY, STRIG, PEN */
+    STMT_EVENT_SET,     /* TIMER ON|OFF|STOP, and KEY(n), PLAY, STRIG(n), PEN */
+    STMT_KEY_SET,       /* KEY n, s$ */
+    STMT_KEY_LIST,      /* KEY LIST */
     STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY, VIEW PRINT, ENVIRON, COMMON */
     STMT_CLEAR,
     /* Graphics (tube fb) */
@@ -540,6 +544,15 @@ typedef struct stmt {
                                      or record's name); NULL: the variable */
         } mid_assign;
 
+        /* STMT_EVENT_ON, STMT_EVENT_SET, STMT_KEY_SET */
+        struct {
+            int kind;           /* EV_TIMER ... */
+            struct expr *n;     /* TIMER's seconds, KEY's, PLAY's, STRIG's number */
+            struct expr *value; /* KEY n, s$ */
+            int action;         /* EV_ON, EV_OFF, EV_STOP */
+            char label[64];     /* GOSUB label; empty: GOSUB 0 */
+        } event;
+
         /* STMT_ON_ERROR */
         struct {
             char label[64];     /* "" = ON ERROR GOTO 0 (disable) */
@@ -782,6 +795,10 @@ int ast_machine_sub(const char *name);
 int stmt_next_add_var(stmt_t *s, const char *name);
 int stmt_def_fn_add_param(stmt_t *s, const char *name, val_type_t type);
 void stmt_on_branch_add_label(stmt_t *s, const char *label);
+
+/* what ON ... GOSUB and ... ON|OFF|STOP are about */
+enum { EV_TIMER, EV_KEY, EV_PLAY, EV_STRIG, EV_PEN };
+enum { EV_OFF, EV_ON, EV_STOP };   /* (OFF is 0: what a trap is until told) */
 
 /* Append statement to end of chain */
 void stmt_append(stmt_t **head, stmt_t **tail, stmt_t *s);

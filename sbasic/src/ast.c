@@ -677,6 +677,14 @@ void stmt_free(stmt_t *s) {
                 free(s->type_def.fields);
                 break;
             case STMT_DIM_AS_TYPE:
+            case STMT_KEY_LIST:
+                break;
+            case STMT_EVENT_ON:
+            case STMT_EVENT_SET:
+            case STMT_KEY_SET:
+                expr_free(s->event.n);
+                expr_free(s->event.value);
+                break;
             case STMT_ON_ERROR:
             case STMT_RESUME:
             case STMT_DEFTYPE:
@@ -1258,6 +1266,8 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
             }
         break;
     case STMT_CALL: exprs_n(s->call_stmt.args, s->call_stmt.nargs, fn, ctx); break;
+    case STMT_EVENT_ON: case STMT_EVENT_SET: case STMT_KEY_SET:
+        X(s->event.n); X(s->event.value); break;
     case STMT_CONST: X(s->const_stmt.value); break;
     case STMT_DIM:
         for (int i = 0; i < s->dim_stmt.ndims; i++) { X(s->dim_stmt.lower[i]); X(s->dim_stmt.dims[i]); }

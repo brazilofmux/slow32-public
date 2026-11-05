@@ -1160,6 +1160,13 @@ static error_t fn_inkey(value_t *args, int nargs, value_t *out) {
     (void)args;
     if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
     char ch[3];
+    {
+        int taken;
+        if (eval_key_unread(ch, &taken)) {
+            *out = val_string(ch, taken);
+            return ERR_NONE;
+        }
+    }
     if (sb_gfx_active()) {
         int n = sb_gfx_inkey(ch);
         if (n > 0) {

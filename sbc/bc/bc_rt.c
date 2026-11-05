@@ -276,6 +276,7 @@ int main(void) {
 
 void bcrt_rerun(void) {
     fflush(stdout);
+    eval_event_reset();
     fileio_close_all();
     while (bcrt_nactive > 0) {          /* (the procedures it was in) */
         array_scope_pop();
@@ -621,7 +622,7 @@ void bcrt_view_print(int has, int top, int bottom) {
 }
 
 /* CLEAR's arrays (compiled code clears its own variables) */
-void bcrt_clear(void) { array_clear(); }
+void bcrt_clear(void) { array_clear(); eval_event_reset(); }
 
 /* PRINT USING: the format's value and which items have one ("1"/"0"
  * each); then using_next (the item to evaluate, -1 when done) and
@@ -1128,6 +1129,9 @@ pair_t bcrt_fn(const char *name, int n, int alo, int ahi, int at, int blo, int b
  * errors */
 #define BCRT_GOSUB_DEPTH 256
 static int bcrt_gosubs[BCRT_GOSUB_DEPTH];
+/* the return point of a trap's handler: none, so the body returns */
+#define BCRT_EVENT_RETURN (-1)
+static int event_returned, event_running = -1;
 
 
 void bcrt_gosub(int k) {
@@ -1136,8 +1140,102 @@ void bcrt_gosub(int k) {
 }
 
 int bcrt_return(void) {
+    int k;
     if (bcrt_ngosub <= (bcrt_ngbase ? bcrt_gbase[bcrt_ngbase - 1] : 0)) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
-    return bcrt_gosubs[--bcrt_ngosub];
+    k = bcrt_gosubs[--bcrt_ngosub];
+    if (k == BCRT_EVENT_RETURN) event_returned = 1;     /* (no return point: the body returns, to event_run) */
+    return k;
+}
+
+/* RETURN label: from a trap's handler it goes on from the label with the
+ * trap released, and event_run is never returned to: QBasic abandons what
+ * was going */
+void bcrt_return_label(void) {
+    int k;
+    if (bcrt_ngosub <= (bcrt_ngbase ? bcrt_gbase[bcrt_ngbase - 1] : 0)) bcrt_fail(ERR_RETURN_WITHOUT_GOSUB);
+    k = bcrt_gosubs[--bcrt_ngosub];
+    if (k == BCRT_EVENT_RETURN && event_running >= 0) {
+        eval_event_done(event_running);
+        event_running = -1;
+    }
+}
+
+/* --- event traps: the rules are eval.c's ------------------------------ */
+
+/* trap's handler, the main program's statements from op, with whatever
+ * procedure was going still under it; an error in them is trapped in here,
+ * so it does not leave what is underneath */
+static void event_run(int trap, int op) {
+    jmp_buf jb;
+    pframe_t *ptop = bcrt_ptop, *frame = trap_frame;
+    int saved_op = bcrt_op, saved_line = bcrt_line, target = bcrt_target;
+    int nactive = bcrt_nactive, ngbase = bcrt_ngbase, outer = event_running;
+    memcpy(&jb, &bcrt_jb, sizeof jb);
+    event_running = trap;
+    bcrt_ptop = NULL;
+    trap_frame = NULL;
+    if (array_scope_push(0, NULL, NULL) != ERR_NONE) bcrt_fail(ERR_OUT_OF_MEMORY);
+    bcrt_gosub(BCRT_EVENT_RETURN);
+    bcrt_target = op;
+    if (setjmp(bcrt_jb) != 0) {         /* (an error trapped: the procedures since left) */
+        while (bcrt_nactive > nactive) {
+            array_scope_pop();
+            eval_leave();
+            bcrt_nactive--;
+        }
+        if (bcrt_ngbase > ngbase) {
+            bcrt_ngosub = bcrt_gbase[ngbase];
+            bcrt_ngbase = ngbase;
+        }
+        bcrt_ptop = NULL;
+        trap_frame = NULL;
+    }
+    event_returned = 0;
+    bcrt_body(1);
+    if (!event_returned) bcrt_end();    /* (off the program's end: it ends) */
+    event_returned = 0;
+    memcpy(&bcrt_jb, &jb, sizeof jb);
+    array_scope_pop();
+    if (event_running >= 0) eval_event_done(event_running);
+    event_running = outer;
+    bcrt_ptop = ptop;
+    trap_frame = frame;
+    bcrt_op = saved_op;
+    bcrt_line = saved_line;
+    bcrt_target = target;
+}
+
+void bcrt_event_poll(void) {
+    int target, trap;
+    if (!eval_events_armed || !bcrt_running) return;
+    if (trap_active) { eval_event_look(); return; }
+    trap = eval_event_next(&target);
+    if (trap >= 0) event_run(trap, target);
+}
+
+void bcrt_event_on(int kind, int lo, int hi, int t, int op) {
+    value_t n = take(lo, hi, t);
+    int v = 0;
+    error_t e = val_to_integer(&n, &v);
+    if (e == ERR_NONE) e = eval_event_on(kind, v, op);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_event_set(int kind, int lo, int hi, int t, int action) {
+    value_t n = take(lo, hi, t);
+    int v = 0;
+    error_t e = val_to_integer(&n, &v);
+    if (e == ERR_NONE) e = eval_event_set(kind, v, action);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_key_define(int lo, int hi, int t, int slo, int shi, int st) {
+    value_t n = take(lo, hi, t), s = take(slo, shi, st);
+    int v = 0;
+    error_t e = val_to_integer(&n, &v);
+    if (e == ERR_NONE) e = eval_key_define(v, &s);
+    val_clear(&s);
+    if (e != ERR_NONE) bcrt_fail(e);
 }
 
 /* --- arrays: the interpreter's own (array.c), by name ----------------- */
@@ -1233,6 +1331,7 @@ static value_t bcrt_in[64];
 /* INPUT's line (eval_input_line): types[i] is 'A' + the i-th field's
  * type; the values are taken one by one (bcrt_input_take) */
 void bcrt_input(const char *prompt, int no_question, int same_line, int n, const char *types) {
+    eval_event_look();          /* (it may wait; a trap only runs after it) */
     val_type_t t[64];
     error_t e;
     for (int i = 0; i < n; i++) t[i] = (val_type_t)(types[i] - 'A');

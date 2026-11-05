@@ -2169,6 +2169,61 @@ static stmt_t *parse_type_def(parser_t *p) {
 }
 
 /* ON expr GOTO/GOSUB label1, label2, ... */
+/* the event the current token names, or -1: TIMER, PEN and STRIG are only
+ * names otherwise */
+static int event_kind(parser_t *p) {
+    token_t *t = lexer_peek(&p->lex);
+    if (t->type == TOK_KEY) return EV_KEY;
+    if (t->type == TOK_PLAY) return EV_PLAY;
+    if (t->type != TOK_IDENT) return -1;
+    if (strcmp(t->text, "TIMER") == 0) return EV_TIMER;
+    if (strcmp(t->text, "STRIG") == 0) return EV_STRIG;
+    if (strcmp(t->text, "PEN") == 0) return EV_PEN;
+    return -1;
+}
+
+/* ON, OFF or STOP next (taken), or -1 (nothing taken) */
+static int event_action(parser_t *p) {
+    token_t *t = lexer_peek(&p->lex);
+    if (t->type == TOK_ON) { lexer_skip(&p->lex); return EV_ON; }
+    if (t->type == TOK_IDENT && strcmp(t->text, "OFF") == 0) { lexer_skip(&p->lex); return EV_OFF; }
+    if (t->type == TOK_IDENT && strcmp(t->text, "STOP") == 0) { lexer_skip(&p->lex); return EV_STOP; }
+    return -1;
+}
+
+/* TIMER ON, KEY(n) OFF, PLAY STOP ...: the statement, or NULL with nothing
+ * taken when these are not that (a variable PEN, an array STRIG, PLAY's
+ * string) */
+static stmt_t *parse_event_set(parser_t *p) {
+    int kind = event_kind(p), action, line = lexer_peek(&p->lex)->line;
+    lexer_t at = p->lex;
+    expr_t *n = NULL;
+    stmt_t *s;
+    if (kind < 0) return NULL;
+    lexer_skip(&p->lex);
+    if (lexer_check(&p->lex, TOK_LPAREN) && (kind == EV_KEY || kind == EV_STRIG)) {
+        lexer_skip(&p->lex);
+        n = parse_expr(p);
+        if (!n || !lexer_match(&p->lex, TOK_RPAREN)) {
+            if (n) expr_free(n);
+            p->lex = at;
+            p->error = ERR_NONE;
+            return NULL;
+        }
+    }
+    action = event_action(p);
+    if (action < 0 || (kind == EV_KEY && !n)) {
+        if (n) expr_free(n);
+        p->lex = at;
+        return NULL;
+    }
+    if (!(s = stmt_alloc(STMT_EVENT_SET, line))) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    s->event.kind = kind;
+    s->event.n = n;
+    s->event.action = action;
+    return s;
+}
+
 /* ON ERROR GOTO label / ON ERROR GOTO 0 */
 static stmt_t *parse_on(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
@@ -2200,35 +2255,33 @@ static stmt_t *parse_on(parser_t *p) {
         return stmt_on_error(err_label, line);
     }
 
-    /* ON TIMER(n) GOSUB label — no-op stub */
-    if (lexer_check(&p->lex, TOK_IDENT) &&
-        strcmp(lexer_peek(&p->lex)->text, "TIMER") == 0) {
-        lexer_skip(&p->lex); /* consume TIMER */
-        if (lexer_match(&p->lex, TOK_LPAREN)) {
-            expr_t *e = parse_expr(p);
-            if (e) expr_free(e);
-            lexer_match(&p->lex, TOK_RPAREN);
-        }
-        /* Consume GOSUB label */
-        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_skip(&p->lex);
-        if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
+    /* ON TIMER(n) GOSUB label, and KEY(n), PLAY(n), STRIG(n), PEN */
+    {
+        int kind = event_kind(p);
+        if (kind >= 0) {
+            stmt_t *ev = stmt_alloc(STMT_EVENT_ON, line);
+            if (!ev) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            ev->event.kind = kind;
             lexer_skip(&p->lex);
-        return stmt_alloc(STMT_NOOP, line);
-    }
-
-    /* ON KEY(n) GOSUB label — no-op stub */
-    if (lexer_check(&p->lex, TOK_KEY)) {
-        lexer_skip(&p->lex); /* consume KEY */
-        if (lexer_match(&p->lex, TOK_LPAREN)) {
-            expr_t *e = parse_expr(p);
-            if (e) expr_free(e);
-            lexer_match(&p->lex, TOK_RPAREN);
+            if (kind != EV_PEN) {
+                if (!expect(p, TOK_LPAREN)) { stmt_free(ev); return NULL; }
+                ev->event.n = parse_expr(p);
+                if (!ev->event.n || !expect(p, TOK_RPAREN)) { stmt_free(ev); return NULL; }
+            }
+            if (!expect(p, TOK_GOSUB)) { stmt_free(ev); return NULL; }
+            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t num = lexer_next(&p->lex);
+                if (num.ival != 0) int_label(ev->event.label, num.ival);    /* (0: no handler) */
+            } else if (lexer_check(&p->lex, TOK_IDENT)) {
+                token_t lab = lexer_next(&p->lex);
+                ast_name_copy(ev->event.label, lab.text);
+            } else {
+                parser_error(p, ERR_SYNTAX);
+                stmt_free(ev);
+                return NULL;
+            }
+            return ev;
         }
-        /* Consume GOSUB label */
-        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_skip(&p->lex);
-        if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
-            lexer_skip(&p->lex);
-        return stmt_alloc(STMT_NOOP, line);
     }
 
     /* ON expr GOTO/GOSUB label1, label2, ... */
@@ -2547,6 +2600,10 @@ static stmt_t *parse_stmt_in(parser_t *p) {
         return stmt_label(label_name, line);
     }
 
+    if (tok->type == TOK_IDENT) {         /* TIMER ON, STRIG(0) OFF, PEN STOP */
+        stmt_t *ev = parse_event_set(p);
+        if (ev) return ev;
+    }
     switch (tok->type) {
         case TOK_PRINT:    return parse_print(p);
         case TOK_NEXT:     return parse_next(p);
@@ -2895,6 +2952,10 @@ static stmt_t *parse_stmt_in(parser_t *p) {
         case TOK_CHAIN: case TOK_PLAY: {
             /* Single string-expr argument, no-op */
             int line = tok->line;
+            if (tok->type == TOK_PLAY) {
+                stmt_t *ev = parse_event_set(p);
+                if (ev) return ev;
+            }
             lexer_skip(&p->lex);
             if (!at_stmt_end(p)) {
                 expr_t *e = parse_expr(p);
@@ -2917,17 +2978,25 @@ static stmt_t *parse_stmt_in(parser_t *p) {
         }
 
         case TOK_KEY: {
-            /* KEY n, string$ / KEY ON / KEY OFF / KEY LIST — all no-op */
+            /* KEY(n) ON|OFF|STOP; KEY LIST; KEY n, s$; KEY ON and KEY OFF,
+             * the soft keys' line, are not shown here */
             int line = tok->line;
+            stmt_t *ev = parse_event_set(p);
+            if (ev) return ev;
             lexer_skip(&p->lex);
-            /* Consume everything until end of statement */
-            while (!at_stmt_end(p)) {
-                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
-                expr_t *e = parse_expr(p);
-                if (e) expr_free(e);
-                else break;
+            if (event_action(p) >= 0) return stmt_alloc(STMT_NOOP, line);
+            if (lexer_check(&p->lex, TOK_LIST) ||
+                (lexer_check(&p->lex, TOK_IDENT) && strcmp(lexer_peek(&p->lex)->text, "LIST") == 0)) {
+                lexer_skip(&p->lex);
+                return stmt_alloc(STMT_KEY_LIST, line);
             }
-            return stmt_alloc(STMT_NOOP, line);
+            ev = stmt_alloc(STMT_KEY_SET, line);
+            if (!ev) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            ev->event.n = parse_expr(p);
+            if (!ev->event.n || !expect(p, TOK_COMMA)) { stmt_free(ev); return NULL; }
+            ev->event.value = parse_expr(p);
+            if (!ev->event.value) { stmt_free(ev); return NULL; }
+            return ev;
         }
 
         case TOK_PALETTE: {

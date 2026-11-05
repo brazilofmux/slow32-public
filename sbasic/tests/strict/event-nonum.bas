@@ -1,0 +1,4 @@
+REM QB: Expected GOSUB, or (
+ON TIMER GOSUB k
+SYSTEM
+k: RETURN

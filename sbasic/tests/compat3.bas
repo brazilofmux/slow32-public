@@ -21,7 +21,7 @@ PRINT "Fixed:"; fixed
 PALETTE
 PALETTE 1, 2
 
-' 4. ON TIMER / ON KEY (no-op stubs)
+' 4. ON TIMER / ON KEY
 ON TIMER(60) GOSUB 999
 ON KEY(1) GOSUB 999
 
@@ -47,3 +47,5 @@ CLOSE #1
 KILL "test_seek.tmp"
 
 PRINT "Done"
+END
+999 RETURN

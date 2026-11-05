@@ -1,0 +1,4 @@
+REM QB: Expected GOSUB, or (
+ON PEN(1) GOSUB k
+SYSTEM
+k: RETURN

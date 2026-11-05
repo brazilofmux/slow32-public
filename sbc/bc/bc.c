@@ -1335,6 +1335,7 @@ typedef struct { char name[64]; int n, data, lb[3], dim[3]; } mirror_t;
 #define BC_MIRRORS 16
 static mirror_t bc_mirrors[BC_MIRRORS];
 static int bc_nmirrors;
+static int bc_events;           /* the program sets an event trap (ON TIMER, ON KEY ...) */
 
 /* name's cell, good now: looked up (or made) if the generation has moved */
 static int array_cell(int line, const char *name, int n) {
@@ -2498,6 +2499,7 @@ static int op_block(void) {
         op_add(b);
         st(bc_body ? hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_op") : bc_area_param, 0, iconst(bc_nops - 1));
         st(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_line"), 0, iconst(bc_basic_line));
+        if (bc_events) call_end(h_ncarg, 0, "bcrt_event_poll", NULL);     /* (a trap's chance, between statements) */
     }
     return b;
 }
@@ -3724,6 +3726,36 @@ static void bc_stmt(stmt_t *s) {
         if (*q == '\0' && q != s->label.name) bc_basic_line = atoi(s->label.name);
         break;
     }
+    case STMT_EVENT_ON: {       /* the handler: its label's op, the main program's */
+        bv_t n = dynv(s->event.n ? expr(s->event.n) : kint(0, VAL_INTEGER));
+        int cb, k = s->event.label[0] ? label_op(s->event.label) : iconst(-1);
+        cb = h_ncarg;
+        carg(iconst(s->event.kind), 0);
+        carg_bv(n);
+        carg(k, 0);
+        call_end(cb, 5, "bcrt_event_on", NULL);
+        break;
+    }
+    case STMT_EVENT_SET: {
+        bv_t n = dynv(s->event.n ? expr(s->event.n) : kint(0, VAL_INTEGER));
+        int cb = h_ncarg;
+        carg(iconst(s->event.kind), 0);
+        carg_bv(n);
+        carg(iconst(s->event.action), 0);
+        call_end(cb, 5, "bcrt_event_set", NULL);
+        break;
+    }
+    case STMT_KEY_SET: {
+        bv_t n = dynv(expr(s->event.n)), x = dynv(expr(s->event.value));
+        int cb = h_ncarg;
+        carg_bv(n);
+        carg_bv(x);
+        call_end(cb, 6, "bcrt_key_define", NULL);
+        break;
+    }
+    case STMT_KEY_LIST:
+        call_end(h_ncarg, 0, "eval_key_list", NULL);
+        break;
     case STMT_ON_ERROR: {       /* the handler: its label's op */
         int cb, k = s->on_error.label[0] ? label_op(s->on_error.label) : iconst(-1);
         cb = h_ncarg;
@@ -3781,7 +3813,7 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_RETURN:
         if (s->goto_stmt.label[0]) {    /* RETURN label: the GOSUB's return dropped, then the label */
-            call_end(h_ncarg, 0, "bcrt_return", NULL);
+            call_end(h_ncarg, 0, "bcrt_return_label", NULL);
             goto_blk(label_blk(s->goto_stmt.label));
             break;
         }
@@ -4685,6 +4717,7 @@ static void proc_func(proc_t *p, Node *fn, int body) {
     bc_proc_exit = new_blk();
     bc_lowering = 1;
     bc_stmts(def->proc_def.body);
+    if (bc_events && bc_live) call_end(h_ncarg, 0, "bcrt_event_poll", NULL);    /* (END SUB is a statement too) */
     bc_lowering = 0;
     goto_blk(bc_proc_exit);
     begin_blk(bc_proc_exit);
@@ -4762,6 +4795,9 @@ static void find_trap(stmt_t *s) {
     for (; s; s = s->next) {
         if (s->type == STMT_ON_ERROR || s->type == STMT_RESUME || s->type == STMT_ERROR_RAISE)
             bc_trap = 1;
+        /* (a trap's handler is the main program's code, entered again with
+         * a procedure maybe under it, as an error's is) */
+        if (s->type == STMT_EVENT_ON) bc_trap = bc_events = 1;
         stmt_exprs(s, trap_top, NULL);
         switch (s->type) {
         case STMT_FOR: find_trap(s->for_stmt.body); break;

@@ -97,6 +97,23 @@ error_t eval_array_store(const char *name, int nidx, int *indices, const value_t
 int elem_bytes(val_type_t t);
 void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b);
 void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b);
+/* Event traps: ON TIMER(n) GOSUB and the rest (the interpreter's run_event;
+ * compiled code's bcrt_event_poll).  Armed while any is not OFF; a program
+ * with none costs nothing but that test.  next: the trap to run now, its
+ * handler's op in *target (-1: none), held in STOP until done. */
+extern int eval_events_armed;
+error_t act_event_poll(void);
+error_t eval_event_on(int kind, int n, int target);
+error_t eval_event_set(int kind, int n, int action);
+error_t eval_key_define(int n, const value_t *s);
+void eval_key_list(void);
+int eval_event_next(int *target);
+void eval_event_done(int trap);
+void eval_event_reset(void);
+void eval_event_look(void);
+/* the keys a key trap's look at the keyboard took and passed over, for
+ * INKEY$: 1 and the key's bytes in ch, *n of them */
+int eval_key_unread(char *ch, int *n);
 /* VARPTR, VARSEG or SADD by that name; its value, from where the thing is */
 int eval_is_addr(const char *name);
 error_t eval_addr_result(const char *fn, int seg, int off, value_t *out);

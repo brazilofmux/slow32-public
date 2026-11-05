@@ -716,6 +716,23 @@ Still taken that QBasic refuses: SADD of a STRING * n variable
 ("Fixed-length string illegal": the checker does not know its length
 there).  Not read: `$DYNAMIC; VARPTR$ is not done (DRAW and PLAY's X).
 
+QB 4.5 past QBasic, reconsidered (2026-11-05): no QB 4.5 to hand, so QBasic
+1.1 stays the authority where it has the feature -- it has nearly all
+of it -- and QB64 is evidence at most, for what QBasic refuses ($INCLUDE,
+ON UEVENT).  '$DYNAMIC and '$STATIC: a comment beginning so (lexer.c),
+for DIMs from there on in the text's order.  Event traps (eval.c's "event
+traps" says the rules, each probed): ON TIMER, KEY, PLAY, STRIG, PEN, and
+their ON, OFF, STOP.  A handler is the main program's code from its label,
+run between statements, the procedure going still under it, in nested C:
+run_event as run_handler does, s32-bc's event_run as bcrt_trap_proc, its
+programs in trap mode (every variable in memory, no mirrors) with a
+bcrt_event_poll at each op, in programs with a trap only.  The clock and
+keyboard are looked at every 64 chances.  Not checked against QBasic: key
+traps (the oracle's keys reach only the BIOS's buffer, under them), by its
+documentation and the engines' agreement.  PLAY, STRIG and PEN keep their
+states and never fire: no background music, stick or pen here.  KEY ON and
+KEY OFF show no line.  INPUT does not run traps, as in QBasic.
+
 Then QBasic's load-time checks (2026-11-04), the last of what the
 checker took that QBasic does not: strict-qb now agrees on every
 program (398, the 4 hoisted DEF FNs apart; it had been 14 short).

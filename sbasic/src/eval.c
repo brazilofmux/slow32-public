@@ -2286,6 +2286,7 @@ error_t eval_input_line(const char *prompt, int no_question, int same_line,
 }
 
 static error_t exec_input(env_t *env, stmt_t *s) {
+    eval_event_look();          /* (it may wait; a trap only runs after it) */
     value_t vals[64];
     val_type_t types[64];
     int n = s->input.nvars;
@@ -3828,6 +3829,299 @@ error_t eval_poke(int offset, int val) {
     return pc_poke(offset, val);
 }
 
+/* --- event traps ------------------------------------------------------
+ * As QBasic has them (probed; key traps from its documentation, since the
+ * oracle's keys reach only the BIOS's buffer):  a trap is OFF (nothing is
+ * kept), ON, or STOP (one event is kept for when it is ON).  Between
+ * statements a trap ON with an event runs its handler, the main program's
+ * code from the label; it is held as in STOP until the handler RETURNs, and
+ * runs with whatever procedure was going still under it.  No trap runs
+ * while an ON ERROR handler is active.  TIMER's count starts when it is
+ * turned on or bound to a handler; ON TIMER(n) rounds n.  CLEAR and RUN turn
+ * all of them off.  PLAY, STRIG and PEN keep their states and never come:
+ * here no music plays in the background, and no stick or pen is attached. */
+#define EV_TRAPS 39
+#define EV_PLAY_TRAP 1
+#define EV_PEN_TRAP 2
+#define EV_STRIG_TRAP(n) (3 + (n) / 2)
+#define EV_KEY_TRAP(n) (7 + (n))
+static struct { int state, target, pending, busy; } ev_traps[EV_TRAPS];   /* (target: the op + 1, 0 no handler) */
+int eval_events_armed;
+static int ev_keys_armed, ev_ready, ev_tick, ev_used;
+static double ev_period, ev_due;
+static unsigned char ev_key_code[32][2];        /* KEY n, s$ (15 to 25): shift flags, scan code */
+static char ev_key_text[32][16];                /* KEY n, s$ (1 to 10, 30, 31) */
+static struct { char b[2]; int n; } ev_unread[16];
+static int ev_nunread;
+
+static double ev_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void ev_recount(void) {
+    eval_events_armed = 0;
+    ev_keys_armed = 0;
+    for (int i = 0; i < EV_TRAPS; i++)
+        if (ev_traps[i].state != EV_OFF) {
+            eval_events_armed = 1;
+            if (i > EV_KEY_TRAP(0)) ev_keys_armed = 1;
+        }
+    ev_ready = 1;
+}
+
+void eval_event_reset(void) {
+    if (!ev_used) return;
+    for (int i = 0; i < EV_TRAPS; i++) {
+        ev_traps[i].state = EV_OFF;
+        ev_traps[i].target = 0;
+        ev_traps[i].pending = ev_traps[i].busy = 0;
+    }
+    ev_recount();
+}
+
+/* the keys of KEY(n): 1 to 25, F11 and F12 at 30 and 31 */
+static int ev_key_ok(int n) { return (n >= 1 && n <= 25) || n == 30 || n == 31; }
+
+error_t eval_event_on(int kind, int n, int target) {
+    int t;
+    ev_used = 1;
+    switch (kind) {
+    case EV_TIMER:
+        if (n < 1 || n > 86400) return ERR_ILLEGAL_FUNCTION_CALL;
+        ev_period = n;
+        ev_due = ev_now() + n;
+        t = 0;
+        break;
+    case EV_KEY:
+        if (!ev_key_ok(n)) return ERR_ILLEGAL_FUNCTION_CALL;
+        t = EV_KEY_TRAP(n);
+        break;
+    case EV_PLAY:
+        if (n < 1 || n > 32) return ERR_ILLEGAL_FUNCTION_CALL;
+        t = EV_PLAY_TRAP;
+        break;
+    case EV_STRIG:
+        if (n < 0 || n > 6 || (n & 1)) return ERR_ILLEGAL_FUNCTION_CALL;
+        t = EV_STRIG_TRAP(n);
+        break;
+    default:
+        t = EV_PEN_TRAP;
+        break;
+    }
+    ev_traps[t].target = target + 1;
+    return ERR_NONE;
+}
+
+static void ev_set_one(int t, int action) {
+    if (t == 0 && ev_traps[0].state == EV_OFF && action != EV_OFF && ev_period > 0)
+        ev_due = ev_now() + ev_period;
+    ev_traps[t].state = action;
+    if (action == EV_OFF) ev_traps[t].pending = 0;
+}
+
+error_t eval_event_set(int kind, int n, int action) {
+    ev_used = 1;
+    switch (kind) {
+    case EV_TIMER: ev_set_one(0, action); break;
+    case EV_KEY:
+        if (n == 0) {
+            for (int k = 1; k < 32; k++) if (ev_key_ok(k)) ev_set_one(EV_KEY_TRAP(k), action);
+        } else {
+            if (!ev_key_ok(n)) return ERR_ILLEGAL_FUNCTION_CALL;
+            ev_set_one(EV_KEY_TRAP(n), action);
+        }
+        break;
+    case EV_PLAY: ev_set_one(EV_PLAY_TRAP, action); break;
+    case EV_STRIG:
+        if (n < 0 || n > 6 || (n & 1)) return ERR_ILLEGAL_FUNCTION_CALL;
+        ev_set_one(EV_STRIG_TRAP(n), action);
+        break;
+    default: ev_set_one(EV_PEN_TRAP, action); break;
+    }
+    ev_recount();
+    return ERR_NONE;
+}
+
+/* KEY n, s$: text for a function key (15 characters kept), or for 15 to 25
+ * the key a trap is on, shift flags then scan code; 11 to 14 are the arrows' */
+error_t eval_key_define(int n, const value_t *s) {
+    if (s->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (n >= 15 && n <= 25) {
+        if (s->sval->len != 2) return ERR_ILLEGAL_FUNCTION_CALL;
+        ev_key_code[n][0] = (unsigned char)s->sval->data[0];
+        ev_key_code[n][1] = (unsigned char)s->sval->data[1];
+        return ERR_NONE;
+    }
+    if (!((n >= 1 && n <= 10) || n == 30 || n == 31)) return ERR_ILLEGAL_FUNCTION_CALL;
+    {
+        int len = s->sval->len < 15 ? s->sval->len : 15;
+        memcpy(ev_key_text[n], s->sval->data, (size_t)len);
+        ev_key_text[n][len] = '\0';
+    }
+    return ERR_NONE;
+}
+
+/* KEY LIST: F1 to F12 and what each says */
+void eval_key_list(void) {
+    for (int f = 1; f <= 12; f++) {
+        const char *text = ev_key_text[f <= 10 ? f : f + 19];
+        printf("F%-2d %s\n", f, text);
+    }
+    fflush(stdout);
+}
+
+/* a key's scan code on the PC's keyboard, and whether it was shifted */
+static int ev_scan_of(int c, int *shift) {
+    static const char row[] = "1234567890-=\0\0qwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./";
+    *shift = c >= 'A' && c <= 'Z';
+    if (*shift) c += 32;
+    if (c == ' ') return 57;
+    if (c == '\r' || c == '\n') return 28;
+    if (c == 27) return 1;
+    for (int i = 0; i < (int)sizeof row - 1; i++)
+        if (row[i] && row[i] == c) return i + 2;
+    return 0;
+}
+
+/* the key trap for this key, or 0 */
+static int ev_key_trap_of(const char *ch, int n) {
+    int shift = 0, scan = n == 2 && ch[0] == 0 ? (unsigned char)ch[1] : ev_scan_of((unsigned char)ch[0], &shift);
+    if (n == 2) {
+        static const unsigned char arrows[4] = { 72, 75, 77, 80 };
+        if (scan >= 59 && scan <= 68) return scan - 58;         /* F1 to F10 */
+        for (int k = 0; k < 4; k++) if (scan == arrows[k]) return 11 + k;
+        if (scan == 133) return 30;
+        if (scan == 134) return 31;
+    }
+    for (int k = 15; k <= 25; k++)
+        if (scan && ev_key_code[k][1] == scan &&
+            ((ev_key_code[k][0] & 3) != 0) == shift)
+            return k;
+    return 0;
+}
+
+/* one key, as INKEY$ has it in graphics: a terminal's escape sequence for
+ * an arrow or a function key made CHR$(0) and its scan code; what it does
+ * not know stays bytes */
+static int ev_read_key(char *ch) {
+    static const unsigned char tens[] = { 59, 60, 61, 62, 63, 0, 64, 65, 66, 67, 0, 68, 133, 134 };
+    char c[3];
+    int v = 0;
+    if (sb_gfx_active()) return sb_gfx_inkey(ch);
+    if (!sb_term_inkey(ch)) return 0;
+    if (ch[0] != 27 || !sb_term_inkey(c)) return 1;
+    if (c[0] != '[' && c[0] != 'O') {
+        ev_unread[ev_nunread].b[0] = c[0];
+        ev_unread[ev_nunread++].n = 1;
+        return 1;
+    }
+    if (!sb_term_inkey(c)) return 1;
+    ch[0] = 0;
+    switch (c[0]) {
+    case 'A': ch[1] = 72; return 2;
+    case 'D': ch[1] = 75; return 2;
+    case 'C': ch[1] = 77; return 2;
+    case 'B': ch[1] = 80; return 2;
+    case 'P': ch[1] = 59; return 2;
+    case 'Q': ch[1] = 60; return 2;
+    case 'R': ch[1] = 61; return 2;
+    case 'S': ch[1] = 62; return 2;
+    default: break;
+    }
+    /* ESC [ 1 5 ~ and so on: F5 is 15, F6 to F10 are 17 to 21, F11 and F12 23 and 24 */
+    while (c[0] >= '0' && c[0] <= '9') {
+        v = v * 10 + (c[0] - '0');
+        if (!sb_term_inkey(c)) break;
+    }
+    if (c[0] == '~' && v >= 11 && v <= 24 && tens[v - 11]) {
+        ch[1] = (char)tens[v - 11];
+        return 2;
+    }
+    ch[0] = 27;
+    return 1;
+}
+
+/* a look at the keyboard: a key some trap watches is that trap's event, any
+ * other is kept for INKEY$ */
+static void ev_keyboard(void) {
+    char ch[3];
+    int n = ev_nunread < 15 ? ev_read_key(ch) : 0;
+    while (n > 0 && ev_nunread < 15) {
+        int k = ev_key_trap_of(ch, n);
+        if (k && ev_traps[EV_KEY_TRAP(k)].state != EV_OFF) {
+            ev_traps[EV_KEY_TRAP(k)].pending = 1;
+            ev_ready = 1;
+        } else {
+            memcpy(ev_unread[ev_nunread].b, ch, 2);
+            ev_unread[ev_nunread++].n = n;
+        }
+        n = ev_nunread < 15 ? ev_read_key(ch) : 0;
+    }
+}
+
+int eval_key_unread(char *ch, int *n) {
+    if (!ev_nunread) return 0;
+    memcpy(ch, ev_unread[0].b, 2);
+    *n = ev_unread[0].n;
+    ev_nunread--;
+    memmove(&ev_unread[0], &ev_unread[1], (size_t)ev_nunread * sizeof ev_unread[0]);
+    return 1;
+}
+
+static void ev_sample(void) {
+    if (ev_traps[0].state != EV_OFF && ev_period > 0) {
+        double now = ev_now();
+        if (now >= ev_due) {
+            ev_traps[0].pending = 1;
+            ev_ready = 1;
+            while (ev_due <= now) ev_due += ev_period;
+        }
+    }
+    if (ev_keys_armed) ev_keyboard();
+}
+
+/* a trap would run now */
+static int ev_runnable(int i) {
+    return ev_traps[i].pending && ev_traps[i].state == EV_ON && !ev_traps[i].busy;
+}
+
+static int event_due(void) {
+    ev_sample();
+    for (int i = 0; i < EV_TRAPS; i++)
+        if (ev_runnable(i) && ev_traps[i].target) return 1;
+    return 0;
+}
+
+int eval_event_next(int *target) {
+    if (--ev_tick <= 0) {       /* (the clock and the keyboard are not free to look at) */
+        ev_tick = 64;
+        ev_sample();
+    }
+    if (!ev_ready) return -1;
+    for (int i = 0; i < EV_TRAPS; i++)
+        if (ev_runnable(i)) {
+            ev_traps[i].pending = 0;
+            if (!ev_traps[i].target) continue;  /* (GOSUB 0) */
+            ev_traps[i].busy = 1;
+            *target = ev_traps[i].target - 1;
+            return i;
+        }
+    ev_ready = 0;
+    return -1;
+}
+
+void eval_event_done(int trap) {
+    ev_traps[trap].busy = 0;
+    ev_ready = 1;
+    ev_tick = 0;
+}
+
+/* look at the clock at the next chance: traps were held back, or a statement
+ * took its time */
+void eval_event_look(void) { ev_tick = 0; }
+
 /* SLEEP seconds (v NULL: SLEEP alone) -- for compiled code too */
 error_t eval_sleep(const value_t *v) {
     double secs = 0.0;
@@ -3835,6 +4129,15 @@ error_t eval_sleep(const value_t *v) {
         if (v->type == VAL_STRING) return ERR_TYPE_MISMATCH;
         if (val_to_double(v, &secs) != ERR_NONE) secs = 0.0;
         if (secs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    /* a trap armed: SLEEP ends as one comes due (SLEEP alone waits for it) */
+    if (eval_events_armed) {
+        double left = v && secs > 0 ? secs : 86400.0;
+        while (left > 0 && !event_due()) {
+            usleep(20000);
+            left -= 0.02;
+        }
+        return ERR_NONE;
     }
     /* Fractional seconds sleep (SLEEP 0.03 paces animation) */
     if (secs > 0) {
@@ -4521,6 +4824,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_CLEAR:
             env_clear(env);
             array_clear();
+            eval_event_reset();
             return ERR_NONE;
 
         case STMT_KILL:         return exec_kill(env, s);
@@ -4533,6 +4837,37 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_DIM_AS_TYPE:  return exec_dim_as_type(env, s);
         case STMT_FIELD_ASSIGN: return exec_field_assign(env, s);
         case STMT_MID_ASSIGN:   return exec_mid_assign(env, s);
+
+        case STMT_EVENT_ON: {
+            int n = 0, target = -1;
+            if (s->event.n) EVAL_CHECK(eval_int_of(env, s->event.n, &n));
+            if (s->event.label[0]) {
+                target = main_code ? code_find_label(main_code, s->event.label) : -1;
+                if (target < 0) return ERR_UNDEFINED_LABEL;
+            }
+            return eval_event_on(s->event.kind, n, target);
+        }
+
+        case STMT_EVENT_SET: {
+            int n = 0;
+            if (s->event.n) EVAL_CHECK(eval_int_of(env, s->event.n, &n));
+            return eval_event_set(s->event.kind, n, s->event.action);
+        }
+
+        case STMT_KEY_SET: {
+            int n;
+            value_t v;
+            error_t err;
+            EVAL_CHECK(eval_int_of(env, s->event.n, &n));
+            EVAL_CHECK(eval_expr(env, s->event.value, &v));
+            err = eval_key_define(n, &v);
+            val_clear(&v);
+            return err;
+        }
+
+        case STMT_KEY_LIST:
+            eval_key_list();
+            return ERR_NONE;
 
         case STMT_ON_ERROR: {
             /* (in the handler, QBasic: GOTO 0 stops the program with the
@@ -4920,9 +5255,15 @@ error_t act_for_enter(act_t *a, stmt_t *s, int runs, double limit, double step,
     return ERR_NONE;
 }
 
+static error_t event_poll(void);
+
 static inline __attribute__((always_inline)) error_t act_step_in(act_t *a, int *ppc) {
     env_t *env = a->env;
     int pc = *ppc;
+    if (eval_events_armed) {
+        error_t ev = event_poll();
+        if (ev != ERR_NONE) return ev;
+    }
     op_t *op = &a->c->ops[pc];
     error_t err;
     int yes;
@@ -5038,6 +5379,52 @@ static error_t run_handler(int *how) {
     }
     return ERR_EXIT;                    /* (off the end of the program: it ends) */
 }
+
+/* A trap's handler: the main program's code from its label, run here, the
+ * procedure going (if any) still under it, its array names the main
+ * program's, until the RETURN of this GOSUB.  RETURN label goes on from the
+ * label with the trap released, and never comes back: QBasic abandons what
+ * was going.  Whatever else stops it is returned. */
+static error_t run_event(int trap, int target) {
+    act_t *m = main_act;
+    int pc = target, base = m->gosub_base, released = 0;
+    code_t *code = cur_code;
+    error_t result = ERR_NONE;
+    if ((result = array_scope_push(0, NULL, NULL)) != ERR_NONE) return result;
+    cur_code = m->c;
+    m->gosub_base = gosub_top;
+    for (;;) {
+        error_t err;
+        if (pc >= m->c->nops) { result = ERR_EXIT; break; }
+        err = act_step_in(m, &pc);
+        if (err == ERR_NONE) continue;
+        if (err == ERR_RETURN && gosub_top <= m->gosub_base) {
+            if (!return_label[0]) break;
+            pc = find_label(return_label);
+            return_label[0] = '\0';
+            if (pc < 0) { result = ERR_UNDEFINED_LABEL; break; }
+            if (!released) eval_event_done(trap);
+            released = 1;
+            continue;
+        }
+        if (!act_transfer(m, err, &pc, &result)) break;
+    }
+    m->gosub_base = base;
+    cur_code = code;
+    array_scope_pop();
+    if (!released) eval_event_done(trap);
+    return result;
+}
+
+static error_t event_poll(void) {
+    int target, trap;
+    if (!main_act) return ERR_NONE;
+    if (on_error_active) { eval_event_look(); return ERR_NONE; }
+    trap = eval_event_next(&target);
+    return trap < 0 ? ERR_NONE : run_event(trap, target);
+}
+
+error_t act_event_poll(void) { return event_poll(); }
 
 int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
     int pc = *ppc;
@@ -5183,6 +5570,7 @@ void eval_reset(void) {
     view_bottom = 24;
     scr_clear_rows(1, SCR_ROWS);
     pc_reset();
+    eval_event_reset();
     eval_depth = 0;
     on_error_label_idx = -1;
     on_error_active = 0;

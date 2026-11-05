@@ -377,6 +377,10 @@ static void walk_list(check_t *c, stmt_t *s) {
             for (int i = 0; i < s->on_branch.nlabels; i++)
                 push(&c->u->jumps, s->on_branch.labels[i], seq, s->line, 1);
             break;
+        case STMT_EVENT_ON:
+            if (s->event.label[0])      /* (its handler the module's, as ON ERROR's) */
+                push(&c->modjumps, s->event.label, seq, s->line, 0);
+            break;
         case STMT_ON_ERROR:
             c->info[STRICT_ON_ERROR]++;
             if (s->on_error.label[0])   /* (its handler the module's, as RESTORE's label) */
@@ -1023,6 +1027,13 @@ static void ty_stmt(check_t *c, stmt_t *s) {
         if (a != K_ANY && b != K_ANY && a != b) ty_mismatch(c, s->line, "SWAP of a string and a number");
         return;
     }
+    case STMT_KEY_SET:
+        ty_want(c, s->event.n, K_NUM, "KEY's number a string");
+        ty_want(c, s->event.value, K_STR, "KEY's string a number");
+        return;
+    case STMT_EVENT_ON: case STMT_EVENT_SET:
+        ty_want(c, s->event.n, K_NUM, "an event's number a string");
+        return;
     case STMT_CALL:
         if ((d = ty_proc(s->call_stmt.name)) && d->type == STMT_SUB_DEF)
             ty_args(c, s->line, d, s->call_stmt.args, s->call_stmt.nargs);
