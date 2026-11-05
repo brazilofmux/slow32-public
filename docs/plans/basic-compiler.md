@@ -733,6 +733,17 @@ documentation and the engines' agreement.  PLAY, STRIG and PEN keep their
 states and never fire: no background music, stick or pen here.  KEY ON and
 KEY OFF show no line.  INPUT does not run traps, as in QBasic.
 
+CHAIN and COMMON (eval.c's "CHAIN" says the rules): the next program takes
+over at eval_program_with's top, as RUN does, its COMMONs given the
+values by position.  s32-sbc has it from there.  s32-bc hands its COMMON's
+values over and goes on in the interpreter it carries (chain.c's
+eval_chain_go, which alone brings the parser in), the chained program
+being BASIC's text: the same bytes as the interpreter, the speed the
+interpreter's.  An array in a COMMON before its DIM is dynamic, as QBasic
+has it.  Not done: RUN "file" and RUN line, which the parser still refuses
+and QBasic takes.  $INCLUDE stays the loader's; QB's own refuses it, QB64
+not tried.  Modules and ON UEVENT wait for a program that needs them.
+
 Then QBasic's load-time checks (2026-11-04), the last of what the
 checker took that QBasic does not: strict-qb now agrees on every
 program (398, the 4 hoisted DEF FNs apart; it had been 14 short).

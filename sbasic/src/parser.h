@@ -24,6 +24,8 @@ typedef struct {
      * is x%, and x! another variable) -- the parser writes it so; the
      * names a CONST or an AS gave keep theirs */
     val_type_t deftype[26];
+    char (*common_arrays)[64];  /* arrays named in a COMMON so far: a DIM after that is dynamic */
+    int ncommon_arrays;
     char (*plain)[64];          /* CONSTs' and AS-declared names */
     int nplain, capplain;
     char (*consts)[64];         /* the CONSTs so far */

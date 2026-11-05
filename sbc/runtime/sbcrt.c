@@ -1,4 +1,5 @@
 /* The start of a compiled SLOW BASIC program: see sbcrt.h. */
+#include "chain.h"
 #include "sbcrt.h"
 #include "parser.h"
 #include <stdio.h>
@@ -38,6 +39,7 @@ int sbcrt_main(const char *source, int nops, main_fn_t main_fn) {
         env_destroy(env);
         return 0;
     }
+    eval_chain_parser = chain_parse;
     err = eval_program_with(env, program, checked_main);
     if (err != ERR_NONE && err != ERR_EXIT)
         error_print(err, 0);

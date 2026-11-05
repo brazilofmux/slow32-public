@@ -3726,6 +3726,37 @@ static void bc_stmt(stmt_t *s) {
         if (*q == '\0' && q != s->label.name) bc_basic_line = atoi(s->label.name);
         break;
     }
+    case STMT_COMMON:
+        break;                  /* (CHAIN reads it) */
+    case STMT_CHAIN: {          /* the file checked, COMMON's values carried, then the rest is the interpreter's */
+        bv_t f = dynv(expr(s->shell_stmt.command));
+        int cb = h_ncarg;
+        carg_bv(f);
+        call_end(cb, 3, "bcrt_chain_check", NULL);
+        for (stmt_t *d = bc_program; d; d = d->next) {
+            if (d->type != STMT_COMMON) continue;
+            for (int i = 0; i < d->common.n; i++) {
+                const char *name = d->common.names[i];
+                cb = h_ncarg;
+                if (d->common.is_array[i]) {
+                    carg(saddr(name, (int)strlen(name)), 0);
+                    carg(iconst(arr_type(name)), 0);
+                    call_end(cb, 2, "bcrt_carry_array", NULL);
+                } else {
+                    int ty = name_type(name);
+                    char sym[96];
+                    var_t *v = bc_proc ? NULL : var_find(name);
+                    if (v && v->type == VAL_RECORD) ty = VAL_RECORD;
+                    mangle(sym, sizeof sym, "bcg_", name);      /* (the main program's: bc_trap has them all global) */
+                    carg(iconst(ty), 0);
+                    carg(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, (char *)global_add(name, sym, ty)), 0);
+                    call_end(cb, 2, "bcrt_carry_var", NULL);
+                }
+            }
+        }
+        call_end(h_ncarg, 0, "eval_chain_go", NULL);
+        break;
+    }
     case STMT_EVENT_ON: {       /* the handler: its label's op, the main program's */
         bv_t n = dynv(s->event.n ? expr(s->event.n) : kint(0, VAL_INTEGER));
         int cb, k = s->event.label[0] ? label_op(s->event.label) : iconst(-1);
@@ -4798,6 +4829,7 @@ static void find_trap(stmt_t *s) {
         /* (a trap's handler is the main program's code, entered again with
          * a procedure maybe under it, as an error's is) */
         if (s->type == STMT_EVENT_ON) bc_trap = bc_events = 1;
+        if (s->type == STMT_CHAIN) bc_trap = 1;         /* (COMMON's variables in memory, from anywhere) */
         stmt_exprs(s, trap_top, NULL);
         switch (s->type) {
         case STMT_FOR: find_trap(s->for_stmt.body); break;

@@ -61,6 +61,7 @@ typedef enum {
     ERR_BAD_FILE_MODE,
     ERR_PATH_NOT_FOUND,
     ERR_RUN,                 /* flow control: RUN, the program again */
+    ERR_CHAIN,               /* flow control: CHAIN, another program */
     ERR_RESUME_LABEL,        /* flow control: RESUME label from a procedure, out to the main program */
     ERR_COUNT
 } error_t;

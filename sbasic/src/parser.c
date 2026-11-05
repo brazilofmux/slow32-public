@@ -1719,6 +1719,8 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
     if (s) s->dim_stmt.fixlen = fixlen;
     if (s) {
         s->dim_stmt.const_bounds = !is_redim && !dynamic;
+        for (int i = 0; i < p->ncommon_arrays; i++)     /* (after its COMMON, QBasic makes it as it runs) */
+            if (strcmp(p->common_arrays[i], name.text) == 0) s->dim_stmt.const_bounds = 0;
         for (int i = 0; i < ndims; i++) {
             s->dim_stmt.lower[i] = lower[i];
             if (!bound_const(p, dims[i]) || !bound_const(p, lower[i])) s->dim_stmt.const_bounds = 0;
@@ -2169,6 +2171,47 @@ static stmt_t *parse_type_def(parser_t *p) {
 }
 
 /* ON expr GOTO/GOSUB label1, label2, ... */
+/* COMMON's names, in order, what CHAIN passes on: read ahead, nothing taken
+ * (the statement's declarations are parsed after) */
+static stmt_t *parse_common_list(parser_t *p, int line) {
+    lexer_t at = p->lex;
+    stmt_t *s = stmt_alloc(STMT_COMMON, line);
+    int cap = 8;
+    if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+    s->common.names = malloc((size_t)cap * sizeof *s->common.names);
+    s->common.is_array = malloc((size_t)cap);
+    while (s->common.names && s->common.is_array &&
+           (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME))) {
+        token_t t = lexer_next(&p->lex);
+        if (s->common.n == cap) {
+            cap *= 2;
+            s->common.names = realloc(s->common.names, (size_t)cap * sizeof *s->common.names);
+            s->common.is_array = realloc(s->common.is_array, (size_t)cap);
+            if (!s->common.names || !s->common.is_array) break;
+        }
+        ast_name_copy(s->common.names[s->common.n], t.text);
+        s->common.is_array[s->common.n] = 0;
+        if (lexer_match(&p->lex, TOK_LPAREN)) {
+            s->common.is_array[s->common.n] = 1;
+            {
+                char (*t2)[64] = realloc(p->common_arrays, (size_t)(p->ncommon_arrays + 1) * sizeof *t2);
+                if (t2) {
+                    p->common_arrays = t2;
+                    ast_name_copy(p->common_arrays[p->ncommon_arrays++], t.text);
+                }
+            }
+            while (!at_stmt_end(p) && !lexer_check(&p->lex, TOK_RPAREN)) lexer_skip(&p->lex);
+            lexer_match(&p->lex, TOK_RPAREN);
+        }
+        s->common.n++;
+        if (lexer_check(&p->lex, TOK_AS))
+            while (!at_stmt_end(p) && !lexer_check(&p->lex, TOK_COMMA)) lexer_skip(&p->lex);
+        if (!lexer_match(&p->lex, TOK_COMMA)) break;
+    }
+    p->lex = at;
+    return s;
+}
+
 /* the event the current token names, or -1: TIMER, PEN and STRIG are only
  * names otherwise */
 static int event_kind(parser_t *p) {
@@ -2955,6 +2998,13 @@ static stmt_t *parse_stmt_in(parser_t *p) {
             if (tok->type == TOK_PLAY) {
                 stmt_t *ev = parse_event_set(p);
                 if (ev) return ev;
+            } else {
+                stmt_t *ch = stmt_alloc(STMT_CHAIN, line);
+                if (!ch) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+                lexer_skip(&p->lex);
+                ch->shell_stmt.command = parse_expr(p);
+                if (!ch->shell_stmt.command) { stmt_free(ch); return NULL; }
+                return ch;
             }
             lexer_skip(&p->lex);
             if (!at_stmt_end(p)) {
@@ -3039,6 +3089,11 @@ static stmt_t *parse_stmt_in(parser_t *p) {
             stmt_t *head = NULL, *tail = NULL, *arrays = NULL;
             lexer_skip(&p->lex);
             shared = lexer_match(&p->lex, TOK_SHARED);
+            {
+                stmt_t *list = parse_common_list(p, line);
+                if (!list) return NULL;
+                stmt_append(&head, &tail, list);
+            }
             while (!at_stmt_end(p)) {
                 if (lexer_check(&p->lex, TOK_COMMA)) { lexer_skip(&p->lex); continue; }
                 if (shared && lexer_check(&p->lex, TOK_IDENT)) {
@@ -3282,6 +3337,8 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     p->error_detail[0] = '\0';
     p->nrecords = 0;
     p->ncommons = 0;
+    p->common_arrays = NULL;
+    p->ncommon_arrays = 0;
     for (int i = 0; i < 26; i++) p->deftype[i] = VAL_SINGLE;
     p->plain = NULL;
     p->nplain = p->capplain = 0;

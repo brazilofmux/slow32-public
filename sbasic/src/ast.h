@@ -165,6 +165,8 @@ typedef enum {
     STMT_LSET,
     STMT_RSET,
     STMT_WIDTH,
+    STMT_CHAIN,         /* CHAIN file$ */
+    STMT_COMMON,        /* COMMON's list, in its order: what CHAIN passes on */
     STMT_EVENT_ON,      /* ON TIMER(n) GOSUB label, and KEY, PLAY, STRIG, PEN */
     STMT_EVENT_SET,     /* TIMER ON|OFF|STOP, and KEY(n), PLAY, STRIG(n), PEN */
     STMT_KEY_SET,       /* KEY n, s$ */
@@ -543,6 +545,13 @@ typedef struct stmt {
             struct expr *target;  /* an element or a field (var_name its array's
                                      or record's name); NULL: the variable */
         } mid_assign;
+
+        /* STMT_COMMON */
+        struct {
+            char (*names)[64];
+            unsigned char *is_array;
+            int n;
+        } common;
 
         /* STMT_EVENT_ON, STMT_EVENT_SET, STMT_KEY_SET */
         struct {

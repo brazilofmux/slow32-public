@@ -1,4 +1,5 @@
 #include "eval.h"
+#include <time.h>
 #include "builtin.h"
 #include "array.h"
 #include "fileio.h"
@@ -126,6 +127,7 @@ static int is_trappable_error(error_t err) {
     case ERR_NONE:
     case ERR_EXIT:
     case ERR_RUN:
+    case ERR_CHAIN:
     case ERR_RESUME_LABEL:
     case ERR_BREAK:
     case ERR_EXIT_FOR:
@@ -4589,6 +4591,15 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_RESTORE:      return exec_restore(s);
         case STMT_END:          return ERR_EXIT;
         case STMT_RUN:          return ERR_RUN;
+        case STMT_COMMON:       return ERR_NONE;
+        case STMT_CHAIN: {
+            value_t f;
+            error_t err;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &f));
+            err = eval_chain_check(&f);
+            val_clear(&f);
+            return err != ERR_NONE ? err : ERR_CHAIN;
+        }
         case STMT_REM:          return ERR_NONE;
         case STMT_LABEL:        return ERR_NONE;
         case STMT_DECLARE:      return ERR_NONE;
@@ -5552,24 +5563,157 @@ error_t eval_program(env_t *env, stmt_t *program) {
     return eval_program_with(env, program, NULL);
 }
 
+/* --- CHAIN ------------------------------------------------------------
+ * As QBasic has it (probed): the other program replaces this one, the
+ * default extension .BAS, a file that is not there File not found and this
+ * program going on.  Open files, memory, the screen and RND's sequence stay;
+ * everything else goes but what COMMON passes on, by position: names may
+ * differ, the types may not (Type mismatch), either list may be the longer.
+ * An array goes with its bounds; a DIM of constant bounds of it in the next
+ * program is only a declaration if it was made so here too. */
+typedef struct { int is_array, present; val_type_t type; value_t v; sb_array_t a; } carried_t;
+static carried_t *carried;
+static int ncarried, capcarried, chain_running;
+static char chain_path[300];
+stmt_t *(*eval_chain_parser)(const char *path);
+
+const char *eval_chain_path(void) { return chain_path; }
+
+static int file_there(const char *p) {
+    FILE *f = fopen(p, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+error_t eval_chain_check(const value_t *file) {
+    size_t n;
+    if (file->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    n = (size_t)file->sval->len;
+    if (n == 0 || n > sizeof chain_path - 5) return ERR_FILE_NOT_FOUND;
+    memcpy(chain_path, file->sval->data, n);
+    chain_path[n] = '\0';
+    if (!strchr(chain_path, '.')) strcpy(chain_path + n, ".BAS");
+    if (!file_there(chain_path)) {      /* (DOS's names, any case: ours often lower) */
+        for (char *c = chain_path; *c; c++) if (*c >= 'A' && *c <= 'Z') *c = (char)(*c + 32);
+        if (!file_there(chain_path)) return ERR_FILE_NOT_FOUND;
+    }
+    ncarried = 0;
+    return ERR_NONE;
+}
+
+static carried_t *carry_slot(void) {
+    if (ncarried == capcarried) {
+        capcarried = capcarried ? capcarried * 2 : 16;
+        carried = realloc(carried, (size_t)capcarried * sizeof *carried);
+    }
+    memset(&carried[ncarried], 0, sizeof carried[0]);
+    return &carried[ncarried++];
+}
+
+void eval_carry_value(const value_t *v) {
+    carried_t *c = carry_slot();
+    c->type = v->type;
+    c->present = 1;
+    c->v = val_copy(v);
+}
+
+void eval_carry_array(const char *name, val_type_t type) {
+    carried_t *c = carry_slot();
+    c->is_array = 1;
+    c->type = type;
+    c->present = array_steal(name, &c->a);
+}
+
+/* the COMMONs of this program at its top, in the text's order, carried */
+static void carry_take(env_t *env, stmt_t *program) {
+    for (stmt_t *s = program; s; s = s->next) {
+        if (s->type != STMT_COMMON) continue;
+        for (int i = 0; i < s->common.n; i++) {
+            const char *name = s->common.names[i];
+            if (s->common.is_array[i]) {
+                sb_array_t *a = array_find(name);
+                eval_carry_array(name, a ? a->elem_type : VAL_SINGLE);
+            } else {
+                value_t *v = env_get(env, name);
+                if (v) eval_carry_value(v);
+            }
+        }
+    }
+}
+
+/* and the next program's COMMONs given them, before it runs */
+static error_t carry_give(env_t *env, stmt_t *program) {
+    int k = 0;
+    error_t err = ERR_NONE;
+    for (stmt_t *s = program; s && err == ERR_NONE; s = s->next) {
+        if (s->type != STMT_COMMON) continue;
+        for (int i = 0; i < s->common.n && k < ncarried && err == ERR_NONE; i++, k++) {
+            carried_t *c = &carried[k];
+            const char *name = s->common.names[i];
+            if (c->is_array != s->common.is_array[i]) { err = ERR_TYPE_MISMATCH; break; }
+            if (c->is_array) {
+                sb_array_t *here = array_find(name);
+                if (!c->present) continue;
+                if (here && here->elem_type != c->a.elem_type) { err = ERR_TYPE_MISMATCH; break; }
+                if (here && !c->a.fixed) { err = ERR_DUPLICATE_DIM; break; }
+                err = array_give(name, &c->a);
+            } else {
+                value_t *v = env_get(env, name);
+                if (!v) { err = ERR_OUT_OF_MEMORY; break; }
+                if (v->type != c->type) { err = ERR_TYPE_MISMATCH; break; }
+                val_clear(v);
+                *v = c->v;
+                c->present = 0;
+            }
+        }
+    }
+    for (int i = 0; i < ncarried; i++) {
+        carried_t *c = &carried[i];
+        if (c->is_array && c->a.data) {
+            for (int j = 0; j < c->a.total; j++) val_clear(&c->a.data[j]);
+            free(c->a.data);
+        } else if (!c->is_array && c->present) val_clear(&c->v);
+    }
+    ncarried = 0;
+    return err;
+}
+
+/* compiled code's CHAIN, its COMMONs carried: the next program, in this
+ * interpreter it carries inside, and it never comes back */
+error_t eval_chain_run(void) {
+    stmt_t *next = eval_chain_parser ? eval_chain_parser(chain_path) : NULL;
+    env_t *env = env_create(NULL);
+    error_t err;
+    if (!next) return ERR_EXIT;
+    chain_running = 1;
+    err = eval_program_with(env, next, NULL);
+    stmt_free(next);
+    return err;
+}
+
 /* A program's state as it starts: the interpreter's, and compiled
  * code's (s32-bc's runtime calls it) */
 void eval_reset(void) {
     option_base = 0;
-    builtin_rnd_reset();
+    if (!chain_running) builtin_rnd_reset();
     array_clear_all();
     data_pool_clear();
-    fileio_init();
-    sb_term_init();
+    if (!chain_running) {               /* (what CHAIN leaves as it is) */
+        fileio_init();
+        sb_term_init();
+    }
     deftype_init();
     type_def_count = 0;
-    print_col = 0;
-    print_row = 1;
-    scr_rows = 25;                      /* (the text screen: 25 rows, 1 to 24 scroll) */
-    view_top = 1;
-    view_bottom = 24;
-    scr_clear_rows(1, SCR_ROWS);
-    pc_reset();
+    if (!chain_running) {
+        print_col = 0;
+        print_row = 1;
+        scr_rows = 25;                  /* (the text screen: 25 rows, 1 to 24 scroll) */
+        view_top = 1;
+        view_bottom = 24;
+        scr_clear_rows(1, SCR_ROWS);
+        pc_reset();
+    }
     eval_event_reset();
     eval_depth = 0;
     on_error_label_idx = -1;
@@ -5586,6 +5730,7 @@ void eval_reset(void) {
 error_t eval_program_with(env_t *env, stmt_t *program, main_fn_t main_fn) {
     int i;
     char base;
+    stmt_t *owned = NULL;               /* (a chained program's: the first is the caller's) */
     stack_base = &base;
     if (!program) return ERR_NONE;
 again:                                  /* (RUN: all of it again, the variables cleared) */
@@ -5608,6 +5753,11 @@ again:                                  /* (RUN: all of it again, the variables 
     deftype_init();             /* (the scan's DEFtypes were for its static DIMs: the run makes its own) */
     if (result != ERR_NONE)
         goto cleanup;
+    if (chain_running) {
+        chain_running = 0;
+        result = carry_give(env, program);
+        if (result != ERR_NONE) goto cleanup;
+    }
 
     main_code = lower_stmts(program, &result);
     if (main_code) {
@@ -5618,7 +5768,8 @@ again:                                  /* (RUN: all of it again, the variables 
 
 cleanup:
     /* Clean up */
-    fileio_close_all();
+    if (result == ERR_CHAIN) carry_take(env, program);  /* (arrays taken before they are cleared) */
+    else fileio_close_all();
     data_pool_clear();
     array_clear_all();
     code_free(main_code);
@@ -5639,6 +5790,19 @@ cleanup:
         env_clear(env);
         goto again;
     }
+    if (result == ERR_CHAIN) {
+        stmt_t *next = eval_chain_parser ? eval_chain_parser(chain_path) : NULL;
+        env_clear(env);
+        if (owned) stmt_free(program);
+        program = owned = next;
+        main_fn = NULL;                 /* (compiled code's was the first program's) */
+        if (next) {
+            chain_running = 1;
+            goto again;
+        }
+        result = ERR_NONE;              /* (its error said) */
+    }
+    if (owned) stmt_free(owned);
     sb_term_shutdown();
     return result;
 }

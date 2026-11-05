@@ -97,6 +97,18 @@ error_t eval_array_store(const char *name, int nidx, int *indices, const value_t
 int elem_bytes(val_type_t t);
 void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b);
 void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b);
+/* CHAIN.  file$ checked and kept (it must be there: File not found, for the
+ * handler if there is one); then what COMMON passes on, in order, each its
+ * value or array; then the next program runs as this one's successor
+ * (eval_program_with goes on to it, or for compiled code eval_chain_run). */
+error_t eval_chain_check(const value_t *file);
+void eval_carry_value(const value_t *v);
+void eval_carry_array(const char *name, val_type_t type);
+/* the parser, kept out of programs that never CHAIN: what the chained
+ * program's text comes through (chain.c) */
+extern stmt_t *(*eval_chain_parser)(const char *path);
+error_t eval_chain_run(void);
+const char *eval_chain_path(void);
 /* Event traps: ON TIMER(n) GOSUB and the rest (the interpreter's run_event;
  * compiled code's bcrt_event_poll).  Armed while any is not OFF; a program
  * with none costs nothing but that test.  next: the trap to run now, its

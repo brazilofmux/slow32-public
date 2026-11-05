@@ -55,6 +55,11 @@ const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);
 int array_mem_index(const sb_array_t *arr, int k);
 int array_row_index(const sb_array_t *arr, int q);
 
+/* CHAIN: array name's bounds and elements taken out of it, into out (0: no
+ * such array; it is gone); and such an array made name's in the next program */
+int array_steal(const char *name, sb_array_t *out);
+error_t array_give(const char *name, sb_array_t *from);
+
 /* Clear all arrays (call at program start) */
 void array_clear_all(void);
 /* The CLEAR statement: static arrays zeroed, dynamic ones erased */

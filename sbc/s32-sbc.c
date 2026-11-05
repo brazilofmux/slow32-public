@@ -1354,6 +1354,7 @@ static int sets_handler(const stmt_t *s) {
     for (; s; s = s->next) {
         switch (s->type) {
             case STMT_ON_ERROR: if (s->on_error.label[0]) return 1; break;
+            case STMT_CHAIN: return 1;          /* (it unwinds through what is going) */
             case STMT_EVENT_ON: return 1;       /* (a trap's handler, with it still there, likewise) */
             case STMT_IF: if (sets_handler(s->if_stmt.then_body) || sets_handler(s->if_stmt.else_body)) return 1; break;
             case STMT_FOR: if (sets_handler(s->for_stmt.body)) return 1; break;

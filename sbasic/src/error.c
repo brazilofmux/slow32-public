@@ -60,6 +60,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Bad file mode",
     "Path not found",
     "RUN",
+    "CHAIN",
 };
 
 int error_qb_code(error_t err) {

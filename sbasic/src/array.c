@@ -206,6 +206,32 @@ error_t array_scope_alias(const char *name, const char *key) {
     return ERR_NONE;
 }
 
+int array_steal(const char *name, sb_array_t *out) {
+    sb_array_t *a = array_find(name);
+    if (!a) return 0;
+    *out = *a;
+    a->data = NULL;
+    a->total = 0;
+    array_free(a);
+    return 1;
+}
+
+error_t array_give(const char *name, sb_array_t *from) {
+    sb_array_t *a;
+    error_t e;
+    array_remove(name);
+    e = array_dim(name, from->elem_type, from->dims, from->ndims, from->lbound);
+    if (e != ERR_NONE) return e;
+    a = array_find(name);
+    for (int i = 0; i < a->total; i++) val_clear(&a->data[i]);
+    free(a->data);
+    a->data = from->data;
+    a->fixlen = from->fixlen;
+    a->fixed = from->fixed;
+    from->data = NULL;
+    return ERR_NONE;
+}
+
 void array_clear_all(void) {
     array_generation++; array_dim_generation++;
     for (int i = 0; i < array_count; i++)

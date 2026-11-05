@@ -268,3 +268,7 @@ fpc-backend/runtime/units/
 
 # islisp builds: host binary, the two SLOW-32 executables, and the per-file .s/.s32o/.k.* intermediates
 islisp/out/
+
+# what chainbad.bas and chainbad2.bas write and stop on
+sbc/tests/native/CHTB.TMP
+sbc/tests/native/CHTC.TMP

@@ -1,3 +1,4 @@
+#include "chain.h"
 #include "strict.h"
 #include "lexer.h"
 #include "parser.h"
@@ -79,6 +80,7 @@ static void cmd_run(void) {
     }
 
     /* Execute */
+    eval_chain_parser = chain_parse;
     error_t err = eval_program(global_env, program);
     if (err != ERR_NONE && err != ERR_EXIT)
         error_print(err, 0);

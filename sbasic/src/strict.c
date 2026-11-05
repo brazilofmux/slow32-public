@@ -1027,6 +1027,9 @@ static void ty_stmt(check_t *c, stmt_t *s) {
         if (a != K_ANY && b != K_ANY && a != b) ty_mismatch(c, s->line, "SWAP of a string and a number");
         return;
     }
+    case STMT_CHAIN:
+        ty_want(c, s->shell_stmt.command, K_STR, "CHAIN's file a number");
+        return;
     case STMT_KEY_SET:
         ty_want(c, s->event.n, K_NUM, "KEY's number a string");
         ty_want(c, s->event.value, K_STR, "KEY's string a number");

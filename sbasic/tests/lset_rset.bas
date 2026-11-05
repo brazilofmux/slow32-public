@@ -15,7 +15,6 @@ PRINT "RSET short: ["; a$; "]"
 WIDTH 80
 SCREEN 0
 FIELD #1, 20 AS n$, 10 AS c$
-CHAIN "test.bas"
 PCOPY 0, 1
 KEY 1, "HELP"
 SOUND 440, 1

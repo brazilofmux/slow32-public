@@ -1160,6 +1160,37 @@ void bcrt_return_label(void) {
     }
 }
 
+/* --- CHAIN: the rules are eval.c's; the next program is BASIC's text, so it
+ * runs in the interpreter this program carries (chain.c's eval_chain_go,
+ * whose object brings the parser in only with a program that chains). --- */
+void bcrt_chain_check(int lo, int hi, int t) {
+    value_t f = take(lo, hi, t);
+    error_t e = eval_chain_check(&f);
+    val_clear(&f);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_carry_var(int ty, void *slot) {
+    value_t v;
+    memset(&v, 0, sizeof v);
+    v.type = (val_type_t)ty;
+    switch (ty) {
+    case VAL_INTEGER: case VAL_LONG: v.ival = *(int *)slot; break;
+    case VAL_SINGLE: v.dval = *(float *)slot; break;
+    case VAL_DOUBLE: memcpy(&v.dval, slot, 8); break;
+    case VAL_STRING: {
+        sb_string_t *s = *(sb_string_t **)slot;
+        v.sval = s ? s : string_empty();
+        break;
+    }
+    default: v.rval = *(sb_record_t **)slot; break;
+    }
+    if (ty == VAL_RECORD && !v.rval) return;
+    eval_carry_value(&v);
+}
+
+void bcrt_carry_array(const char *name, int ty) { eval_carry_array(name, (val_type_t)ty); }
+
 /* --- event traps: the rules are eval.c's ------------------------------ */
 
 /* trap's handler, the main program's statements from op, with whatever
