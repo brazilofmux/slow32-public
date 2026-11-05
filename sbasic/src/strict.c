@@ -471,8 +471,15 @@ static void walk_list(check_t *c, stmt_t *s) {
             break;
         case STMT_CALL: {               /* CALL name, or name args alone */
             ref_t *p = find_proc_ref(&c->procs, s->call_stmt.name);
-            if (!p && ast_machine_sub(s->call_stmt.name))
-                break;                  /* (QB's own: BSAVE, BLOAD, CALL ABSOLUTE) */
+            if (!p && ast_machine_sub(s->call_stmt.name)) {     /* (QB's own: BSAVE, BLOAD, CALL ABSOLUTE) */
+                int n = s->call_stmt.nargs;
+                if (strcmp(s->call_stmt.name, "BSAVE") == 0 ? n != 3 :
+                    strcmp(s->call_stmt.name, "BLOAD") == 0 && (n < 1 || n > 2)) {
+                    snprintf(d, sizeof d, "%s with %d arguments", s->call_stmt.name, n);
+                    finding(c, s->line, "sub-args", d);
+                }
+                break;
+            }
             if (!p) {
                 snprintf(d, sizeof d, "%s is no SUB of the program", s->call_stmt.name);
                 finding(c, s->line, "sub-undefined", d);
@@ -834,6 +841,26 @@ static void ty_args(check_t *c, int line, stmt_t *def, expr_t **args, int nargs)
     (void)line;
 }
 
+/* what VARPTR, VARSEG and SADD take: a variable (QB: Expected: variable),
+ * not a FUNCTION's or a CONST's name (Variable required); SADD's a string
+ * of no fixed length (Fixed-length string illegal, here as Type mismatch
+ * when the checker knows it) */
+static void ty_addr(check_t *c, expr_t *e) {
+    expr_t *a = e->call.args[0];
+    if (a->type != EXPR_VARIABLE && a->type != EXPR_FIELD_ACCESS &&
+        !(a->type == EXPR_CALL && !a->paren && !builtin_exists(a->call.name) && !ty_proc(a->call.name))) {
+        finding(c, e->line, "variable-required", "the address of what is not a variable");
+        return;
+    }
+    if (a->type == EXPR_VARIABLE) {
+        stmt_t *d = ty_proc(a->var.name);
+        if ((d && d->type == STMT_FUNC_DEF) || find(&c->u->consts, a->var.name) || find(&c->modconsts, a->var.name))
+            finding(c, e->line, "variable-required", "the address of a FUNCTION's or a CONST's name");
+    }
+    if (e->call.name[0] == 'S' && a->type == EXPR_FIELD_ACCESS)
+        finding(c, e->line, "type-mismatch", "SADD of a field: a fixed-length string");
+}
+
 static int ty_call(check_t *c, expr_t *e) {
     const char *name = e->call.name;
     stmt_t *d;
@@ -854,6 +881,9 @@ static int ty_call(check_t *c, expr_t *e) {
         }
         return name_k(name);
     }
+    if (e->call.nargs == 1 && (strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 ||
+                               strcmp(name, "SADD") == 0))
+        ty_addr(c, e);
     for (size_t j = 0; j < sizeof qb_sigs / sizeof qb_sigs[0]; j++) {
         if (strcmp(qb_sigs[j].name, name) != 0) continue;
         matched = 1;
@@ -995,6 +1025,9 @@ static void ty_stmt(check_t *c, stmt_t *s) {
     case STMT_CALL:
         if ((d = ty_proc(s->call_stmt.name)) && d->type == STMT_SUB_DEF)
             ty_args(c, s->line, d, s->call_stmt.args, s->call_stmt.nargs);
+        else if (!d && (strcmp(s->call_stmt.name, "BSAVE") == 0 || strcmp(s->call_stmt.name, "BLOAD") == 0))
+            for (int i = 0; i < s->call_stmt.nargs; i++)        /* a file's name, then numbers */
+                ty_want(c, s->call_stmt.args[i], i ? K_NUM : K_STR, "BSAVE or BLOAD's file a number, or its address a string");
         else
             for (int i = 0; i < s->call_stmt.nargs; i++)
                 if (!(s->call_stmt.args[i]->type == EXPR_CALL && s->call_stmt.args[i]->call.nargs == 0))

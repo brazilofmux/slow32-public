@@ -672,12 +672,49 @@ checker's DIM twice only where QBasic refuses it (the main program,
 constant bounds); and LBOUND/UBOUND with no DEFtype suffix
 (dims4.bas, recparams.bas).
 
-Where it stands (2026-11-04): 96 of the 103 corpus programs QBasic
-loads compile.  The seven left are five that use the machine itself
-(CALL ABSOLUTE, and BLOAD/BSAVE of code or of an array's memory --
-not to be done, W^X) and two that only load because QB64's _
-continues a line.  Everything QBasic was asked along the way is
+Where it stood (2026-11-04): 96 of the 103 corpus programs QBasic
+loads compiled.  The seven left were five that use the machine itself
+(CALL ABSOLUTE, and BLOAD/BSAVE of code or of an array's memory; the
+data half came later, below, machine code will not: W^X) and two that
+only load because QB64's _ continues a line.  Everything QBasic was asked along the way is
 pinned in a test that prints what QBasic prints.
+
+The variables' memory (2026-11-05): VARSEG, VARPTR, SADD, BSAVE and
+BLOAD are the data half of the machine's memory, done as QBasic lays
+it out (probed; machine.c's header comment has the rules).  A program's
+storage stays where it is; an address is a window onto it, made the
+first time a program asks, and PEEK, POKE, BSAVE and BLOAD reach it
+through the window as the bytes QuickBASIC keeps it in: INTEGER 2,
+LONG 4, IEEE SINGLE and DOUBLE, a STRING * n its characters, a record
+its fields packed, a string a 4-byte descriptor and its characters.
+Each array has a segment of its own from offset 0 (so usersubs' DEF SEG
+= VARSEG(a(1)): BLOAD f$, 0 works), its first subscript fastest; the
+variables, the characters of strings and arrays of strings share one
+segment, which is also what DEF SEG alone means and where a program
+starts (not 0: `DEF SEG: PEEK(1600)` reads the variables' segment).
+VARPTR is a signed INTEGER.  A POKE makes the string its own, shared
+copies untouched.  Which segment is ours: tests print only what QBasic
+prints too.  GET and PUT follow the same element order on arrays of
+more dimensions.  QBasic refuses an array past 64K (Subscript out of
+range); ours runs, its segment moving on every 64K: not changed here.
+What is left is machine code, which stays refused: s32-bc compiles
+CALL ABSOLUTE to the run-time "Advanced feature unavailable" the
+interpreter gives, so 101 of the 103 compile, but cabsmous, tictac and
+chess stop at it.  usersubs runs through every page with the
+interpreter's screen, checksum for checksum (paths and waits patched
+in a scratch copy: its files sit in QB64's tree, its paths in DOS's).
+
+Running it found two older defects no gate saw: s32-bc's arrays of a
+procedure shared storage, more than one in an activation (array_find's
+cache is by the name's address, and the run time made each key in the
+same buffer of its frame; keys are not cached now; since d2208030,
+whose test had one array at a time), and a CONST passed to a SUB went
+by reference, so the SUB could change the CONST, in every engine (it
+is a value of its own now).  LEN of a number or a record is its size,
+as the checker already allowed.  sbc/tests/fuzz.py now has both shapes.
+Still taken that QBasic refuses: SADD of a STRING * n variable
+("Fixed-length string illegal": the checker does not know its length
+there).  Not read: `$DYNAMIC; VARPTR$ is not done (DRAW and PLAY's X).
 
 Then QBasic's load-time checks (2026-11-04), the last of what the
 checker took that QBasic does not: strict-qb now agrees on every

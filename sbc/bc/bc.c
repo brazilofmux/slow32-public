@@ -322,6 +322,8 @@ static const char *global_of(const char *name, int type) {
  */
 #define ST_DYN (-1)
 typedef struct { int lo, hi, t; int st, k; double kv; } bv_t;
+static bv_t addr_of(expr_t *e);
+static int record_len(expr_t *e, int line);
 
 static int st_int(int st) { return st == VAL_INTEGER || st == VAL_LONG; }
 static int st_flt(int st) { return st == VAL_SINGLE || st == VAL_DOUBLE; }
@@ -488,8 +490,12 @@ static int shadowed(const char *name) {
 static int is_errvar(const char *name) { return strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0; }
 
 /* a builtin the interpreter would call for this name */
+static int is_addr_fn(const char *name) {
+    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0;
+}
+
 static int is_builtin_call(const char *name) {
-    return builtin_exists(name) && !shadowed(name) &&
+    return (builtin_exists(name) || is_addr_fn(name)) && !shadowed(name) &&
            strcmp(name, "LBOUND") != 0 && strcmp(name, "UBOUND") != 0 && strcmp(name, "JOIN$") != 0;
 }
 
@@ -1655,6 +1661,26 @@ static int record_of(int line, const char *var, expr_t *elem, int *t) {
     return rec;
 }
 
+/* the bytes of the record e names (its element's subscripts looked at),
+ * or -1: e is no record */
+static int record_len(expr_t *e, int line) {
+    int t = -1, n = 0;
+    if (e->type == EXPR_VARIABLE) {
+        var_t *v = var_find(e->var.name);
+        if (!v || v->type != VAL_RECORD) return -1;
+        record_of(line, e->var.name, NULL, &t);
+    } else if (e->type == EXPR_CALL && arr_rtype(e->call.name) >= 0 && !e->paren) {
+        record_of(line, e->call.name, e, &t);
+    }
+    if (t < 0) return -1;
+    for (int i = 0; i < bc_types[t]->type_def.nfields; i++) {
+        int ft = field_type(t, i);
+        n += ft == VAL_STRING ? bc_types[t]->type_def.fields[i].fixlen :
+             ft == VAL_INTEGER ? 2 : ft == VAL_DOUBLE ? 8 : 4;
+    }
+    return n;
+}
+
 /* a record as a whole value (b = a, b = c(i), c(i) = a): the record it
  * names, or -1 (refused) */
 static int record_value(expr_t *e, int line) {
@@ -1865,6 +1891,11 @@ static bv_t expr(expr_t *e) {
             bv_t r;
             proc_call(e->line, proc_find(e->call.name), e->call.nargs, e->call.args, &r);
             return r;
+        }
+        if (e->call.nargs == 1 && is_addr_fn(e->call.name) && is_builtin_call(e->call.name)) return addr_of(e);
+        if (e->call.nargs == 1 && strcmp(e->call.name, "LEN") == 0 && is_builtin_call("LEN")) {
+            int size = record_len(e->call.args[0], e->line);    /* LEN of a record: its TYPE's bytes */
+            if (size >= 0) return kint(size, VAL_INTEGER);
         }
         if (is_builtin_call(e->call.name))
             return builtin_fn(e, e->call.name, e->call.nargs, e->call.args);
@@ -3207,7 +3238,7 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
             kind[i] = 3;
             continue;
         }
-        if (!e->paren && is_plain_var(e)) {
+        if (!e->paren && is_plain_var(e) && const_find(e->var.name) < 0) {     /* (a CONST: a value) */
             var_t *v = var_get(e->var.name, e->var.var_type, line);
             if (v->type != pt) {
                 int c2 = h_ncarg;
@@ -3325,7 +3356,38 @@ static void proc_call(int line, proc_t *p, int nargs, expr_t **args, bv_t *res) 
 static void bc_call(stmt_t *s) {
     proc_t *p = proc_find(s->call_stmt.name);
     bv_t r;
-    if (!p) { bc_not_yet(s->line, "a CALL of no SUB of the program"); return; }
+    if (!p) {
+        int save = strcmp(s->call_stmt.name, "BSAVE") == 0, n = s->call_stmt.nargs;
+        if (save || strcmp(s->call_stmt.name, "BLOAD") == 0) {  /* as exec_call_stmt */
+            bv_t a[3];
+            int cb;
+            if (n > 3 || n != (save ? 3 : n) || (!save && n > 2) || n < 1) {
+                bc_not_yet(s->line, "this BSAVE or BLOAD");
+                return;
+            }
+            for (int i = 0; i < n; i++) a[i] = dynv(expr(s->call_stmt.args[i]));
+            if (n == 1) a[1] = dynv(kint(0, VAL_INTEGER));
+            cb = h_ncarg;
+            carg_bv(a[0]);
+            carg_bv(a[1]);
+            if (save) {
+                carg_bv(a[2]);
+                call_end(cb, 9, "bcrt_bsave", NULL);
+            } else {
+                carg(iconst(n == 2), 0);
+                call_end(cb, 7, "bcrt_bload", NULL);
+            }
+            return;
+        }
+        if (ast_machine_sub(s->call_stmt.name)) {       /* CALL ABSOLUTE: machine code, which is not run */
+            int cb = h_ncarg;
+            carg(iconst(ERR_ADVANCED), 0);
+            call_end(cb, 1, "bcrt_err", NULL);
+            return;
+        }
+        bc_not_yet(s->line, "a CALL of no SUB of the program");
+        return;
+    }
     proc_call(s->line, p, s->call_stmt.nargs, s->call_stmt.args, p->def->type == STMT_FUNC_DEF ? &r : NULL);
     if (p->def->type == STMT_FUNC_DEF && r.st == VAL_STRING) {
         int cb = h_ncarg;
@@ -3537,6 +3599,66 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
         return 1;
     }
     return 0;
+}
+
+/* VARPTR(x), VARSEG(x), SADD(x$): x named, not read (machine.c).  A
+ * variable that is asked for stays in memory, as one passed by reference
+ * does: its address has gone to a call. */
+static bv_t addr_of(expr_t *e) {
+    expr_t *a = e->call.args[0];
+    int which = e->call.name[0] == 'S' ? 2 : e->call.name[3] == 'S' ? 1 : 0;
+    int cb, r, ea, f = -1;
+    const char *arr = NULL;
+    var_t *v = NULL;
+    if (a->type == EXPR_FIELD_ACCESS && which != 2) {
+        int t;
+        if (a->field.elem) {
+            expr_t *el = a->field.elem;
+            bv_t ix[8];
+            arr = el->call.name;
+            t = arr_rtype(arr);
+            if (t < 0) { bc_not_yet(e->line, "a field of no array of records"); return zero(); }
+            sub_args(e->line, el->call.nargs, el->call.args, ix);
+            ea = array_elem(e->line, arr, el->call.nargs, ix);
+        } else {
+            v = var_find(a->field.var_name);
+            if (!v || v->type != VAL_RECORD) { bc_not_yet(e->line, "a field of no record DIMmed before it"); return zero(); }
+            t = v->rtype;
+        }
+        f = field_find(t, a->field.field_name);
+        if (f < 0) {
+            cb = h_ncarg;
+            carg(iconst(ERR_UNDEFINED_FIELD), 0);
+            call_end(cb, 1, "bcrt_err", NULL);
+            return zero();
+        }
+    } else if (a->type == EXPR_VARIABLE) {
+        v = var_get(a->var.name, a->var.var_type, e->line);
+    } else if (a->type == EXPR_CALL && !is_builtin_call(a->call.name) && !is_function(a->call.name)) {
+        bv_t ix[8];
+        arr = a->call.name;
+        sub_args(e->line, a->call.nargs, a->call.args, ix);
+        ea = array_elem(e->line, arr, a->call.nargs, ix);
+    } else {
+        bc_not_yet(e->line, "this VARPTR, VARSEG or SADD");
+        return zero();
+    }
+    cb = h_ncarg;
+    carg(iconst(which), 0);
+    if (arr) {
+        carg(saddr(arr, (int)strlen(arr)), 0);
+        carg(iconst(arr_mode(arr)), 0);
+        carg(ea, 0);
+        carg(iconst(f), 0);
+        r = call_end(cb, 5, "bcrt_addr_elem", NULL);
+    } else {
+        carg(iconst(v->type), 0);
+        carg(VA(v), 0);
+        carg(iconst(v->fixlen), 0);
+        carg(iconst(f), 0);
+        r = call_end(cb, 5, "bcrt_addr_var", NULL);
+    }
+    return mk(r, -1, -1, VAL_INTEGER);
 }
 
 /* its value's words, a SINGLE's as a double (a variable's float exact) */
@@ -3864,7 +3986,13 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_DEF_SEG: {
-        int seg = s->shell_stmt.command ? handle_of(s->shell_stmt.command) : iconst(0), cb = h_ncarg;
+        int seg, cb;
+        if (!s->shell_stmt.command) {
+            call_end(h_ncarg, 0, "pc_def_seg_home", NULL);
+            break;
+        }
+        seg = handle_of(s->shell_stmt.command);
+        cb = h_ncarg;
         carg(seg, 0);
         call_end(cb, 1, "bcrt_def_seg", NULL);
         break;
@@ -4175,7 +4303,7 @@ static void prescan_expr(expr_t *e, void *ctx) {
         !(strncmp(e->var.name, "FN", 2) == 0 && def_fn_find(e->var.name)) &&
         !calls_function0(e->var.name) && !is_errvar(e->var.name))
         var_get(e->var.name, e->var.var_type, e->line);
-    if (e->type == EXPR_CALL && !builtin_exists(e->call.name)) shadow_add(e->call.name);
+    if (e->type == EXPR_CALL && !builtin_exists(e->call.name) && !is_addr_fn(e->call.name)) shadow_add(e->call.name);
 }
 
 /* names used as arrays or assigned, before anything is lowered */

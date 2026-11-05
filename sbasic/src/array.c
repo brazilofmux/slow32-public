@@ -1,4 +1,5 @@
 #include "array.h"
+#include "machine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,27 @@ unsigned array_dim_generation = 0;  /* moved only when an array is made, erased 
 
 static int any_erased;                  /* ERASE or CLEAR has left an erased slot */
 
+int array_mem_index(const sb_array_t *arr, int k) {
+    int q = 0, mul = 1, sub[MAX_ARRAY_DIMS];
+    if (arr->ndims < 2) return k;
+    for (int i = arr->ndims - 1; i >= 0; i--) { sub[i] = k % arr->dims[i]; k /= arr->dims[i]; }
+    for (int i = 0; i < arr->ndims; i++) { q += sub[i] * mul; mul *= arr->dims[i]; }
+    return q;
+}
+
+int array_row_index(const sb_array_t *arr, int q) {
+    int k = 0, sub[MAX_ARRAY_DIMS];
+    if (arr->ndims < 2) return q;
+    for (int i = 0; i < arr->ndims; i++) { sub[i] = q % arr->dims[i]; q /= arr->dims[i]; }
+    for (int i = 0; i < arr->ndims; i++) k = k * arr->dims[i] + sub[i];
+    return k;
+}
+
 static void array_free(sb_array_t *arr) {
+    if (pc_windows) {           /* (its address, and its strings' characters, gone with it) */
+        pc_forget(arr, arr + 1);
+        pc_forget(arr->data, arr->data + arr->total);
+    }
     for (int j = 0; j < arr->total; j++)
         val_clear(&arr->data[j]);
     free(arr->data);
@@ -252,10 +273,15 @@ sb_array_t *array_find(const char *name) {
     key = array_key(name, kb, sizeof kb);
     for (int i = 0; i < array_count; i++) {
         if (arrays[i]->active && strcmp(arrays[i]->name, key) == 0) {
-            find_cache[h].name = name;          /* hits only are kept */
-            find_cache[h].gen = array_generation;
-            find_cache[h].scope = sc;
-            find_cache[h].arr = arrays[i];
+            /* hits only are kept, and no key made for the moment (compiled
+             * code's "id:NAME", in a buffer of its frame: another name's,
+             * next time, at the same address) */
+            if (!strchr(name, ':')) {
+                find_cache[h].name = name;
+                find_cache[h].gen = array_generation;
+                find_cache[h].scope = sc;
+                find_cache[h].arr = arrays[i];
+            }
             return arrays[i];
         }
     }

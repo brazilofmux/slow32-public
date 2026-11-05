@@ -832,6 +832,58 @@ void bcrt_poke(int offset, int v) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* VARPTR (which 0), VARSEG (1), SADD (2): the variable by its slot, of
+ * BASIC type ty (f: a field of the record, else -1) */
+static int addr_result(int which, int seg, int off) {
+    return which == 1 ? seg : (short)off;
+}
+
+int bcrt_addr_var(int which, int ty, void *slot, int fixlen, int f) {
+    int seg, off, byte = 0;
+    error_t e;
+    int kind = ty == VAL_INTEGER ? PC_INT : ty == VAL_LONG ? PC_LONG : ty == VAL_SINGLE ? PC_FLOAT :
+               ty == VAL_DOUBLE ? PC_DOUBLE : ty == VAL_STRING ? PC_STRING : PC_RECORD;
+    if (kind == PC_RECORD) {
+        sb_record_t *r = *(sb_record_t **)slot;
+        if (!r) bcrt_fail(ERR_UNDEFINED_VAR);
+        if (f >= 0) byte = pc_field_at(r, f);
+    }
+    e = which == 2 ? pc_addr_chars(kind, slot, &seg, &off) : pc_addr_var(kind, slot, fixlen, byte, &seg, &off);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return addr_result(which, seg, off);
+}
+
+/* ... the element at ea of array name */
+int bcrt_addr_elem(int which, const char *name, int mode, value_t *ea, int f) {
+    char kb[ARRAY_KEY_MAX];
+    sb_array_t *arr = array_find(akey(name, mode, kb));
+    int seg, off, byte = 0;
+    error_t e;
+    if (!arr) bcrt_fail(ERR_SUBSCRIPT_OUT_OF_RANGE);
+    if (f >= 0) {
+        if (ea->type != VAL_RECORD) bcrt_fail(ERR_TYPE_MISMATCH);
+        byte = pc_field_at(ea->rval, f);
+    }
+    e = which == 2 ? pc_addr_chars(PC_VALUE, ea, &seg, &off)
+                   : pc_addr_elem(arr, (int)(ea - arr->data), byte, &seg, &off);
+    if (e != ERR_NONE) bcrt_fail(e);
+    return addr_result(which, seg, off);
+}
+
+void bcrt_bsave(int flo, int fhi, int ft, int olo, int ohi, int ot, int llo, int lhi, int lt) {
+    value_t f = take(flo, fhi, ft), o = take(olo, ohi, ot), l = take(llo, lhi, lt);
+    error_t e = eval_bsave(&f, &o, &l);
+    val_clear(&f);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_bload(int flo, int fhi, int ft, int olo, int ohi, int ot, int has_offset) {
+    value_t f = take(flo, fhi, ft), o = take(olo, ohi, ot);
+    error_t e = eval_bload(&f, has_offset ? &o : NULL);
+    val_clear(&f);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
 /* OUT and WAIT: the ports the machine model knows (machine.c) */
 void bcrt_out(int port, int v) {
     error_t e = pc_out(port, v);

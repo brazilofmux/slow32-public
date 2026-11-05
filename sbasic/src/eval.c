@@ -312,6 +312,8 @@ static int find_label(const char *name) {
 static error_t run_code(env_t *env, code_t *c, int is_main);
 static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out);
 static int data_number(const char *t, double *out);
+int eval_is_addr(const char *name);
+static error_t eval_addr(env_t *env, expr_t *e, value_t *out);
 
 /* A store: v made the type of the variable or element it goes into.
  * Every variable is created with its type (its suffix, DEFtype, DIM ...
@@ -832,7 +834,9 @@ static error_t arg_by_ref(env_t *env, expr_t *e, val_type_t pt, arg_ref_t *r, va
     if (e->paren) return ERR_NONE;
     if (e->type == EXPR_VARIABLE) {
         const char *name = e->var.name;
-        value_t *slot = eval_var_slot(env, name);
+        value_t *slot;
+        if (env_is_const(env, name)) return ERR_NONE;   /* (a value: nothing may change a CONST) */
+        slot = eval_var_slot(env, name);
         if (!slot) {
             /* not a variable yet: a builtin's name, an FN or ERR/ERL is
              * a value; anything else becomes the variable */
@@ -935,7 +939,9 @@ error_t eval_refix(env_t *env, const char *name) {
 }
 
 value_t *eval_arg_ref(env_t *env, const char *name) {
-    value_t *slot = eval_var_slot(env, name);
+    value_t *slot;
+    if (env_is_const(env, name)) return NULL;   /* (as arg_by_ref) */
+    slot = eval_var_slot(env, name);
     if (slot) return slot;
     if (strcmp(name, "ERR") == 0 || strcmp(name, "ERL") == 0 ||
         strncmp(name, "FN", 2) == 0 || builtin_exists(name))
@@ -1351,6 +1357,10 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             /* an FN name is a DEF FN's or nothing: no array, no builtin */
             if (!proc && strncmp(e->call.name, "FN", 2) == 0)
                 return ERR_FUNC_NOT_DEFINED;
+
+            if (!proc && e->call.nargs == 1 && (e->call.name[0] == 'V' || e->call.name[0] == 'S') &&
+                eval_is_addr(e->call.name))
+                return eval_addr(env, e, out);
 
             /* 4. An array not DIMmed yet (or one ERASE took away) */
             if (!proc && array_gone(e->call.name)) return array_elem_read(env, e, NULL, out);
@@ -2393,7 +2403,7 @@ static error_t exec_gfx(env_t *env, stmt_t *s) {
  * LONG and a SINGLE 4, a DOUBLE 8, little-endian -- a SINGLE's bits
  * moved by hand, so a NaN's (a sprite's bytes may make one) are not
  * quieted on the way */
-static int elem_bytes(val_type_t t) {
+int elem_bytes(val_type_t t) {
     return t == VAL_INTEGER ? 2 : t == VAL_LONG || t == VAL_SINGLE ? 4 : t == VAL_DOUBLE ? 8 : 0;
 }
 
@@ -2423,7 +2433,7 @@ static double single_of_bits(uint32_t r) {
     return f;
 }
 
-static void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b) {
+void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b) {
     uint32_t w = 0;
     if (t == VAL_DOUBLE) {
         double d = v->type == VAL_DOUBLE || v->type == VAL_SINGLE ? v->dval : v->ival;
@@ -2435,7 +2445,7 @@ static void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b) {
     for (int i = 0; i < elem_bytes(t); i++) b[i] = (unsigned char)(w >> (8 * i));
 }
 
-static void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b) {
+void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b) {
     uint32_t w = 0;
     if (t == VAL_DOUBLE) {
         double d;
@@ -2464,7 +2474,7 @@ error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int
         value_t *e;
         EVAL_CHECK(eval_array_for(name, nidx, &arr));
         EVAL_CHECK(array_get(name, (int *)idx, nidx, &e));
-        start = (int)(e - arr->data);
+        start = array_mem_index(arr, (int)(e - arr->data));
     } else if (!(arr = array_find(name)))
         return ERR_ILLEGAL_FUNCTION_CALL;
     if (!(sz = elem_bytes(arr->elem_type))) return ERR_TYPE_MISMATCH;
@@ -2482,13 +2492,13 @@ error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int
         int ne = (n + sz - 1) / sz;
         if (!(buf = calloc((size_t)ne, (size_t)sz))) return ERR_OUT_OF_MEMORY;
         /* (the last element's bytes past the image kept as they are) */
-        elem_to_bytes(&arr->data[start + ne - 1], arr->elem_type, buf + (ne - 1) * sz);
+        elem_to_bytes(&arr->data[array_row_index(arr, start + ne - 1)], arr->elem_type, buf + (ne - 1) * sz);
         sb_gfx_get(left, top, right, bottom, buf);
         for (int i = 0; i < ne; i++) {
-            value_t nv;
+            value_t nv, *slot = &arr->data[array_row_index(arr, start + i)];
             elem_from_bytes(&nv, arr->elem_type, buf + i * sz);
-            val_clear(&arr->data[start + i]);
-            arr->data[start + i] = nv;
+            val_clear(slot);
+            *slot = nv;
         }
         free(buf);
         sb_gfx_set_last(mx, my);
@@ -2496,7 +2506,7 @@ error_t eval_gfx_getput(const gfx_op_t *g, const char *name, int nidx, const int
     }
     if (!(buf = malloc((size_t)avail + 1))) return ERR_OUT_OF_MEMORY;
     for (int i = 0; start + i < arr->total; i++)
-        elem_to_bytes(&arr->data[start + i], arr->elem_type, buf + i * sz);
+        elem_to_bytes(&arr->data[array_row_index(arr, start + i)], arr->elem_type, buf + i * sz);
     if (sb_gfx_put(x1, y1, buf, avail, g->box) < 0) err = ERR_ILLEGAL_FUNCTION_CALL;
     else sb_gfx_set_last(lx, ly);
     free(buf);
@@ -2867,6 +2877,49 @@ static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
     }
 }
 
+/* VARPTR(x), VARSEG(x), SADD(x$): where x is (machine.c).  An offset is
+ * an INTEGER, as QBasic gives it: past 32767, negative. */
+int eval_is_addr(const char *name) {
+    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0;
+}
+
+error_t eval_addr_result(const char *fn, int seg, int off, value_t *out) {
+    *out = val_integer(fn[3] == 'S' ? seg : (short)off);      /* (VAR"S"EG) */
+    return ERR_NONE;
+}
+
+static error_t eval_addr(env_t *env, expr_t *e, value_t *out) {
+    expr_t *a = e->call.args[0];
+    const char *fn = e->call.name;
+    int sadd = fn[0] == 'S', seg, off, byte = 0;
+    value_t *v;
+    const char *arr_name = NULL;
+    if (a->type == EXPR_FIELD_ACCESS && !sadd) {
+        expr_t *el = a->field.elem;
+        if (el) { EVAL_CHECK(resolve_lvalue(env, el, &v)); arr_name = el->call.name; }
+        else v = env_get(env, a->field.var_name);
+        if (!v || v->type != VAL_RECORD) return el ? ERR_TYPE_MISMATCH : ERR_UNDEFINED_VAR;
+        int fi = find_field_index(&type_defs[v->rval->type_idx], a->field.field_name);
+        if (fi < 0) return ERR_UNDEFINED_FIELD;
+        byte = pc_field_at(v->rval, fi);
+    } else if (a->type == EXPR_VARIABLE || (a->type == EXPR_CALL && !find_proc(a->call.name))) {
+        EVAL_CHECK(resolve_lvalue(env, a, &v));
+        if (a->type == EXPR_CALL) arr_name = a->call.name;
+    } else
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    if (sadd) {
+        if (v->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+        EVAL_CHECK(pc_addr_chars(PC_VALUE, v, &seg, &off));
+    } else if (arr_name) {
+        sb_array_t *arr = array_find(arr_name);
+        if (!arr) return ERR_SUBSCRIPT_OUT_OF_RANGE;
+        EVAL_CHECK(pc_addr_elem(arr, (int)(v - arr->data), byte, &seg, &off));
+    } else
+        EVAL_CHECK(pc_addr_var(PC_VALUE, v, env_fixlen(env, a->type == EXPR_VARIABLE ? a->var.name : a->field.var_name),
+                               byte, &seg, &off));
+    return eval_addr_result(fn, seg, off, out);
+}
+
 /* var.field, or var(subscripts).field (elem, the element): the field's
  * storage, and its type */
 static error_t field_slot(env_t *env, const char *var, const char *field,
@@ -3125,8 +3178,26 @@ static error_t exec_const(env_t *env, stmt_t *s) {
 
 static error_t exec_call_stmt(env_t *env, stmt_t *s) {
     proc_entry_t *proc = find_proc(s->call_stmt.name);
-    if (!proc)
+    if (!proc) {
+        int save = strcmp(s->call_stmt.name, "BSAVE") == 0;
+        if (save || strcmp(s->call_stmt.name, "BLOAD") == 0) {
+            value_t a[3];
+            int n = 0;
+            error_t err = ERR_NONE;
+            if (s->call_stmt.nargs > 3) return ERR_ILLEGAL_FUNCTION_CALL;
+            for (; n < s->call_stmt.nargs && err == ERR_NONE; n++) {
+                err = eval_expr(env, s->call_stmt.args[n], &a[n]);
+                if (err != ERR_NONE) break;
+            }
+            if (err == ERR_NONE) {
+                if (save) err = n == 3 ? eval_bsave(&a[0], &a[1], &a[2]) : ERR_ILLEGAL_FUNCTION_CALL;
+                else err = n == 1 || n == 2 ? eval_bload(&a[0], n == 2 ? &a[1] : NULL) : ERR_ILLEGAL_FUNCTION_CALL;
+            }
+            while (n > 0) val_clear(&a[--n]);
+            return err;
+        }
         return ast_machine_sub(s->call_stmt.name) ? ERR_ADVANCED : ERR_UNDEFINED_PROC;
+    }
 
     if (proc->def->type == STMT_FUNC_DEF) {
         value_t result;
@@ -3735,6 +3806,21 @@ error_t eval_dir(int kind, const value_t *path) {
     const char *p = path->sval ? path->sval->data : "";
     int r = kind == STMT_CHDIR ? chdir(p) : kind == STMT_MKDIR ? mkdir(p, 0777) : rmdir(p);
     return r != 0 ? ERR_FILE_NOT_FOUND : ERR_NONE;
+}
+
+error_t eval_bsave(const value_t *file, const value_t *offset, const value_t *length) {
+    int off, len;
+    if (file->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    EVAL_CHECK(val_to_integer(offset, &off));
+    EVAL_CHECK(val_to_integer(length, &len));
+    return pc_bsave(file->sval->data, off, len);
+}
+
+error_t eval_bload(const value_t *file, const value_t *offset) {
+    int off = 0;
+    if (file->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (offset) EVAL_CHECK(val_to_integer(offset, &off));
+    return pc_bload(file->sval->data, offset != NULL, off);
 }
 
 /* POKE offset, v (in DEF SEG's segment: machine.c) -- for compiled code too */
@@ -4353,7 +4439,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
                 if (err != ERR_NONE) return err;
                 def_seg = seg;
             } else {
-                def_seg = 0;
+                pc_def_seg_home();
             }
             return ERR_NONE;
         }

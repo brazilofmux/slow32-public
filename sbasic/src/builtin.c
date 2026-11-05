@@ -306,7 +306,16 @@ static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
 
 static error_t fn_len(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (args[0].type == VAL_RECORD) {
+        *out = val_integer(pc_field_at(args[0].rval, args[0].rval->nfields));
+        return ERR_NONE;
+    }
+    if (args[0].type != VAL_STRING) {   /* a number: the bytes it is kept in */
+        int n = elem_bytes(args[0].type);
+        if (!n) return ERR_TYPE_MISMATCH;
+        *out = val_integer(n);
+        return ERR_NONE;
+    }
     *out = val_integer(args[0].sval->len);
     return ERR_NONE;
 }

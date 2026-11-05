@@ -57,7 +57,9 @@ typedef enum {
     ERR_ARG_COUNT,
     ERR_FUNC_NOT_DEFINED,
     ERR_PARAM_MISMATCH,
-    ERR_ADVANCED,            /* QB's "Advanced feature unavailable": BSAVE, BLOAD, CALL ABSOLUTE */
+    ERR_ADVANCED,            /* QB's "Advanced feature unavailable": CALL ABSOLUTE */
+    ERR_BAD_FILE_MODE,
+    ERR_PATH_NOT_FOUND,
     ERR_RUN,                 /* flow control: RUN, the program again */
     ERR_RESUME_LABEL,        /* flow control: RESUME label from a procedure, out to the main program */
     ERR_COUNT

@@ -93,6 +93,18 @@ error_t eval_compare(cmpop_t op, value_t *left, value_t *right, value_t *out);
 error_t eval_assign_check(env_t *env, const char *name);
 error_t eval_assign_store(env_t *env, const char *name, const value_t *v);
 error_t eval_array_store(const char *name, int nidx, int *indices, const value_t *v);
+/* a number's bytes as QuickBASIC keeps it (0: type t is not a number) */
+int elem_bytes(val_type_t t);
+void elem_to_bytes(const value_t *v, val_type_t t, unsigned char *b);
+void elem_from_bytes(value_t *v, val_type_t t, const unsigned char *b);
+/* VARPTR, VARSEG or SADD by that name; its value, from where the thing is */
+int eval_is_addr(const char *name);
+error_t eval_addr_result(const char *fn, int seg, int off, value_t *out);
+/* BSAVE file$, offset, length and BLOAD file$[, offset]'s values made
+ * what they are; args as written (a string, then numbers) -- compiled
+ * code's too */
+error_t eval_bsave(const value_t *file, const value_t *offset, const value_t *length);
+error_t eval_bload(const value_t *file, const value_t *offset);
 /* for compiled code (s32-bc): DIM/REDIM, an array read as an expression
  * reads it (implicit arrays made), OPTION BASE */
 error_t eval_dim(const char *name, val_type_t type, int ndims, const int *lowers,

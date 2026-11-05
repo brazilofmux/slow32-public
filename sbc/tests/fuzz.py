@@ -111,7 +111,7 @@ def A_EXPR(r):
 def program(seed):
     r = random.Random(seed)
     lines = ['ON ERROR GOTO 900', 'DIM P%(10), Q&(10), R!(3, 4), S#(10), W$(5)',
-             'S$ = "abc": U$ = "Hello": W$(1) = "x": I% = 2']
+             'S$ = "abc": U$ = "Hello": W$(1) = "x": I% = 2', 'CONST KC% = 4']
     if QB_CLEAN:                # (bounds not constant: QBasic refuses a REDIM otherwise)
         lines[1] = 'Z1% = 10: Z2% = 3: Z3% = 4: DIM P%(Z1%), Q&(Z1%), R!(Z2%, Z3%), S#(Z1%), W$(5)'
     for v in VARS:
@@ -147,8 +147,15 @@ def program(seed):
         if r.random() < 0.08:
             lines.append(('CALL S1((%s)): PRINT "S"; Y' if QB_CLEAN else 'CALL S1(%s): PRINT "S"; Y') % expr(r, 2))
         if r.random() < 0.08:
-            a = r.choice(['A%', 'B%', 'P%(2)', '(A%)'] + (['(' + A_EXPR(r) + ')'] if QB_CLEAN else ['C&', A_EXPR(r)]))
-            lines.append('CALL S2(%s, %s): PRINT "S2"; A%%; B%%; P%%(2)' % (a, r.choice(['A%', 'B%', '3'])))
+            a = r.choice(['A%', 'B%', 'P%(2)', '(A%)', 'KC%'] + (['(' + A_EXPR(r) + ')'] if QB_CLEAN else ['C&', A_EXPR(r)]))
+            lines.append('CALL S2(%s, %s): PRINT "S2"; A%%; B%%; P%%(2); KC%%' % (a, r.choice(['A%', 'B%', '3', 'KC%'])))
+        if r.random() < 0.06:
+            lines.append('CALL S3(%s)' % r.choice(['A%', 'B%', '3', 'P%(1)']))
+        if r.random() < 0.06:
+            # a variable and an element as bytes (machine.c)
+            target_v, base, width = r.choice([('A%', 'A%', 2), ('L&', 'L&', 4), ('P%(2)', 'P%(0)', 6), ('Q&(1)', 'Q&(0)', 8), ('S#(1)', 'S#(0)', 16)])
+            lines.append('DEF SEG = VARSEG(%s): POKE VARPTR(%s) + %d, %d: PRINT "V"; %s; PEEK(VARPTR(%s) + 1): DEF SEG' % (
+                target_v, base, r.randint(0, width - 1), r.randint(0, 255), target_v, target_v))
         if r.random() < 0.06:
             lines.append('GOSUB 800: PRINT "G"; B%; C&')
         if r.random() < 0.3:
@@ -180,7 +187,11 @@ def program(seed):
               'END FUNCTION',
               'SUB S1(a!)', 'SHARED Y', 'Y = Y + a!', 'END SUB',
               'FUNCTION F4!(z!)', 'z! = z! + 1', 'F4! = z! * 2', 'END FUNCTION',
-              'SUB S2(a%, b%)', 'a% = a% + b%', 'END SUB']
+              'SUB S2(a%, b%)', 'a% = a% + b%', 'END SUB',
+              # (arrays of the activation, side by side: their cells apart)
+              'SUB S3(a%)', 'DIM L1%(3), L2!(3)', 'DIM L3#(1 TO 2)',
+              'L1%(1) = a%: L2!(1) = a% + .5: L3#(2) = a% + .25', 'L1%(2) = L1%(1) + 1',
+              'PRINT "L"; L1%(1); L1%(2); L2!(1); L2!(2); L3#(2)', 'END SUB']
     if QB_CLEAN and seed % 2 == 0:      # (half with no handler: what s32-bc does differently then)
         lines = [l for l in lines if l != 'ON ERROR GOTO 900' and not l.startswith('900 ')]
     return '\n'.join(lines) + '\n'

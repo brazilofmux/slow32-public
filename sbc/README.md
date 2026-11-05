@@ -36,9 +36,9 @@ the corpus) and to the interpreter.
 won (2026-11-03: "a switch, auto-detection, a build target"):
 auto-detection by trying s32-bc, whose refusal -- a checker finding,
 QBasic's own reason, or a "not yet" -- names the line.  As of
-2026-11-04 s32-bc compiles 96 of the 103 QB-corpus programs QBasic
-loads; the seven left use the machine itself (CALL ABSOLUTE, BLOAD,
-BSAVE) or are QB64's.
+2026-11-05 s32-bc compiles 101 of the 103 QB-corpus programs QBasic
+loads (the other two are QB64's); three of those stop when they reach
+CALL ABSOLUTE, machine code, which stays refused at run time.
 
 ## s32-bc — the QuickBASIC compiler
 

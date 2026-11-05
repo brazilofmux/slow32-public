@@ -1,4 +1,5 @@
 #include "env.h"
+#include "machine.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -85,6 +86,7 @@ static void clear_entries(env_t *env) {
         var_entry_t *e = env->table[i];
         while (e) {
             var_entry_t *next = e->next;
+            if (pc_windows) pc_forget(&e->value, &e->value + 1);     /* (its address: gone with it) */
             if (!e->link) val_clear(&e->value);
             entry_free(e);
             e = next;

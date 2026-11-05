@@ -32,10 +32,10 @@ OUT 888, 0
 ' 6. INP at a port with no device: 255, the bus floating high
 PRINT "INP:"; INP(888)
 
-' 7. VARPTR / SADD (stubs)
+' 7. VARPTR / SADD
 DIM dummy AS INTEGER
-PRINT "VARPTR:"; VARPTR(dummy)
-PRINT "SADD:"; SADD("test")
+PRINT "VARPTR:"; VARPTR(dummy) > 0
+PRINT "SADD:"; SADD(nothing$)
 
 ' 8. SEEK function (file position read)
 OPEN "test_seek.tmp" FOR OUTPUT AS #1

@@ -49,6 +49,12 @@ void array_scope_pop(void);
 /* name's key in the current scope by mode (for names compiled code scopes) */
 const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);
 
+/* QuickBASIC keeps an array with its first subscript varying fastest,
+ * we with the last: element k of arr->data is the array_mem_index'th in
+ * its memory; array_row_index is the way back */
+int array_mem_index(const sb_array_t *arr, int k);
+int array_row_index(const sb_array_t *arr, int q);
+
 /* Clear all arrays (call at program start) */
 void array_clear_all(void);
 /* The CLEAR statement: static arrays zeroed, dynamic ones erased */

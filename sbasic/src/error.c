@@ -57,6 +57,8 @@ static const char *error_messages[ERR_COUNT] = {
     "Function not defined",
     "Parameter type mismatch",
     "Advanced feature unavailable",
+    "Bad file mode",
+    "Path not found",
     "RUN",
 };
 
@@ -91,7 +93,9 @@ int error_qb_code(error_t err) {
     case ERR_FILE_NOT_FOUND:         return 53;
     case ERR_FILE_ALREADY_OPEN:      return 55;
     case ERR_INPUT_PAST_END:         return 62;
+    case ERR_BAD_FILE_MODE:          return 54;
     case ERR_ADVANCED:               return 73;
+    case ERR_PATH_NOT_FOUND:         return 76;
     default:                         return 5;
     }
 }
