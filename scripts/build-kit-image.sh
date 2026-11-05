@@ -24,11 +24,12 @@
 # EXCLUDED from the image (the same editorial line as the public mirror,
 # applied to layers -- an image is an extractable archive):
 #   regal.s32x   the user's ledger tooling; not for public consumption
+#   .backup-prefix  an old rebuild's leftover copies of the tools
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KIT="${KIT:-$HOME/s32x}"
 REP1="274462252673.dkr.ecr.us-west-2.amazonaws.com"
-EXCLUDE=(regal.s32x .DS_Store)
+EXCLUDE=(regal.s32x .DS_Store .backup-prefix)
 PUSH=0
 [ "${1:-}" = "--push" ] && PUSH=1
 
