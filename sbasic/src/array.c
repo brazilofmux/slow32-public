@@ -79,6 +79,7 @@ typedef struct {
 static array_scope_t *scopes;
 static int nscopes, cap_scopes;
 static unsigned scope_next = 1;
+unsigned array_scope_now = 0;
 
 /* a parameter's array in the activation going on, or NULL */
 static const char *array_alias(const char *name) {
@@ -136,6 +137,7 @@ error_t array_scope_push(int proc, array_mode_fn mode, void *ctx) {
     scopes[nscopes].alias = NULL;
     scopes[nscopes].nalias = 0;
     scopes[nscopes].owns = 0;
+    array_scope_now = scopes[nscopes].id;
     nscopes++;
     array_generation++;
     return ERR_NONE;
@@ -153,8 +155,9 @@ void array_scope_pop(void) {
                 arrays[i]->erased = 0;
             }
     }
-    free(scopes[nscopes - 1].alias);
+    if (scopes[nscopes - 1].alias) free(scopes[nscopes - 1].alias);
     nscopes--;
+    array_scope_now = nscopes ? scopes[nscopes - 1].id : 0;
     array_generation++;
 }
 
@@ -189,6 +192,7 @@ void array_clear_all(void) {
     array_count = 0;
     any_erased = 0;
     nscopes = 0;
+    array_scope_now = 0;
 }
 
 void array_clear(void) {
@@ -202,6 +206,7 @@ void array_clear(void) {
         any_erased |= a->erased;
     }
     nscopes = 0;
+    array_scope_now = 0;
 }
 
 void array_mark_fixed(const char *name) {

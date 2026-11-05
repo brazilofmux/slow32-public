@@ -28,6 +28,9 @@ typedef struct {
  * (compiled programs cache them) */
 extern unsigned array_generation;
 extern unsigned array_dim_generation;
+/* the activation going on, never used again by another (0: the main
+ * program): what a procedure's name means holds within it */
+extern unsigned array_scope_now;
 
 /* QuickBASIC's arrays of a procedure (array.c): how a name is scoped in
  * one -- the main program's, the activation's own, the procedure's STATIC */

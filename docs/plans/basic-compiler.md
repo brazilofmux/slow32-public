@@ -296,7 +296,12 @@ errors, where any op can be entered again.
 The same mirrors hold in WHILE and DO loops.  A main-program array's cell is
 good across calls: array_dim_generation moves only when an array is made,
 erased or re-dimensioned, where array_generation moves with every scope (what
-a procedure's own names mean changes with it).  PRINT of a known string or
+a procedure's own names mean changes with it).  A name of a procedure's has a
+cell of that procedure's, good also only in the activation that filled it
+(array_scope_now, never reused), so it too survives a call: procarrs 9.9M ->
+3.7M, `tests/native/procarr`.  No mirrors for these: making one looks the array
+up before the loop, and a loop that never reaches it must not raise what the
+look-up would.  PRINT of a known string or
 integer goes straight to the screen (bcrt_print_str, bcrt_print_int,
 scr_put_run), the interpreter's too.
 

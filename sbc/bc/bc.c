@@ -1286,7 +1286,7 @@ static void sub_args(int line, int n, expr_t **ix, bv_t *a) {
 
 /* each array name's cell in bcrt_acache (bc_rt.c) */
 #define BC_ACELLS 256
-#define BC_ACELL 32             /* gen, data, lower bounds[3], sizes[3] */
+#define BC_ACELL 36             /* gen, data, lower bounds[3], sizes[3], activation */
 #define BC_ELEM 12              /* a value_t: its type, then its number or string */
 static char bc_anames[BC_ACELLS][64];
 static int bc_nanames;
@@ -1332,21 +1332,23 @@ static int bc_nmirrors;
 
 /* name's cell, good now: looked up (or made) if the generation has moved */
 static int array_cell(int line, const char *name, int n) {
-    /* (a main-program array has its own cell, good until one is made or
-     * moved; a name of a procedure's means another array each activation) */
+    /* (a cell is good until an array is made or moved; a name of a
+     * procedure's means another array each activation, so its cell is its
+     * procedure's and holds for the activation that filled it) */
     int module = arr_mode(name) == ARRAY_MODULE;
     char key[72];
-    int id, cell, fast, slow, cb;
-    snprintf(key, sizeof key, "%s%s", module ? "" : "~", name);
+    int id, cell, fast, slow, cb, good;
+    if (module) snprintf(key, sizeof key, "%s", name);
+    else snprintf(key, sizeof key, "~%p~%s", (void *)bc_proc, name);
     id = array_id(key, line);
     cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
                    id * BC_ACELL, NULL);
     fast = new_blk();
     slow = new_blk();
-    hi_emit(HI_BRC, TY_VOID,
-            bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, module ? "array_dim_generation" : "array_generation"), 0),
-                ld(cell, 0)),
-            fast, slow, NULL);
+    good = bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "array_dim_generation"), 0), ld(cell, 0));
+    if (!module)
+        good = bin(HI_AND, good, bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "array_scope_now"), 0), ld(cell, 32)));
+    hi_emit(HI_BRC, TY_VOID, good, fast, slow, NULL);
     bc_live = 0;
     begin_blk(slow);
     cb = h_ncarg;

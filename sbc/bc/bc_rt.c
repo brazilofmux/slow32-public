@@ -251,11 +251,12 @@ static pair_t give(const value_t *v) {
 
 /* The arrays compiled code reaches itself: a cell for each array name
  * of the program, what an element's address takes, good while
- * array_generation is the cell's (an array made, erased or
- * re-dimensioned bumps it).  bc.c knows the cell's layout and
+ * array_dim_generation is the cell's (an array made, erased or
+ * re-dimensioned bumps it) and, for a name of a procedure's, in the
+ * activation that filled it.  bc.c knows the cell's layout and
  * value_t's: an element is 12 bytes, its number or string 4 in. */
-typedef struct { unsigned gen; value_t *data; int lbound[3], dims[3]; } bcrt_acell_t;
-_Static_assert(sizeof(bcrt_acell_t) == 32, "bc.c: the cell's layout");
+typedef struct { unsigned gen; value_t *data; int lbound[3], dims[3]; unsigned scope; } bcrt_acell_t;
+_Static_assert(sizeof(bcrt_acell_t) == 36, "bc.c: the cell's layout");
 _Static_assert(sizeof(value_t) == 12 && offsetof(value_t, ival) == 4 &&
                offsetof(value_t, dval) == 4 && offsetof(value_t, sval) == 4, "bc.c: value_t's layout");
 #define BCRT_ACELLS 256
@@ -1157,7 +1158,8 @@ void bcrt_alook(const char *name, int n, int id, int ty, int mode) {
         fprintf(stderr, "s32-bc: internal: %s has elements of type %d, not %d\n", name, arr->elem_type, ty);
         exit(1);
     }
-    c->gen = mode == ARRAY_MODULE ? array_dim_generation : array_generation;
+    c->gen = array_dim_generation;
+    c->scope = array_scope_now;
     c->data = arr->data;
     for (int i = 0; i < n && i < 3; i++) {
         c->lbound[i] = arr->lbound[i];
