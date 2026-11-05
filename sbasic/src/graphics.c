@@ -356,19 +356,87 @@ static void hspan(int x0, int x1, int y, int c) {
         plot(x, y, c);
 }
 
-static void bresenham(int x0, int y0, int x1, int y1, int c) {
-    int dx = x1 > x0 ? x1 - x0 : x0 - x1;
-    int dy = y1 > y0 ? y1 - y0 : y0 - y1;
-    int sx = x0 < x1 ? 1 : -1;
-    int sy = y0 < y1 ? 1 : -1;
-    int err = dx - dy;
-    for (;;) {
-        plot(x0, y0, c);
-        if (x0 == x1 && y0 == y1)
-            break;
-        int e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x0 += sx; }
-        if (e2 <  dx) { err += dx; y0 += sy; }
+/* LINE's style, for the one LINE: a mask of 16 pixels, carried along it and
+ * round a box's sides */
+static unsigned line_mask = 0xFFFF;
+static unsigned line_at;
+
+void sb_gfx_line_style(int mask) {
+    line_mask = (unsigned)mask & 0xFFFF;
+}
+
+/* n * d, by the line's slope: a line cut at an edge, rounded half away from
+ * zero */
+static long cut_by(long n, long d, long den) {
+    long long a = (long long)n * d, b = den, r;
+    int neg = (a < 0) != (b < 0);
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    r = (2 * a + b) / (2 * b);
+    return (long)(neg ? -r : r);
+}
+
+enum { CUT_L = 1, CUT_R = 2, CUT_T = 4, CUT_B = 8 };
+
+static int out_code(int x, int y) {
+    return (x < vx1 ? CUT_L : 0) | (x > vx2 ? CUT_R : 0) | (y < vy1 ? CUT_T : 0) | (y > vy2 ? CUT_B : 0);
+}
+
+/* a line clipped to the viewport as QBasic clips one before it draws it
+ * (fitted to 1800 of its lines): the end named first, then the other, each
+ * at the left, right, top and bottom in turn, from where that end has got
+ * to; 0 when nothing is left.  The pixels follow from the cut ends, so a
+ * line that runs off the edge has its slope changed a little. */
+static int clip_line(int *x0, int *y0, int *x1, int *y1) {
+    int *ex[2] = { x0, x1 }, *ey[2] = { y0, y1 };
+    for (int end = 0; end < 2; end++) {
+        int *ax = ex[end], *ay = ey[end], *bx = ex[1 - end], *by = ey[1 - end];
+        for (int bit = CUT_L; bit <= CUT_B; bit <<= 1) {
+            if (out_code(*ax, *ay) & out_code(*bx, *by)) return 0;
+            if (!(out_code(*ax, *ay) & bit)) continue;
+            if (bit == CUT_L || bit == CUT_R) {
+                int edge = bit == CUT_L ? vx1 : vx2;
+                *ay += (int)cut_by(*by - *ay, edge - *ax, *bx - *ax);
+                *ax = edge;
+            } else {
+                int edge = bit == CUT_T ? vy1 : vy2;
+                *ax += (int)cut_by(*bx - *ax, edge - *ay, *by - *ay);
+                *ay = edge;
+            }
+        }
+    }
+    return !(out_code(*x0, *y0) | out_code(*x1, *y1));
+}
+
+/* LINE as QBasic draws one (fitted to its pixels, SCREEN 13, every slope
+ * to 14 by 14): always left to right, whichever end was named first; along
+ * the longer axis one step at a time, the other stepping when 3M + 4im has
+ * reached 4Mj, M and m the two lengths: the error starts at three
+ * quarters, not at a half. */
+static void draw_line(int x0, int y0, int x1, int y1, int c) {
+    int dx, dy, sy, major, minor, e, x, y;
+    if (!clip_line(&x0, &y0, &x1, &y1)) return;
+    if (x0 > x1) {
+        x = x0; x0 = x1; x1 = x;
+        y = y0; y0 = y1; y1 = y;
+    }
+    dx = x1 - x0;
+    dy = y1 > y0 ? y1 - y0 : y0 - y1;
+    sy = y0 < y1 ? 1 : -1;
+    major = dx >= dy ? dx : dy;
+    minor = dx >= dy ? dy : dx;
+    e = 3 * major;
+    x = x0;
+    y = y0;
+    for (int i = 0; i <= major; i++) {
+        if (line_mask == 0xFFFF || (line_mask >> (15 - line_at % 16) & 1)) plot(x, y, c);
+        line_at++;
+        e += 4 * minor;
+        if (dx >= dy) x++; else y += sy;
+        if (e >= 4 * major) {
+            e -= 4 * major;
+            if (dx >= dy) y += sy; else x++;
+        }
     }
 }
 
@@ -377,19 +445,30 @@ void sb_gfx_line(int x0, int y0, int x1, int y1, int color, int box) {
     if (!scr_mode)
         return;
     c = clamp_color(color);
+    line_at = 0;
     if (box == 0) {
-        bresenham(x0, y0, x1, y1, c);
+        draw_line(x0, y0, x1, y1, c);
+    } else if (box == 1 && line_mask != 0xFFFF) {
+        /* (the style's way round, fitted: the row at the second y, the row at
+         * the first, each from the left; then the column at the second x and
+         * the one at the first, each first y to second) */
+        int lo = x0 < x1 ? x0 : x1, hi = x0 < x1 ? x1 : x0;
+        draw_line(lo, y1, hi, y1, c);
+        draw_line(lo, y0, hi, y0, c);
+        draw_line(x1, y0, x1, y1, c);
+        draw_line(x0, y0, x0, y1, c);
     } else if (box == 1) {
         hspan(x0, x1, y0, c);
         hspan(x0, x1, y1, c);
-        bresenham(x0, y0, x0, y1, c);
-        bresenham(x1, y0, x1, y1, c);
+        draw_line(x0, y0, x0, y1, c);
+        draw_line(x1, y0, x1, y1, c);
     } else {
         int ylo = y0 < y1 ? y0 : y1;
         int yhi = y0 < y1 ? y1 : y0;
         for (y = ylo; y <= yhi; y++)
             hspan(x0, x1, y, c);
     }
+    line_mask = 0xFFFF;
     flip();
 }
 
@@ -469,92 +548,136 @@ void sb_gfx_circle(int cx, int cy, int r, int color, double aspect,
             err += 2 * (y - x) + 1;
         }
     }
-    if (sline) bresenham(cx, cy, cx + scaled(sx, fx), cy - scaled(sy, fy), c);
-    if (eline) bresenham(cx, cy, cx + scaled(ex, fx), cy - scaled(ey, fy), c);
+    if (sline) draw_line(cx, cy, cx + scaled(sx, fx), cy - scaled(sy, fy), c);
+    if (eline) draw_line(cx, cy, cx + scaled(ex, fx), cy - scaled(ey, fy), c);
     flip();
 }
 
 /* the mode's CIRCLE aspect when none is given: a 4:3 screen's pixels' */
 double sb_gfx_aspect(void) {
-    return scr_mode ? (float)(4.0 / 3.0 * scr_h / scr_w) : 1.0;   /* (a SINGLE, as QBasic's) */
+    /* (a SINGLE of seven decimal digits, as if QBasic's were written out:
+     * .8333333, a hair under 5/6, and .4166667, a hair over 5/12 -- which
+     * decides ties) */
+    if (!scr_mode) return 1.0;
+    return (float)(floor(4.0 / 3.0 * scr_h / scr_w * 1e7 + 0.5) / 1e7);
 }
 
-/* PAINT: seed fill bounded by the border color. Painted pixels stop
- * the walk too (except when paint == border, where the paint itself
- * is the boundary), so the fill terminates. Span-based seed stack. */
+/* PAINT, as QBasic fills (fitted to its pixels): a span runs from the seed
+ * to the border, or the viewport's edge, either way, and only those stop it;
+ * all of it is painted; and it spreads to the rows above and below only if a
+ * pixel in it changed, or the paint's row at this y is the background's
+ * pattern, whole (no background given: 0's) -- so a row already looking like
+ * the paint ends the fill, and the first span spreads whatever it found.  A
+ * solid color is a tile of one color. */
 typedef struct { int x, y; } seed_t;
 
-static int fillable(int x, int y, int paint, int border) {
-    uint8_t p;
-    if (x < vx1 || x > vx2 || y < vy1 || y > vy2)
-        return 0;
-    p = pixels[y * scr_w + x];
-    if (p == (uint8_t)border)
-        return 0;
-    if (paint != border && p == (uint8_t)paint)
-        return 0;
+/* a tile's color at a pixel: the row by y on the screen, the mode's bytes
+ * in it: a byte a pixel (13), the bits of 1 or 2 per pixel, or the planes'
+ * bytes in turn; what the string does not reach is 0 */
+int sb_gfx_tile_row(void) {
+    switch (scr_mode) {
+        case 7: case 8: case 9: case 12: return 4;
+        case 10: return 2;
+        default: return 1;
+    }
+}
+
+static int tile_color(int x, int y, const unsigned char *t, int len) {
+    int row = sb_gfx_tile_row(), rows = (len + row - 1) / row;
+    int at = (y % rows) * row, c = 0;
+    if (scr_mode == 13) return t[at];
+    if (scr_mode == 1) return t[at] >> (6 - 2 * (x % 4)) & 3;
+    for (int p = 0; p < row; p++)
+        if (at + p < len && (t[at + p] >> (7 - x % 8) & 1)) c |= 1 << p;
+    return c;
+}
+
+/* the tile's row at y is the background's pattern, whole */
+static int tile_row_is(const unsigned char *t, int len, int y, const unsigned char *bg, int bglen) {
+    int row = sb_gfx_tile_row(), rows = (len + row - 1) / row, at = (y % rows) * row;
+    for (int p = 0; p < row; p++) {
+        int a = at + p < len ? t[at + p] : 0, b = p < bglen ? bg[p] : 0;
+        if (a != b) return 0;
+    }
     return 1;
 }
 
-void sb_gfx_paint(int x, int y, int paint, int border) {
-    seed_t *stack;
-    int top = 0, cap = 1024;
+static int in_view(int x, int y) { return x >= vx1 && x <= vx2 && y >= vy1 && y <= vy2; }
 
-    if (!scr_mode)
-        return;
-    paint = clamp_color(paint);
-    border = (border < 0) ? paint : mode_color(border);
-    if (!fillable(x, y, paint, border)) {
-        flip();
-        return;
+static void paint_fill(int x, int y, int solid, const unsigned char *t, int len, int border,
+                       const unsigned char *bg, int bglen) {
+    seed_t *stack;
+    uint8_t *seen;              /* (a background's row looks the same after: it counts the once) */
+    int top = 0, cap = 1024, first = 1;
+#define PAINT_BORDER(px, py) (pixels[(py) * scr_w + (px)] == (uint8_t)border)
+    if (!in_view(x, y) || PAINT_BORDER(x, y)) { flip(); return; }
+    stack = malloc((size_t)cap * sizeof(seed_t));
+    if (!stack) return;
+    /* (no background given: 0's, a blank pixel not being painted yet) */
+    if (!bg) {
+        static const unsigned char zero[1] = { 0 };
+        bg = zero;
+        bglen = 1;
     }
-    stack = malloc(cap * sizeof(seed_t));
-    if (!stack)
-        return;
-    stack[top].x = x;
-    stack[top].y = y;
+    if (!(seen = calloc((size_t)scr_w * scr_h, 1))) { free(stack); return; }
+    stack[0].x = x;
+    stack[0].y = y;
     top = 1;
     while (top > 0) {
-        int lx, rx, cy, row, sx;
+        int lx, rx, cy, changed = first, row_is_bg;
         top--;
         x = stack[top].x;
         cy = stack[top].y;
-        if (!fillable(x, cy, paint, border))
-            continue;
-        lx = x;
-        while (fillable(lx - 1, cy, paint, border))
-            lx--;
-        rx = x;
-        while (fillable(rx + 1, cy, paint, border))
-            rx++;
-        for (sx = lx; sx <= rx; sx++)
-            pixels[cy * scr_w + sx] = (uint8_t)paint;
-        for (row = cy - 1; row <= cy + 1; row += 2) {
-            for (sx = lx; sx <= rx; sx++) {
-                if (fillable(sx, row, paint, border)) {
-                    /* push the start of each run once */
-                    if (sx == lx || !fillable(sx - 1, row, paint, border)) {
-                        if (top == cap) {
-                            seed_t *ns;
-                            cap *= 2;
-                            ns = realloc(stack, cap * sizeof(seed_t));
-                            if (!ns) {
-                                free(stack);
-                                flip();
-                                return;
-                            }
-                            stack = ns;
-                        }
-                        stack[top].x = sx;
-                        stack[top].y = row;
-                        top++;
-                    }
+        if (!in_view(x, cy) || PAINT_BORDER(x, cy)) continue;
+        row_is_bg = t ? tile_row_is(t, len, cy, bg, bglen) : solid == 0;
+        lx = rx = x;
+        while (lx - 1 >= vx1 && !PAINT_BORDER(lx - 1, cy)) lx--;
+        while (rx + 1 <= vx2 && !PAINT_BORDER(rx + 1, cy)) rx++;
+        for (int sx = lx; sx <= rx; sx++) {
+            uint8_t *p = &pixels[cy * scr_w + sx];
+            int c = t ? tile_color(sx, cy, t, len) : solid;
+            if (*p != (uint8_t)c) changed = 1;
+            else if (row_is_bg && !seen[cy * scr_w + sx]) changed = 1;
+            *p = (uint8_t)c;
+            seen[cy * scr_w + sx] = 1;
+        }
+        first = 0;
+        if (!changed) continue;
+        for (int row = cy - 1; row <= cy + 1; row += 2) {
+            if (row < vy1 || row > vy2) continue;
+            for (int sx = lx; sx <= rx; sx++) {
+                if (PAINT_BORDER(sx, row) || (sx > lx && !PAINT_BORDER(sx - 1, row))) continue;
+                if (top == cap) {
+                    seed_t *ns;
+                    cap *= 2;
+                    ns = realloc(stack, (size_t)cap * sizeof(seed_t));
+                    if (!ns) { free(stack); free(seen); flip(); return; }
+                    stack = ns;
                 }
+                stack[top].x = sx;
+                stack[top].y = row;
+                top++;
             }
         }
     }
+#undef PAINT_BORDER
     free(stack);
+    free(seen);
     flip();
+}
+
+void sb_gfx_paint(int x, int y, int paint, int border) {
+    if (!scr_mode)
+        return;
+    paint = clamp_color(paint);
+    paint_fill(x, y, paint, NULL, 0, border < 0 ? paint : mode_color(border), NULL, 0);
+}
+
+void sb_gfx_paint_tile(int x, int y, const unsigned char *tile, int len, int border,
+                       const unsigned char *bg, int bglen) {
+    if (!scr_mode)
+        return;
+    paint_fill(x, y, 0, tile, len, border < 0 ? clamp_color(-1) : mode_color(border), bg, bglen);
 }
 
 void sb_gfx_cls(void) {
@@ -665,7 +788,7 @@ int sb_gfx_draw(const char *s, int len) {
                 if (!rel) {                         /* M x,y: the point itself */
                     double nx = (double)n - ox, ny = (double)y - oy;
                     if (!nodraw)
-                        bresenham((int)rint(px) + ox, (int)rint(py) + oy, (int)n, (int)y, clamp_color(draw_color));
+                        draw_line((int)rint(px) + ox, (int)rint(py) + oy, (int)n, (int)y, clamp_color(draw_color));
                     if (!back) { px = nx; py = ny; }
                     continue;
                 }
@@ -718,7 +841,7 @@ int sb_gfx_draw(const char *s, int len) {
         }
         ix = (int)rint(px); iy = (int)rint(py);
         jx = (int)rint(px + dx); jy = (int)rint(py + dy);
-        if (!nodraw) bresenham(ix + ox, iy + oy, jx + ox, jy + oy, clamp_color(draw_color));
+        if (!nodraw) draw_line(ix + ox, iy + oy, jx + ox, jy + oy, clamp_color(draw_color));
         if (!back) { px += dx; py += dy; }
     }
     last_lx = to_world(0, px);
@@ -806,6 +929,8 @@ int sb_gfx_put(int x, int y, const unsigned char *buf, int len, int action) {
 }
 
 int sb_gfx_mode(void) { return scr_mode; }
+
+void sb_gfx_set_fg(int color) { fg = mode_color(color); }
 
 int sb_gfx_fb_get(int off) {
     if (scr_mode != 13 || off < 0 || off >= scr_w * scr_h) return -1;

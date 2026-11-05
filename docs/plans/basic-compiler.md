@@ -745,6 +745,25 @@ and memory stay, files close, variables, DEF SEG, WIDTH, traps and RND's
 sequence start again.  $INCLUDE stays the loader's; QB's own refuses it, QB64
 not tried.  Modules and ON UEVENT wait for a program that needs them.
 
+Graphics, from QBasic's own pixels (2026-11-05).  The oracle's transcript goes
+blank once a program enters a graphics mode, but the program runs on: probes
+write what they see to a file.  LINE: drawn from the left end, whichever came
+first, the minor axis stepping when 3M + 4im reaches 4Mj; clipped first (the
+first end, then the other, left, right, top, bottom, each cut rounded half
+away from zero), which is why a line off the edge has another slope.  Fitted
+to 840 lines and 1800 clipped, then held to lines it never saw, DRAW's and
+CIRCLE's among them.  Its style runs from the left end, carried round a box's
+sides in the order rows at second y, first y, columns at second x, first x.
+PAINT: a span runs to the border or the edge, only those stop it, and it spreads
+if a pixel changed or the paint's row is the background's whole (0's if none is
+given).  Tiles by mode; COLOR's foreground now reaches drawing and is the
+tile's default border.  CIRCLE's default aspect is seven decimal digits, which
+decides ties.  SCREEN of the mode it is in clears nothing.  gfxpix.bas holds
+QBasic's hashes for 39 pictures.  Scenes of random lines and paints against
+QBasic: about 1 in 100 still differ, a row of a border-colored tile in SCREEN 1,
+unexplained; QBasic also runs out of memory (error 7) on some paints we finish,
+and does not finish a few at all, which is not copied.
+
 Then QBasic's load-time checks (2026-11-04), the last of what the
 checker took that QBasic does not: strict-qb now agrees on every
 program (398, the 4 hoisted DEF FNs apart; it had been 14 short).

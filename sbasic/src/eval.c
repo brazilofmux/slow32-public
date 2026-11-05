@@ -2383,9 +2383,89 @@ static error_t gfx_eval_num(env_t *env, expr_t *e, double *out) {
     return err;
 }
 
+/* LINE's style: a 16-bit mask, an INTEGER or its bits unsigned, else Overflow */
+error_t eval_line_style(const value_t *v) {
+    int m;
+    EVAL_CHECK(val_to_integer(v, &m));
+    if (m < -32768 || m > 65535) return ERR_OVERFLOW;
+    sb_gfx_line_style(m);
+    return ERR_NONE;
+}
+
+static error_t gfx_point(double x, double y, int step, double *lx, double *ly, int *ax, int *ay);
+
+/* PAINT: a number is the solid fill eval_gfx does; a string a tile of 1 to 64
+ * bytes.  The background is only a tile's, a string of at least a byte, its
+ * first row what counts; a tile with three rows of that in a row, round and
+ * round, could not end: Illegal function call (probed) */
+error_t eval_paint(const gfx_op_t *g, const value_t *paint, const value_t *bg) {
+    const unsigned char *t, *b = NULL;
+    int len, bl = 0, row, rows, ax, ay;
+    double lx, ly;
+    if (!paint || paint->type != VAL_STRING) {
+        if (bg) return bg->type == VAL_STRING ? ERR_ILLEGAL_FUNCTION_CALL : ERR_TYPE_MISMATCH;
+        return eval_gfx(g);
+    }
+    if (bg && bg->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!sb_gfx_active())
+        return sb_gfx_degraded() ? ERR_NONE : ERR_ILLEGAL_FUNCTION_CALL;
+    len = paint->sval->len;
+    t = (const unsigned char *)paint->sval->data;
+    if (len < 1 || len > 64) return ERR_ILLEGAL_FUNCTION_CALL;
+    row = sb_gfx_tile_row();
+    rows = (len + row - 1) / row;
+    if (bg) {
+        unsigned char r0[8] = { 0 }, rn[8];
+        int run = 0;            /* (the rows the background's, one after another, round the tile) */
+        bl = bg->sval->len;
+        b = (const unsigned char *)bg->sval->data;
+        if (bl < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+        if (bl > row) bl = row;
+        memcpy(r0, b, (size_t)bl);
+        for (int i = 0; i < rows * 2 + 3; i++) {
+            int k = i % rows;
+            memset(rn, 0, sizeof rn);
+            for (int p = 0; p < row && k * row + p < len; p++) rn[p] = t[k * row + p];
+            run = memcmp(rn, r0, (size_t)row) == 0 ? run + 1 : 0;
+            if (run >= 3) return ERR_ILLEGAL_FUNCTION_CALL;
+        }
+    }
+    EVAL_CHECK(gfx_point(g->x1, g->y1, g->step1, &lx, &ly, &ax, &ay));
+    sb_gfx_paint_tile(ax, ay, t, len, g->has_aux ? g->aux : -1, b, bl);
+    sb_gfx_set_last(lx, ly);
+    return ERR_NONE;
+}
+
+static error_t exec_paint(env_t *env, stmt_t *s) {
+    double x1 = 0, y1 = 0;
+    int aux = -1;
+    value_t paint, bg;
+    int has_paint = 0, has_bg = 0, color = -1;
+    error_t err;
+    EVAL_CHECK(gfx_eval_num(env, s->gfx.x1, &x1));
+    EVAL_CHECK(gfx_eval_num(env, s->gfx.y1, &y1));
+    if (s->gfx.color) { EVAL_CHECK(eval_expr(env, s->gfx.color, &paint)); has_paint = 1; }
+    err = has_paint && paint.type != VAL_STRING ? val_to_integer(&paint, &color) : ERR_NONE;
+    if (err == ERR_NONE) err = gfx_eval_color(env, s->gfx.aux, &aux);
+    if (err == ERR_NONE && s->gfx.start) {
+        err = eval_expr(env, s->gfx.start, &bg);
+        has_bg = err == ERR_NONE;
+    }
+    if (err == ERR_NONE) {
+        gfx_op_t g = { STMT_PAINT, x1, y1, 0, 0, color, aux, 1, s->gfx.color != NULL,
+                       s->gfx.aux != NULL, s->gfx.step1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        err = eval_paint(&g, has_paint ? &paint : NULL, has_bg ? &bg : NULL);
+    }
+    if (has_paint) val_clear(&paint);
+    if (has_bg) val_clear(&bg);
+    return err;
+}
+
 static error_t exec_gfx(env_t *env, stmt_t *s) {
     double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
     int color, aux;
+
+    if (s->type == STMT_PAINT) return exec_paint(env, s);
 
     /* Evaluate operands even when degraded, so side effects and type
      * errors behave the same with or without a tube. */
@@ -2398,6 +2478,17 @@ static error_t exec_gfx(env_t *env, stmt_t *s) {
     gfx_op_t g = { s->type, x1, y1, x2, y2, color, aux, s->gfx.x1 != NULL, s->gfx.color != NULL,
                    s->gfx.aux != NULL, s->gfx.step1, s->gfx.step2, s->gfx.has_from, s->gfx.box,
                    s->gfx.preset, 0, 0, 0, 0, 0, 0 };
+    if (s->type == STMT_LINE_G) {
+        if (s->gfx.start) {
+            value_t m;
+            error_t err;
+            EVAL_CHECK(eval_expr(env, s->gfx.start, &m));
+            err = eval_line_style(&m);
+            val_clear(&m);
+            if (err != ERR_NONE) return err;
+        }
+        return eval_gfx(&g);
+    }
     if (s->gfx.start) { EVAL_CHECK(gfx_eval_num(env, s->gfx.start, &g.start)); g.has_start = 1; }
     if (s->gfx.end) { EVAL_CHECK(gfx_eval_num(env, s->gfx.end, &g.end)); g.has_end = 1; }
     if (s->gfx.aspect) { EVAL_CHECK(gfx_eval_num(env, s->gfx.aspect, &g.aspect)); g.has_aspect = 1; }
@@ -2564,7 +2655,9 @@ static void screen_text(int mode, int prev) {
 }
 
 error_t eval_screen(int mode) {
-    int prev = sb_gfx_mode(), r = sb_gfx_screen(mode);
+    int prev = sb_gfx_mode(), r;
+    if (mode != 0 && mode == prev) return ERR_NONE;     /* (the mode it is in: nothing is cleared, QBasic) */
+    r = sb_gfx_screen(mode);
     if (r == -2)
         return ERR_ILLEGAL_FUNCTION_CALL;
     if (r == 0) screen_text(mode, prev);
@@ -2813,13 +2906,14 @@ error_t eval_locate(int row, int col) {
 static error_t exec_color(env_t *env, stmt_t *s) {
     int fg = 7;
     int bg = 0;
+    EVAL_CHECK(eval_color_begin());
     if (s->color_stmt.has_fg) {
         value_t fv;
         EVAL_CHECK(eval_expr(env, s->color_stmt.fg, &fv));
         error_t err = val_to_integer(&fv, &fg);
         val_clear(&fv);
         if (err != ERR_NONE) return err;
-        EVAL_CHECK(eval_color_arg(fg));
+        EVAL_CHECK(eval_color_fg(fg));
     }
     if (s->color_stmt.has_bg) {
         value_t bv;
@@ -2827,15 +2921,33 @@ static error_t exec_color(env_t *env, stmt_t *s) {
         error_t err = val_to_integer(&bv, &bg);
         val_clear(&bv);
         if (err != ERR_NONE) return err;
-        EVAL_CHECK(eval_color_arg(bg));
+        EVAL_CHECK(eval_color_bg(bg));
     }
     eval_color(fg, bg, s->color_stmt.has_fg, s->color_stmt.has_bg);
     return ERR_NONE;
 }
 
-/* COLOR's colors, each 0 to 15, then COLOR -- for compiled code too */
-error_t eval_color_arg(int c) {
-    return c < 0 || c > 15 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
+/* COLOR's colors, each 0 to 15, then COLOR -- for compiled code too.  In
+ * graphics (probed): SCREEN 2 and 11 have no COLOR at all; 7, 8, 9, 12 and
+ * 13 take a foreground, what a drawing with no color of its own draws in (to
+ * 255 in 13); 12 and 13 no background, the foreground already in force by
+ * then; SCREEN 1's are its background and palette, drawing left in 3. */
+error_t eval_color_begin(void) {
+    int m = sb_gfx_mode();
+    return m == 2 || m == 11 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
+}
+
+error_t eval_color_fg(int c) {
+    int m = sb_gfx_mode();
+    if (c < 0 || c > (m == 13 ? 255 : 15)) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (m && m != 1) sb_gfx_set_fg(c);
+    return ERR_NONE;
+}
+
+error_t eval_color_bg(int c) {
+    int m = sb_gfx_mode();
+    if (m == 12 || m == 13 || c < 0 || c > 15) return ERR_ILLEGAL_FUNCTION_CALL;
+    return ERR_NONE;
 }
 
 void eval_color(int fg, int bg, int has_fg, int has_bg) {

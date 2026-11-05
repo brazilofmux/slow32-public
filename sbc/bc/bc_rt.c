@@ -589,8 +589,18 @@ void bcrt_locate(int row, int col) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
-void bcrt_color_arg(int c) {
-    error_t e = eval_color_arg(c);
+void bcrt_color_begin(void) {
+    error_t e = eval_color_begin();
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_color_fg(int c) {
+    error_t e = eval_color_fg(c);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_color_bg(int c) {
+    error_t e = eval_color_bg(c);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
@@ -967,6 +977,29 @@ void bcrt_gfx(int type, int flags, int box, int color, int aux, int x1l, int x1h
                    dwords_of(y2l, y2h), color, aux, flags & 1, (flags >> 1) & 1, (flags >> 2) & 1,
                    (flags >> 3) & 1, (flags >> 4) & 1, (flags >> 5) & 1, box, (flags >> 6) & 1 };
     error_t e = eval_gfx(&g);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_line_style(int lo, int hi, int t) {
+    value_t m = take(lo, hi, t);
+    error_t e = eval_line_style(&m);
+    val_clear(&m);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+/* PAINT (flags: 1 a paint, 2 a border, 4 a background, 8 STEP) */
+void bcrt_paint(int flags, int xl, int xh, int yl, int yh, int plo, int phi, int pt, int border,
+                int blo, int bhi, int bt) {
+    value_t paint = take(plo, phi, pt), bg = take(blo, bhi, bt);
+    int color = -1;
+    error_t e = flags & 1 && paint.type != VAL_STRING ? val_to_integer(&paint, &color) : ERR_NONE;
+    if (e == ERR_NONE) {
+        gfx_op_t g = { STMT_PAINT, dwords_of(xl, xh), dwords_of(yl, yh), 0, 0, color, border, 1, flags & 1,
+                       (flags >> 1) & 1, (flags >> 3) & 1, 0, 0, 0, 0 };
+        e = eval_paint(&g, flags & 1 ? &paint : NULL, flags & 4 ? &bg : NULL);
+    }
+    val_clear(&paint);
+    val_clear(&bg);
     if (e != ERR_NONE) bcrt_fail(e);
 }
 

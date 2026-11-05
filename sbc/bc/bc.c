@@ -4100,7 +4100,24 @@ static void bc_stmt(stmt_t *s) {
         call_end(cb, 14, "bcrt_circle", NULL);
         break;
     }
-    case STMT_PSET: case STMT_LINE_G: case STMT_PAINT: case STMT_PALETTE:
+    case STMT_PAINT: {          /* (x, y), paint, border, background: a string paint a tile (eval_paint) */
+        int xl, xh, yl, yh, b, cb;
+        bv_t paint, bg;
+        dwords(coerce(expr(s->gfx.x1), VAL_DOUBLE), &xl, &xh);
+        dwords(coerce(expr(s->gfx.y1), VAL_DOUBLE), &yl, &yh);
+        paint = dynv(s->gfx.color ? expr(s->gfx.color) : kint(0, VAL_INTEGER));
+        b = s->gfx.aux ? handle_of(s->gfx.aux) : iconst(-1);
+        bg = dynv(s->gfx.start ? expr(s->gfx.start) : kint(0, VAL_INTEGER));
+        cb = h_ncarg;
+        carg(iconst((s->gfx.color != NULL) | (s->gfx.aux != NULL) << 1 | (s->gfx.start != NULL) << 2 | s->gfx.step1 << 3), 0);
+        carg(xl, 0); carg(xh, 0); carg(yl, 0); carg(yh, 0);
+        carg_bv(paint);
+        carg(b, 0);
+        carg_bv(bg);
+        call_end(cb, 12, "bcrt_paint", NULL);
+        break;
+    }
+    case STMT_PSET: case STMT_LINE_G: case STMT_PALETTE:
     case STMT_VIEW: case STMT_WINDOW: {
         /* each point's coordinate as it is, a double (eval_gfx rounds it or
          * maps it), a color an integer, as each comes; an absent one 0, an
@@ -4112,6 +4129,12 @@ static void bc_stmt(stmt_t *s) {
             else lo[i] = dconst(0, &hi[i]);
         }
         for (int i = 0; i < 2; i++) v[i] = op[4 + i] ? handle_of(op[4 + i]) : iconst(-1);
+        if (s->type == STMT_LINE_G && s->gfx.start) {   /* its style, for the LINE about to be */
+            bv_t m = dynv(expr(s->gfx.start));
+            cb = h_ncarg;
+            carg_bv(m);
+            call_end(cb, 3, "bcrt_line_style", NULL);
+        }
         flags = (s->gfx.x1 != NULL) | (s->gfx.color != NULL) << 1 | (s->gfx.aux != NULL) << 2 |
                 s->gfx.step1 << 3 | s->gfx.step2 << 4 | s->gfx.has_from << 5 | s->gfx.preset << 6;
         cb = h_ncarg;
@@ -4205,13 +4228,14 @@ static void bc_stmt(stmt_t *s) {
     }
     case STMT_COLOR: {          /* each made an integer and checked as it comes */
         int fg = iconst(7), bg = iconst(0), cb;
+        call_end(h_ncarg, 0, "bcrt_color_begin", NULL);
         if (s->color_stmt.has_fg) {
             fg = coerce(expr(s->color_stmt.fg), VAL_LONG).lo;
-            cb = h_ncarg; carg(fg, 0); call_end(cb, 1, "bcrt_color_arg", NULL);
+            cb = h_ncarg; carg(fg, 0); call_end(cb, 1, "bcrt_color_fg", NULL);
         }
         if (s->color_stmt.has_bg) {
             bg = coerce(expr(s->color_stmt.bg), VAL_LONG).lo;
-            cb = h_ncarg; carg(bg, 0); call_end(cb, 1, "bcrt_color_arg", NULL);
+            cb = h_ncarg; carg(bg, 0); call_end(cb, 1, "bcrt_color_bg", NULL);
         }
         cb = h_ncarg;
         carg(fg, 0); carg(bg, 0);

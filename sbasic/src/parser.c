@@ -878,9 +878,8 @@ static stmt_t *parse_line_graphics(parser_t *p, int line) {
                 }
             }
             if (lexer_match(&p->lex, TOK_COMMA)) {
-                expr_t *style = parse_expr(p);   /* dashed style: ignored */
-                if (!style) { stmt_free(s); return NULL; }
-                expr_free(style);
+                s->gfx.start = parse_expr(p);    /* its style, a mask of 16 pixels */
+                if (!s->gfx.start) { stmt_free(s); return NULL; }
             }
         }
     }
@@ -918,11 +917,19 @@ static stmt_t *parse_paint(parser_t *p) {
         stmt_free(s); return NULL;
     }
     if (lexer_match(&p->lex, TOK_COMMA)) {
-        s->gfx.color = parse_expr(p);
-        if (!s->gfx.color) { stmt_free(s); return NULL; }
+        if (!lexer_check(&p->lex, TOK_COMMA)) {         /* (PAINT (x, y), , border: the color in force) */
+            s->gfx.color = parse_expr(p);
+            if (!s->gfx.color) { stmt_free(s); return NULL; }
+        }
         if (lexer_match(&p->lex, TOK_COMMA)) {
-            s->gfx.aux = parse_expr(p);
-            if (!s->gfx.aux) { stmt_free(s); return NULL; }
+            if (!lexer_check(&p->lex, TOK_COMMA)) {     /* (PAINT (x, y), a$, , bg$) */
+                s->gfx.aux = parse_expr(p);
+                if (!s->gfx.aux) { stmt_free(s); return NULL; }
+            }
+            if (lexer_match(&p->lex, TOK_COMMA)) {      /* the background, for a tile */
+                s->gfx.start = parse_expr(p);
+                if (!s->gfx.start) { stmt_free(s); return NULL; }
+            }
         }
     }
     return s;

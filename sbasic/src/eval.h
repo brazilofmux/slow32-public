@@ -172,7 +172,6 @@ void eval_cls(void);
 error_t eval_locate(int row, int col);
 int eval_cursor_row(void);
 int eval_cursor_col(void);
-error_t eval_color_arg(int c);
 void eval_color(int fg, int bg, int has_fg, int has_bg);
 error_t eval_line_input(const char *prompt, value_t *out);
 void eval_write_value(const value_t *v);
@@ -210,7 +209,16 @@ typedef struct {
     double start, end, aspect;  /* CIRCLE's, each when has_ says so */
     int has_start, has_end, has_aspect;
 } gfx_op_t;
+/* COLOR, as the mode has it: begin before its operands, then each as it
+ * comes; a foreground is in force at once */
+error_t eval_color_begin(void);
+error_t eval_color_fg(int c);
+error_t eval_color_bg(int c);
 error_t eval_gfx(const gfx_op_t *g);
+/* PAINT with its paint and background as they came: a string is a tile */
+error_t eval_paint(const gfx_op_t *g, const value_t *paint, const value_t *bg);
+/* LINE's style, as it came */
+error_t eval_line_style(const value_t *v);
 error_t eval_cls_mode(int mode);
 error_t eval_screen_at(int row, int col, int attr, value_t *out);
 error_t eval_view_print(int has, int top, int bottom);

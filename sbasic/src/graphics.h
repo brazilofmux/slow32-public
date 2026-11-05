@@ -40,7 +40,18 @@ int sb_gfx_draw(const char *s, int len);
 
 /* the mode's aspect when CIRCLE gives none: 4/3 * height / width */
 double sb_gfx_aspect(void);
+/* what a drawing with no color draws in (COLOR, in the modes it says so) */
+void sb_gfx_set_fg(int color);
 void sb_gfx_paint(int x, int y, int paint, int border);
+/* PAINT with a tile (len 1 to 64), the mode's bytes a row: border < 0 the
+ * color in force; bg, if any, a pattern of a row that is not yet painted
+ * though the tile would look the same */
+void sb_gfx_paint_tile(int x, int y, const unsigned char *tile, int len, int border,
+                       const unsigned char *bg, int bglen);
+/* the bytes of a row of a tile in this mode */
+int sb_gfx_tile_row(void);
+/* the next LINE's style: the 16 pixels' mask, first pixel the top bit */
+void sb_gfx_line_style(int mask);
 void sb_gfx_cls(void);
 
 /* PALETTE attr, rgb24 (0xRRGGBB). attr -1 restores the default
