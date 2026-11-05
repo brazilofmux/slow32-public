@@ -620,7 +620,7 @@ void bcrt_view_print(int has, int top, int bottom) {
 }
 
 /* CLEAR's arrays (compiled code clears its own variables) */
-void bcrt_clear(void) { array_clear_all(); }
+void bcrt_clear(void) { array_clear(); }
 
 /* PRINT USING: the format's value and which items have one ("1"/"0"
  * each); then using_next (the item to evaluate, -1 when done) and
@@ -945,6 +945,9 @@ void bcrt_dim_records(const char *name, int mode, int t, const char *sig, int n)
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* a main program's DIM of constant bounds: QuickBASIC's static array */
+void bcrt_array_static(const char *name) { array_mark_fixed(name); }
+
 /* DIM a(...) AS STRING * n (eval_array_fixed) */
 void bcrt_dim_fixed(const char *name, int mode, int n) {
     char kb[ARRAY_KEY_MAX];
@@ -1031,6 +1034,11 @@ void bcrt_print_val(int lo, int hi, int t) {
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+/* (items whose type the program's text settles) */
+void bcrt_print_int(int n) { print_int(n, bcrt_width_now()); }
+
+void bcrt_print_str(int s) { print_string((sb_string_t *)(intptr_t)s, bcrt_width_now()); }
+
 void bcrt_print_comma(void) { print_comma(bcrt_width_now()); }
 
 void bcrt_print_nl(void) { print_text("\n"); }
@@ -1092,7 +1100,7 @@ void bcrt_dim(const char *name, int type, int n, int in_place, int redim, int pr
     char kb[ARRAY_KEY_MAX];
     error_t e;
     name = akey(name, mode, kb);
-    if (in_place && array_find(name)) return;
+    if (in_place && array_standing(name)) return;
     e = eval_dim(name, (val_type_t)type, n, lo, up, redim, preserve);
     if (e != ERR_NONE) bcrt_fail(e);
 }
@@ -1104,7 +1112,7 @@ void bcrt_dim_n(const char *name, int type, int n, int in_place, int redim, int 
     char kb[ARRAY_KEY_MAX];
     error_t e;
     name = akey(name, mode, kb);
-    if (in_place && array_find(name)) return;
+    if (in_place && array_standing(name)) return;
     e = eval_dim(name, (val_type_t)type, n, b, b + n, redim, preserve);
     if (e != ERR_NONE) bcrt_fail(e);
 }
@@ -1149,7 +1157,7 @@ void bcrt_alook(const char *name, int n, int id, int ty, int mode) {
         fprintf(stderr, "s32-bc: internal: %s has elements of type %d, not %d\n", name, arr->elem_type, ty);
         exit(1);
     }
-    c->gen = array_generation;
+    c->gen = mode == ARRAY_MODULE ? array_dim_generation : array_generation;
     c->data = arr->data;
     for (int i = 0; i < n && i < 3; i++) {
         c->lbound[i] = arr->lbound[i];

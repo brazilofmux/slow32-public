@@ -1,5 +1,5 @@
 # compare-speed.py --record: instructions over the games both compilers take
 programs 92
-interpreter 469489419
-s32-sbc 181056366
-s32-bc 72861679
+interpreter 463084831
+s32-sbc 171782017
+s32-bc 62039854

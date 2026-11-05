@@ -817,6 +817,8 @@ static int in_range(int lo, int hi, unsigned mhi, unsigned mlo) {
                                bin(HI_SLEU, lo, iconst((int)mlo))));
 }
 #define FLT_MAX_HI 0x47EFFFFFu  /* 3.4028234663852886e38 */
+#define DBL_MAX_HI 0x7FEFFFFFu  /* 1.7976931348623157e308 */
+#define DBL_MAX_LO 0xFFFFFFFFu
 #define FLT_MAX_LO 0xE0000000u
 #define DBL_INF_HI 0x7FF00000u  /* below it: finite */
 
@@ -857,12 +859,13 @@ static bv_t flt_to_int(bv_t x, int ty) {
 static int to_float(bv_t x);
 static bv_t coerce(bv_t x, int ty);
 
-/* x as a store of type ty takes it: a value is only held to its type's
- * range when it is stored (an expression carries infinity on, QBasic), so
- * a SINGLE past a SINGLE's range is an Overflow here, DOUBLE or no */
+/* x as a store of type ty takes it: a value is only held to the range of
+ * what it is stored in (an expression carries infinity on, QBasic), so a
+ * SINGLE past a SINGLE's range goes into a DOUBLE whole, and only what is
+ * past a DOUBLE's is an Overflow there */
 static bv_t store_coerce(bv_t x, int ty) {
-    if (ty == VAL_DOUBLE && x.st == VAL_SINGLE && !x.k)
-        guard(in_range(x.lo, x.hi, FLT_MAX_HI, FLT_MAX_LO), ERR_OVERFLOW);
+    if (ty == VAL_DOUBLE && st_flt(x.st) && !x.k)
+        guard(in_range(x.lo, x.hi, DBL_MAX_HI, DBL_MAX_LO), ERR_OVERFLOW);
     return coerce(x, ty);
 }
 
@@ -1329,13 +1332,20 @@ static int bc_nmirrors;
 
 /* name's cell, good now: looked up (or made) if the generation has moved */
 static int array_cell(int line, const char *name, int n) {
-    int id = array_id(name, line), cell, fast, slow, cb;
+    /* (a main-program array has its own cell, good until one is made or
+     * moved; a name of a procedure's means another array each activation) */
+    int module = arr_mode(name) == ARRAY_MODULE;
+    char key[72];
+    int id, cell, fast, slow, cb;
+    snprintf(key, sizeof key, "%s%s", module ? "" : "~", name);
+    id = array_id(key, line);
     cell = hi_emit(HI_ADDI, TY_INT, hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "bcrt_acache"), -1,
                    id * BC_ACELL, NULL);
     fast = new_blk();
     slow = new_blk();
     hi_emit(HI_BRC, TY_VOID,
-            bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, "array_generation"), 0), ld(cell, 0)),
+            bin(HI_SEQ, ld(hi_emit(HI_GADDR, TY_INT, -1, -1, 0, module ? "array_dim_generation" : "array_generation"), 0),
+                ld(cell, 0)),
             fast, slow, NULL);
     bc_live = 0;
     begin_blk(slow);
@@ -2131,11 +2141,25 @@ static void bc_print_items(const prints_t *s) {
                 carg(saddr(e->call.name, 3), 0);
                 carg_bv(a);
                 call_end(cb, 4, "bcrt_print_tab", NULL);
-            } else {
-                bv_t v = dynv(expr(e));
+            } else if (static_str(e)) {
+                int own, p = str_operand(e, 1, &own);
                 cb = h_ncarg;
-                carg_bv(v);
-                call_end(cb, 3, "bcrt_print_val", NULL);
+                carg(p, 0);
+                call_end(cb, 1, "bcrt_print_str", NULL);
+                str_release(p, own);
+            } else {
+                bv_t v = expr(e);
+                if (st_int(v.st)) {
+                    int x = v.k ? iconst((int)v.kv) : v.lo;
+                    cb = h_ncarg;
+                    carg(x, 0);
+                    call_end(cb, 1, "bcrt_print_int", NULL);
+                } else {
+                    v = dynv(v);
+                    cb = h_ncarg;
+                    carg_bv(v);
+                    call_end(cb, 3, "bcrt_print_val", NULL);
+                }
             }
         }
         if (it->sep == ';') nl = 0;
@@ -2655,6 +2679,18 @@ static void mirrors_make(region_t *r, int line) {
     }
 }
 
+/* a WHILE or DO loop s: its mirrors made; the count to go back to after it */
+static int loop_mirrors(stmt_t *s) {
+    int base = bc_nmirrors;
+    if (!bc_trap) {
+        region_t r;
+        region_init(&r, NULL);
+        region_stmt(s, &r);
+        if (r.ok) mirrors_make(&r, s->line);
+    }
+    return base;
+}
+
 static void bc_for(stmt_t *s) {
     for_t *f;
     region_t r;
@@ -2897,6 +2933,11 @@ static void bc_dim(stmt_t *s, int is_static, int base) {
         for (int i = 0; i < 3; i++) carg(up[i], 0);
         carg(iconst(arr_mode(s->dim_stmt.name)), 0);
         call_end(cb, 13, "bcrt_dim", NULL);
+    }
+    if (s->dim_stmt.const_bounds && !bc_proc) {
+        cb = h_ncarg;
+        carg(saddr(s->dim_stmt.name, (int)strlen(s->dim_stmt.name)), 0);
+        call_end(cb, 1, "bcrt_array_static", NULL);
     }
     if (base >= 0) return;      /* (made before the run: its records or strings when its DIM runs) */
     if (s->dim_stmt.rec_type[0]) {      /* its elements records (eval_array_records) */
@@ -3656,7 +3697,7 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_WHILE: {
-        int bh, bb = new_blk(), bx = new_blk(), c;
+        int bh, bb = new_blk(), bx = new_blk(), c, mb = loop_mirrors(s);
         bh = op_block();
         c = cond(s->while_stmt.condition);
         hi_emit(HI_BRC, TY_VOID, c, bb, bx, NULL);
@@ -3667,6 +3708,7 @@ static void bc_stmt(stmt_t *s) {
         bc_nloops--;
         op_jump(bh);
         begin_blk(bx);
+        bc_nmirrors = mb;
         break;
     }
     case STMT_FOR:
@@ -3740,7 +3782,7 @@ static void bc_stmt(stmt_t *s) {
         break;
     case STMT_DO_LOOP: {
         /* DO [WHILE|UNTIL c] ... LOOP [WHILE|UNTIL c] */
-        int bh, bb = new_blk(), bx = new_blk(), c;
+        int bh, bb = new_blk(), bx = new_blk(), c, mb = loop_mirrors(s);
         if (s->do_loop.pre_cond) bh = op_block();
         else {
             bh = new_blk();
@@ -3767,6 +3809,7 @@ static void bc_stmt(stmt_t *s) {
         } else
             op_jump(bh);
         begin_blk(bx);
+        bc_nmirrors = mb;
         break;
     }
     case STMT_EXIT:

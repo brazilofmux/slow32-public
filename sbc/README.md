@@ -9,7 +9,7 @@ history: [docs/plans/basic-compiler.md](../docs/plans/basic-compiler.md).
 |---|---|---|
 | takes | what QBasic 1.1 loads: the checker (`sbasic -check`, `sbasic/src/strict.c`) passes it -- typed, every FOR its NEXT, every label there | anything the interpreter runs: GW-BASIC's line numbers and habits, ECMA-55, the interpreter's own statements |
 | how | decides the program's shape before it runs and writes native code through HIR (stage08's back end, `bc/hir/`); values the run time types go through the interpreter's own code (`bc/bc_rt.c`) | writes the interpreter's lowered ops as C, native behind guards, the interpreter's executor running the rest; C by clang or stage08 |
-| speed (the 92 games both take, instructions; `tests/compare-speed.py`) | 72.9M | 181M (the interpreter: 469M) |
+| speed (the 92 games both take, instructions; `tests/compare-speed.py`) | 62.0M | 172M (the interpreter: 463M) |
 | sources | `bc/bc.c`, `bc/bc_rt.c`, `build-bc.sh`, `compile-bc.sh` | `s32-sbc.c`, `runtime/`, `build.sh`, `compile-bas.sh`, `build-lib.sh` |
 | shipped | `slow32:basic` (`s32bc`; assembly straight out, no C compiler) | `slow32:basic` (`s32sbc`, stage08 cc on the emulator, no LLVM) |
 | gate (both also `tests/compare-speed.py --check`) | `tests/run-oracle.py --bc`, `tests/fuzz.py --bc [--loops]`, `tests/qb-corpus.py` (QBasic's programs), `sbasic/tests/strict-qb.py` (the checker against QBasic) | `tests/run-oracle.py`, `tests/run-stage08.sh`, `tests/fuzz.py` |

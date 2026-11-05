@@ -17,12 +17,17 @@ typedef struct {
     value_t *data;              /* flat row-major storage */
     int active;                  /* 1 if allocated */
     int fixlen;                  /* AS STRING * n: n; else 0 */
+    int fixed;                   /* QuickBASIC's static array: ERASE and CLEAR zero it, its bounds stay */
+    int wiped;                   /* ... and they have: a DIM of other bounds may make it anew */
+    int erased;                  /* a dynamic array ERASE took away (active 0): until it is
+                                  * made again a use is out of range, not an implicit array */
 } sb_array_t;
 
 /* Bumped whenever an array is made, erased or re-dimensioned: a pointer
  * to an array (and to its data) stays good while it is unchanged
  * (compiled programs cache them) */
 extern unsigned array_generation;
+extern unsigned array_dim_generation;
 
 /* QuickBASIC's arrays of a procedure (array.c): how a name is scoped in
  * one -- the main program's, the activation's own, the procedure's STATIC */
@@ -43,6 +48,16 @@ const char *array_key_mode(const char *name, int mode, char *buf, size_t cap);
 
 /* Clear all arrays (call at program start) */
 void array_clear_all(void);
+/* The CLEAR statement: static arrays zeroed, dynamic ones erased */
+void array_clear(void);
+/* name is a static array (made by a main-program DIM of constant bounds) */
+void array_mark_fixed(const char *name);
+/* an ERASE took name away and nothing has made it since */
+int array_gone(const char *name);
+/* name, gone with nothing left behind (SPLIT makes it again, whatever it was) */
+void array_remove(const char *name);
+/* name is there, and a static DIM of it only declares it */
+int array_standing(const char *name);
 
 /* Create an array. sizes[] are dimension sizes (not upper bounds). */
 error_t array_dim(const char *name, val_type_t type,

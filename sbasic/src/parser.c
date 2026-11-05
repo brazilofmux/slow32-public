@@ -1253,6 +1253,32 @@ static stmt_t *parse_exit(parser_t *p) {
 }
 
 /* CONST a = e [, b = e ...]: one statement per name, chained */
+static void const_note(parser_t *p, const char *name) {
+    if (p->nconsts == p->capconsts) {
+        int cap = p->capconsts ? p->capconsts * 2 : 64;
+        char (*t)[64] = realloc(p->consts, (size_t)cap * sizeof *t);
+        if (!t) return;
+        p->consts = t;
+        p->capconsts = cap;
+    }
+    ast_name_copy(p->consts[p->nconsts++], name);
+}
+
+/* a bound of a static DIM: numbers and CONSTs, joined by operators */
+static int bound_const(parser_t *p, const expr_t *e) {
+    if (!e) return 1;
+    switch (e->type) {
+    case EXPR_LITERAL: return e->literal.type != VAL_STRING;
+    case EXPR_VARIABLE:
+        for (int i = 0; i < p->nconsts; i++)
+            if (strcmp(p->consts[i], e->var.name) == 0) return 1;
+        return 0;
+    case EXPR_UNARY: return bound_const(p, e->unary.operand);
+    case EXPR_BINARY: return bound_const(p, e->binary.left) && bound_const(p, e->binary.right);
+    default: return 0;
+    }
+}
+
 static stmt_t *parse_const(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     stmt_t *head = NULL, *tail = NULL;
@@ -1263,6 +1289,7 @@ static stmt_t *parse_const(parser_t *p) {
         }
         token_t name = lexer_next(&p->lex);
         plain_note(p, name.text);           /* (typed by its value, not by DEFtype) */
+        const_note(p, name.text);
         if (!expect(p, TOK_EQ)) { stmt_free(head); return NULL; }
         expr_t *val = parse_expr(p);
         if (!val) { stmt_free(head); return NULL; }
@@ -1411,12 +1438,14 @@ static stmt_t *parse_sub(parser_t *p) {
     token_t name = lexer_next(&p->lex);
     stmt_t *s = stmt_proc_def(STMT_SUB_DEF, name.text, line);
     int plain_mark = p->nplain;
+    int const_mark = p->nconsts;
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
     s->proc_def.is_static = lexer_match(&p->lex, TOK_STATIC);
 
     stmt_t *body = parse_block(p, BLK_END_SUB);
     p->nplain = plain_mark;             /* (its CONSTs and AS names its own) */
+    p->nconsts = const_mark;
     stmt_proc_set_body(s, body);
     return s;
 }
@@ -1433,6 +1462,7 @@ static stmt_t *parse_function(parser_t *p) {
     canon_tok(p, &name);
     stmt_t *s = stmt_proc_def(STMT_FUNC_DEF, name.text, line);
     int plain_mark = p->nplain;
+    int const_mark = p->nconsts;
     s->proc_def.return_type = var_type_from_name(name.text);
 
     if (!parse_params(p, s)) { stmt_free(s); return NULL; }
@@ -1440,6 +1470,7 @@ static stmt_t *parse_function(parser_t *p) {
 
     stmt_t *body = parse_block(p, BLK_END_FUNC);
     p->nplain = plain_mark;             /* (its CONSTs and AS names its own) */
+    p->nconsts = const_mark;
     stmt_proc_set_body(s, body);
     return s;
 }
@@ -1686,7 +1717,11 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
         ast_name_copy(s->dim_stmt.rec_type, tn.text);
     if (s) s->dim_stmt.fixlen = fixlen;
     if (s) {
-        for (int i = 0; i < ndims; i++) s->dim_stmt.lower[i] = lower[i];
+        s->dim_stmt.const_bounds = !is_redim;
+        for (int i = 0; i < ndims; i++) {
+            s->dim_stmt.lower[i] = lower[i];
+            if (!bound_const(p, dims[i]) || !bound_const(p, lower[i])) s->dim_stmt.const_bounds = 0;
+        }
         s->dim_stmt.typed = typed;
         s->dim_stmt.shared = shared;
         s->dim_stmt.as_missing = as_missing;
@@ -3180,6 +3215,8 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     for (int i = 0; i < 26; i++) p->deftype[i] = VAL_SINGLE;
     p->plain = NULL;
     p->nplain = p->capplain = 0;
+    p->consts = NULL;
+    p->nconsts = p->capconsts = 0;
 }
 
 /* --- SUB ... STATIC: every variable of its own kept, as a STATIC list

@@ -8,6 +8,57 @@
 static sb_array_t **arrays;
 static int array_count = 0, array_cap = 0;
 unsigned array_generation = 0;
+unsigned array_dim_generation = 0;  /* moved only when an array is made, erased or re-dimensioned:
+                                     * a scope changes what a name means, not where a main-program
+                                     * array is, so what is cached for one of those outlives a call */
+
+static int any_erased;                  /* ERASE or CLEAR has left an erased slot */
+
+static void array_free(sb_array_t *arr) {
+    for (int j = 0; j < arr->total; j++)
+        val_clear(&arr->data[j]);
+    free(arr->data);
+    arr->active = 0;
+}
+
+/* a record's fields as it was made (a TYPE's strings are all STRING * n) */
+static void record_wipe(sb_record_t *r) {
+    for (int i = 0; i < r->nfields; i++) {
+        value_t *f = &r->fields[i];
+        if (f->type == VAL_RECORD) record_wipe(f->rval);
+        else if (f->type == VAL_STRING) {
+            sb_string_t *z = string_alloc(NULL, f->sval->len);
+            if (z) {
+                memset(z->data, 0, f->sval->len);
+                string_unref(f->sval);
+                f->sval = z;
+            }
+        } else {
+            val_type_t t = f->type;
+            *f = val_default(t);
+        }
+    }
+}
+
+/* what ERASE and CLEAR do to a static array: each element as DIM made it */
+static void array_wipe(sb_array_t *arr) {
+    for (int i = 0; i < arr->total; i++) {
+        value_t *v = &arr->data[i];
+        if (v->type == VAL_RECORD) { record_wipe(v->rval); continue; }
+        val_clear(v);
+        if (arr->fixlen && arr->elem_type == VAL_STRING) {
+            sb_string_t *z = string_alloc(NULL, arr->fixlen);
+            if (z) {
+                memset(z->data, 0, arr->fixlen);
+                v->type = VAL_STRING;
+                v->sval = z;
+                continue;
+            }
+        }
+        *v = val_default(arr->elem_type);
+    }
+    arr->wiped = 1;
+}
 
 /* --- Scopes: QuickBASIC's arrays of a SUB or FUNCTION -------------------
  *
@@ -97,11 +148,9 @@ void array_scope_pop(void) {
         char pre[16];
         size_t n = (size_t)snprintf(pre, sizeof pre, "%u:", scopes[nscopes - 1].id);
         for (int i = 0; i < array_count; i++)
-            if (arrays[i]->active && strncmp(arrays[i]->name, pre, n) == 0) {
-                for (int j = 0; j < arrays[i]->total; j++)
-                    val_clear(&arrays[i]->data[j]);
-                free(arrays[i]->data);
-                arrays[i]->active = 0;
+            if (strncmp(arrays[i]->name, pre, n) == 0) {
+                if (arrays[i]->active) array_free(arrays[i]);
+                arrays[i]->erased = 0;
             }
     }
     free(scopes[nscopes - 1].alias);
@@ -134,17 +183,51 @@ error_t array_scope_alias(const char *name, const char *key) {
 }
 
 void array_clear_all(void) {
-    array_generation++;
-    for (int i = 0; i < array_count; i++) {
-        if (arrays[i]->active) {
-            for (int j = 0; j < arrays[i]->total; j++)
-                val_clear(&arrays[i]->data[j]);
-            free(arrays[i]->data);
-            arrays[i]->active = 0;
-        }
-    }
+    array_generation++; array_dim_generation++;
+    for (int i = 0; i < array_count; i++)
+        if (arrays[i]->active) array_free(arrays[i]);
     array_count = 0;
+    any_erased = 0;
     nscopes = 0;
+}
+
+void array_clear(void) {
+    array_generation++; array_dim_generation++;
+    for (int i = 0; i < array_count; i++) {
+        sb_array_t *a = arrays[i];
+        if (!a->active) continue;
+        if (a->fixed) { array_wipe(a); continue; }
+        array_free(a);
+        a->erased = !(a->name[0] >= '0' && a->name[0] <= '9');   /* (an activation's goes with it) */
+        any_erased |= a->erased;
+    }
+    nscopes = 0;
+}
+
+void array_mark_fixed(const char *name) {
+    sb_array_t *a;
+    if (!nscopes && (a = array_find(name)) != NULL) a->fixed = 1;
+}
+
+int array_gone(const char *name) {
+    char kb[ARRAY_KEY_MAX];
+    const char *key;
+    if (!any_erased) return 0;          /* (every call of a built-in function asks) */
+    key = array_key(name, kb, sizeof kb);
+    for (int i = 0; i < array_count; i++)
+        if (arrays[i]->erased && strcmp(arrays[i]->name, key) == 0) return 1;
+    return 0;
+}
+
+void array_remove(const char *name) {
+    sb_array_t *arr = array_find(name);
+    array_generation++; array_dim_generation++;
+    if (arr) array_free(arr);
+}
+
+int array_standing(const char *name) {
+    sb_array_t *a = array_find(name);
+    return a && !a->wiped;
 }
 
 /* A name is looked up from the same place (the same AST string) again
@@ -180,12 +263,16 @@ error_t array_dim(const char *name, val_type_t type,
     if (array_find(name))
         return ERR_DUPLICATE_DIM;
     name = array_key(name, kb, sizeof kb);
-    array_generation++;
+    array_generation++; array_dim_generation++;
 
-    /* Reuse an inactive slot before growing the table (#6 fix) */
+    /* Reuse an inactive slot before growing the table: this name's, if
+     * ERASE left one, or one no name is remembered in */
     int slot = -1;
     for (int i = 0; i < array_count; i++) {
-        if (!arrays[i]->active) { slot = i; break; }
+        if (arrays[i]->active) continue;
+        if (arrays[i]->erased) {
+            if (strcmp(arrays[i]->name, name) == 0) { slot = i; break; }
+        } else if (slot < 0) slot = i;
     }
     if (slot < 0) {
         if (array_count == array_cap) {
@@ -276,13 +363,11 @@ error_t array_set(const char *name, int *indices, int nindices,
 
 void array_erase(const char *name) {
     sb_array_t *arr = array_find(name);
-    array_generation++;
-    if (arr) {
-        for (int j = 0; j < arr->total; j++)
-            val_clear(&arr->data[j]);
-        free(arr->data);
-        arr->active = 0;
-    }
+    array_generation++; array_dim_generation++;
+    if (!arr) return;
+    if (arr->fixed) { array_wipe(arr); return; }
+    array_free(arr);
+    arr->erased = any_erased = 1;
 }
 
 error_t array_redim(const char *name, val_type_t type,
@@ -290,7 +375,7 @@ error_t array_redim(const char *name, val_type_t type,
     sb_array_t *arr = array_find(name);
     if (!arr)
         return array_dim(name, type, sizes, ndims, lbounds);
-    array_generation++;
+    array_generation++; array_dim_generation++;
 
     int new_total = 1;
     for (int i = 0; i < ndims; i++) {
@@ -365,6 +450,7 @@ error_t array_redim(const char *name, val_type_t type,
         arr->lbound[i] = lbounds[i];
     }
     arr->total = new_total;
+    arr->fixed = arr->wiped = 0;
 
     return ERR_NONE;
 }

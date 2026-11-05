@@ -293,6 +293,13 @@ is INTEGER and the step too (the 32-bit one), and when only NEXT moves it and
 limit + step is known in range (both).  None of this in a program that traps
 errors, where any op can be entered again.
 
+The same mirrors hold in WHILE and DO loops.  A main-program array's cell is
+good across calls: array_dim_generation moves only when an array is made,
+erased or re-dimensioned, where array_generation moves with every scope (what
+a procedure's own names mean changes with it).  PRINT of a known string or
+integer goes straight to the screen (bcrt_print_str, bcrt_print_int,
+scr_put_run), the interpreter's too.
+
 The fuzzer met s32-bc that day (`tests/fuzz.py --bc`, programs QBasic would
 load, half with no handler; `--loops`, loops above all, with a refusal tally
 so "all agree" cannot be vacuous, and mutation-tested: a mirror's bounds check
@@ -311,6 +318,21 @@ Known and left, each pathological: nested on one counter, with the inner FOR
 failed, the interpreter's NEXT finds the outer loop's frame by name.  QBasic's `7 ^ (32767 + g#)` raises Overflow
 and takes the THEN too, and a store after an overflowing ^ leaves 1.#INF in the
 variable; inf - inf stores a NaN without error.
+
+A value is held only to the range of what it is stored in: past a SINGLE's and
+into a DOUBLE it goes whole (`x# = a! / b!` is 1.3D+43, QBasic), and only past
+a DOUBLE's is it an Overflow.  (943b9bed had this backwards for s32-bc,
+Overflow at a SINGLE's limit; `tests/native/past-single`.)
+
+ERASE and CLEAR leave what QBasic leaves (`tests/native/erased`).  A static
+array -- a main-program DIM of numbers and CONSTs, or an implicit one -- stays
+dimensioned and is zeroed, records and STRING * n elements as DIM made them.
+A dynamic one -- REDIM, a DIM of anything else, any array of a procedure, its
+STATICs too -- is gone: a use (subscripts evaluated first) or UBOUND is
+Subscript out of range until DIM or REDIM makes it again.  A DIM of other
+bounds after an ERASE of a static array is GW-BASIC's, and QB's load error;
+the interpreter still makes it anew.  `'$DYNAMIC` is not read yet: QBasic makes
+`DIM m(3)` under it dynamic, here it stays static (item 4 of the road ahead).
 
 ## s32-bc (sbc/bc/, 2026-11-03)
 

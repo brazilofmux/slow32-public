@@ -284,7 +284,11 @@ static void format_int(long long n, char *buf, int bufsize) {
     char tmp[24];
     int i = 0, o = 0;
     unsigned long long u = n < 0 ? 0ull - (unsigned long long)n : (unsigned long long)n;
-    do { tmp[i++] = (char)('0' + u % 10); u /= 10; } while (u);
+    while (u >> 32) { tmp[i++] = (char)('0' + u % 10); u /= 10; }
+    {                                   /* (in 32 bits, the rest: a word's division, no call) */
+        unsigned w = (unsigned)u;
+        do { tmp[i++] = (char)('0' + w % 10); w /= 10; } while (w);
+    }
     if (n < 0 && o < bufsize - 1) buf[o++] = '-';
     while (i && o < bufsize - 1) buf[o++] = tmp[--i];
     buf[o] = '\0';

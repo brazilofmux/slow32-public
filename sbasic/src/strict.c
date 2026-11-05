@@ -1024,6 +1024,12 @@ static void ty_stmt(check_t *c, stmt_t *s) {
             snprintf(d, sizeof d, "REDIM %s, which a DIM of constant bounds made", s->dim_stmt.name);
             finding(c, s->line, "redim-static", d);
         }
+        else if (!s->dim_stmt.is_redim && ty_cur && find(&c->staticdims, s->dim_stmt.name) &&
+                 (find(&c->dimshared, s->dim_stmt.name) || ty_proc_shares(s->dim_stmt.name))) {
+            char d[128];                /* (the same array: a SHARED name is the main program's) */
+            snprintf(d, sizeof d, "DIM %s in a procedure, a shared array already made", s->dim_stmt.name);
+            finding(c, s->line, "dim-twice", d);
+        }
         stmt_exprs(s, ty_top, c);
         return;
     case STMT_SELECT:

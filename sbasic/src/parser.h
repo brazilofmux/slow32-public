@@ -26,6 +26,8 @@ typedef struct {
     val_type_t deftype[26];
     char (*plain)[64];          /* CONSTs' and AS-declared names */
     int nplain, capplain;
+    char (*consts)[64];         /* the CONSTs so far */
+    int nconsts, capconsts;
 } parser_t;
 
 /* Initialize parser */

@@ -492,13 +492,16 @@ static sb_array_t *array_implicit(const char *name, int ndims) {
     }
     if (array_dim(name, resolve_var_type(name), sizes, ndims, lb) != ERR_NONE)
         return NULL;
-    return array_find(name);
+    sb_array_t *arr = array_find(name);
+    if (arr) arr->fixed = 1;            /* (QuickBASIC: a static array, ERASE or CLEAR only zeroes it) */
+    return arr;
 }
 
-/* the value of arr(subscripts), e being the call expression */
+/* the value of arr(subscripts), e being the call expression (arr NULL:
+ * one ERASE took away -- out of range, its subscripts evaluated first) */
 static error_t array_elem_read(env_t *env, expr_t *e, sb_array_t *arr, value_t *out) {
     int indices[MAX_ARRAY_DIMS];
-    if (e->call.nargs != arr->ndims)
+    if (arr ? e->call.nargs != arr->ndims : e->call.nargs > MAX_ARRAY_DIMS)
         return ERR_WRONG_DIMS;
     for (int i = 0; i < e->call.nargs; i++) {
         value_t iv;
@@ -508,6 +511,7 @@ static error_t array_elem_read(env_t *env, expr_t *e, sb_array_t *arr, value_t *
         val_clear(&iv);
         if (err != ERR_NONE) return err;
     }
+    if (!arr) return ERR_SUBSCRIPT_OUT_OF_RANGE;
     value_t *elem;
     EVAL_CHECK(array_get(e->call.name, indices, e->call.nargs, &elem));
     *out = val_copy(elem);
@@ -1347,7 +1351,8 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             if (!proc && strncmp(e->call.name, "FN", 2) == 0)
                 return ERR_FUNC_NOT_DEFINED;
 
-            /* 4. An array not DIMmed yet */
+            /* 4. An array not DIMmed yet (or one ERASE took away) */
+            if (!proc && array_gone(e->call.name)) return array_elem_read(env, e, NULL, out);
             if (!proc && (arr = array_implicit(e->call.name, e->call.nargs)) != NULL)
                 return array_elem_read(env, e, arr, out);
 
@@ -1503,7 +1508,7 @@ int lprint_col = 0;
  * nothing else; other control characters take no column. */
 static int screen_tty = -1;
 
-static void screen_putc(char c) {
+static __attribute__((noinline)) void screen_putc(char c) {
     extern int console_width;
     if (c == '\n' || c == '\r') {
         putchar('\n');
@@ -1532,6 +1537,28 @@ static int on_screen(void) {
     return active_print_col == &print_col && (!col_output_fp || col_output_fp == stdout);
 }
 
+/* a line filled: the next one (out of the way of what prints) */
+static __attribute__((noinline)) void screen_wrap(void) {
+    putchar('\n');
+    print_col = 0;
+    scr_newline();
+}
+
+/* n characters at the cursor, kept: the row found once, not per cell */
+static void scr_put_run(const char *s, int n) {
+    int col = print_col;
+    print_col += n;
+    if (print_row < 1 || print_row > scr_rows || col < 0 || col >= SCR_COLS) return;
+    if (n > SCR_COLS - col) n = SCR_COLS - col;
+    {
+        int p = scr_map[print_row - 1];
+        if (col > scr_len[p]) scr_extend(p, col - 1);
+        memcpy(scr_ch[p] + col, s, (size_t)n);
+        memset(scr_at[p] + col, sb_term_attr(), (size_t)n);
+        if (col + n > scr_len[p]) scr_len[p] = (short)(col + n);
+    }
+}
+
 /* s on the screen, as screen_putc writes it a character at a time: a
  * run of printing characters goes out in pieces that fit the line, each
  * one fwrite, not a putchar a character */
@@ -1542,18 +1569,11 @@ static void screen_puts(const char *s) {
         const char *e = s;
         while ((unsigned char)*e >= 32) e++;
         while (s < e) {
-            if (console_width > 0 && print_col >= console_width) {
-                putchar('\n');
-                print_col = 0;
-                scr_newline();
-            }
+            if (console_width > 0 && print_col >= console_width) screen_wrap();
             int n = (int)(e - s);
             if (console_width > 0 && n > console_width - print_col) n = console_width - print_col;
             fwrite(s, 1, (size_t)n, stdout);
-            {
-                unsigned char attr = (unsigned char)sb_term_attr();
-                for (int i = 0; i < n; i++, print_col++) scr_put_at((unsigned char)s[i], attr);
-            }
+            scr_put_run(s, n);
             s += n;
         }
     }
@@ -2001,10 +2021,30 @@ static void print_fit(int len, int width) {
  * line's, 0 for a file */
 /* One PRINT item's value; tab_spc when it was TAB() or SPC(), which
  * place rather than fit */
+/* an INTEGER or LONG item, the sign's place before and a space after */
+void print_int(int n, int width) {
+    char item[16], *p = item + sizeof item - 1;
+    unsigned w = n < 0 ? 0u - (unsigned)n : (unsigned)n;
+    *p = '\0';
+    *--p = ' ';
+    do { *--p = (char)('0' + w % 10); w /= 10; } while (w);
+    *--p = n < 0 ? '-' : ' ';
+    print_fit((int)(item + sizeof item - 1 - p), width);
+    col_puts(p);
+}
+
+/* a string item */
+void print_string(const sb_string_t *s, int width) {
+    print_fit(s->len, width);
+    col_putn(s->data, s->len);
+}
+
 error_t print_value(const value_t *v, int tab_spc, int width) {
     switch (v->type) {
         case VAL_INTEGER:
         case VAL_LONG:
+            print_int(v->ival, width);
+            break;
         case VAL_DOUBLE:
         case VAL_SINGLE: {
             /* a space or the minus sign before, a space after */
@@ -2812,8 +2852,10 @@ static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
             val_clear(&iv);
             if (err != ERR_NONE) return err;
         }
-        if (!array_find(e->call.name))
+        if (!array_find(e->call.name)) {
+            if (array_gone(e->call.name)) return ERR_SUBSCRIPT_OUT_OF_RANGE;
             array_implicit(e->call.name, e->call.nargs);
+        }
         return array_get(e->call.name, indices, e->call.nargs, out);
     }
     case EXPR_FIELD_ACCESS:
@@ -3110,15 +3152,17 @@ error_t eval_dim(const char *name, val_type_t type, int ndims, const int *lowers
     }
     if (is_redim)
         return array_redim(name, type, sizes, ndims, lowers, preserve);
-    {   /* a procedure's STATIC array DIMmed again with the same bounds: a
-         * declaration (QuickBASIC makes one of constant bounds at load) */
+    {   /* a static array, or a procedure's STATIC one, DIMmed again with
+         * the same bounds: a declaration (QuickBASIC makes one of constant
+         * bounds at load); of other bounds after an ERASE: made anew */
         sb_array_t *a = array_find(name);
-        if (a && array_is_static(name) && a->ndims == ndims) {
+        if (a && (a->fixed || array_is_static(name)) && a->ndims == ndims) {
             int same = 1;
             for (int i = 0; i < ndims; i++)
                 if (a->dims[i] != sizes[i] || a->lbound[i] != lowers[i]) same = 0;
             if (same) return ERR_NONE;
         }
+        if (a && a->wiped) array_remove(name);
     }
     return array_dim(name, type, sizes, ndims, lowers);
 }
@@ -3144,8 +3188,8 @@ static error_t eval_int_of(env_t *env, expr_t *e, int *out) {
 static error_t exec_dim(env_t *env, stmt_t *s) {
     int lowers[MAX_ARRAY_DIMS], uppers[MAX_ARRAY_DIMS];
     /* a static array was made before the run; DIM is then a declaration
-     * (unless ERASE took it away) */
-    if (!(s->dim_stmt.is_static && array_find(s->dim_stmt.name))) {
+     * (unless ERASE and this DIM's bounds say otherwise: eval_dim) */
+    if (!(s->dim_stmt.is_static && array_standing(s->dim_stmt.name))) {
         for (int i = 0; i < s->dim_stmt.ndims; i++) {
             lowers[i] = option_base;
             if (s->dim_stmt.lower[i]) EVAL_CHECK(eval_int_of(env, s->dim_stmt.lower[i], &lowers[i]));
@@ -3155,6 +3199,7 @@ static error_t exec_dim(env_t *env, stmt_t *s) {
         EVAL_CHECK(eval_dim(s->dim_stmt.name, dim_type(s), s->dim_stmt.ndims, lowers, uppers,
                             s->dim_stmt.is_redim, s->dim_stmt.preserve));
     }
+    if (s->dim_stmt.const_bounds) array_mark_fixed(s->dim_stmt.name);
     if (s->dim_stmt.rec_type[0]) {
         int ti = find_type_def(s->dim_stmt.rec_type);
         if (ti < 0) return ERR_UNDEFINED_TYPE;
@@ -3199,7 +3244,7 @@ error_t eval_randomize(int has_seed, double seed) {
 /* LBOUND(name, dim) or UBOUND (upper) -- for compiled code too */
 error_t eval_bound(const char *name, int dim, int upper, value_t *out) {
     sb_array_t *a = array_find(name);
-    if (!a) return ERR_UNDEFINED_VAR;
+    if (!a) return array_gone(name) ? ERR_SUBSCRIPT_OUT_OF_RANGE : ERR_UNDEFINED_VAR;
     if (dim < 1 || dim > a->ndims)
         return ERR_ILLEGAL_FUNCTION_CALL;
     *out = val_integer(upper ? a->lbound[dim - 1] + a->dims[dim - 1] - 1 : a->lbound[dim - 1]);
@@ -3210,6 +3255,7 @@ error_t eval_bound(const char *name, int dim, int upper, value_t *out) {
  * assigned: one DIMmed, or an implicit one made (subscripts to 10) */
 error_t eval_array_for(const char *name, int nidx, sb_array_t **out) {
     sb_array_t *arr = array_find(name);
+    if (!arr && array_gone(name)) return ERR_SUBSCRIPT_OUT_OF_RANGE;
     if (!arr) arr = array_implicit(name, nidx);
     if (!arr) return ERR_UNDEFINED_VAR;
     if (nidx != arr->ndims) return ERR_WRONG_DIMS;
@@ -4256,7 +4302,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             if (p && p->def == s) return ERR_NONE;
             /* Register DEF FN in proc table (whether name(args) is an
              * array depends on it: a cached array is stale) */
-            array_generation++;
+            array_generation++; array_dim_generation++;
             return proc_register(s->def_fn.name, s);
         }
 
@@ -4387,7 +4433,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_CLEAR:
             env_clear(env);
-            array_clear_all();
+            array_clear();
             return ERR_NONE;
 
         case STMT_KILL:         return exec_kill(env, s);
@@ -4518,7 +4564,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
             /* REDIM the target array */
             int sizes[1] = { count }, lb[1] = { option_base };
-            array_erase(s->split.array_name);
+            array_remove(s->split.array_name);
             error_t aerr = array_dim(s->split.array_name, VAL_STRING,
                                       sizes, 1, lb);
             if (aerr != ERR_NONE) { val_clear(&sv); val_clear(&dv); return aerr; }
@@ -4607,8 +4653,10 @@ static void scan_static_dim(stmt_t *s) {
     }
     if (array_find(s->dim_stmt.name)) return;
     if (array_dim(s->dim_stmt.name, dim_type(s), sizes,
-                  s->dim_stmt.ndims, lowers) == ERR_NONE)
+                  s->dim_stmt.ndims, lowers) == ERR_NONE) {
         s->dim_stmt.is_static = 1;
+        array_mark_fixed(s->dim_stmt.name);
+    }
 }
 
 static error_t scan_one_stmt(stmt_t *s) {
