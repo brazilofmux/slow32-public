@@ -546,6 +546,12 @@ typedef struct stmt {
                                      or record's name); NULL: the variable */
         } mid_assign;
 
+        /* STMT_RUN: alone, from a line (a number), or another program */
+        struct {
+            char label[64];
+            struct expr *file;
+        } run_stmt;
+
         /* STMT_COMMON */
         struct {
             char (*names)[64];

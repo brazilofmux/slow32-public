@@ -108,6 +108,10 @@ void eval_carry_array(const char *name, val_type_t type);
  * program's text comes through (chain.c) */
 extern stmt_t *(*eval_chain_parser)(const char *path);
 error_t eval_chain_run(void);
+/* RUN: what starts next is a restart, not a program's first start: the
+ * screen and memory stay (compiled code's bcrt_rerun, before eval_reset) */
+void eval_restart_run(void);
+void eval_chain_run_file(void);
 const char *eval_chain_path(void);
 /* Event traps: ON TIMER(n) GOSUB and the rest (the interpreter's run_event;
  * compiled code's bcrt_event_poll).  Armed while any is not OFF; a program

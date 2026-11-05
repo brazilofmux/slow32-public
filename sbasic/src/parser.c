@@ -3189,12 +3189,17 @@ static stmt_t *parse_stmt_in(parser_t *p) {
 
         case TOK_RUN: {                 /* RUN: the program again (QuickBASIC) */
             int line = tok->line;
+            stmt_t *r;
             lexer_skip(&p->lex);
-            if (!at_stmt_end(p)) {
-                parser_error_detail(p, ERR_SYNTAX, "RUN with a line or a file");
+            if (!(r = stmt_alloc(STMT_RUN, line))) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t num = lexer_next(&p->lex);
+                int_label(r->run_stmt.label, num.ival);
+            } else if (!at_stmt_end(p) && !(r->run_stmt.file = parse_expr(p))) {
+                stmt_free(r);
                 return NULL;
             }
-            return stmt_alloc(STMT_RUN, line);
+            return r;
         }
 
         case TOK_GOTO: {

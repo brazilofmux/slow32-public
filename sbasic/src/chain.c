@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+void eval_chain_go(void);
+
 stmt_t *chain_parse(const char *path) {
     parser_t parser;
     stmt_t *program;
@@ -27,6 +29,12 @@ stmt_t *chain_parse(const char *path) {
         return NULL;
     }
     return program;     /* (the text stays: the statements may point into it) */
+}
+
+/* compiled code's RUN file$ */
+void eval_run_file_go(void) {
+    eval_chain_run_file();
+    eval_chain_go();
 }
 
 /* compiled code's CHAIN, COMMON carried: on in the interpreter, for good */

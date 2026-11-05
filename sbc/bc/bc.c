@@ -3859,7 +3859,19 @@ static void bc_stmt(stmt_t *s) {
         break;
     }
     case STMT_RUN:              /* the program again, all of it cleared (bcrt_rerun) */
-        call_void("bcrt_rerun");
+        if (s->run_stmt.file) { /* another: the interpreter's, as CHAIN's */
+            bv_t f = dynv(expr(s->run_stmt.file));
+            int cb = h_ncarg;
+            carg_bv(f);
+            call_end(cb, 3, "bcrt_chain_check", NULL);
+            call_end(h_ncarg, 0, "eval_run_file_go", NULL);
+            break;
+        }
+        {
+            int k = s->run_stmt.label[0] ? label_op(s->run_stmt.label) : iconst(-1), cb = h_ncarg;
+            carg(k, 0);
+            call_end(cb, 1, "bcrt_rerun", NULL);
+        }
         goto_blk(new_blk());    /* (never taken: bcrt_rerun does not return) */
         break;
     case STMT_END:
@@ -4829,6 +4841,7 @@ static void find_trap(stmt_t *s) {
         /* (a trap's handler is the main program's code, entered again with
          * a procedure maybe under it, as an error's is) */
         if (s->type == STMT_EVENT_ON) bc_trap = bc_events = 1;
+        if (s->type == STMT_RUN && s->run_stmt.label[0]) bc_trap = 1;   /* (the body entered at a line's op) */
         if (s->type == STMT_CHAIN) bc_trap = 1;         /* (COMMON's variables in memory, from anywhere) */
         stmt_exprs(s, trap_top, NULL);
         switch (s->type) {

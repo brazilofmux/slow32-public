@@ -377,6 +377,10 @@ static void walk_list(check_t *c, stmt_t *s) {
             for (int i = 0; i < s->on_branch.nlabels; i++)
                 push(&c->u->jumps, s->on_branch.labels[i], seq, s->line, 1);
             break;
+        case STMT_RUN:
+            if (s->run_stmt.label[0])   /* (a line of the main program's, from anywhere) */
+                push(&c->modjumps, s->run_stmt.label, seq, s->line, 0);
+            break;
         case STMT_EVENT_ON:
             if (s->event.label[0])      /* (its handler the module's, as ON ERROR's) */
                 push(&c->modjumps, s->event.label, seq, s->line, 0);
@@ -1027,6 +1031,9 @@ static void ty_stmt(check_t *c, stmt_t *s) {
         if (a != K_ANY && b != K_ANY && a != b) ty_mismatch(c, s->line, "SWAP of a string and a number");
         return;
     }
+    case STMT_RUN:
+        ty_want(c, s->run_stmt.file, K_STR, "RUN of a number that is no line's");
+        return;
     case STMT_CHAIN:
         ty_want(c, s->shell_stmt.command, K_STR, "CHAIN's file a number");
         return;
@@ -1210,6 +1217,30 @@ int strict_check(stmt_t *program, strict_report_fn report, void *rctx, int info[
             }
         if (s->type == STMT_CONST)
             push(&c.modconsts, s->const_stmt.name, 0, s->line, 0);
+    }
+    /* QB's "COMMON and DECLARE must precede executable statements": at the
+     * module's level, what is no statement that runs comes before them */
+    {
+        int ran = 0;
+        for (stmt_t *s = program; s; s = s->next) {
+            switch (s->type) {
+            case STMT_COMMON: case STMT_DECLARE:
+                if (ran) finding(&c, s->line, "common-after-code",
+                                 s->type == STMT_COMMON ? "COMMON after a statement that runs"
+                                                        : "DECLARE after a statement that runs");
+                break;
+            case STMT_DIM:
+                if (s->dim_stmt.is_redim || !s->dim_stmt.const_bounds) ran = 1;
+                break;
+            case STMT_REM: case STMT_LABEL: case STMT_DATA: case STMT_DEFTYPE: case STMT_CONST:
+            case STMT_OPTION_BASE: case STMT_TYPE_DEF: case STMT_DIM_SCALAR: case STMT_DIM_AS_TYPE:
+            case STMT_SUB_DEF: case STMT_FUNC_DEF: case STMT_SHARED: case STMT_NOOP: case STMT_END:
+                break;
+            default:
+                ran = 1;
+                break;
+            }
+        }
     }
     walk_unit(&c, program, NULL);
     ty_check(&c, program);

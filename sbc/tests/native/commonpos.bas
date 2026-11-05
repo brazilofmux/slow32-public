@@ -1,0 +1,23 @@
+' what may come before COMMON and DECLARE: nothing that runs
+REM a comment
+'$DYNAMIC
+DEFINT A-Z
+CONST k = 1
+OPTION BASE 1
+DATA 1
+l1:
+TYPE t
+    i AS INTEGER
+END TYPE
+DIM z AS INTEGER
+'$STATIC
+DIM a(3)
+COMMON c%
+DECLARE SUB q ()
+DIM b(3)
+COMMON d%
+PRINT LBOUND(a); k; c%
+READ m: PRINT m
+SYSTEM
+SUB q
+END SUB

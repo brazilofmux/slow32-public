@@ -679,6 +679,9 @@ void stmt_free(stmt_t *s) {
             case STMT_DIM_AS_TYPE:
             case STMT_KEY_LIST:
                 break;
+            case STMT_RUN:
+                expr_free(s->run_stmt.file);
+                break;
             case STMT_COMMON:
                 free(s->common.names);
                 free(s->common.is_array);
@@ -761,7 +764,6 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->width_stmt.rows);
                 break;
             case STMT_NOOP:
-            case STMT_RUN:
             case STMT_CLEAR:
                 break;
             case STMT_PSET:
@@ -1325,6 +1327,7 @@ void stmt_exprs(stmt_t *s, void (*fn)(expr_t *, void *), void *ctx) {
     case STMT_DRAW:
     case STMT_DEF_SEG: X(s->shell_stmt.command); break;
     case STMT_CHAIN: X(s->shell_stmt.command); break;
+    case STMT_RUN: X(s->run_stmt.file); break;
     case STMT_POKE: X(s->poke_stmt.addr); X(s->poke_stmt.value); break;
     case STMT_LSET:
     case STMT_RSET: X(s->lrset.value); break;

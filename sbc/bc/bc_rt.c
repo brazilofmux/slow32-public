@@ -96,6 +96,8 @@ void bcrt_proc_run(void (*body)(int *, int), int *area) {
     bcrt_ptop = f.prev;
 }
 
+static int bcrt_start_op = -1;  /* RUN line's: the op the next run starts at */
+static int event_returned, event_running = -1;  /* (event_run's) */
 static int bcrt_nusing;
 static void bcrt_trap_proc(int code);
 static void bcrt_trap(int code) {
@@ -125,6 +127,11 @@ static void bcrt_fail(error_t e) {
 void bcrt_run(void (*body)(int)) {
     int at = 0;
     bcrt_body = body;
+    if (bcrt_start_op >= 0) {
+        bcrt_target = bcrt_start_op;
+        bcrt_start_op = -1;
+        at = 1;
+    }
     for (;;) {
         if (setjmp(bcrt_jb) == 0) {
             bcrt_running = 1;
@@ -274,9 +281,11 @@ int main(void) {
     return bcm_main();
 }
 
-void bcrt_rerun(void) {
+void bcrt_rerun(int op) {
     fflush(stdout);
     eval_event_reset();
+    eval_restart_run();
+    bcrt_start_op = op;
     fileio_close_all();
     while (bcrt_nactive > 0) {          /* (the procedures it was in) */
         array_scope_pop();
@@ -286,6 +295,12 @@ void bcrt_rerun(void) {
     bcrt_ngosub = 0;
     bcrt_ngbase = 0;
     bcrt_running = 0;
+    bcrt_ptop = NULL;                   /* (a RUN from a procedure leaves no frame behind, */
+    trap_frame = NULL;                  /* and the error handler goes with the program) */
+    trap_handler = -1;
+    trap_active = 0;
+    trap_code = 0;
+    event_running = -1;
     longjmp(bcrt_restart, 1);           /* (bcm_main's start zeroes every variable, bcrt_start the rest) */
 }
 
@@ -1131,7 +1146,6 @@ pair_t bcrt_fn(const char *name, int n, int alo, int ahi, int at, int blo, int b
 static int bcrt_gosubs[BCRT_GOSUB_DEPTH];
 /* the return point of a trap's handler: none, so the body returns */
 #define BCRT_EVENT_RETURN (-1)
-static int event_returned, event_running = -1;
 
 
 void bcrt_gosub(int k) {

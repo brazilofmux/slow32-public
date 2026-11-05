@@ -740,8 +740,9 @@ values over and goes on in the interpreter it carries (chain.c's
 eval_chain_go, which alone brings the parser in), the chained program
 being BASIC's text: the same bytes as the interpreter, the speed the
 interpreter's.  An array in a COMMON before its DIM is dynamic, as QBasic
-has it.  Not done: RUN "file" and RUN line, which the parser still refuses
-and QBasic takes.  $INCLUDE stays the loader's; QB's own refuses it, QB64
+has it.  RUN, RUN line and RUN file$ are restarts by the same road: screen
+and memory stay, files close, variables, DEF SEG, WIDTH, traps and RND's
+sequence start again.  $INCLUDE stays the loader's; QB's own refuses it, QB64
 not tried.  Modules and ON UEVENT wait for a program that needs them.
 
 Then QBasic's load-time checks (2026-11-04), the last of what the

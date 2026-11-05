@@ -314,6 +314,8 @@ static int find_label(const char *name) {
 static error_t run_code(env_t *env, code_t *c, int is_main);
 static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out);
 static int data_number(const char *t, double *out);
+static char run_label[64];
+static int chain_is_run;
 int eval_is_addr(const char *name);
 static error_t eval_addr(env_t *env, expr_t *e, value_t *out);
 
@@ -4590,7 +4592,21 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_READ:         return exec_read(env, s);
         case STMT_RESTORE:      return exec_restore(s);
         case STMT_END:          return ERR_EXIT;
-        case STMT_RUN:          return ERR_RUN;
+        case STMT_RUN: {
+            value_t f;
+            error_t err;
+            if (s->run_stmt.label[0]) {
+                ast_name_copy(run_label, s->run_stmt.label);
+                return ERR_RUN;
+            }
+            if (!s->run_stmt.file) return ERR_RUN;
+            EVAL_CHECK(eval_expr(env, s->run_stmt.file, &f));
+            err = eval_chain_check(&f);     /* (the same look for it as CHAIN's) */
+            val_clear(&f);
+            if (err != ERR_NONE) return err;
+            chain_is_run = 1;
+            return ERR_CHAIN;
+        }
         case STMT_COMMON:       return ERR_NONE;
         case STMT_CHAIN: {
             value_t f;
@@ -5545,10 +5561,13 @@ int act_transfer(act_t *a, error_t err, int *ppc, error_t *result) {
  * error in a procedure comes out of its CALL, and RESUME returns to
  * that.  A compiled program (s32-sbc) calls the same two for what it
  * does not do itself. */
+static int run_start;           /* the op RUN line starts the next run at */
+
 static error_t run_code(env_t *env, code_t *c, int is_main) {
     act_t a;
     error_t result = act_begin(&a, env, c, is_main);
-    int pc = 0;
+    int pc = is_main ? run_start : 0;
+    if (is_main) run_start = 0;
     if (result != ERR_NONE) return result;
     while (pc < c->nops) {
         error_t err = act_step_in(&a, &pc);
@@ -5571,9 +5590,14 @@ error_t eval_program(env_t *env, stmt_t *program) {
  * differ, the types may not (Type mismatch), either list may be the longer.
  * An array goes with its bounds; a DIM of constant bounds of it in the next
  * program is only a declaration if it was made so here too. */
+/* RUN, alone or with a file or a line, is a restart too (probed): the screen
+ * and memory stay; files close; the variables, DEF SEG, WIDTH, traps and
+ * RND's sequence start again, and COMMON passes nothing. */
 typedef struct { int is_array, present; val_type_t type; value_t v; sb_array_t a; } carried_t;
 static carried_t *carried;
-static int ncarried, capcarried, chain_running;
+static int ncarried, capcarried;
+enum { START_FRESH, START_RUN, START_CHAIN };
+static int restart_kind;
 static char chain_path[300];
 stmt_t *(*eval_chain_parser)(const char *path);
 
@@ -5679,6 +5703,14 @@ static error_t carry_give(env_t *env, stmt_t *program) {
     return err;
 }
 
+void eval_restart_run(void) { restart_kind = START_RUN; }
+
+/* (compiled code's RUN file$: as CHAIN's, nothing carried and the files shut) */
+void eval_chain_run_file(void) {
+    chain_is_run = 1;
+    fileio_close_all();
+}
+
 /* compiled code's CHAIN, its COMMONs carried: the next program, in this
  * interpreter it carries inside, and it never comes back */
 error_t eval_chain_run(void) {
@@ -5686,7 +5718,8 @@ error_t eval_chain_run(void) {
     env_t *env = env_create(NULL);
     error_t err;
     if (!next) return ERR_EXIT;
-    chain_running = 1;
+    restart_kind = chain_is_run ? START_RUN : START_CHAIN;
+    chain_is_run = 0;
     err = eval_program_with(env, next, NULL);
     stmt_free(next);
     return err;
@@ -5696,16 +5729,19 @@ error_t eval_chain_run(void) {
  * code's (s32-bc's runtime calls it) */
 void eval_reset(void) {
     option_base = 0;
-    if (!chain_running) builtin_rnd_reset();
+    if (restart_kind != START_CHAIN) builtin_rnd_reset();
     array_clear_all();
     data_pool_clear();
-    if (!chain_running) {               /* (what CHAIN leaves as it is) */
-        fileio_init();
-        sb_term_init();
+    if (restart_kind != START_CHAIN) fileio_init();
+    if (restart_kind == START_RUN) {
+        extern int console_width;
+        pc_def_seg_home();
+        console_width = 80;
     }
+    if (restart_kind == START_FRESH) sb_term_init();
     deftype_init();
     type_def_count = 0;
-    if (!chain_running) {
+    if (restart_kind == START_FRESH) {
         print_col = 0;
         print_row = 1;
         scr_rows = 25;                  /* (the text screen: 25 rows, 1 to 24 scroll) */
@@ -5753,22 +5789,28 @@ again:                                  /* (RUN: all of it again, the variables 
     deftype_init();             /* (the scan's DEFtypes were for its static DIMs: the run makes its own) */
     if (result != ERR_NONE)
         goto cleanup;
-    if (chain_running) {
-        chain_running = 0;
+    if (restart_kind == START_CHAIN) {
+        restart_kind = START_FRESH;
         result = carry_give(env, program);
         if (result != ERR_NONE) goto cleanup;
     }
+    restart_kind = START_FRESH;
 
     main_code = lower_stmts(program, &result);
     if (main_code) {
         gosub_top = 0;
+        if (run_label[0]) {             /* (RUN line) */
+            run_start = code_find_label(main_code, run_label);
+            run_label[0] = '\0';
+            if (run_start < 0) { result = ERR_UNDEFINED_LABEL; run_start = 0; goto cleanup; }
+        }
         result = main_fn ? main_fn(env, main_code) : run_code(env, main_code, 1);
         if (result == ERR_EXIT) result = ERR_NONE;
     }
 
 cleanup:
     /* Clean up */
-    if (result == ERR_CHAIN) carry_take(env, program);  /* (arrays taken before they are cleared) */
+    if (result == ERR_CHAIN && !chain_is_run) carry_take(env, program); /* (arrays taken before they are cleared) */
     else fileio_close_all();
     data_pool_clear();
     array_clear_all();
@@ -5788,6 +5830,8 @@ cleanup:
     }
     if (result == ERR_RUN) {
         env_clear(env);
+        restart_kind = START_RUN;
+        if (run_label[0]) main_fn = NULL;       /* (from a line: compiled C starts only at its top) */
         goto again;
     }
     if (result == ERR_CHAIN) {
@@ -5797,7 +5841,8 @@ cleanup:
         program = owned = next;
         main_fn = NULL;                 /* (compiled code's was the first program's) */
         if (next) {
-            chain_running = 1;
+            restart_kind = chain_is_run ? START_RUN : START_CHAIN;
+            chain_is_run = 0;
             goto again;
         }
         result = ERR_NONE;              /* (its error said) */
