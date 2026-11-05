@@ -332,6 +332,8 @@ static int ra_stat_imm_base_reuse;  /* HI_ADDI results that reused their base re
  * ================================================================= */
 
 #define GC_ACT_MAX   128     /* values live at once, interval builder (gc_build) */
+#define GC_ROUNDS_PATIENT 20   /* rounds of spilling a little at a time (gc_respill: matrix.bas under s32-bc is 17% slower at 6, unmoved at 20) */
+#define GC_ROUNDS_MANY 32       /* ... and how many failing nodes is many */
 #define GC_ROUNDS_INTERVALS 4  /* colouring rounds without exact liveness (gc_alloc_rounds) */
 
 static int gc_nnode;
@@ -4397,7 +4399,10 @@ static void gc_rs_cand_add(int a, int cost) {
     if (cost < gc_rs_ccost[worst]) { gc_rs_cand[worst] = a; gc_rs_ccost[worst] = cost; }
 }
 
-static int gc_respill(void) {
+static int gc_respill(int iter) {
+    int ntaken;
+    int nfailed;
+    int hurry;
     int n;
     int nv;
     int e;
@@ -4410,9 +4415,11 @@ static int gc_respill(void) {
 
     n = 0;
     while (n < gc_nnode) { gc_rs_nfail[n] = 0; gc_rs_taken[n] = 0; n = n + 1; }
+    nfailed = 0;
     n = 0;
     while (n < gc_nnode) {
         if (gc_color[n] < 0 || gc_force_spill[n]) {
+            nfailed = nfailed + 1;
             e = gc_adj_head[n];
             while (e >= 0) {
                 a = gc_get_alias(gc_adj_peer[e]);
@@ -4423,6 +4430,7 @@ static int gc_respill(void) {
         n = n + 1;
     }
 
+    hurry = iter >= GC_ROUNDS_PATIENT && nfailed >= GC_ROUNDS_MANY;
     nv = 0;
     gc_rs_nremat = 0;
     gc_rs_nregion = 0;
@@ -4432,6 +4440,7 @@ static int gc_respill(void) {
         if (gc_color[n] < 0 || gc_force_spill[n]) {
             /* Cheapest of the failed node and its neighbors. */
             best = n;
+            ntaken = 0;
             bcost = gc_respill_cost(gc_inst[n], 1);
             gc_rs_ncand = 0;
             gc_rs_cand_add(n, bcost);
@@ -4439,7 +4448,19 @@ static int gc_respill(void) {
             while (e >= 0) {
                 a = gc_get_alias(gc_adj_peer[e]);
                 inst = gc_inst[a];
-                if (gc_rs_taken[a]) { best = -1; break; }
+                if (gc_rs_taken[a]) {
+                    /* A neighbour already going to memory may free the
+                     * colour this node needs: wait and see.  But one colour
+                     * serves one node, and in a dense graph every failed
+                     * node has that same neighbour, so a round spills a
+                     * handful of hundreds and the rounds run out.  Late on,
+                     * with many failing, wait only when there are enough
+                     * for all who want one. */
+                    ntaken = ntaken + 1;
+                    if (!hurry || ntaken > gc_rs_nfail[n]) { best = -1; break; }
+                    e = gc_adj_next[e];
+                    continue;
+                }
                 if (!gc_rs_victim(inst)) {
                     cost = gc_respill_cost(inst, gc_rs_nfail[a]);
                     if (cost < bcost) { best = a; bcost = cost; }
@@ -4798,7 +4819,7 @@ static void gc_alloc_rounds(void) {
          * A few rounds, then what is left uncoloured lives in memory,
          * as it does past the 32. */
         if (iter >= (lv_on ? 32 : GC_ROUNDS_INTERVALS)) break;
-        if (gc_respill() == 0) break;
+        if (gc_respill(iter) == 0) break;
         if (gc_rs_nregion > 0) {
             /* Regional splits appended copies and moved reads: rebuild
              * everything (which also serves this round's remat victims). */

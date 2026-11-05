@@ -45,6 +45,7 @@ static int *licm_in_any_loop;
  * cost in hir_regalloc: a value used in an inner loop is far more
  * expensive to spill than its static use count says. */
 static int *licm_depth;
+static int *licm_nhoist;      /* values moved so far to the preheader of this header */
 
 /* --- Stats --- */
 static int licm_stat_hoisted;
@@ -126,6 +127,7 @@ static void licm_tables(void) {
     hir_blk_table((char **)&licm_tail, (int)sizeof(int));
     hir_blk_table((char **)&licm_in_any_loop, (int)sizeof(int));
     hir_blk_table((char **)&licm_depth, (int)sizeof(int));
+    hir_blk_table((char **)&licm_nhoist, (int)sizeof(int));
     hir_blk_table((char **)&split_head, (int)sizeof(int));
     hir_inst_table((char **)&licm_next, (int)sizeof(int));
     hir_inst_table((char **)&licm_map, (int)sizeof(int));
@@ -274,6 +276,59 @@ static int licm_operand_hoistable(int inst) {
     return ho_use[inst];
 }
 
+/* A value hoisted is live through the whole loop, a register taken from
+ * everything in it, and a loop has so many.  Past that a hoist only moves
+ * a recompute to a reload, and costs the allocator its rounds: a program
+ * of GOTOs is one loop over nearly all of itself, with 150 constants and
+ * addresses to hoist from it at each of its back edges -- 650 values that
+ * could not have a register, 4.4M interferences, 32 rounds at a second
+ * each (battle.bas under s32-bc, 32 s; 2.6 s with this, and no instruction
+ * slower over the games or kernels).  So at most LICM_MAX_HOISTS leave by
+ * one header, those used least deep staying behind.  1 if any did. */
+#define LICM_MAX_HOISTS 24
+static int licm_trim(int body_count) {
+    int nmarked;
+    int over;
+    int d;
+    int dmin;
+    int dmax;
+    int bi;
+    int b;
+    int i;
+    nmarked = 0;
+    dmin = -1;
+    dmax = -1;
+    bi = 0;
+    while (bi < body_count) {
+        b = licm_body[bi];
+        if (dmin < 0 || licm_depth[b] < dmin) dmin = licm_depth[b];
+        if (licm_depth[b] > dmax) dmax = licm_depth[b];
+        i = bb_start[b];
+        while (i < bb_end[b]) { if (ho_use[i]) nmarked = nmarked + 1; i = i + 1; }
+        bi = bi + 1;
+    }
+    over = nmarked + licm_nhoist[licm_cur_header] - LICM_MAX_HOISTS;
+    if (over > nmarked) over = nmarked;
+    if (over <= 0) return 0;
+    d = dmin;
+    while (d <= dmax && over > 0) {
+        bi = body_count - 1;
+        while (bi >= 0 && over > 0) {
+            b = licm_body[bi];
+            if (licm_depth[b] == d) {
+                i = bb_end[b] - 1;
+                while (i >= bb_start[b] && over > 0) {
+                    if (ho_use[i]) { ho_use[i] = 0; over = over - 1; }
+                    i = i - 1;
+                }
+            }
+            bi = bi - 1;
+        }
+        d = d + 1;
+    }
+    return 1;
+}
+
 static void licm_prune(int body_count) {
     int dom;
     int cheap;
@@ -365,6 +420,7 @@ static void licm_prune(int body_count) {
             }
             bi = bi + 1;
         }
+        if (!changed && licm_trim(body_count)) changed = 1;
     }
 }
 
@@ -587,6 +643,7 @@ static void licm_hoist(int header, int body_count) {
                     /* Record mapping */
                     licm_map[i] = cl;
                     licm_stat_hoisted = licm_stat_hoisted + 1;
+                    licm_nhoist[header] = licm_nhoist[header] + 1;
                 }
                 i = i + 1;
             }
@@ -1729,6 +1786,7 @@ static void hir_licm(void) {
         licm_tail[b] = -1;
         licm_in_any_loop[b] = 0;
         licm_depth[b] = 0;
+        licm_nhoist[b] = 0;
         split_head[b] = -1;
         b = b + 1;
     }

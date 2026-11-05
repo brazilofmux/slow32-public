@@ -3910,3 +3910,34 @@ subnormal statics, a float zero after a float); 3,040 random and 5,122
 adversarial constants (exact ties, near-ties at the 40th and 60th
 digit, truncations, an 1100-digit string) bit-identical to clang, as
 static initializers and as locals.
+
+### 109. [RESOLVED 2026-11-04] A loop with hundreds of invariants took half a minute to compile, and came out worse
+
+s32-bc, which uses this back end, took 32 s and 96 MB on battle.bas, 196
+lines of BASIC.  Its GOTOs make one loop of nearly the whole program, and LICM
+hoisted some 650 constants and addresses out of it: everything it could prove
+invariant, with no thought for the registers, at each of the loop's back
+edges.  None of that could be coloured.  The graph held 4.4M interferences,
+the allocator spent its full 32 rounds at a second each, and because a failed
+node with a neighbour already going to memory waits to see, each round of 600
+failures spilled about five.  In plain C the same shape, 150 invariant doubles
+and addresses in a loop (tests/test_hoist_budget.c), took 14.7 s for 2,974
+lines of assembly.  With S12CC_NO_LICM it took s32-bc 0.3 s and 14% less code.
+
+- LICM moves at most LICM_MAX_HOISTS (24) values out by one header, counted
+  across its back edges, those used least deep staying behind (licm_trim).
+- From round 20 (GC_ROUNDS_PATIENT) with at least 32 nodes failing
+  (GC_ROUNDS_MANY), a failed node waits only when enough of its neighbours are
+  going to memory for all its failing neighbours too.  The same rule from
+  round 6 made matrix.bas 17% slower, and with no floor on the failures it put
+  a parameter into memory in test_respill's round16, so both limits stay.
+
+The test: 0.38 s, 2,091 lines.  battle.bas: 0.8 s, 12% less code.  The games'
+instructions under s32-bc are unchanged (62.07M against 62.08M), every kernel
+to the digit.  SQLite: 290,103 lines of assembly against 290,073, and the
+smoke test 923,187 instructions against 923,155.
+
+Gates: run-tests 184/184 with the self-rebuild, check-stage08 identical,
+xbc stage08, run-stage08-fuzz 2,000 x 2, stage07 differential; the
+cross-compilers share hir_licm.h, and their emulators print benchmark_core's
+checksum on x86-64 (kagura) and arm64 (podman).

@@ -349,9 +349,12 @@ terminal, tube and DPC services compiled beside the interpreter.  `run-kit.sh`:
 of 618 programs both compilers write the host's bytes or the host's refusal,
 and the oracle agrees through each.
 
-Open: battle.bas takes `s32-bc` 32 s, host or guest near enough (42 s).
-The allocator runs all 32 rounds on its main program and never converges, ~1 s
-a round, 96 MB; the next worst of the games takes 2 s.  Not the kit's doing.
+battle.bas took `s32-bc` 32 s, host or guest near enough (42 s), and 96 MB:
+LICM hoisted some 650 constants and addresses out of the one big loop its GOTOs
+make, and the allocator ran all 32 rounds at a second each on what could not
+have registers.  Fixed in stage08: at most 24 values leave by one loop header,
+and late rounds with many failing spill more than a handful each.  0.8 s; no
+game over 1.4 s.
 
 ## s32-bc (sbc/bc/, 2026-11-03)
 
