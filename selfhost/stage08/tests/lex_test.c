@@ -16,6 +16,12 @@ static int test_total;
 /* The lexer reports a malformed escape through the parser's p_error
  * (selfhost ISSUES-83), and there is no parser here: a lexical error
  * is one more failure. */
+/* The source's text moving is the parser's to follow too (its marks into
+ * it, f49e6103), and there is no parser here, so nothing to follow. */
+static void ps_mk_rebase(char *old, int oldcap, char *nw) {
+    (void)old; (void)oldcap; (void)nw;
+}
+
 static void p_error(char *msg) {
     fdputs("FAIL: lexer error: ", 2);
     fdputs(msg, 2);

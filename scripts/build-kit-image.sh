@@ -18,6 +18,8 @@
 # image, i.e. the kit's own tools driven on the image's engines, and the
 # shipped islisp.s32x over islisp/tests with committed expected output.
 # And run-kit-basic.sh: the kit's BASIC compilers against its interpreter.
+# (BUILD_TIMEOUT: the harness's 180 s skips a test whose build takes longer,
+# with exit 0, and the largest take that on a 4-vCPU host: this is ample.)
 #
 # EXCLUDED from the image (the same editorial line as the public mirror,
 # applied to layers -- an image is an extractable archive):
@@ -62,7 +64,7 @@ fi
 
 echo "--- gate: kit differentials and kit islisp inside $HOST_TAG"
 podman run --rm -v "$ROOT:/ws" -w /ws/regression \
-    -e KIT=/opt/slow32/kit \
+    -e KIT=/opt/slow32/kit -e BUILD_TIMEOUT="${BUILD_TIMEOUT:-1800}" \
     -e SLOW32=/usr/local/bin/slow32 -e SLOW32_FAST=/usr/local/bin/slow32-fast \
     -e SLOW32_DBT=/usr/local/bin/slow32-dbt -e QEMU_S32=/usr/local/bin/qemu-system-slow32 \
     --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh && ./run-kit-basic.sh'
