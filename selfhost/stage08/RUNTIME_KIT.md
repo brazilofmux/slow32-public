@@ -105,6 +105,10 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-04.  `cc.s32x` and the tools, `libc.s32a` (`open_memstream`
+for writing, `rmdir`) with `stdio.h` and `unistd.h`, and new: the two BASIC
+compilers and `basic/` ("BASIC" below).  `crt0.s32o` is unchanged.
+
 Rebuilt 2026-11-02 (tree at `031a68ac`).  Everything but `crt0.s32o`:
 the rest of C library clause 7 reaches the kit.  `libc.s32a` grows from
 34 members to 345: the mathematics is one function a member (`m_*`,
