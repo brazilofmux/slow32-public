@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 /* --- Procedure and label tables --- */
 

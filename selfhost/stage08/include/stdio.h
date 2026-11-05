@@ -49,6 +49,7 @@ FILE *fopen(const char *path, const char *mode);
 FILE *fdopen(int fd, const char *mode);
 FILE *freopen(const char *path, const char *mode, FILE *f);
 FILE *tmpfile(void);
+FILE *open_memstream(char **bufp, size_t *sizep);
 int   fclose(FILE *f);
 int   fflush(FILE *f);
 int   setvbuf(FILE *f, char *buf, int mode, size_t size);

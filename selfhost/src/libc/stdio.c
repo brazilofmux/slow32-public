@@ -92,6 +92,9 @@ struct _FILE {
     int mode;
     int unget;      /* a character put back, or -1 */
     int ownbuf;     /* the buffer is malloc's, to be freed */
+    char **mbufp;   /* open_memstream: where the caller's pointer is; else 0 */
+    unsigned int *msizep;   /* ... and its length */
+    int mcap;       /* ... the room in *mbufp */
     /* the wide state, struct __s32_wstate of <stdio.h> (runtime/wstdio.c):
      * these four, in this order */
     int worient;    /* 1 wide, -1 byte, 0 neither yet */
@@ -131,6 +134,9 @@ static void s_init(FILE *fp, int fd, int flags, int mode) {
     fp->mode = mode;
     fp->unget = -1;
     fp->ownbuf = 0;
+    fp->mbufp = (char **)0;
+    fp->msizep = (unsigned int *)0;
+    fp->mcap = 0;
     fp->worient = 0;
     fp->wbytes = 0;
     fp->wnback = 0;
@@ -166,6 +172,30 @@ void __stdio_init(void) {
 
 /* ---- the buffer --------------------------------------------------------- */
 
+/* n bytes on to where the stream's writes go: the host, or a memory
+ * stream's block (always a NUL past its end): how many, or <= 0 */
+static int s_out(FILE *fp, const char *p, int n) {
+    char *nb;
+    int cap;
+    int len;
+    if (!fp->mbufp) return write(fp->fd, p, n);
+    len = (int)*fp->msizep;
+    if (len + n + 1 > fp->mcap) {
+        cap = fp->mcap;
+        while (len + n + 1 > cap) cap = cap * 2;
+        nb = malloc(cap);
+        if (!nb) return -1;
+        memcpy(nb, *fp->mbufp, (unsigned int)len);
+        free(*fp->mbufp);
+        *fp->mbufp = nb;
+        fp->mcap = cap;
+    }
+    memcpy(*fp->mbufp + len, p, (unsigned int)n);
+    (*fp->mbufp)[len + n] = 0;
+    *fp->msizep = (unsigned int)(len + n);
+    return n;
+}
+
 /* send what was written and is still here: 0, or -1 and the error is set */
 static int s_flush(FILE *fp) {
     int off;
@@ -173,7 +203,7 @@ static int s_flush(FILE *fp) {
     if (fp->blen != 0 || fp->bpos <= 0) return 0;
     off = 0;
     while (off < fp->bpos) {
-        n = write(fp->fd, fp->buf + off, fp->bpos - off);
+        n = s_out(fp, fp->buf + off, fp->bpos - off);
         if (n <= 0) {
             fp->error = 1;
             fp->bpos = 0;
@@ -242,7 +272,7 @@ static int s_write(FILE *fp, const char *p, int n) {
     done = 0;
     if (!s_buffer(fp)) {
         while (done < n) {
-            k = write(fp->fd, p + done, n - done);
+            k = s_out(fp, p + done, n - done);
             if (k <= 0) {
                 fp->error = 1;
                 return done;
@@ -254,7 +284,7 @@ static int s_write(FILE *fp, const char *p, int n) {
     while (done < n) {
         if (fp->bpos == 0 && n - done >= fp->bsize) {
             /* a buffer's worth or more, and nothing waiting: straight out */
-            k = write(fp->fd, p + done, n - done);
+            k = s_out(fp, p + done, n - done);
             if (k <= 0) {
                 fp->error = 1;
                 return done;
@@ -413,7 +443,7 @@ static int s_close(FILE *fp) {
     int fd;
     rc = s_flush(fp);
     fd = fp->fd;
-    if (close(fd) < 0) rc = -1;
+    if (!fp->mbufp && close(fd) < 0) rc = -1;
     if (fp->ownbuf && fp->buf) free(fp->buf);
     if (fd >= 0 && fd < FD_TABLE_SIZE && _fd_stream[fd] == fp) _fd_stream[fd] = (FILE *)0;
     if (fp == stdin || fp == stdout || fp == stderr) {
@@ -564,6 +594,29 @@ FILE *freopen(const char *path, const char *mode, FILE *fp) {
      * functions and the table look for it; and under its new number */
     if (fd < FD_TABLE_SIZE) _fd_stream[fd] = fp;
     if (mode[0] == 'a' && !(flags & FLAG_READ)) lseek(fd, 0, SEEK_END);
+    return fp;
+}
+
+/* POSIX's memory stream, for writing: *bufp holds what has been written,
+ * NUL-terminated, *sizep its length, after fflush and fclose; the caller
+ * frees it.  No fseek or ftell on one. */
+FILE *open_memstream(char **bufp, unsigned int *sizep) {
+    FILE *fp;
+    char *block;
+    fp = pool_alloc();
+    if (!fp) return (FILE *)0;
+    block = malloc(256);
+    if (!block) {
+        fp->used = 0;
+        return (FILE *)0;
+    }
+    block[0] = 0;
+    s_init(fp, -1, FLAG_WRITE, BUF_FULL);
+    *bufp = block;
+    *sizep = 0;
+    fp->mbufp = bufp;
+    fp->msizep = sizep;
+    fp->mcap = 256;
     return fp;
 }
 

@@ -11,6 +11,10 @@
 
 /* --- 1. diagnostic output ------------------------------------------ */
 
+/* (stage08's libc has its own fdputs and fdputc, of other types) */
+#define fdputs bc_fdputs
+#define fdputc bc_fdputc
+#define fdputuint bc_fdputuint
 static void fdputs(char *s, int fd) { write(fd, s, strlen(s)); }
 static void fdputc(int c, int fd) { char b; b = (char)c; write(fd, &b, 1); }
 static void fdputuint(int fd, unsigned int v) {

@@ -1,5 +1,5 @@
 /* posix_fs.c -- filesystem calls over the MMIO ring: access, ftruncate,
- * stat/lstat, mkdir, chdir, getcwd, fsync, utimes, opendir/readdir/closedir.
+ * stat/lstat, mkdir, rmdir, chdir, getcwd, fsync, utimes, opendir/readdir/closedir.
  * Split from posix_more.c (GitHub issue 65).  Plain C: stage07 compiles
  * this libc too. */
 
@@ -20,6 +20,7 @@ void free(void *p);
 #define MMIO_OP_ACCESS      0x25
 #define MMIO_OP_STAT        0x0A
 #define MMIO_OP_MKDIR       0x22
+#define MMIO_OP_RMDIR       0x23
 #define MMIO_OP_LSTAT       0x24
 #define MMIO_OP_CHDIR       0x26
 #define MMIO_OP_GETCWD      0x27
@@ -70,6 +71,10 @@ int lstat(const char *path, void *st) {
 
 int mkdir(const char *path, unsigned int mode) {
     return pm_path_request(MMIO_OP_MKDIR, path, mode) == 0 ? 0 : -1;
+}
+
+int rmdir(const char *path) {
+    return pm_path_request(MMIO_OP_RMDIR, path, 0) == 0 ? 0 : -1;
 }
 
 int chdir(const char *path) {

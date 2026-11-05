@@ -871,7 +871,8 @@ What a program written against the old library might trip on:
 - `RAND_MAX` is 65535, which is what `rand` returns up to.
 
 Not there: `scanf`/`fscanf` (`sscanf` is), locales other than "C", wide
-and multibyte characters, `tmpnam`, memory streams.  `time_t` is 32 bits.
+and multibyte characters, `tmpnam`, `fmemopen`.  `open_memstream` is for
+writing, with no `fseek` or `ftell` on it.  `time_t` is 32 bits.
 
 The tools, at the same time:
 
@@ -888,7 +889,26 @@ The tools, at the same time:
 
 A kit built before this change has none of the above.
 
+## BASIC (2026-11)
+
+The kit has the two BASIC compilers, built by this toolchain alone with this
+library: `s32-bc.s32x` (the QuickBASIC compiler, what QBasic 1.1 loads, to
+assembly) and `s32-sbc.s32x` (the SLOW BASIC compiler, anything `sbasic` runs,
+to C), with `basic/` beside them: `bc_rt.s32o` and `libsbasic.s32a`, their run
+time, and `c-include/`, the headers `s32-sbc`'s C includes.  `s32kbasic`
+(`slow32:kit`; `slow-32/docker/bin/s32kbasic`, with `KIT=~/s32x` and `EMU=` an
+engine, anywhere) drives them:
+
+```bash
+s32kbasic prog.bas out.s32x          # s32-bc if it takes it, else s32-sbc; it says which
+s32kbasic --qb prog.bas out.s32x     # s32-bc only
+s32kbasic --any prog.bas out.s32x    # s32-sbc only
+```
+
 ## Regenerating
+
+BASIC, after the toolchain below, from `slow-32` with the kit's tools:
+`KIT_TOOLS=~/s32x KIT_RT=~/s32x/selfhost sbc/build-kit.sh ~/s32x`.
 
 From `slow-32/selfhost/stage08` after `make`, into the kit at `~/s32x/selfhost/`:
 

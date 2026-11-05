@@ -1,0 +1,58 @@
+#!/bin/bash
+# s32kbasic -- a BASIC program to a SLOW-32 executable with the SELF-HOSTED
+# kit alone: s32-bc.s32x or s32-sbc.s32x, cc.s32x, s32-as.s32x, s32-ld.s32x,
+# all SLOW-32 programs on the emulator, and no LLVM and no host compiler
+# anywhere.  (s32basic in slow32:basic is the same two compilers as host
+# programs.)
+#   s32kbasic [--qb | --any] prog.bas [out.s32x]
+#   s32-bc, the QuickBASIC compiler, is tried first: a program QBasic would
+#   load goes straight to assembly.  A program it refuses goes to s32-sbc,
+#   the SLOW BASIC compiler, which takes anything the interpreter runs, by
+#   way of C and cc.s32x; it says which, and why.
+#   --qb   s32-bc only (a refusal is the failure);  --any  s32-sbc only
+# KIT is the kit (default /opt/slow32/kit); EMU the engine (default slow32-dbt).
+set -eu
+KIT="${KIT:-/opt/slow32/kit}"
+EMU="${EMU:-slow32-dbt}"
+SH=$KIT/selfhost
+B=$KIT/basic
+mode=auto
+case "${1:-}" in
+    --qb) mode=qb; shift ;;
+    --any) mode=any; shift ;;
+esac
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    echo "usage: s32kbasic [--qb | --any] prog.bas [out.s32x]" >&2
+    exit 2
+fi
+src=$1
+b=$(basename "$src"); b=${b%.*}
+out=${2:-./$b.s32x}
+W=$(mktemp -d "${TMPDIR:-/tmp}/s32kbasic.XXXXXX")
+trap 'rm -rf "${W:?}"' EXIT
+
+# the tools narrate on stdout and stderr: kept for a failure
+as_ld() {  # as_ld the-program's-other-objects...
+    "$EMU" "$KIT/s32-as.s32x" "$W/$b.s" "$W/$b.s32o" >"$W/log" 2>&1 || { cat "$W/log" >&2; exit 1; }
+    "$EMU" "$KIT/s32-ld.s32x" -o "$out" --mmio 64K --stack-size 1M --heap-size 16M \
+        "$SH/crt0.s32o" "$W/$b.s32o" "$@" "$B/libsbasic.s32a" "$SH/libc.s32a" >"$W/log" 2>&1 ||
+        { cat "$W/log" >&2; exit 1; }
+}
+
+if [ "$mode" != any ]; then
+    if "$EMU" "$KIT/s32-bc.s32x" "$src" "$W/$b.s" >"$W/bc.log" 2>&1; then
+        as_ld "$B/bc_rt.s32o"
+        [ "$mode" = qb ] || echo "s32kbasic: $out by s32-bc (QuickBASIC)" >&2
+        exit 0
+    fi
+    if [ "$mode" = qb ]; then
+        cat "$W/bc.log" >&2
+        exit 1
+    fi
+    echo "s32kbasic: s32-bc refused it ($(head -1 "$W/bc.log" | sed 's/^s32-bc: //')); s32-sbc (SLOW BASIC) instead" >&2
+fi
+"$EMU" "$KIT/s32-sbc.s32x" "$src" -o "$W/$b.c" >"$W/log" 2>&1 || { cat "$W/log" >&2; exit 1; }
+"$EMU" "$KIT/cc.s32x" -I"$SH/include" -I"$B/c-include" "$W/$b.c" "$W/$b.s" >/dev/null 2>"$W/log" && [ -s "$W/$b.s" ] ||
+    { cat "$W/log" >&2; exit 1; }
+as_ld
+[ "$mode" = any ] || echo "s32kbasic: $out by s32-sbc (SLOW BASIC)" >&2

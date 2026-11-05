@@ -18,6 +18,9 @@ interpreter refuses it too, at the same line, that is agreement, and
 counted as AGREE-REJECT); TIMEOUT (either side).  Exit status 1 when
 anything DIFFERs.
 
+--kit bc and --kit sbc do it with the compiler, its run time and every tool
+self-hosted (docker/bin/s32kbasic, KIT= the kit; tests/run-kit.sh).
+
 --bc holds s32-bc (bc/, compile-bc.sh) to the interpreter instead.  Its
 refusals are tallied by reason: a checker finding (the program is no
 QuickBASIC loads; the interpreter runs it anyway), or "not yet: ..." --
@@ -37,6 +40,7 @@ EMU = os.environ.get('EMU', os.path.join(ROOT, 'tools/emulator/slow32-fast'))
 SBASIC = os.path.join(ROOT, 'sbasic/sbasic.s32x')
 OUT = os.path.join(SBC, 'out/oracle')
 COMPILE = 'compile-bas.sh'
+KIT_CMD = None      # --kit bc|sbc: the self-hosted kit's driver (KIT= the kit, run-kit.sh)
 BUILD = 'build.sh' 
 REFS = os.path.expanduser('~/refs/basic/nbs-ecma55-test')
 TLIMIT = int(os.environ.get('TIMEOUT', '60'))
@@ -70,7 +74,7 @@ def one(path):
     exe = os.path.join(OUT, tag + '.s32x')
     work = os.path.join(OUT, 'work-' + tag)
     os.makedirs(work, exist_ok=True)
-    c = subprocess.run(['bash', os.path.join(SBC, COMPILE), path, exe],
+    c = subprocess.run(KIT_CMD + [path, exe] if KIT_CMD else ['bash', os.path.join(SBC, COMPILE), path, exe],
                        capture_output=True, cwd=cwd, env=dict(os.environ, SBC_WORK=work))
     interp = run([EMU, '-q', SBASIC, path], keys, cwd)
     if interp is not None:
@@ -121,18 +125,25 @@ def main():
         jobs = int(args[args.index('-j') + 1])
         del args[args.index('-j'):args.index('-j') + 2]
     args = [a for a in args if a != '-v']
-    global OUT, COMPILE, BUILD
-    bc = '--bc' in args
+    global OUT, COMPILE, BUILD, KIT_CMD
+    kit = None
+    if '--kit' in args:
+        kit = args[args.index('--kit') + 1]
+        del args[args.index('--kit'):args.index('--kit') + 2]
+        KIT_CMD = [os.path.join(ROOT, 'docker/bin/s32kbasic'), {'bc': '--qb', 'sbc': '--any'}[kit]]
+        OUT = os.path.join(SBC, 'out/oracle-kit-' + kit)
+    bc = '--bc' in args or kit == 'bc'
     if bc:
         args = [a for a in args if a != '--bc']
-        OUT, COMPILE, BUILD = os.path.join(SBC, 'out/oracle-bc'), 'compile-bc.sh', 'build-bc.sh' 
+        OUT, COMPILE, BUILD = kit and OUT or os.path.join(SBC, 'out/oracle-bc'), 'compile-bc.sh', 'build-bc.sh'
     if not args:
         args = [os.path.join(ROOT, 'sbasic/tests'), os.path.join(HERE, 'native')]
         args += [os.path.join(REFS, d) for d in ('NBS', 'basic_computer_games', 'fast')
                  if os.path.isdir(os.path.join(REFS, d))]
     os.makedirs(OUT, exist_ok=True)
     # the runtime's own object, made once before the programs race for it
-    subprocess.run(['bash', os.path.join(SBC, BUILD)], check=True, capture_output=True)
+    if not kit:
+        subprocess.run(['bash', os.path.join(SBC, BUILD)], check=True, capture_output=True)
     with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
         res = list(ex.map(one, corpus(args)))
     counts = {}

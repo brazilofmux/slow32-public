@@ -32,5 +32,7 @@ int main(void) {
     printf("back: %d\n", r && strlen(r) == n);
     printf("too small gives null: %d\n", getcwd(tiny, sizeof tiny) == NULL);
     printf("size 0 gives null: %d\n", getcwd(buf, 0) == NULL);
+    printf("rmdir: %d\n", rmdir("heron_dir"));
+    printf("rmdir again fails: %d\n", rmdir("heron_dir"));
     return 0;
 }

@@ -7,6 +7,10 @@
 #                     (lua, nano, prolog, sbasic, xbase, islisp, sqlite3, the
 #                     Forth kernel, ...), plus `s32kcc`, C -> .s32x through
 #                     that toolchain running on the emulator.
+#                     s32-bc.s32x and s32-sbc.s32x, the two BASIC compilers
+#                     built by that toolchain, with basic/ (their run time,
+#                     stage08's too), and `s32kbasic`: BASIC -> .s32x the
+#                     same way, no LLVM and no host compiler anywhere.
 #
 # The context is NOT the tree: it is a staged copy of the kit made by
 # scripts/build-kit-image.sh, which also applies the exclusion list (the
@@ -18,7 +22,9 @@ ARG BASE_IMAGE=slow32:base
 FROM ${BASE_IMAGE}
 COPY kit/ /opt/slow32/kit/
 COPY bin/s32kcc /opt/slow32/bin/s32kcc
+COPY bin/s32kbasic /opt/slow32/bin/s32kbasic
 
 # Usage:  s32kcc prog.c [-I dir]... [-o prog.s32x]; s32run prog.s32x
+#         s32kbasic [--qb | --any] prog.bas [out.s32x]; s32run out.s32x
 #         s32run /opt/slow32/kit/lua.s32x < script.lua   (the port reads stdin)
 WORKDIR /data

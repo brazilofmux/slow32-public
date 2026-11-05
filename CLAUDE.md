@@ -164,7 +164,9 @@ substituted 1:1.
   libsbasic.s32a, no LLVM.  Gate: sbc/tests/run-stage08.sh.
 - `slow32:kit` (FROM base): + `/opt/slow32/kit`, the self-hosted kit
   (`~/s32x`: cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
-  and `s32kcc`, C to `.s32x` through that toolchain on the emulator. The
+  and `s32kcc`, C to `.s32x` through that toolchain on the emulator, and
+  `s32kbasic [--qb | --any] prog.bas [out.s32x]`, the two BASIC compilers
+  built by that toolchain (`sbc/build-kit.sh`; no LLVM, no host compiler). The
   kit is not in git, so this one is built by `scripts/build-kit-image.sh`
   on a machine with the kit (both arches with `--push`), not by ~/builder;
   `regal.s32x` is excluded.

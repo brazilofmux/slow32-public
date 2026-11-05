@@ -17,6 +17,7 @@
 # run-kit-tools-differential.sh and run-kit-islisp.sh INSIDE the built
 # image, i.e. the kit's own tools driven on the image's engines, and the
 # shipped islisp.s32x over islisp/tests with committed expected output.
+# And run-kit-basic.sh: the kit's BASIC compilers against its interpreter.
 #
 # EXCLUDED from the image (the same editorial line as the public mirror,
 # applied to layers -- an image is an extractable archive):
@@ -39,6 +40,7 @@ mkdir -p "$CTX/kit" "$CTX/bin"
 ex=(); for e in "${EXCLUDE[@]}"; do ex+=(--exclude "$e"); done
 rsync -a "${ex[@]}" "$KIT/" "$CTX/kit/"
 cp "$ROOT/docker/bin/s32kcc" "$CTX/bin/s32kcc"; chmod +x "$CTX/bin/s32kcc"
+cp "$ROOT/docker/bin/s32kbasic" "$CTX/bin/s32kbasic"; chmod +x "$CTX/bin/s32kbasic"
 for e in "${EXCLUDE[@]}"; do [ ! -e "$CTX/kit/$e" ] || { echo "exclusion failed: $e"; exit 1; }; done
 echo "context: $(du -sh "$CTX/kit" | cut -f1) from $KIT, excluding: ${EXCLUDE[*]}"
 
@@ -63,7 +65,7 @@ podman run --rm -v "$ROOT:/ws" -w /ws/regression \
     -e KIT=/opt/slow32/kit \
     -e SLOW32=/usr/local/bin/slow32 -e SLOW32_FAST=/usr/local/bin/slow32-fast \
     -e SLOW32_DBT=/usr/local/bin/slow32-dbt -e QEMU_S32=/usr/local/bin/qemu-system-slow32 \
-    --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh'
+    --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh && ./run-kit-basic.sh'
 
 if [ "$PUSH" = 1 ]; then
     for arch in arm64 amd64; do

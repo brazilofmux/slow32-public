@@ -26,6 +26,12 @@ In the slow32:basic image the same three are `s32basic`, `s32bc` and
 ./compile.sh --any prog.bas              # s32-sbc only
 ```
 
+The self-hosted kit (`~/s32x`, `slow32:kit`) carries both, built by stage08
+alone with its libc, the interpreter's run time too (`build-kit.sh`):
+`s32kbasic` is `compile.sh` there.  `tests/run-kit.sh` holds them to the host
+builds byte for byte (the same assembly, the same C, the same refusals, over
+the corpus) and to the interpreter.
+
 `compile.sh` is the reconciliation the plan ruled for when s32-bc had
 won (2026-11-03: "a switch, auto-detection, a build target"):
 auto-detection by trying s32-bc, whose refusal -- a checker finding,

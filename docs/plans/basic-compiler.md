@@ -339,6 +339,20 @@ bounds after an ERASE of a static array is GW-BASIC's, and QB's load error;
 the interpreter still makes it anew.  `'$DYNAMIC` is not read yet: QBasic makes
 `DIM m(3)` under it dynamic, here it stays static (item 4 of the road ahead).
 
+## In the kit (2026-11-04)
+
+Both compilers run as SLOW-32 programs, built by stage08 alone with its libc;
+`build-kit.sh` makes them and the run time, `s32kbasic` drives them, no LLVM
+and no host compiler anywhere.  They asked stage08's libc for two things,
+`open_memstream` (for writing) and `rmdir`, and for the runtime's own argument,
+terminal, tube and DPC services compiled beside the interpreter.  `run-kit.sh`:
+of 618 programs both compilers write the host's bytes or the host's refusal,
+and the oracle agrees through each.
+
+Open: battle.bas takes `s32-bc` 32 s, host or guest near enough (42 s).
+The allocator runs all 32 rounds on its main program and never converges, ~1 s
+a round, 96 MB; the next worst of the games takes 2 s.  Not the kit's doing.
+
 ## s32-bc (sbc/bc/, 2026-11-03)
 
 The compiler that decides up front, begun.  `sbc/compile-bc.sh
