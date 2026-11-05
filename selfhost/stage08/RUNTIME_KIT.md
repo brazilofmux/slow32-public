@@ -105,6 +105,10 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-04 again.  `cc.s32x` only, and the BASIC compilers built by
+it: a loop with hundreds of invariants no longer takes half a minute to compile
+(selfhost ISSUES-109).
+
 Rebuilt 2026-11-04.  `cc.s32x` and the tools, `libc.s32a` (`open_memstream`
 for writing, `rmdir`) with `stdio.h` and `unistd.h`, and new: the two BASIC
 compilers and `basic/` ("BASIC" below).  `crt0.s32o` is unchanged.
