@@ -165,6 +165,8 @@ typedef enum {
     STMT_LSET,
     STMT_RSET,
     STMT_WIDTH,
+    STMT_PLAY,          /* PLAY s$ */
+    STMT_SOUND,         /* SOUND f, d */
     STMT_CHAIN,         /* CHAIN file$ */
     STMT_COMMON,        /* COMMON's list, in its order: what CHAIN passes on */
     STMT_EVENT_ON,      /* ON TIMER(n) GOSUB label, and KEY, PLAY, STRIG, PEN */

@@ -491,7 +491,8 @@ static int is_errvar(const char *name) { return strcmp(name, "ERR") == 0 || strc
 
 /* a builtin the interpreter would call for this name */
 static int is_addr_fn(const char *name) {
-    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0;
+    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0 ||
+           strcmp(name, "VARPTR$") == 0;
 }
 
 static int is_builtin_call(const char *name) {
@@ -3608,8 +3609,9 @@ static int lval_of(expr_t *e, int line, lval_t *lv) {
  * does: its address has gone to a call. */
 static bv_t addr_of(expr_t *e) {
     expr_t *a = e->call.args[0];
-    int which = e->call.name[0] == 'S' ? 2 : e->call.name[3] == 'S' ? 1 : 0;
-    int cb, r, ea, f = -1;
+    int str = strcmp(e->call.name, "VARPTR$") == 0;
+    int which = str ? 0 : e->call.name[0] == 'S' ? 2 : e->call.name[3] == 'S' ? 1 : 0;
+    int cb, r, ea, f = -1, ty = VAL_SINGLE;
     const char *arr = NULL;
     var_t *v = NULL;
     if (a->type == EXPR_FIELD_ACCESS && which != 2) {
@@ -3634,11 +3636,14 @@ static bv_t addr_of(expr_t *e) {
             call_end(cb, 1, "bcrt_err", NULL);
             return zero();
         }
+        ty = field_type(t, f);
     } else if (a->type == EXPR_VARIABLE) {
         v = var_get(a->var.name, a->var.var_type, e->line);
+        ty = v->type;
     } else if (a->type == EXPR_CALL && !is_builtin_call(a->call.name) && !is_function(a->call.name)) {
         bv_t ix[8];
         arr = a->call.name;
+        ty = arr_type(arr);
         sub_args(e->line, a->call.nargs, a->call.args, ix);
         ea = array_elem(e->line, arr, a->call.nargs, ix);
     } else {
@@ -3659,6 +3664,12 @@ static bv_t addr_of(expr_t *e) {
         carg(iconst(v->fixlen), 0);
         carg(iconst(f), 0);
         r = call_end(cb, 5, "bcrt_addr_var", NULL);
+    }
+    if (str) {                  /* VARPTR$: its type code and that offset, a string */
+        cb = h_ncarg;
+        carg(iconst(ty), 0);
+        carg(r, 0);
+        return mk(call_end(cb, 2, "bcrt_varptr_str", NULL), -1, -1, VAL_STRING);
     }
     return mk(r, -1, -1, VAL_INTEGER);
 }
@@ -3724,6 +3735,21 @@ static void bc_stmt(stmt_t *s) {
         if (bc_body) oplabel_add(s->label.name);
         while (*q >= '0' && *q <= '9') q++;     /* (a line number: ERL's, as lower.c's) */
         if (*q == '\0' && q != s->label.name) bc_basic_line = atoi(s->label.name);
+        break;
+    }
+    case STMT_PLAY: {
+        bv_t x = dynv(expr(s->shell_stmt.command));
+        int cb = h_ncarg;
+        carg_bv(x);
+        call_end(cb, 3, "bcrt_play", NULL);
+        break;
+    }
+    case STMT_SOUND: {
+        bv_t f = dynv(expr(s->event.n)), d = dynv(expr(s->event.value));
+        int cb = h_ncarg;
+        carg_bv(f);
+        carg_bv(d);
+        call_end(cb, 6, "bcrt_sound", NULL);
         break;
     }
     case STMT_COMMON:

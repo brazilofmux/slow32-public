@@ -6,6 +6,7 @@
 #include "terminal.h"
 #include "graphics.h"
 #include "machine.h"
+#include "music.h"
 #include "lower.h"
 #include <stdio.h>
 #include <math.h>
@@ -2997,7 +2998,36 @@ static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
 /* VARPTR(x), VARSEG(x), SADD(x$): where x is (machine.c).  An offset is
  * an INTEGER, as QBasic gives it: past 32767, negative. */
 int eval_is_addr(const char *name) {
-    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0;
+    return strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 || strcmp(name, "SADD") == 0 ||
+           strcmp(name, "VARPTR$") == 0;
+}
+
+/* VARPTR$: the variable's type code, then its offset */
+value_t eval_varptr_str(val_type_t t, int off) {
+    char b[3];
+    b[0] = (char)(t == VAL_INTEGER ? 2 : t == VAL_LONG ? 20 : t == VAL_SINGLE ? 4 : t == VAL_DOUBLE ? 8 : 3);
+    b[1] = (char)off;
+    b[2] = (char)(off >> 8);
+    return val_string(b, 3);
+}
+
+error_t eval_play(const value_t *s) {
+    if (s->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    return music_play(s->sval->data, s->sval->len);
+}
+
+/* SOUND f, d (probed): a frequency 37 to 32767 and an INTEGER's Overflow past
+ * that, a duration of 0 to 65535 clock ticks; no speaker, and it does not
+ * wait, for itself or for music */
+error_t eval_sound(const value_t *freq, const value_t *dur) {
+    int f;
+    double d;
+    if (freq->type == VAL_STRING || dur->type == VAL_STRING) return ERR_TYPE_MISMATCH;
+    EVAL_CHECK(val_to_integer(freq, &f));
+    if (f > 32767) return ERR_OVERFLOW;
+    if (f < 37) return ERR_ILLEGAL_FUNCTION_CALL;
+    EVAL_CHECK(val_to_double(dur, &d));
+    return d < 0 || d > 65535 ? ERR_ILLEGAL_FUNCTION_CALL : ERR_NONE;
 }
 
 error_t eval_addr_result(const char *fn, int seg, int off, value_t *out) {
@@ -3034,6 +3064,10 @@ static error_t eval_addr(env_t *env, expr_t *e, value_t *out) {
     } else
         EVAL_CHECK(pc_addr_var(PC_VALUE, v, env_fixlen(env, a->type == EXPR_VARIABLE ? a->var.name : a->field.var_name),
                                byte, &seg, &off));
+    if (strcmp(fn, "VARPTR$") == 0) {
+        *out = eval_varptr_str(v->type, off);
+        return ERR_NONE;
+    }
     return eval_addr_result(fn, seg, off, out);
 }
 
@@ -3954,8 +3988,8 @@ error_t eval_poke(int offset, int val) {
  * runs with whatever procedure was going still under it.  No trap runs
  * while an ON ERROR handler is active.  TIMER's count starts when it is
  * turned on or bound to a handler; ON TIMER(n) rounds n.  CLEAR and RUN turn
- * all of them off.  PLAY, STRIG and PEN keep their states and never come:
- * here no music plays in the background, and no stick or pen is attached. */
+ * all of them off.  PLAY comes as the notes left fall under its n.  STRIG and
+ * PEN keep their states and never come: no stick or pen is attached. */
 #define EV_TRAPS 39
 #define EV_PLAY_TRAP 1
 #define EV_PEN_TRAP 2
@@ -3965,6 +3999,7 @@ static struct { int state, target, pending, busy; } ev_traps[EV_TRAPS];   /* (ta
 int eval_events_armed;
 static int ev_keys_armed, ev_ready, ev_tick, ev_used;
 static double ev_period, ev_due;
+static int ev_play_under, ev_play_was;  /* ON PLAY(n): it comes as the count falls under n */
 static unsigned char ev_key_code[32][2];        /* KEY n, s$ (15 to 25): shift flags, scan code */
 static char ev_key_text[32][16];                /* KEY n, s$ (1 to 10, 30, 31) */
 static struct { char b[2]; int n; } ev_unread[16];
@@ -4016,6 +4051,7 @@ error_t eval_event_on(int kind, int n, int target) {
         break;
     case EV_PLAY:
         if (n < 1 || n > 32) return ERR_ILLEGAL_FUNCTION_CALL;
+        ev_play_under = n;
         t = EV_PLAY_TRAP;
         break;
     case EV_STRIG:
@@ -4196,6 +4232,14 @@ static void ev_sample(void) {
         }
     }
     if (ev_keys_armed) ev_keyboard();
+    if (ev_traps[EV_PLAY_TRAP].state != EV_OFF) {
+        int now = music_count();
+        if (now < ev_play_under && ev_play_was >= ev_play_under) {
+            ev_traps[EV_PLAY_TRAP].pending = 1;
+            ev_ready = 1;
+        }
+        ev_play_was = now;
+    }
 }
 
 /* a trap would run now */
@@ -4720,6 +4764,25 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_CHAIN;
         }
         case STMT_COMMON:       return ERR_NONE;
+        case STMT_PLAY: {
+            value_t v;
+            error_t err;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &v));
+            err = eval_play(&v);
+            val_clear(&v);
+            return err;
+        }
+        case STMT_SOUND: {
+            value_t f, d;
+            error_t err;
+            EVAL_CHECK(eval_expr(env, s->event.n, &f));
+            err = eval_expr(env, s->event.value, &d);
+            if (err != ERR_NONE) { val_clear(&f); return err; }
+            err = eval_sound(&f, &d);
+            val_clear(&f);
+            val_clear(&d);
+            return err;
+        }
         case STMT_CHAIN: {
             value_t f;
             error_t err;
@@ -5841,7 +5904,10 @@ error_t eval_chain_run(void) {
  * code's (s32-bc's runtime calls it) */
 void eval_reset(void) {
     option_base = 0;
-    if (restart_kind != START_CHAIN) builtin_rnd_reset();
+    if (restart_kind != START_CHAIN) {
+        builtin_rnd_reset();
+        music_reset();
+    }
     array_clear_all();
     data_pool_clear();
     if (restart_kind != START_CHAIN) fileio_init();

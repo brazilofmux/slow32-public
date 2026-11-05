@@ -764,6 +764,15 @@ QBasic: about 1 in 100 still differ, a row of a border-colored tile in SCREEN 1,
 unexplained; QBasic also runs out of memory (error 7) on some paints we finish,
 and does not finish a few at all, which is not copied.
 
+PLAY and SOUND (music.c), silent: SLOW-32 has no audio.  What a program sees is
+QBasic's (probed): the string's rules, a foreground PLAY waiting until its last
+note begins (and for the music before it), the background's PLAY(n) falling as
+notes begin, ON PLAY as it falls under n, SOUND not waiting for music, X and =
+with VARPTR$ in PLAY and DRAW.  (Two long SOUNDs in a row took QBasic about half
+a second once, unexplained and not pinned.)  Durations are exact here
+where QBasic's go by 18.2 clock ticks, so a long string can come out a few
+hundredths apart.
+
 Then QBasic's load-time checks (2026-11-04), the last of what the
 checker took that QBasic does not: strict-qb now agrees on every
 program (398, the 4 hoisted DEF FNs apart; it had been 14 short).

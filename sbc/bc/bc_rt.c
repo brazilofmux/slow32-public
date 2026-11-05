@@ -980,6 +980,26 @@ void bcrt_gfx(int type, int flags, int box, int color, int aux, int x1l, int x1h
     if (e != ERR_NONE) bcrt_fail(e);
 }
 
+void bcrt_play(int lo, int hi, int t) {
+    value_t v = take(lo, hi, t);
+    error_t e = eval_play(&v);
+    val_clear(&v);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+void bcrt_sound(int fl, int fh, int ft, int dl, int dh, int dt) {
+    value_t f = take(fl, fh, ft), d = take(dl, dh, dt);
+    error_t e = eval_sound(&f, &d);
+    val_clear(&f);
+    val_clear(&d);
+    if (e != ERR_NONE) bcrt_fail(e);
+}
+
+int bcrt_varptr_str(int ty, int off) {
+    value_t v = eval_varptr_str((val_type_t)ty, off);
+    return (int)(intptr_t)v.sval;
+}
+
 void bcrt_line_style(int lo, int hi, int t) {
     value_t m = take(lo, hi, t);
     error_t e = eval_line_style(&m);

@@ -1,4 +1,5 @@
 #include "graphics.h"
+#include "machine.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -735,6 +736,13 @@ static int draw_num(const char **q, const char *end, int may_sign, long *n, int 
     int neg = 0, any = 0;
     long v = 0;
     while (p < end && (*p == ' ' || *p == '\t')) p++;
+    if (p < end && *p == '=') {         /* = and a VARPTR$ of a number */
+        if (end - p < 4 || !pc_var_number((unsigned char)p[1], (unsigned char)p[2] | (unsigned char)p[3] << 8, n))
+            return 0;
+        *q = p + 4;
+        *given = 1;
+        return 1;
+    }
     if (may_sign && p < end && (*p == '+' || *p == '-')) neg = *p++ == '-';
     while (p < end && *p >= '0' && *p <= '9') { v = v * 10 + (*p++ - '0'); any = 1; if (v > 100000) return 0; }
     *q = p;
@@ -830,7 +838,21 @@ int sb_gfx_draw(const char *s, int len) {
                 sb_gfx_paint((int)rint(px) + ox, (int)rint(py) + oy, (int)n, (int)b);
                 continue;
             }
-            default:                                /* (X, =: VARPTR$'s -- not here) */
+            case 'X': {                             /* the string a VARPTR$ names, drawn here */
+                const char *sub;
+                int sublen;
+                if (end - q < 3 || (unsigned char)q[0] != 3 ||
+                    !pc_string_at((unsigned char)q[1] | (unsigned char)q[2] << 8, &sub, &sublen))
+                    return -1;
+                q += 3;
+                last_lx = to_world(0, px);
+                last_ly = to_world(1, py);
+                if (sb_gfx_draw(sub, sublen) < 0) return -1;
+                px = to_view(0, last_lx);
+                py = to_view(1, last_ly);
+                continue;
+            }
+            default:
                 return -1;
         }
         if (draw_angle != 0) {                      /* turned where a pixel is square */

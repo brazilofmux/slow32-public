@@ -604,6 +604,50 @@ error_t pc_addr_chars(int kind, void *p, int *seg, int *off) {
     return ERR_NONE;
 }
 
+int pc_string_at(int off, const char **s, int *len) {
+    window_t *w = window_at(HOME_LINEAR + (off & 0xFFFF));
+    sb_string_t *str = NULL;
+    long k;
+    if (!w) return 0;
+    k = HOME_LINEAR + (off & 0xFFFF) - w->base;
+    if (w->kind == W_ARRAY) {
+        sb_array_t *a = w->p;
+        value_t *e;
+        if (a->elem_type != VAL_STRING) return 0;
+        e = &a->data[array_row_index(a, (int)(k / array_elem_size(a)))];
+        str = e->sval;
+    } else if (w->kind == PC_VALUE) {
+        value_t *v = w->p;
+        if (v->type != VAL_STRING) return 0;
+        str = v->sval;
+    } else if (w->kind == PC_STRING) {
+        str = *(sb_string_t **)w->p;
+    } else
+        return 0;
+    *s = str ? str->data : "";
+    *len = str ? str->len : 0;
+    return 1;
+}
+
+int pc_var_number(int code, int off, long *out) {
+    long a = HOME_LINEAR + (off & 0xFFFF);
+    if (code == 2) {
+        *out = (short)(linear_peek(a) | linear_peek(a + 1) << 8);
+        return 1;
+    }
+    if (code == 4) {
+        unsigned char b[4];
+        value_t v;
+        double d;
+        for (int i = 0; i < 4; i++) b[i] = (unsigned char)linear_peek(a + i);
+        elem_from_bytes(&v, VAL_SINGLE, b);
+        d = v.dval;
+        *out = (long)(d >= 0 ? d + 0.5 : d - 0.5);
+        return 1;
+    }
+    return 0;
+}
+
 /* --- BSAVE and BLOAD: a file of FD, the segment, the offset, the length,
  * each a word, then the bytes.  A length of -1 is 65535 (an INTEGER's
  * bits); BLOAD with no offset goes back where BSAVE took it from, DEF SEG

@@ -209,6 +209,11 @@ typedef struct {
     double start, end, aspect;  /* CIRCLE's, each when has_ says so */
     int has_start, has_end, has_aspect;
 } gfx_op_t;
+/* PLAY s$ and SOUND f, d as they came */
+error_t eval_play(const value_t *s);
+error_t eval_sound(const value_t *freq, const value_t *dur);
+/* VARPTR$'s string, from a variable's BASIC type and offset */
+value_t eval_varptr_str(val_type_t t, int off);
 /* COLOR, as the mode has it: begin before its operands, then each as it
  * comes; a foreground is in force at once */
 error_t eval_color_begin(void);

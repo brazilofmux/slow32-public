@@ -238,7 +238,7 @@ static expr_t *parse_primary(parser_t *p) {
         if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
         return call;
     }
-    /* PLAY(n): the notes left in the music queue (none here: 0) */
+    /* PLAY(n): the notes left in the music queue */
     if (tok->type == TOK_PLAY) {
         token_t t = lexer_next(&p->lex);
         if (!expect(p, TOK_LPAREN)) return NULL;
@@ -3005,23 +3005,30 @@ static stmt_t *parse_stmt_in(parser_t *p) {
             if (tok->type == TOK_PLAY) {
                 stmt_t *ev = parse_event_set(p);
                 if (ev) return ev;
-            } else {
-                stmt_t *ch = stmt_alloc(STMT_CHAIN, line);
+            }
+            {
+                stmt_t *ch = stmt_alloc(tok->type == TOK_PLAY ? STMT_PLAY : STMT_CHAIN, line);
                 if (!ch) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
                 lexer_skip(&p->lex);
                 ch->shell_stmt.command = parse_expr(p);
                 if (!ch->shell_stmt.command) { stmt_free(ch); return NULL; }
                 return ch;
             }
-            lexer_skip(&p->lex);
-            if (!at_stmt_end(p)) {
-                expr_t *e = parse_expr(p);
-                if (e) expr_free(e);
-            }
-            return stmt_alloc(STMT_NOOP, line);
         }
 
-        case TOK_PCOPY: case TOK_SOUND: {
+        case TOK_SOUND: {
+            int line = tok->line;
+            stmt_t *so = stmt_alloc(STMT_SOUND, line);
+            if (!so) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            lexer_skip(&p->lex);
+            so->event.n = parse_expr(p);
+            if (!so->event.n || !expect(p, TOK_COMMA)) { stmt_free(so); return NULL; }
+            so->event.value = parse_expr(p);
+            if (!so->event.value) { stmt_free(so); return NULL; }
+            return so;
+        }
+
+        case TOK_PCOPY: {
             /* Two numeric arguments, no-op */
             int line = tok->line;
             lexer_skip(&p->lex);

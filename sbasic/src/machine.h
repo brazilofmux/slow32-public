@@ -40,6 +40,12 @@ int pc_field_at(const sb_record_t *r, int f);
 extern int pc_windows;
 void pc_forget(const void *lo, const void *hi);
 
+/* what a VARPTR$ names: the string at this offset of the variables' segment
+ * (X in PLAY and DRAW), 0 if none; a number of its type code, 2 INTEGER or 4
+ * SINGLE as = takes them, rounded, 0 for any other */
+int pc_string_at(int off, const char **s, int *len);
+int pc_var_number(int code, int off, long *out);
+
 /* BSAVE and BLOAD's bytes: the file's name, and an address */
 error_t pc_bsave(const char *file, int offset, int length);
 error_t pc_bload(const char *file, int has_offset, int offset);

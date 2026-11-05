@@ -748,7 +748,7 @@ static const struct { const char *name; char res; const char *args; } qb_sigs[] 
     {"EOF", 'N', "N"}, {"STICK", 'N', "N"}, {"STRIG", 'N', "N"}, {"PEN", 'N', "N"}, {"PLAY", 'N', "N"},
     {"FRE", 'N', "*"}, {"SCREEN", 'N', "NN"}, {"SCREEN", 'N', "NNN"}, {"POINT", 'N', "N"},
     {"POINT", 'N', "NN"}, {"PMAP", 'N', "NN"}, {"TIMER", 'N', ""}, {"CSRLIN", 'N', ""},
-    {"FREEFILE", 'N', ""}, {"SADD", 'N', "S"}, {"VARPTR", 'N', "*"}, {"VARSEG", 'N', "*"},
+    {"FREEFILE", 'N', ""}, {"SADD", 'N', "S"}, {"VARPTR", 'N', "*"}, {"VARSEG", 'N', "*"}, {"VARPTR$", 'S', "*"},
     {"LEN", 'N', "L"}, {"VAL", 'N', "S"}, {"ASC", 'N', "S"}, {"INSTR", 'N', "SS"}, {"INSTR", 'N', "NSS"},
     {"CVI", 'N', "S"}, {"CVL", 'N', "S"}, {"CVS", 'N', "S"}, {"CVD", 'N', "S"},
     {"CHR$", 'S', "N"}, {"STR$", 'S', "N"}, {"HEX$", 'S', "N"}, {"OCT$", 'S', "N"}, {"SPACE$", 'S', "N"},
@@ -866,6 +866,8 @@ static void ty_addr(check_t *c, expr_t *e) {
         if ((d && d->type == STMT_FUNC_DEF) || find(&c->u->consts, a->var.name) || find(&c->modconsts, a->var.name))
             finding(c, e->line, "variable-required", "the address of a FUNCTION's or a CONST's name");
     }
+    if (strcmp(e->call.name, "VARPTR$") == 0 && a->type == EXPR_CALL && name_k(a->call.name) != K_STR)
+        finding(c, e->line, "type-mismatch", "VARPTR$ of a numeric array's element");
     if (e->call.name[0] == 'S' && a->type == EXPR_FIELD_ACCESS)
         finding(c, e->line, "type-mismatch", "SADD of a field: a fixed-length string");
 }
@@ -891,7 +893,7 @@ static int ty_call(check_t *c, expr_t *e) {
         return name_k(name);
     }
     if (e->call.nargs == 1 && (strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 ||
-                               strcmp(name, "SADD") == 0))
+                               strcmp(name, "SADD") == 0 || strcmp(name, "VARPTR$") == 0))
         ty_addr(c, e);
     for (size_t j = 0; j < sizeof qb_sigs / sizeof qb_sigs[0]; j++) {
         if (strcmp(qb_sigs[j].name, name) != 0) continue;
@@ -903,7 +905,8 @@ static int ty_call(check_t *c, expr_t *e) {
             char a = qb_sigs[j].args[i];
             expr_t *x = e->call.args[i];
             if (a == '*' && (strcmp(name, "LBOUND") == 0 || strcmp(name, "UBOUND") == 0 ||
-                             strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0)) continue;
+                             strcmp(name, "VARPTR") == 0 || strcmp(name, "VARSEG") == 0 ||
+                             strcmp(name, "VARPTR$") == 0)) continue;
             if (a == 'L') {             /* LEN: a string, or any variable (its size) */
                 int k = ty_expr(c, x);
                 if (k == K_NUM && x->type != EXPR_VARIABLE && x->type != EXPR_CALL &&
@@ -1033,6 +1036,13 @@ static void ty_stmt(check_t *c, stmt_t *s) {
     }
     case STMT_RUN:
         ty_want(c, s->run_stmt.file, K_STR, "RUN of a number that is no line's");
+        return;
+    case STMT_PLAY:
+        ty_want(c, s->shell_stmt.command, K_STR, "PLAY of a number");
+        return;
+    case STMT_SOUND:
+        ty_want(c, s->event.n, K_NUM, "SOUND of a string");
+        ty_want(c, s->event.value, K_NUM, "SOUND of a string");
         return;
     case STMT_CHAIN:
         ty_want(c, s->shell_stmt.command, K_STR, "CHAIN's file a number");

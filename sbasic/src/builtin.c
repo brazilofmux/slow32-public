@@ -4,6 +4,7 @@
 #include "terminal.h"
 #include "graphics.h"
 #include "machine.h"
+#include "music.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -1215,12 +1216,12 @@ static error_t fn_screen(value_t *args, int nargs, value_t *out) {
     return eval_screen_at(r, c, a, out);
 }
 
-/* PLAY(n): the notes waiting to be played -- none: PLAY plays nothing here */
+/* PLAY(n): the notes waiting to be played (music.c) */
 static error_t fn_play(value_t *args, int nargs, value_t *out) {
     double n;
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     EVAL_CHECK(get_num(&args[0], &n));
-    *out = val_integer(0);
+    *out = val_integer(music_count());
     return ERR_NONE;
 }
 
