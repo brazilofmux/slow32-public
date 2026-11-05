@@ -102,6 +102,7 @@ typedef struct {
     int at_line_start;  /* the next token begins a line */
     token_type_t prev;  /* the token consumed last (-1: none yet), and whether it began its line */
     int prev_first;
+    int dynamic;        /* '$DYNAMIC seen, and no '$STATIC since */
 } lexer_t;
 
 /* Initialize lexer with source text */

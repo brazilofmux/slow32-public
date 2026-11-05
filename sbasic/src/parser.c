@@ -1586,6 +1586,7 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
 }
 
 static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared, int line) {
+    int dynamic = p->lex.dynamic;       /* (as it stands here: a '$STATIC after this DIM on its line is later) */
     if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error_detail(p, ERR_SYNTAX, "Expected variable name after DIM"); return NULL;
     }
@@ -1717,7 +1718,7 @@ static stmt_t *parse_dim_one(parser_t *p, int is_redim, int preserve, int shared
         ast_name_copy(s->dim_stmt.rec_type, tn.text);
     if (s) s->dim_stmt.fixlen = fixlen;
     if (s) {
-        s->dim_stmt.const_bounds = !is_redim;
+        s->dim_stmt.const_bounds = !is_redim && !dynamic;
         for (int i = 0; i < ndims; i++) {
             s->dim_stmt.lower[i] = lower[i];
             if (!bound_const(p, dims[i]) || !bound_const(p, lower[i])) s->dim_stmt.const_bounds = 0;

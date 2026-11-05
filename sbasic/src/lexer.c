@@ -1,5 +1,6 @@
 #include "lexer.h"
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <ctype.h>
 
@@ -197,6 +198,19 @@ void lexer_init(lexer_t *lex, const char *src, int start_line) {
     lex->at_line_start = 1;
     lex->prev = (token_type_t)-1;     /* (none yet) */
     lex->prev_first = 0;
+    lex->dynamic = 0;
+}
+
+/* a comment beginning $DYNAMIC or $STATIC, spaces before the $ and
+ * anything after the word (QBasic, probed): how DIMs from here on, in the
+ * text's order, make their arrays */
+static void metacommand(lexer_t *lex, int skip) {
+    const char *t = lex->src + lex->pos + skip;
+    while (*t == ' ' || *t == '\t') t++;
+    if (*t != '$') return;
+    t++;
+    if (strncasecmp(t, "DYNAMIC", 7) == 0) lex->dynamic = 1;
+    else if (strncasecmp(t, "STATIC", 6) == 0) lex->dynamic = 0;
 }
 
 static char peek_char(lexer_t *lex) {
@@ -295,6 +309,7 @@ static void scan_token_raw(lexer_t *lex, token_t *tok) {
 
     /* Comment: ' */
     if (c == '\'') {
+        metacommand(lex, 1);    /* (the ' is still to come) */
         /* Skip to end of line */
         while (peek_char(lex) && peek_char(lex) != '\n' && peek_char(lex) != '\r')
             next_char(lex);
@@ -532,6 +547,7 @@ static void scan_token_raw(lexer_t *lex, token_t *tok) {
                 tok->type = kw;
                 /* REM: skip rest of line */
                 if (kw == TOK_REM) {
+                    metacommand(lex, 0);
                     while (peek_char(lex) && peek_char(lex) != '\n' && peek_char(lex) != '\r')
                         next_char(lex);
                     tok->type = TOK_EOL;

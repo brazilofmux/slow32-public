@@ -39,7 +39,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Expected END SELECT",
     "Cannot reassign CONST",
     "Subscript out of range",
-    "Array already dimensioned",
+    "Duplicate definition",
     "Out of DATA",
     "File not found",
     "File already open",

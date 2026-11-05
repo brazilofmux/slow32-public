@@ -4729,7 +4729,7 @@ static int literal_int(const expr_t *d, int *out) {
 static void scan_static_dim(stmt_t *s) {
     int sizes[MAX_ARRAY_DIMS], lowers[MAX_ARRAY_DIMS];
     s->dim_stmt.is_static = 0;
-    if (s->dim_stmt.is_redim) return;
+    if (s->dim_stmt.is_redim || !s->dim_stmt.const_bounds) return;      /* (also: under '$DYNAMIC) */
     for (int i = 0; i < s->dim_stmt.ndims; i++) {
         int upper;
         lowers[i] = option_base;

@@ -216,6 +216,7 @@ static const char *const_value(check_t *c, const expr_t *e);
 /* a DIM's bounds all constant (a static array, QB's) -- and not an
  * array COMMON SHARED declares, which is dynamic */
 static int dim_static(check_t *c, const stmt_t *s) {
+    if (!s->dim_stmt.const_bounds) return 0;    /* (the parser's: other bounds, or under '$DYNAMIC) */
     if (find(&c->dimshared, s->dim_stmt.name) && !s->dim_stmt.shared) return 0;
     for (int i = 0; i < s->dim_stmt.ndims; i++)
         if ((s->dim_stmt.dims[i] && const_value(c, s->dim_stmt.dims[i])) ||

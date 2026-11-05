@@ -3005,7 +3005,7 @@ static int static_names_has(const char *name) {
 static void hoist_dims(stmt_t *s) {
     for (; s; s = s->next) {
         if (s->type == STMT_OPTION_BASE) bc_base = s->option_base.base;
-        if (s->type == STMT_DIM && !s->dim_stmt.is_redim && s->dim_stmt.ndims <= 3 &&
+        if (s->type == STMT_DIM && !s->dim_stmt.is_redim && s->dim_stmt.const_bounds && s->dim_stmt.ndims <= 3 &&
             !static_names_has(s->dim_stmt.name)) {
             int ok = 1;
             for (int i = 0; i < s->dim_stmt.ndims && ok; i++) {     /* (as scan_static_dim) */
