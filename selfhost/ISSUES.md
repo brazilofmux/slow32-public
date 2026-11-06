@@ -3966,3 +3966,14 @@ because the first phase of the library build has no shared files).  Gate:
 
 The SQLite shell had its own `getuid` and `getpid` for the old gap; they are gone.
 Also, `selfhost/stage08/Makefile` did not rebuild when `build-s12cc.sh` changed.
+
+### 112. [RESOLVED 2026-11-06] A zero-sized object had no address
+
+`struct e {}; struct e one;` and any use of `&one` failed at the link, "Undefined
+symbol".  A section with no bytes was left out of the object, in both assemblers,
+so a label in it had no section; and `tools/linker/s32-ld.c` skipped an empty
+section other than `.bss`, which gave such a symbol the address 0.  A section now
+exists if it has bytes or a label.  Found through flang, an empty derived type in
+gfortran's `class_array_16`.  Gate: regression/run-local-symbols.sh, which
+requires a non-null address in all four sections and the same object from both
+assemblers; mutation-tested on the linker.

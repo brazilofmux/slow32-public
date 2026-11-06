@@ -3273,6 +3273,14 @@ static int resolve_uleb_diffs(assembler_t *as) {
     return 0;
 }
 
+static bool section_has_label(const assembler_t *as, section_t section) {
+    for (int i = 0; i < as->num_labels; i++) {
+        const label_t *l = &as->labels[i];
+        if (l->section == section && l->is_defined && !l->is_absolute) return true;
+    }
+    return false;
+}
+
 static int write_object_file(assembler_t *as, const char *filename) {
     // Resolve label-difference fixups before emitting
     if (as->num_label_diffs > 0) {
@@ -3320,31 +3328,41 @@ static int write_object_file(assembler_t *as, const char *filename) {
         }
     }
 
-    if (as->code_size > 0) {
+    // A section exists if it has bytes, or a label in it: a zero-sized object has
+    // an address, and with no section its symbol would come out undefined.
+    bool has_code = as->code_size > 0 || section_has_label(as, SECTION_CODE);
+    bool has_rodata = as->rodata_size > 0 || section_has_label(as, SECTION_RODATA);
+    bool has_data = as->data_size > 0 || section_has_label(as, SECTION_DATA);
+    bool has_bss = as->bss_size > 0 || section_has_label(as, SECTION_BSS);
+    bool has_init_array = as->init_array_size > 0 || section_has_label(as, SECTION_INIT_ARRAY);
+    bool has_eh_frame = as->eh_frame_data_size > 0 || section_has_label(as, SECTION_EH_FRAME);
+    bool has_except_table = as->except_table_size > 0 || section_has_label(as, SECTION_EXCEPT_TABLE);
+
+    if (has_code) {
         text_name_offset = add_string(as, ".text");
         num_sections++;
     }
-    if (as->rodata_size > 0) {
+    if (has_rodata) {
         rodata_name_offset = add_string(as, ".rodata");
         num_sections++;
     }
-    if (as->data_size > 0) {
+    if (has_data) {
         data_name_offset = add_string(as, ".data");
         num_sections++;
     }
-    if (as->bss_size > 0) {
+    if (has_bss) {
         bss_name_offset = add_string(as, ".bss");
         num_sections++;
     }
-    if (as->init_array_size > 0) {
+    if (has_init_array) {
         init_array_name_offset = add_string(as, ".init_array");
         num_sections++;
     }
-    if (as->eh_frame_data_size > 0) {
+    if (has_eh_frame) {
         eh_frame_name_offset = add_string(as, ".eh_frame");
         num_sections++;
     }
-    if (as->except_table_size > 0) {
+    if (has_except_table) {
         except_table_name_offset = add_string(as, ".gcc_except_table");
         num_sections++;
     }
@@ -3352,13 +3370,13 @@ static int write_object_file(assembler_t *as, const char *filename) {
     // Create mapping from internal section enum to output section index
     int section_map[SECTION_COUNT] = {0};
     int output_section_idx = 1;  // Output sections are 1-based
-    if (as->code_size > 0) section_map[SECTION_CODE] = output_section_idx++;
-    if (as->rodata_size > 0) section_map[SECTION_RODATA] = output_section_idx++;
-    if (as->data_size > 0) section_map[SECTION_DATA] = output_section_idx++;
-    if (as->bss_size > 0) section_map[SECTION_BSS] = output_section_idx++;
-    if (as->init_array_size > 0) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
-    if (as->eh_frame_data_size > 0) section_map[SECTION_EH_FRAME] = output_section_idx++;
-    if (as->except_table_size > 0) section_map[SECTION_EXCEPT_TABLE] = output_section_idx++;
+    if (has_code) section_map[SECTION_CODE] = output_section_idx++;
+    if (has_rodata) section_map[SECTION_RODATA] = output_section_idx++;
+    if (has_data) section_map[SECTION_DATA] = output_section_idx++;
+    if (has_bss) section_map[SECTION_BSS] = output_section_idx++;
+    if (has_init_array) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
+    if (has_eh_frame) section_map[SECTION_EH_FRAME] = output_section_idx++;
+    if (has_except_table) section_map[SECTION_EXCEPT_TABLE] = output_section_idx++;
     
     // Build symbol table (dynamically grown)
     int num_symbols = 0;
@@ -3542,7 +3560,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     fwrite(&header, sizeof(header), 1, f);
     
     // Write section table
-    if (as->code_size > 0) {
+    if (has_code) {
         s32o_section_t section = {
             .name_offset = text_name_offset,
             .type = S32_SEC_CODE,
@@ -3556,7 +3574,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
     
-    if (as->rodata_size > 0) {
+    if (has_rodata) {
         s32o_section_t section = {
             .name_offset = rodata_name_offset,
             .type = S32_SEC_RODATA,
@@ -3570,7 +3588,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
     
-    if (as->data_size > 0) {
+    if (has_data) {
         s32o_section_t section = {
             .name_offset = data_name_offset,
             .type = S32_SEC_DATA,
@@ -3584,7 +3602,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
     
-    if (as->bss_size > 0) {
+    if (has_bss) {
         s32o_section_t section = {
             .name_offset = bss_name_offset,
             .type = S32_SEC_BSS,
@@ -3598,7 +3616,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
 
-    if (as->init_array_size > 0) {
+    if (has_init_array) {
         s32o_section_t section = {
             .name_offset = init_array_name_offset,
             .type = S32_SEC_DATA,  // Treat as data for linking purposes
@@ -3612,7 +3630,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
 
-    if (as->eh_frame_data_size > 0) {
+    if (has_eh_frame) {
         s32o_section_t section = {
             .name_offset = eh_frame_name_offset,
             .type = S32_SEC_EH_FRAME,
@@ -3626,7 +3644,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
 
-    if (as->except_table_size > 0) {
+    if (has_except_table) {
         s32o_section_t section = {
             .name_offset = except_table_name_offset,
             .type = S32_SEC_EXCEPT_TABLE,

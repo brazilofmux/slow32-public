@@ -9,5 +9,5 @@ cmake -S /src/llvm -B /b -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=
   -DLLVM_DEFAULT_TARGET_TRIPLE=slow32-unknown-none -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
   -DLLVM_INCLUDE_EXAMPLES=OFF -DMLIR_ENABLE_EXECUTION_ENGINE=OFF -DFLANG_INCLUDE_TESTS=OFF -DCLANG_INCLUDE_TESTS=OFF \
   -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF >/dev/null
-ninja -C /b -j8 flang llc
+ninja -C /b -j2 flang llc   # g++ on flang runs a 24 GB VM out of memory at -j4
 /b/bin/flang --version | head -1

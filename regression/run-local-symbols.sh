@@ -162,5 +162,58 @@ if [ -f "$S8/s32-as.s32x" ]; then
     [ "$(names "$W/big.s32x" LOCAL | wc -l | tr -d ' ')" -ge 80000 ]; check "s32-ld: writes them" $?
 fi
 
+echo "=== a zero-sized object has an address, in any section"
+# (an empty struct: the section had no bytes, the assembler left it out, and the
+# symbol came out undefined at the link; the program fails if an address is null)
+cat > "$W/z1.s" <<'E'
+    .bss
+    .globl empty_bss
+empty_bss:
+    .data
+    .globl empty_data
+empty_data:
+    .section .rodata
+    .globl empty_rodata
+empty_rodata:
+E
+cat > "$W/z2.s" <<'E'
+    .text
+    .globl empty_text
+empty_text:
+E
+cat > "$W/z3.s" <<'E'
+    .text
+    .globl main
+main:
+    lui r2, %hi(empty_bss)
+    addi r2, r2, %lo(empty_bss)
+    beq r2, r0, bad
+    lui r2, %hi(empty_data)
+    addi r2, r2, %lo(empty_data)
+    beq r2, r0, bad
+    lui r2, %hi(empty_rodata)
+    addi r2, r2, %lo(empty_rodata)
+    beq r2, r0, bad
+    lui r2, %hi(empty_text)
+    addi r2, r2, %lo(empty_text)
+    beq r2, r0, bad
+    addi r1, r0, 0
+    jalr r0, lr, 0
+bad:
+    addi r1, r0, 1
+    jalr r0, lr, 0
+E
+for u in z1 z2 z3; do "$AS" "$W/$u.s" "$W/h$u.s32o" > /dev/null 2>&1; check "slow32asm: $u" $?; done
+"$LD" -o "$W/hz.s32x" "$RT/crt0.s32o" "$W/hz3.s32o" "$W/hz1.s32o" "$W/hz2.s32o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" --mmio 64K > /dev/null 2>&1
+check "s32-ld: zero-sized symbols resolve" $?
+"$DBT" "$W/hz.s32x" > /dev/null 2>&1; check "slow32asm + s32-ld: runs" $?
+if [ -f "$S8/s32-as.s32x" ]; then
+    for u in z1 z2 z3; do "$DBT" "$S8/s32-as.s32x" "$W/$u.s" "$W/s$u.s32o" > /dev/null 2>&1; check "s32-as: $u" $?
+        cmp -s "$W/h$u.s32o" "$W/s$u.s32o"; check "both assemblers: the same object, $u" $?; done
+    "$DBT" "$S8/s32-ld.s32x" -o "$W/sz.s32x" "$RT/crt0.s32o" "$W/sz3.s32o" "$W/sz1.s32o" "$W/sz2.s32o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" --mmio 64K > /dev/null 2>&1
+    check "s32-ld.s32x: zero-sized symbols resolve" $?
+    "$DBT" "$W/sz.s32x" > /dev/null 2>&1; check "s32-as + s32-ld.s32x: runs" $?
+fi
+
 echo "local symbols: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

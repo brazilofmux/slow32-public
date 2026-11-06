@@ -4,6 +4,9 @@
 
 set -e
 
+# Under another shell BASH_SOURCE is empty, this would be the current directory's
+# parent, and rsync --delete would write there.
+[ -n "${BASH_VERSION:-}" ] || { echo "$0: run this with bash" >&2; exit 2; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
 

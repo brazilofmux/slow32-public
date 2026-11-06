@@ -8,7 +8,7 @@ LCX=$L/build-slow32-libcxx/install/include/c++/v1; RT=$L/flang-rt/lib/runtime
 mkdir -p $O/rt $O/mod
 FL=(-I$HERE/shim -I$L/flang-rt/include -I$L/flang/include -I$L/flang-rt/lib)
 for f in $RT/*.cpp $L/flang/lib/Decimal/*.cpp; do n=${f:t:r}
-  case $n in execute|trampoline|io-stmt-minimal|io-api-gpu|io-api-server) continue;; esac   # no processes; W^X; GPU only
+  case $n in trampoline|io-stmt-minimal|io-api-gpu|io-api-server) continue;; esac   # W^X; GPU only
   $CXX -target slow32-unknown-none -std=c++17 -O2 -fno-exceptions -fno-rtti -nostdinc++ -isystem $LCX -isystem $ROOT/runtime/include $FL -DFLANG_RT_BUILD -DRT_NO_RPC_SERVER -DRT_USE_PSEUDO_LOCK=1 -DFLANG_LITTLE_ENDIAN=1 -S $f -o $O/rt/$n.s
   $AS $O/rt/$n.s $O/rt/$n.s32o >/dev/null
 done

@@ -1622,6 +1622,14 @@ static int add_sym(int i, int sec, int bind) {
     return 0;
 }
 
+int sec_has_label(int sec)
+{
+    int i;
+    for (i = 0; i < g_nlbl; i = i + 1)
+        if (g_lbl_defd[i] && !g_lbl_abs[i] && g_lbl_sec[i] == sec) return 1;
+    return 0;
+}
+
 int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, int bss_idx) {
     int i;
     char *name;
@@ -1969,11 +1977,13 @@ int write_obj(char *out) {
     data_data_off = 0;
     init_array_data_off = 0;
 
-    if (g_tsz) { nsec = nsec + 1; text_idx = nsec; }
-    if (g_rsz) { nsec = nsec + 1; rodata_idx = nsec; }
-    if (g_dsz) { nsec = nsec + 1; data_idx = nsec; }
-    if (g_isz) { nsec = nsec + 1; init_array_idx = nsec; }
-    if (g_bsz) { nsec = nsec + 1; bss_idx = nsec; }
+    /* A section exists if it has bytes, or a label in it: a zero-sized object has
+     * an address, and with no section its symbol would come out undefined. */
+    if (g_tsz || sec_has_label(SEC_TEXT)) { nsec = nsec + 1; text_idx = nsec; }
+    if (g_rsz || sec_has_label(SEC_RODATA)) { nsec = nsec + 1; rodata_idx = nsec; }
+    if (g_dsz || sec_has_label(SEC_DATA)) { nsec = nsec + 1; data_idx = nsec; }
+    if (g_isz || sec_has_label(SEC_INIT_ARRAY)) { nsec = nsec + 1; init_array_idx = nsec; }
+    if (g_bsz || sec_has_label(SEC_BSS)) { nsec = nsec + 1; bss_idx = nsec; }
 
     for (i = 0; i < g_nrel; i = i + 1) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel = text_rel + 1;
@@ -2014,10 +2024,10 @@ int write_obj(char *out) {
     str_off = off;
     off = off + g_ssz;
     off = (off + 3) & -4;
-    if (text_idx) { text_data_off = off; off = off + g_tsz; }
-    if (rodata_idx) { rodata_data_off = off; off = off + g_rsz; }
-    if (data_idx) { data_data_off = off; off = off + g_dsz; }
-    if (init_array_idx) { init_array_data_off = off; off = off + g_isz; }
+    if (g_tsz) { text_data_off = off; off = off + g_tsz; }
+    if (g_rsz) { rodata_data_off = off; off = off + g_rsz; }
+    if (g_dsz) { data_data_off = off; off = off + g_dsz; }
+    if (g_isz) { init_array_data_off = off; off = off + g_isz; }
 
     g_out = fopen(out, "wb");
     if (!g_out) return -1;

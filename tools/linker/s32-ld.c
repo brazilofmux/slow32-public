@@ -806,9 +806,8 @@ static void merge_sections(linker_state_t *ld) {
         for (uint32_t s = 0; s < inf->header.nsections; s++) {
             s32o_section_t *isec = &inf->sections[s];
             
-            // Skip empty sections
-            if (isec->size == 0 && isec->type != S32_SEC_BSS) continue;
-            
+            // An empty section is kept: the assembler writes one only when a label
+            // is in it, and that symbol's address is the section's.
             const char *name = safe_string(inf, isec->name_offset);
             int combined_idx = find_or_create_section(ld, name, isec->type,
                                                        isec->flags, isec->align);

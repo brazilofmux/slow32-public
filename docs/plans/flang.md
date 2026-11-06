@@ -17,6 +17,13 @@ stage08 and DBT stress test.
   `complex`, math intrinsics.  Formatted lines are byte-identical to gfortran;
   list-directed ones differ as above.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
+- gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
+  carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
+  oracle: **2,297 of 2,592 agree**, where gfortran has a verdict and the test is one
+  file.  Of the 295 left, LLVM's `DisabledFiles.cmake` lists 271 as failing on
+  flang natively.  This corpus found, in a day, everything in "what it found".
+- `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
+  the other side) and `wide` (what is wider than `index`), each engine.
 
 ```sh
 ninja -C ~/llvm-project/build-flang flang llc   # configure: see below
@@ -60,19 +67,37 @@ ran off the top of memory.  What it took:
 - `Target.cpp`: the SLOW-32 entry, `COMPLEX` as clang has `_Complex`.
 - `lock.h`: no threads, real files.
 
-Known left in this family: `c_ptr` holds its address in `integer(int64)`
-(`__fortran_builtins.f90`), and `MaxDescriptorSizeInBytes` over-approximates
-(upstream's FIXME; harmless, only padding).
+## What it found
+
+FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
+
+- Semantics sized descriptors and procedure pointers for a 64-bit machine, and
+  aligned 8-byte types at 8 where clang has 4: `storage_size` said 64 bytes for
+  elements 36 apart, and the runtime walks the type tables by those numbers.
+  (`MaxDescriptorSizeInBytes` was called harmless padding here.  It was not.)
+- `c_ptr` and `c_funptr` held 64-bit addresses, `c_long` and `c_size_t` were 64
+  bits, and two type-table structs disagreed with the runtime's.
+- An `INTEGER(8)` DO variable beyond 32 bits miscounted, in loops and array
+  constructors; `NINT` to `INTEGER(8)` read a 32-bit `lround` as 64 bits.
+- `REAL(16)` followed the host's `long double`, so hosts could disagree.
+- Not flang's: a zero-sized global (an empty struct) never linked, from C either,
+  in both toolchains (selfhost ISSUES-112).
+
+## Still wrong
+
+- `do i = 0, 1, huge(0)` runs zero times: the trip count overflows a 32-bit index.
+- A `character(c_char), value` above 127 reaches a C `char` with the wrong sign.
+- `SetRecl` takes a `size_t`, so a RECL above 4 GB is cut short.
+- `INTEGER(16)` I/O does not link: no 128-bit type in clang's SLOW-32 target.
+- `bessel_yn` in `REAL(4)` is a unit in the last place off, enough to fail
+  `bessel_5` through the recurrence (runtime ISSUES-29).
 
 ## Not done
 
-- `execute` (no processes here) and `trampoline` (internal procedures passed as
-  arguments need code made at run time; W^X forbids it) are left out of the
-  runtime.  Which programs that refuses has not been measured.
-- `REAL(10)`, `REAL(16)`: `long double` is `double` here, and flang's kinds have
-  not been checked against it.
-- A Fortran 90+ corpus: FCVS is F77, and `f90t` is one program.  gfortran is the
-  oracle.
+- `trampoline` is left out of the runtime: internal procedures passed as arguments
+  need code made at run time, and W^X forbids it.  `llc` says so; 2 of the corpus.
+  `EXECUTE_COMMAND_LINE` answers `cmdstat = -1`, no command processor.
+- `REAL(4)` and `(8)` are all there is: 2, 3, 10 and 16 are off.
 - `flang-rt` by its own CMake, a driver (`flang` itself, not `-fc1`), an image.
   Only `slow32-dbt` and `slow32-fast` have been run.
 - Speed and code size are unmeasured.  `hello` is 1.2 MB; the runtime and libc++

@@ -43,6 +43,147 @@ index 7147c3a6b940..00ea0306db03 100644
    // No state.
  #elif USE_PTHREADS
    pthread_mutex_t mutex_{};
+diff --git a/flang-rt/lib/runtime/__fortran_builtins.f90 b/flang-rt/lib/runtime/__fortran_builtins.f90
+index 8c3983f38dd3..ea94c5a3d769 100644
+--- a/flang-rt/lib/runtime/__fortran_builtins.f90
++++ b/flang-rt/lib/runtime/__fortran_builtins.f90
+@@ -43,12 +43,18 @@ module __fortran_builtins
+   intrinsic :: selected_int_kind
+   integer, parameter :: int64 = selected_int_kind(18)
+ 
++#if defined(__ILP32__)
++  integer, parameter :: __address_kind = selected_int_kind(9)
++#else
++  integer, parameter :: __address_kind = int64
++#endif
++
+   type, bind(c), public :: __builtin_c_ptr
+-    integer(kind=int64), private :: __address
++    integer(kind=__address_kind), private :: __address
+   end type
+ 
+   type, bind(c), public :: __builtin_c_funptr
+-    integer(kind=int64), private :: __address
++    integer(kind=__address_kind), private :: __address
+   end type
+ 
+   type, public :: __builtin_event_type
+diff --git a/flang-rt/lib/runtime/__fortran_type_info.f90 b/flang-rt/lib/runtime/__fortran_type_info.f90
+index d8cf385b8665..1cb422acecd2 100644
+--- a/flang-rt/lib/runtime/__fortran_type_info.f90
++++ b/flang-rt/lib/runtime/__fortran_type_info.f90
+@@ -70,7 +70,11 @@ module __fortran_type_info
+ 
+   type, bind(c) :: Value
+     integer(1) :: genre ! Value::Genre
++#if defined(__ILP32__)
++    integer(1) :: __padding0(3) ! int64 is aligned at 4
++#else
+     integer(1) :: __padding0(7)
++#endif
+     integer(kind=int64) :: value
+   end type
+ 
+@@ -124,7 +128,9 @@ module __fortran_type_info
+     integer(1) :: isArgDescriptorSet
+     integer(1) :: isTypeBound ! binding index + 1, if any
+     integer(1) :: specialCaseFlag
++#if !defined(__ILP32__)
+     integer(1) :: __padding0(4)
++#endif
+     type(__builtin_c_funptr) :: proc
+   end type
+ 
+diff --git a/flang-rt/lib/runtime/execute.cpp b/flang-rt/lib/runtime/execute.cpp
+index 875cb597fa07..fb82bb7c6128 100644
+--- a/flang-rt/lib/runtime/execute.cpp
++++ b/flang-rt/lib/runtime/execute.cpp
+@@ -16,12 +16,14 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <errno.h>
++#ifndef __slow32__
+ #include <future>
++#endif
+ #include <limits>
+ 
+ #ifdef _WIN32
+ #include "flang/Common/windows-include.h"
+-#else
++#elif !defined(__slow32__) // no processes there
+ #include <signal.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+@@ -184,6 +186,19 @@ void RTNAME(ExecuteCommandLine)(const Descriptor &command, bool wait,
+     const Descriptor *exitstat, const Descriptor *cmdstat,
+     const Descriptor *cmdmsg, const char *sourceFile, int line) {
+   Terminator terminator{sourceFile, line};
++#ifdef __slow32__
++  // No command processor: 16.9.73's cmdstat of -1, or error termination.
++  if (!cmdstat) {
++    terminator.Crash("EXECUTE_COMMAND_LINE: no command processor");
++  }
++  RUNTIME_CHECK(terminator, IsValidIntDescriptor(cmdstat));
++  StoreIntToDescriptor(cmdstat, NO_SUPPORT_ERR, terminator);
++  if (cmdmsg) {
++    RUNTIME_CHECK(terminator, IsValidCharDescriptor(cmdmsg));
++    CheckAndCopyCharsToDescriptor(cmdmsg, "No command processor");
++  }
++  return;
++#else
+   char *newCmd{EnsureNullTerminated(
+       command.OffsetElement(), command.ElementBytes(), terminator)};
+ 
+@@ -312,6 +327,7 @@ void RTNAME(ExecuteCommandLine)(const Descriptor &command, bool wait,
+   if (newCmd != command.OffsetElement()) {
+     FreeMemory(newCmd);
+   }
++#endif
+ }
+ 
+ } // namespace Fortran::runtime
+diff --git a/flang-rt/lib/runtime/ieee_arithmetic.f90 b/flang-rt/lib/runtime/ieee_arithmetic.f90
+index 0e7d4493385f..ac1154f96ab7 100644
+--- a/flang-rt/lib/runtime/ieee_arithmetic.f90
++++ b/flang-rt/lib/runtime/ieee_arithmetic.f90
+@@ -288,6 +288,24 @@ module ieee_arithmetic
+ #endif
+ #endif
+ 
++#if __slow32__ /* REAL(4) and (8) are all it has */
++#undef SPECIFICS_R
++#undef SPECIFICS_RI
++#undef SPECIFICS_RR
++#undef SPECIFICS_rRR
++#define SPECIFICS_R(G) \
++  G(4) G(8)
++#define SPECIFICS_RI(G) \
++  G(4,1) G(4,2) G(4,4) G(4,8) \
++  G(8,1) G(8,2) G(8,4) G(8,8)
++#define SPECIFICS_RR(G) \
++  G(4,4) G(4,8) \
++  G(8,4) G(8,8)
++#define SPECIFICS_rRR(G) \
++  G(4,4,4) G(8,4,8) \
++  G(8,8,4) G(8,8,8)
++#endif
++
+ #define IEEE_CLASS_R(XKIND) \
+   simple elemental type(ieee_class_type) function ieee_class_a##XKIND(x); \
+     import ieee_class_type; \
+diff --git a/flang-rt/lib/runtime/iso_c_binding.f90 b/flang-rt/lib/runtime/iso_c_binding.f90
+index 619b1f2e5c6d..96f606e26342 100644
+--- a/flang-rt/lib/runtime/iso_c_binding.f90
++++ b/flang-rt/lib/runtime/iso_c_binding.f90
+@@ -45,7 +45,7 @@ module iso_c_binding
+   integer, parameter, public :: &
+     c_int = c_int32_t, &
+     c_short = c_int16_t, &
+-#if defined(_WIN32)
++#if defined(_WIN32) || defined(__ILP32__)
+     c_long = c_int32_t, &
+ #else
+     c_long = c_int64_t, &
 diff --git a/flang-rt/lib/runtime/main.cpp b/flang-rt/lib/runtime/main.cpp
 index 950d0839863f..dac5766e58af 100644
 --- a/flang-rt/lib/runtime/main.cpp
@@ -57,6 +198,24 @@ index 950d0839863f..dac5766e58af 100644
    // I/O is initialized on demand so that it works for non-Fortran main().
  }
  
+diff --git a/flang/include/flang/Evaluate/target.h b/flang/include/flang/Evaluate/target.h
+index 7b38db2db195..a1164c22e658 100644
+--- a/flang/include/flang/Evaluate/target.h
++++ b/flang/include/flang/Evaluate/target.h
+@@ -131,9 +131,12 @@ public:
+   IeeeFeatures &ieeeFeatures() { return ieeeFeatures_; }
+   const IeeeFeatures &ieeeFeatures() const { return ieeeFeatures_; }
+ 
+-  std::size_t integerKindForPointer() { return integerKindForPointer_; }
++  std::size_t integerKindForPointer() const { return integerKindForPointer_; }
+   void set_integerKindForPointer(std::size_t newKind) {
+     integerKindForPointer_ = newKind;
++    procedurePointerByteSize_ = newKind;
++    procedurePointerAlignment_ = newKind;
++    descriptorAlignment_ = newKind;
+   }
+ 
+ private:
 diff --git a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 index 67bdf6867251..56928940846a 100644
 --- a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
@@ -310,7 +469,7 @@ index 93f36d077a53..a51e7e8bd517 100644
      const char *sourceFile = nullptr, int sourceLine = 0);
  
 diff --git a/flang/include/flang/Runtime/descriptor-consts.h b/flang/include/flang/Runtime/descriptor-consts.h
-index acd7bc5ddbde..4b7b3b9f6622 100644
+index acd7bc5ddbde..472e2b91750a 100644
 --- a/flang/include/flang/Runtime/descriptor-consts.h
 +++ b/flang/include/flang/Runtime/descriptor-consts.h
 @@ -9,6 +9,7 @@
@@ -330,6 +489,27 @@ index acd7bc5ddbde..4b7b3b9f6622 100644
  class DerivedType;
  } // namespace Fortran::runtime::typeInfo
  
+@@ -35,6 +36,20 @@ using common::TypeCategory;
+ /// Returns size in bytes of the descriptor (not the data)
+ /// This must be at least as large as the largest descriptor of any target
+ /// triple.
++/// The same layout on a target whose pointers, size_t and CFI_index_t are
++/// pointerBytes wide; length parameters are 8 bytes on any target.
++static constexpr RT_API_ATTRS std::size_t DescriptorSizeInBytes(
++    std::size_t pointerBytes, int rank, bool addendum = false,
++    int lengthTypeParameters = 0) {
++  std::size_t bytes{2u * pointerBytes + 8u + rank * 3u * pointerBytes};
++  if (addendum || lengthTypeParameters > 0) {
++    if (lengthTypeParameters < 1)
++      lengthTypeParameters = 1;
++    bytes += pointerBytes + static_cast<std::size_t>(lengthTypeParameters) * 8u;
++  }
++  return bytes;
++}
++
+ static constexpr RT_API_ATTRS std::size_t MaxDescriptorSizeInBytes(
+     int rank, bool addendum = false, int lengthTypeParameters = 0) {
+   // Layout:
 diff --git a/flang/include/flang/Runtime/extensions.h b/flang/include/flang/Runtime/extensions.h
 index 7746116c7f1f..aa0ccd82ccc6 100644
 --- a/flang/include/flang/Runtime/extensions.h
@@ -917,6 +1097,207 @@ index 3393ed1dc981..9705e3e339e9 100644
  
  void RTDECL(Transpose)(Descriptor &result, const Descriptor &matrix,
      const char *sourceFile = nullptr, int line = 0);
+diff --git a/flang/include/flang/Tools/TargetSetup.h b/flang/include/flang/Tools/TargetSetup.h
+index fe6215b7a538..2e3bad42bf4c 100644
+--- a/flang/include/flang/Tools/TargetSetup.h
++++ b/flang/include/flang/Tools/TargetSetup.h
+@@ -97,6 +97,23 @@ namespace Fortran::tools {
+   targetCharacteristics.set_integerKindForPointer(
+       targetTriple.getArchPointerBitWidth() / 8);
+ 
++  // SLOW-32 aligns its 8-byte types at 4 (clang's TargetInfo; the data layout's
++  // i64:32 and f64:32) and has no long double beyond double, whatever the host's.
++  if (targetTriple.isSLOW32()) {
++    using common::TypeCategory;
++    for (TypeCategory category : {TypeCategory::Integer, TypeCategory::Unsigned,
++             TypeCategory::Logical, TypeCategory::Real}) {
++      targetCharacteristics.EnableType(category, 8, 8, 4);
++    }
++    targetCharacteristics.EnableType(TypeCategory::Complex, 8, 16, 4);
++    targetCharacteristics.EnableType(TypeCategory::Integer, 16, 16, 4);
++    targetCharacteristics.EnableType(TypeCategory::Unsigned, 16, 16, 4);
++    for (int kind : {2, 3, 16}) { // nothing here does half precision either
++      targetCharacteristics.DisableType(TypeCategory::Real, kind);
++      targetCharacteristics.DisableType(TypeCategory::Complex, kind);
++    }
++  }
++
+   // TODO: use target machine data layout to set-up the target characteristics
+   // type size and alignment info.
+ }
+diff --git a/flang/lib/Evaluate/intrinsics.cpp b/flang/lib/Evaluate/intrinsics.cpp
+index f7ea85a455ac..e7b3bc635c5b 100644
+--- a/flang/lib/Evaluate/intrinsics.cpp
++++ b/flang/lib/Evaluate/intrinsics.cpp
+@@ -104,6 +104,7 @@ ENUM_CLASS(KindCode, none, defaultIntegerKind,
+     dimArg, // this argument is DIM=
+     likeMultiply, // for DOT_PRODUCT and MATMUL
+     subscript, // address-sized integer
++    pointerSized, // the target's pointer size: C_SIZE_T, for SIZEOF
+     size, // default KIND= for SIZE(), UBOUND, &c.
+     addressable, // for PRESENT(), &c.; anything (incl. procedure) but BOZ
+     nullPointerType, // for ASSOCIATED(NULL())
+@@ -144,6 +145,7 @@ static constexpr TypePattern DoublePrecisionComplex{
+     ComplexType, KindCode::doublePrecision};
+ static constexpr TypePattern QuadPrecision{RealType, KindCode::quadPrecision};
+ static constexpr TypePattern SubscriptInt{IntType, KindCode::subscript};
++static constexpr TypePattern PointerSizedInt{IntType, KindCode::pointerSized};
+ 
+ // Match any kind of some intrinsic or derived types
+ static constexpr TypePattern AnyInt{IntType, KindCode::any};
+@@ -993,7 +995,7 @@ static const IntrinsicInterface genericIntrinsicFunction[]{
+             OptionalDIM, // unless array is assumed-size
+             SizeDefaultKIND},
+         KINDInt, Rank::scalar, IntrinsicClass::inquiryFunction},
+-    {"sizeof", {{"x", AnyData, Rank::anyOrAssumedRank}}, SubscriptInt,
++    {"sizeof", {{"x", AnyData, Rank::anyOrAssumedRank}}, PointerSizedInt,
+         Rank::scalar, IntrinsicClass::inquiryFunction},
+     {"spacing", {{"x", SameReal}}, SameReal},
+     {"spread",
+@@ -2654,6 +2656,13 @@ std::optional<SpecificCall> IntrinsicInterface::Match(
+       resultType =
+           DynamicType{TypeCategory::Integer, defaults.subscriptIntegerKind()};
+       break;
++    case KindCode::pointerSized:
++      CHECK(result.categorySet == IntType);
++      CHECK(*category == TypeCategory::Integer);
++      resultType = DynamicType{TypeCategory::Integer,
++          static_cast<int>(
++              context.targetCharacteristics().integerKindForPointer())};
++      break;
+     case KindCode::size:
+       CHECK(result.categorySet == IntType);
+       CHECK(*category == TypeCategory::Integer);
+diff --git a/flang/lib/Frontend/CompilerInvocation.cpp b/flang/lib/Frontend/CompilerInvocation.cpp
+index d4c6b44e1147..c6bc318cf40b 100644
+--- a/flang/lib/Frontend/CompilerInvocation.cpp
++++ b/flang/lib/Frontend/CompilerInvocation.cpp
+@@ -2029,6 +2029,9 @@ void CompilerInvocation::setDefaultPredefinitions() {
+   }
+ 
+   llvm::Triple targetTriple{llvm::Triple(this->targetOpts.triple)};
++  if (targetTriple.isArch32Bit()) {
++    fortranOptions.predefinitions.emplace_back("__ILP32__", "1");
++  }
+   if (targetTriple.isOSLinux()) {
+     fortranOptions.predefinitions.emplace_back("__linux__", "1");
+   } else if (targetTriple.isOSAIX()) {
+@@ -2056,6 +2059,9 @@ void CompilerInvocation::setDefaultPredefinitions() {
+     fortranOptions.predefinitions.emplace_back("__aarch64__", "1");
+     fortranOptions.predefinitions.emplace_back("__aarch64", "1");
+     break;
++  case llvm::Triple::ArchType::slow32:
++    fortranOptions.predefinitions.emplace_back("__slow32__", "1");
++    break;
+   case llvm::Triple::ArchType::systemz:
+     fortranOptions.predefinitions.emplace_back("__s390x__", "1");
+     fortranOptions.predefinitions.emplace_back("__s390x", "1");
+diff --git a/flang/lib/Lower/Bridge.cpp b/flang/lib/Lower/Bridge.cpp
+index 18ce19eafae9..7913293d5d81 100644
+--- a/flang/lib/Lower/Bridge.cpp
++++ b/flang/lib/Lower/Bridge.cpp
+@@ -52,6 +52,7 @@
+ #include "flang/Optimizer/Dialect/FIROps.h"
+ #include "flang/Optimizer/Dialect/Support/FIRContext.h"
+ #include "flang/Optimizer/HLFIR/HLFIROps.h"
++#include "flang/Optimizer/Support/TargetModel.h"
+ #include "flang/Optimizer/Support/AllocationPolicy.h"
+ #include "flang/Optimizer/Support/DataLayout.h"
+ #include "flang/Optimizer/Support/FatalError.h"
+@@ -3293,6 +3294,11 @@ private:
+         auto doLoopOp = mlir::cast<fir::DoLoopOp>(info.loopOp);
+         builder->setInsertionPointAfter(doLoopOp);
+         mlir::Type idxTy = builder->getIndexType();
++        // Wider than index, the DO variable's own type holds the arithmetic.
++        if (auto intTy = mlir::dyn_cast<mlir::IntegerType>(
++                doLoopOp.getLowerBound().getType()))
++          if (intTy.getWidth() > fir::getTargetSizeBits())
++            idxTy = intTy;
+         mlir::Value lb =
+             builder->createConvert(loc, idxTy, doLoopOp.getLowerBound());
+         mlir::Value ub =
+diff --git a/flang/lib/Lower/ConvertArrayConstructor.cpp b/flang/lib/Lower/ConvertArrayConstructor.cpp
+index 1d22da615ba0..61f6abd4da66 100644
+--- a/flang/lib/Lower/ConvertArrayConstructor.cpp
++++ b/flang/lib/Lower/ConvertArrayConstructor.cpp
+@@ -13,6 +13,7 @@
+ #include "flang/Lower/ConvertType.h"
+ #include "flang/Lower/StatementContext.h"
+ #include "flang/Lower/SymbolMap.h"
++#include "flang/Optimizer/Support/TargetModel.h"
+ #include "flang/Optimizer/Builder/HLFIRTools.h"
+ #include "flang/Optimizer/Builder/Runtime/ArrayConstructor.h"
+ #include "flang/Optimizer/Builder/TemporaryStorage.h"
+@@ -219,6 +220,7 @@ public:
+     // implied-do-index = lower+((i-1)*stride)
+     mlir::Value diff = mlir::arith::SubIOp::create(
+         builder, loc, elementalOp.getIndices()[0], one);
++    diff = builder.createConvert(loc, lower.getType(), diff);
+     mlir::Value mul = mlir::arith::MulIOp::create(builder, loc, diff, stride);
+     mlir::Value add = mlir::arith::AddIOp::create(builder, loc, lower, mul);
+     return add;
+@@ -747,8 +749,17 @@ static void genAcValue(mlir::Location loc,
+                        Fortran::lower::SymMap &symMap,
+                        Fortran::lower::StatementContext &stmtCtx,
+                        ArrayCtorLoweringStrategy &arrayBuilder) {
++  // An ac-implied-do-variable is INTEGER(8) here: it stays that wide where
++  // index is narrower, as its bounds and values may not fit.
+   auto lowerIndex =
+       [&](const Fortran::evaluate::ExtentExpr expr) -> mlir::Value {
++    if (fir::getTargetSizeBits() < 64) {
++      fir::FirOpBuilder &builder = converter.getFirOpBuilder();
++      hlfir::Entity value = Fortran::lower::convertExprToHLFIR(
++          loc, converter, toEvExpr(expr), symMap, stmtCtx);
++      value = hlfir::loadTrivialScalar(loc, builder, value);
++      return builder.createConvert(loc, builder.getI64Type(), value);
++    }
+     return lowerExtentExpr(loc, converter, symMap, stmtCtx, expr);
+   };
+   mlir::Value lower = lowerIndex(impledDo.lower());
+diff --git a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
+index 43c23ba28fa9..d6fa0a8e4b4e 100644
+--- a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
++++ b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
+@@ -1455,9 +1455,9 @@ static constexpr MathOperation mathOperations[] = {
+     {"nearbyint", RTNAME_STRING(NearbyintF128), FuncTypeReal16Real16,
+      genLibF128Call},
+     // llvm.lround behaves the same way as libm's lround.
+-    {"nint", "llvm.lround.i64.f64", genFuncType<Ty::Integer<8>, Ty::Real<8>>,
++    {"nint", "llvm.llround.i64.f64", genFuncType<Ty::Integer<8>, Ty::Real<8>>,
+      genLibCall},
+-    {"nint", "llvm.lround.i64.f32", genFuncType<Ty::Integer<8>, Ty::Real<4>>,
++    {"nint", "llvm.llround.i64.f32", genFuncType<Ty::Integer<8>, Ty::Real<4>>,
+      genLibCall},
+     {"nint", RTNAME_STRING(LlroundF128), FuncTypeInteger8Real16,
+      genLibF128Call},
+@@ -6372,6 +6372,13 @@ fir::ExtendedValue IntrinsicLibrary::genIeeeSupportRounding(
+   assert(args.size() == 1 || args.size() == 2);
+   auto [fieldRef, fieldTy] = getFieldRef(builder, loc, getBase(args[0]));
+   mlir::Value mode = fir::LoadOp::create(builder, loc, fieldRef);
++  if (fir::getTargetTriple(builder.getModule()).isSLOW32()) // nearest, only
++    return builder.createConvert(
++        loc, resultType,
++        mlir::arith::CmpIOp::create(
++            builder, loc, mlir::arith::CmpIPredicate::eq, mode,
++            builder.createIntegerConstant(loc, fieldTy,
++                                          _FORTRAN_RUNTIME_IEEE_NEAREST)));
+   mlir::Value lbOk = mlir::arith::CmpIOp::create(
+       builder, loc, mlir::arith::CmpIPredicate::sge, mode,
+       builder.createIntegerConstant(loc, fieldTy,
+diff --git a/flang/lib/Optimizer/CodeGen/CodeGen.cpp b/flang/lib/Optimizer/CodeGen/CodeGen.cpp
+index cf13475d4f88..b246d3c1e8de 100644
+--- a/flang/lib/Optimizer/CodeGen/CodeGen.cpp
++++ b/flang/lib/Optimizer/CodeGen/CodeGen.cpp
+@@ -2592,7 +2592,8 @@ struct XEmboxOpConversion : public EmboxCommonConversion<fir::cg::XEmboxOp> {
+     // each dimension. Initially, this is the size of the input element.
+     // Note that when there are no components/substring, the resultEleSize
+     // that was previously computed matches the input element size.
+-    mlir::Value prevDimByteStride = resultEleSize;
++    mlir::Value prevDimByteStride =
++        integerCast(loc, rewriter, i64Ty, resultEleSize);
+     if (hasSubcomp) {
+       // We have a subcomponent. The step value needs to be the number of
+       // bytes per element (which is a derived type).
 diff --git a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp b/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
 index 995a2efba25a..3efea2073df3 100644
 --- a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
@@ -1068,3 +1449,97 @@ index 66ae5c4c653a..91b4d34e4791 100644
    mod->setAttr(mlir::LLVM::LLVMDialect::getTargetTripleAttrName(),
                 mlir::StringAttr::get(mod.getContext(), target));
  }
+diff --git a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
+index b12cabf6cd73..8d8bdd2e9502 100644
+--- a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
++++ b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
+@@ -10,6 +10,7 @@
+ #include "flang/Optimizer/Dialect/FIROps.h"
+ #include "flang/Optimizer/Dialect/Support/FIRContext.h"
+ #include "flang/Optimizer/Dialect/Support/KindMapping.h"
++#include "flang/Optimizer/Support/TargetModel.h"
+ #include "flang/Optimizer/Transforms/Passes.h"
+ #include "mlir/Dialect/Affine/IR/AffineOps.h"
+ #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+@@ -62,7 +63,18 @@ public:
+     // conditional block since it already has the induction variable and
+     // loop-carried values as arguments.
+     auto *conditionalBlock = &loop.getRegion().front();
+-    conditionalBlock->addArgument(rewriter.getIndexType(), loc);
++    // Iterations are counted in index, unless the DO variable is wider: on a
++    // 32-bit target, INTEGER(8) bounds would lose their high words.
++    mlir::Type countTy = rewriter.getIndexType();
++    if (auto intTy =
++            mlir::dyn_cast<mlir::IntegerType>(loop.getLowerBound().getType()))
++      if (intTy.getWidth() > fir::getTargetSizeBits())
++        countTy = intTy;
++    auto countConstant = [&](int64_t n) -> mlir::Value {
++      return mlir::arith::ConstantOp::create(
++          rewriter, loc, countTy, rewriter.getIntegerAttr(countTy, n));
++    };
++    conditionalBlock->addArgument(countTy, loc);
+     auto *firstBlock =
+         rewriter.splitBlock(conditionalBlock, conditionalBlock->begin());
+     auto *lastBlock = &loop.getRegion().back();
+@@ -79,10 +91,9 @@ public:
+     // Initalization block
+     rewriter.setInsertionPointToEnd(initBlock);
+     auto toIndex = [&](mlir::Value value) -> mlir::Value {
+-      if (value.getType().isIndex())
++      if (value.getType() == countTy)
+         return value;
+-      return fir::ConvertOp::create(rewriter, loc, rewriter.getIndexType(),
+-                                    value);
++      return fir::ConvertOp::create(rewriter, loc, countTy, value);
+     };
+     mlir::Value lowIndex = toIndex(low);
+     mlir::Value highIndex = toIndex(high);
+@@ -93,10 +104,10 @@ public:
+         mlir::arith::DivSIOp::create(rewriter, loc, distance, stepIndex);
+ 
+     if (forceLoopToExecuteOnce) {
+-      auto zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
++      mlir::Value zero = countConstant(0);
+       auto cond = mlir::arith::CmpIOp::create(
+           rewriter, loc, arith::CmpIPredicate::sle, iters, zero);
+-      auto one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
++      mlir::Value one = countConstant(1);
+       iters = mlir::arith::SelectOp::create(rewriter, loc, cond, one, iters);
+     }
+ 
+@@ -117,7 +128,7 @@ public:
+     assert(steppedIndex && "must be a Value");
+     auto lastArg = conditionalBlock->getNumArguments() - 1;
+     auto itersLeft = conditionalBlock->getArgument(lastArg);
+-    auto one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
++    mlir::Value one = countConstant(1);
+     mlir::Value itersMinusOne =
+         mlir::arith::SubIOp::create(rewriter, loc, itersLeft, one);
+ 
+@@ -138,7 +149,7 @@ public:
+ 
+     // Conditional block
+     rewriter.setInsertionPointToEnd(conditionalBlock);
+-    auto zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
++    mlir::Value zero = countConstant(0);
+     auto comparison = mlir::arith::CmpIOp::create(
+         rewriter, loc, arith::CmpIPredicate::sgt, itersLeft, zero);
+ 
+diff --git a/flang/lib/Semantics/compute-offsets.cpp b/flang/lib/Semantics/compute-offsets.cpp
+index ce9e19c57a86..7edfa497fd53 100644
+--- a/flang/lib/Semantics/compute-offsets.cpp
++++ b/flang/lib/Semantics/compute-offsets.cpp
+@@ -521,10 +521,9 @@ auto ComputeOffsetsHelper::GetSizeAndAlignment(
+     int lenParams{derived ? CountLenParameters(*derived) : 0};
+     bool needAddendum{derived || (dyType && dyType->IsUnlimitedPolymorphic())};
+ 
+-    // FIXME: Get descriptor size from targetCharacteristics instead
+-    // overapproximation
+-    std::size_t size{runtime::MaxDescriptorSizeInBytes(
+-        symbol.Rank(), needAddendum, lenParams)};
++    std::size_t size{runtime::DescriptorSizeInBytes(
++        targetCharacteristics.integerKindForPointer(), symbol.Rank(),
++        needAddendum, lenParams)};
+ 
+     return {size, targetCharacteristics.descriptorAlignment()};
+   }

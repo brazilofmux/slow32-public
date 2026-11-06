@@ -347,6 +347,12 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
 
   // Varargs support - follow RISC-V pattern
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  // docs/SPEC.md: round to nearest, ties to even, and no other mode.
+  setOperationAction(ISD::GET_ROUNDING, MVT::i32, Custom);
+  setOperationAction(ISD::SET_ROUNDING, MVT::Other, Custom);
+  // A trampoline is code made at run time, and W^X forbids it.
+  setOperationAction(ISD::INIT_TRAMPOLINE, MVT::Other, Custom);
+  setOperationAction(ISD::ADJUST_TRAMPOLINE, MVT::Other, Custom);
   // Let LLVM expand VAARG, VACOPY, VAEND
   setOperationAction(ISD::VAARG, MVT::Other, Custom);
   setOperationAction(ISD::VACOPY, MVT::Other, Expand);
@@ -493,6 +499,17 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::LOAD:           return LowerLOAD(Op, DAG);
     case ISD::STORE:          return LowerSTORE(Op, DAG);
     case ISD::VASTART:        return LowerVASTART(Op, DAG);
+    case ISD::GET_ROUNDING:
+      return DAG.getMergeValues({DAG.getConstant(1, SDLoc(Op), MVT::i32),
+                                 Op.getOperand(0)},
+                                SDLoc(Op));
+    case ISD::SET_ROUNDING:   return Op.getOperand(0);
+    case ISD::INIT_TRAMPOLINE:
+    case ISD::ADJUST_TRAMPOLINE:
+      reportFatalUsageError(
+          "SLOW-32 has no trampolines: code cannot be made at run time, so an "
+          "internal procedure cannot be passed as an argument or taken by a "
+          "procedure pointer");
     case ISD::VAARG:          return LowerVAARG(Op, DAG);
     case ISD::BRCOND:         return LowerBRCOND(Op, DAG);
     case ISD::BR_CC:          return LowerBR_CC(Op, DAG);
