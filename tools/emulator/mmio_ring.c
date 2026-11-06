@@ -555,6 +555,12 @@ static const struct { uint32_t s32; tcflag_t host; } term_lflag_map[] = {
 };
 
 // A cursor style's bytes: DECTCEM, and DECSCUSR's steady shapes
+// Where the terminal's cursor is, the shadow knows only once something has
+// placed it, and only until output goes round the term service (WRITE to
+// stdout or stderr, PUTCHAR).  While it is lost, END_UPDATE places the first
+// cell it paints.
+static bool term_cursor_lost = true;
+
 static void term_emit_cursor(int style) {
     static const int shape[5] = { 0, 0, 2, 4, 6 };
     if (style == 0) fputs("\033[?25l", stdout);
@@ -565,6 +571,7 @@ static void term_emit_cursor(int style) {
 static void *term_create(void) {
     term_state_t *ts = calloc(1, sizeof(term_state_t));
     if (!ts) return NULL;
+    term_cursor_lost = true;
     ts->key_pushback = -1;
     ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
@@ -860,6 +867,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             if (!ts->in_update) {
                 fprintf(stdout, "\033[%u;%uH", row, col);
                 fflush(stdout);
+                term_cursor_lost = false;
             }
             ts->cur_row = (int)row - 1;  // shadow: 0-based
             ts->cur_col = (int)col - 1;
@@ -877,6 +885,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                     default: fprintf(stdout, "\033[2J\033[H"); break;
                 }
                 fflush(stdout);
+                if (req->status != 1 && req->status != 2) term_cursor_lost = false;
             } else if (ts->n_pending_clears < TERM_MAX_PENDING_CLEARS) {
                 ts->pending_clears[ts->n_pending_clears].mode = (int)req->status;
                 ts->pending_clears[ts->n_pending_clears].row = ts->cur_row;
@@ -1071,6 +1080,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 fprintf(stdout, "\033[%d;%dH",
                         ts->cur_row + 1, ts->cur_col + 1);
                 fflush(stdout);
+                term_cursor_lost = false;
             }
             free(s->cells);
             s->cells = NULL;
@@ -1110,8 +1120,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             int out_attr = ts->prev_cur_attr;
             int out_fg = ts->prev_cur_fg;
             int out_bg = ts->prev_cur_bg;
-            int out_row = ts->prev_cur_row;
-            int out_col = ts->prev_cur_col;
+            int out_row = term_cursor_lost ? -1 : ts->prev_cur_row;
+            int out_col = term_cursor_lost ? -1 : ts->prev_cur_col;
             // The clears first, on the terminal itself, in the order asked;
             // the snapshot forgets what they covered so the diff repaints it.
             for (int i = 0; i < ts->n_pending_clears; i++) {
@@ -1188,6 +1198,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             fprintf(stdout, "\033[%d;%dH",
                     ts->cur_row + 1, ts->cur_col + 1);
             fflush(stdout);
+            term_cursor_lost = false;
             free(ts->prev_cells);
             ts->prev_cells = NULL;
             resp->status = S32_MMIO_STATUS_OK;
@@ -3309,6 +3320,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             uint8_t ch = mmio->data_buffer[offset];
             fputc(ch, stdout);
             fflush(stdout);
+            term_cursor_lost = true;
             resp.status = 0;
             break;
         }
@@ -3333,6 +3345,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 to_write = max_bytes;
             }
 
+            if (host_fd == STDOUT_FILENO || host_fd == STDERR_FILENO) term_cursor_lost = true;
             ssize_t written = write(host_fd, mmio->data_buffer + offset, to_write);
             if (written < 0) {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);

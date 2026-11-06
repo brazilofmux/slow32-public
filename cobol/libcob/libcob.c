@@ -86,6 +86,7 @@ static void out_flush(void)
 static int term_up;                     /* defined with the terminal service below */
 static int scr_tty;                     /* standard input is a terminal (raw mode took): a person is typing */
 static int scr_rm_mode;                 /* set by the first positioned slot painted */
+static int scr_last_line = 1, scr_last_col = 1, scr_last_width = 0;   /* where the last thing painted ended: a CONT slot follows it */
 static int scr_next_line;               /* the line a LINE-less statement takes; see scr_pos */
 static int con_col = 1, con_rows;
 static void con_write(const char *p, int n)
@@ -115,6 +116,7 @@ static void con_write(const char *p, int n)
         }
     }
     con_col += pend;
+    scr_last_line = scr_next_line ? scr_next_line : 1; scr_last_col = con_col; scr_last_width = 0;
 }
 
 static char *out_cap; static int out_cap_n, out_cap_max;   /* DISPLAY's text taken into a screen slot (scr_render) */
@@ -7019,7 +7021,6 @@ static void scr_render(const cob_scr_field *f, char *buf)
 /* Where a positioned slot (COB_SX_POS) goes: LINE 0 is the line after the
  * last positioned statement, POSITION 0 is column 1, and a CONT slot follows
  * the slot painted before it.  A SCREEN SECTION slot keeps its numbers. */
-static int scr_last_line = 1, scr_last_col = 1, scr_last_width = 0;   /* scr_next_line: above, with the console path */
 
 static int scr_off_line, scr_off_col;           /* the screen record's placing (cob_screen.line_off/col_off), while its statement runs */
 static int scr_errs;                            /* COB_SCR_E_* found by the statement under way */

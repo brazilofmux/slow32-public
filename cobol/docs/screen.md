@@ -268,6 +268,9 @@ it (`ext`, `prompt`; 32 bytes on the guest, `SCRF_SIZE` in the compiler):
 - `COB_SX_NOBEEP`: no bell on a rejected key;
 - HIGH / LOW / REVERSE are the HIGHLIGHT / LOWLIGHT / REVERSE-VIDEO flags.
 
+Several operands in one statement each keep their own phrases: one with no
+place goes at the cursor, also ahead of one that has (cobol ISSUES-126).
+
 LINE, POSITION and AT given as identifiers are stored into the slot by the
 statement before the call (`cob_scr_at` splits rrcc). Once a positioned
 statement has painted, a plain DISPLAY is positioned too, on the next line

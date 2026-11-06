@@ -1561,7 +1561,8 @@ diff repaints it.
 
 **END_UPDATE:**
 ```
-(oa, of, ob) := attr, fg, bg at BEGIN_UPDATE; (orow, ocol) := cursor at BEGIN_UPDATE
+(oa, of, ob) := attr, fg, bg at BEGIN_UPDATE
+(orow, ocol) := cursor at BEGIN_UPDATE, or (-1, -1) if the terminal's cursor is lost (below)
 for each recorded clear (m, r, c) in order:
     if m == 1 or m == 2: output CUP(r+1, c+1) then "ESC[K" (m=1) or "ESC[J" (m=2);
                          blank the snapshot from index r*C+c to the end of row r (m=1) or screen (m=2);
@@ -1587,6 +1588,11 @@ if current attr != oa: output SGR(current attr)
 if (current fg, bg) != (of, ob): output COL(current fg, current bg)
 output CUP(cursor row+1, cursor col+1); flush
 ```
+
+The terminal's cursor is *lost* from session start until an output places it
+(MOVE_CURSOR or a CLEAR of the screen outside an update, END_UPDATE, RESTORE_SCREEN
+outside an update), and again after output that goes round this service (a WRITE to
+host stdout or stderr, PUTCHAR).
 
 **RESTORE_SCREEN** outside an update (S = popped save; PR = min(S.R, R), PC = min(S.C, C)). Inside an update only the `shadow :=` and `cursor, attr, fg, bg :=` steps happen, with no output. Either way the cluster state and the last cell (8.14.2) are left as they were:
 ```

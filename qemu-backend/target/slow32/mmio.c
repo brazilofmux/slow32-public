@@ -704,9 +704,16 @@ static const struct { uint32_t s32; tcflag_t host; } slow32_term_lflag_map[] = {
     { S32_TERM_LF_IEXTEN, IEXTEN },
 };
 
+/* Where the terminal's cursor is, the shadow knows only once something has
+ * placed it, and only until output goes round the term service (WRITE to
+ * stdout or stderr, PUTCHAR).  While it is lost, END_UPDATE places the first
+ * cell it paints. */
+static bool slow32_term_cursor_lost = true;
+
 static void *slow32_term_create(void)
 {
     Slow32TermState *ts = g_new0(Slow32TermState, 1);
+    slow32_term_cursor_lost = true;
     ts->key_pushback = -1;
     ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) &&
@@ -1100,6 +1107,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         uint32_t col = req->status & 0xFFFF;
         if (!ts->in_update) {
             slow32_console_printf("\033[%u;%uH", row, col);
+            slow32_term_cursor_lost = false;
         }
         ts->cur_row = (int)row - 1;  /* shadow: 0-based */
         ts->cur_col = (int)col - 1;
@@ -1123,6 +1131,9 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
             default:
                 slow32_console_printf("\033[2J\033[H");
                 break;
+            }
+            if (req->status != 1 && req->status != 2) {
+                slow32_term_cursor_lost = false;
             }
         } else if (ts->n_pending_clears < TERM_MAX_PENDING_CLEARS) {
             ts->pending_clears[ts->n_pending_clears].mode = (int)req->status;
@@ -1335,6 +1346,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
                     (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
             slow32_console_printf("\033[%d;%dH",
                     ts->cur_row + 1, ts->cur_col + 1);
+            slow32_term_cursor_lost = false;
         }
         g_free(s->cells);
         s->cells = NULL;
@@ -1376,8 +1388,8 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         int out_attr = ts->prev_cur_attr;
         int out_fg = ts->prev_cur_fg;
         int out_bg = ts->prev_cur_bg;
-        int out_row = ts->prev_cur_row;
-        int out_col = ts->prev_cur_col;
+        int out_row = slow32_term_cursor_lost ? -1 : ts->prev_cur_row;
+        int out_col = slow32_term_cursor_lost ? -1 : ts->prev_cur_col;
         /* The clears first, on the terminal itself, in the order asked;
          * the snapshot forgets what they covered so the diff repaints it. */
         for (int i = 0; i < ts->n_pending_clears; i++) {
@@ -1472,6 +1484,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         slow32_console_printf("\033[%d;%dH",
                 ts->cur_row + 1, ts->cur_col + 1);
+        slow32_term_cursor_lost = false;
         g_free(ts->prev_cells);
         ts->prev_cells = NULL;
         resp->status = S32_MMIO_STATUS_OK;
@@ -2973,6 +2986,7 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     case S32_MMIO_OP_PUTCHAR:
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 1);
         slow32_console_write_byte(ctx->scratch[0]);
+        slow32_term_cursor_lost = true;
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 1;
         break;
@@ -3008,6 +3022,9 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
                                  req->offset % S32_MMIO_DATA_CAPACITY);
 
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, to_write);
+        if (host_fd == STDOUT_FILENO || host_fd == STDERR_FILENO) {
+            slow32_term_cursor_lost = true;
+        }
         ssize_t written = write(host_fd, ctx->scratch, to_write);
         if (written < 0) {
             slow32_mmio_fail(resp, errno > 0 ? errno : EIO);

@@ -20,11 +20,34 @@
  * and CONTROL are accepted and ignored. */
 #define SCRF_SIZE 32               /* sizeof(cob_scr_field) on the guest */
 
+/* is the word at token i the COLUMN phrase (2023 14.9.1, 14.9.11)?  COL was
+ * no reserved word before 2002, so a data item may have that name. */
+static int pos_column_at(int i)
+{
+    Tok *t = &g_tok[i];
+    if (is_word(t, "column")) return 1;
+    return is_word(t, "col") && !sym_lookup_quiet(t->s);
+}
+
+/* WITH and one of the screen entry's attributes: a positioned statement,
+ * though it names no place (Micro Focus's format 3 and GnuCOBOL take it) */
+static int pos_with_attr_at(int i)
+{
+    static const char *attr[] = { "highlight", "lowlight", "reverse-video", "underline", "blink", "secure", "auto", "auto-skip",
+                                  "required", "empty-check", "full", "length-check", "foreground-color", "foreground-colour",
+                                  "background-color", "background-colour", NULL };
+    if (!is_word(&g_tok[i], "with")) return 0;
+    for (int k = 0; attr[k]; k++) if (is_word(&g_tok[i + 1], attr[k])) return 1;
+    return 0;
+}
+
 static int pos_word_at(int i)      /* token i begins a positioning clause */
 {
     Tok *t = &g_tok[i];
     if (t->kind != T_WORD) return 0;
     if (i > 0 && is_word(&g_tok[i - 1], "function")) return 0;   /* FUNCTION REVERSE is the function, not reverse video */
+    if (i > g_tp && pos_column_at(i)) return 1;
+    if (pos_with_attr_at(i)) return 1;
     static const char *strong[] = { "line", "position", "erase", "prompt", "size", "high", "low", "reverse", "update", "at", NULL };
     for (int k = 0; strong[k]; k++) if (!strcmp(t->s, strong[k])) return 1;
     if (!strcmp(t->s, "no") && is_word(&g_tok[i + 1], "beep")) return 1;
@@ -79,19 +102,18 @@ static void pos_int(int *val, Ref **rp, const char *what)
 
 static void parse_pos_clauses(SField *f, int is_accept)
 {
+    int said_line = 0, said_column = 0;
     g_pos_field = f;
     for (;;) {
         if (accept_word("with")) continue;
-        if (at_word("line") || at_word("position") || at_word("column") || at_word("col") || at_word("at"))
+        if (at_word("line") || at_word("position") || pos_column_at(g_tp) || at_word("at"))
             bp(BP_E7_POSITIONED_IO, cur()->line);
-        if (accept_word("line")) { pos_int(&f->line, &f->line_r, "LINE"); continue; }
-        if (accept_word("position") || accept_word("column") || accept_word("col")) { pos_int(&f->col, &f->col_r, "POSITION"); continue; }
+        if (accept_word("line")) { said_line = 1; pos_int(&f->line, &f->line_r, "LINE"); continue; }
+        if (pos_column_at(g_tp)) { said_column = 1; advance(); pos_int(&f->col, &f->col_r, "COLUMN"); continue; }
+        if (accept_word("position")) { pos_int(&f->col, &f->col_r, "POSITION"); continue; }
         if (accept_word("at")) {
-            if (accept_word("line")) {
-                pos_int(&f->line, &f->line_r, "AT LINE");
-                if (accept_word("position") || accept_word("column") || accept_word("col")) pos_int(&f->col, &f->col_r, "COLUMN");
-                continue;
-            }
+            if (at_word("line") || pos_column_at(g_tp)) continue;   /* the phrases, in either order: AT COLUMN alone is the standard's too */
+            said_line = 1;
             if (cur()->kind == T_NUM) { int v = atoi(cur()->s); advance(); f->line = v / 100; f->col = v % 100; continue; }
             if (cur()->kind != T_WORD) die_at(cur()->line, "AT needs rrcc or a numeric identifier");
             { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier");
@@ -138,7 +160,15 @@ static void parse_pos_clauses(SField *f, int is_accept)
         if (accept_word("unit") || accept_word("control")) { Opnd o; parse_operand(&o); continue; }
         break;
     }
+    /* COLUMN without LINE: line 1 (2023 14.9.11.4 rule 15; GnuCOBOL likewise).
+     * RM's POSITION keeps its own rule, the next line. */
+    if (said_column && !said_line) f->line = 1;
 }
+
+/* does the slot name a line, or a place at all?  (what its clauses said, at
+ * compile time or by an identifier the statement will read) */
+static int sfield_has_line(const SField *f) { return f->line || f->line_r || f->at_r; }
+static int sfield_placed(const SField *f) { return sfield_has_line(f) || f->col || f->col_r; }
 
 static Screen *screen_synth(void)
 {
@@ -226,9 +256,15 @@ static void parse_display_positioned(void)
         if (!at_operand() && !(t->kind == T_WORD && (is_figurative(t->s) || !strcmp(t->s, "all")))) break;
         Opnd o; parse_operand(&o);
         SField *f = screen_synth_field(&g_screens[si]);
-        if (!first) f->ext |= COB_SX_CONT;
-        first = 0;
+        int with_attr = pos_with_attr_at(g_tp);
         parse_pos_clauses(f, 0);
+        /* Each operand has its own phrases (Micro Focus's rules 15 and 17,
+         * GnuCOBOL, cobol ISSUES-126).  One after the first with no line
+         * follows the one before it; LINE alone is column 1. */
+        if (!first && !sfield_has_line(f)) f->ext |= COB_SX_CONT;
+        /* WITH an attribute and no place: at the cursor (GnuCOBOL) */
+        if (first && with_attr && !sfield_placed(f)) f->ext |= COB_SX_CONT;
+        first = 0;
         switch (o.kind) {
         case O_REF:
             f->kind = COB_SCR_FROM; f->item = o.ref.sym; f->dyn = 1;
@@ -314,6 +350,16 @@ static void parse_display_positioned(void)
             break; }
         default: die_at(o.line, "a positioned DISPLAY takes identifiers and literals");
         }
+    }
+    /* An operand with no place, ahead of one that has: at the cursor, as the
+     * operands after it would be (GnuCOBOL: home, before anything is
+     * painted; Micro Focus's rule 17 says home always).  Alone in its
+     * statement it keeps RM's rule, the next line. */
+    {
+        Screen *sc = &g_screens[si];
+        if (sc->nf > 1 && !sfield_placed(&sc->f[0]))
+            for (int k = 1; k < sc->nf; k++)
+                if (sfield_placed(&sc->f[k])) { sc->f[0].ext |= COB_SX_CONT; break; }
     }
     emit_pos_stmt(si, "cob_screen_display");
 }

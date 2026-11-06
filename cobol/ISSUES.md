@@ -6348,22 +6348,41 @@ Open, each waiting for a program that asks:
   scratch tool; a harness mode that compares final screens rather than
   streams is still wanted.
 
-### 126. Positioned DISPLAY with several operands positions the last one only (2026-10-06, open)
+### 126. Positioned DISPLAY with several operands (2026-10-06; RESOLVED 2026-11-05, not as first proposed)
 
-`DISPLAY "[" s "]" AT LINE 8 COLUMN 1` writes `[` and `s` as a plain
-DISPLAY (no newline, wherever the cursor is) and positions `]` alone:
-the AT phrase is taken by the last operand's slot and the ones before
-it go the console way.  Noticed twice while writing tests for
-standard-queue items 10 and 12 (free/posrefmod2, 2002/posbits); the
-tests write one operand per statement.  Micro Focus and ACUCOBOL
-(docs/screen.md's sources) show the operands as one string at the
-position, and the standard's format (2023 14.9.12 format 2, DISPLAY
-... AT ... screen) names one `identifier-1 | literal-1` per statement,
-so the several-operand form is an extension whose meaning is "the
-concatenation, placed".  The fix is in display.h's positioned parse:
-gather the operands into one slot (a VALUE slot for literals only, a
-FROM slot with a compiler-made record otherwise), as the plain DISPLAY
-joins them.  Not a standard-queue item; queued here.
+`DISPLAY "[" s "]" AT LINE 8 COLUMN 1` wrote `[` and `s` wherever the
+stream stood and placed `]` alone.  This entry first called that a bug in
+itself and proposed "the concatenation, placed", on the belief that Micro
+Focus shows the operands as one string.  Nothing supports that.  Micro
+Focus's DISPLAY, general rules 15 and 17: a WITH clause applies to the
+operand before it, a first item with no AT begins at line 1 column 1, each
+later one at the cursor.  GnuCOBOL 3.3 and 4.0, run on a terminal (`podman
+run -t`), do the same but for the first item of a later statement, which
+goes at the cursor; gcobol refuses the form.  The standard's format has one
+operand.  So each operand keeps its own phrases, and what was wrong was
+smaller.  Fixed, by GnuCOBOL's placement where the two disagree:
+
+- an operand with no place ahead of one that has goes at the cursor (home
+  before anything is painted), not on the next line;
+- `LINE n` alone on a later operand is column 1 (it kept the running column);
+- the term service placed nothing before a first paint at home, so
+  `DISPLAY "a" AT 0101` after plain output landed at the stream's position
+  (END_UPDATE assumed the shadow's cursor was the terminal's: docs/SPEC.md
+  8.14.3 now starts unknown; both engines);
+- a plain DISPLAY in positioned mode now counts as the last thing painted
+  for the next continuing operand.
+
+Found beside it, all refused before: `AT COLUMN n`, the standard's own form
+(2023 14.9.11.2; LINE omitted is line 1, rule 15), `COLUMN n` and `COL n`
+with no LINE, COLUMN before LINE, and `DISPLAY x WITH HIGHLIGHT` and the
+other attributes with no place.  COL stays a data name in a program that
+declares one (it was not reserved before 2002).
+
+Left as they are, deliberately: an operand alone with no place and an RM
+word (`DISPLAY x HIGH`, `ERASE`) and bare `POSITION n` keep RM's next-line
+rule (docs/screen.md); GnuCOBOL homes or continues.  We do not clear the
+screen at the first positioned statement, as curses does.
+Tests: free/posmulti, free/poscolumn, free/poscolitem.
 
 ### 127. gcobol as a second oracle (2026-10-07, queued)
 
