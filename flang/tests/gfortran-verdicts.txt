@@ -1627,7 +1627,7 @@ exit-differs	ieee/ieee_1.F90
 pass	ieee/ieee_10.f90
 pass	ieee/ieee_11.F90
 pass	ieee/ieee_12.f90
-exit-differs	ieee/ieee_2.f90
+pass	ieee/ieee_2.f90
 exit-differs	ieee/ieee_3.f90
 pass	ieee/ieee_4.f90
 pass	ieee/ieee_5.f90
@@ -1638,7 +1638,7 @@ pass	ieee/ieee_9.f90
 oracle-refuses	ieee/intrinsics_1.f90
 oracle-refuses	ieee/intrinsics_2.F90
 exit-differs	ieee/large_1.f90
-exit-differs	ieee/large_2.f90
+pass	ieee/large_2.f90
 exit-differs	ieee/large_3.F90
 skip-conditional	ieee/large_4.f90
 pass	ieee/maxloc_nan_1.f90
@@ -1651,9 +1651,9 @@ pass	ieee/minmax_3.f90
 pass	ieee/minmax_4.f90
 flang	ieee/modes_1.f90
 oracle-refuses	ieee/out_of_range.f90
-exit-differs	ieee/rounding_1.f90
+pass	ieee/rounding_1.f90
 pass	ieee/rounding_2.f90
-exit-differs	ieee/rounding_3.f90
+pass	ieee/rounding_3.f90
 skip-multifile	ieee/signaling_1.f90
 skip-multifile	ieee/signaling_2.f90
 skip-conditional	ieee/signaling_3.f90
@@ -1899,7 +1899,7 @@ skip-multifile	lrshift_1.f90
 ld	ltime_gmtime_1.f90
 ld	ltime_gmtime_2.f90
 pass	make_unit.f90
-flang	malloc_free_1.f90
+pass	malloc_free_1.f90
 pass	mapping_1.f90
 pass	mapping_2.f90
 pass	mapping_3.f90

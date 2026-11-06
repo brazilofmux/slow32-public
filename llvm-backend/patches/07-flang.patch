@@ -1161,10 +1161,10 @@ index 3393ed1dc981..9705e3e339e9 100644
  void RTDECL(Transpose)(Descriptor &result, const Descriptor &matrix,
      const char *sourceFile = nullptr, int line = 0);
 diff --git a/flang/include/flang/Tools/TargetSetup.h b/flang/include/flang/Tools/TargetSetup.h
-index fe6215b7a538..2e3bad42bf4c 100644
+index fe6215b7a538..6097334c673e 100644
 --- a/flang/include/flang/Tools/TargetSetup.h
 +++ b/flang/include/flang/Tools/TargetSetup.h
-@@ -97,6 +97,23 @@ namespace Fortran::tools {
+@@ -97,6 +97,32 @@ namespace Fortran::tools {
    targetCharacteristics.set_integerKindForPointer(
        targetTriple.getArchPointerBitWidth() / 8);
  
@@ -1179,6 +1179,15 @@ index fe6215b7a538..2e3bad42bf4c 100644
 +    targetCharacteristics.EnableType(TypeCategory::Complex, 8, 16, 4);
 +    targetCharacteristics.EnableType(TypeCategory::Integer, 16, 16, 4);
 +    targetCharacteristics.EnableType(TypeCategory::Unsigned, 16, 16, 4);
++    // docs/SPEC.md: no exception flags, no halting on them, and one rounding mode.
++    // A program that asks has to be told.  (Rounding off leaves the question to
++    // lowering: otherwise it folds to all four modes for a constant argument.)
++    using evaluate::IeeeFeature;
++    for (IeeeFeature feature : {IeeeFeature::Flags, IeeeFeature::Halting,
++             IeeeFeature::Rounding, IeeeFeature::Standard,
++             IeeeFeature::UnderflowControl}) {
++      targetCharacteristics.set_ieeeFeature(feature, false);
++    }
 +    for (int kind : {2, 3, 16}) { // nothing here does half precision either
 +      targetCharacteristics.DisableType(TypeCategory::Real, kind);
 +      targetCharacteristics.DisableType(TypeCategory::Complex, kind);
@@ -1435,7 +1444,7 @@ index 7f03f3f050d5..edd9362710c1 100644
 +  return choose(empty, zero, count);
 +}
 diff --git a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
-index 43c23ba28fa9..d6fa0a8e4b4e 100644
+index 43c23ba28fa9..3f87266dc474 100644
 --- a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
 +++ b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
 @@ -1455,9 +1455,9 @@ static constexpr MathOperation mathOperations[] = {
@@ -1450,7 +1459,16 @@ index 43c23ba28fa9..d6fa0a8e4b4e 100644
       genLibCall},
      {"nint", RTNAME_STRING(LlroundF128), FuncTypeInteger8Real16,
       genLibF128Call},
-@@ -6372,6 +6372,13 @@ fir::ExtendedValue IntrinsicLibrary::genIeeeSupportRounding(
+@@ -6284,6 +6284,8 @@ IntrinsicLibrary::genIeeeSupportFlag(mlir::Type resultType,
+                                      llvm::ArrayRef<fir::ExtendedValue> args) {
+   // Check if a floating point exception flag is supported.
+   assert(args.size() == 1 || args.size() == 2);
++  if (fir::getTargetTriple(builder.getModule()).isSLOW32()) // docs/SPEC.md: none
++    return builder.createConvert(loc, resultType, builder.createBool(loc, false));
+   mlir::Type i1Ty = builder.getI1Type();
+   mlir::Type i32Ty = builder.getIntegerType(32);
+   auto [fieldRef, fieldTy] = getFieldRef(builder, loc, getBase(args[0]));
+@@ -6372,6 +6374,13 @@ fir::ExtendedValue IntrinsicLibrary::genIeeeSupportRounding(
    assert(args.size() == 1 || args.size() == 2);
    auto [fieldRef, fieldTy] = getFieldRef(builder, loc, getBase(args[0]));
    mlir::Value mode = fir::LoadOp::create(builder, loc, fieldRef);
@@ -1464,6 +1482,23 @@ index 43c23ba28fa9..d6fa0a8e4b4e 100644
    mlir::Value lbOk = mlir::arith::CmpIOp::create(
        builder, loc, mlir::arith::CmpIPredicate::sge, mode,
        builder.createIntegerConstant(loc, fieldTy,
+diff --git a/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp b/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp
+index 9be86f357e74..0447b405b5ca 100644
+--- a/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp
++++ b/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp
+@@ -146,10 +146,9 @@ void fir::runtime::genFlush(fir::FirOpBuilder &builder, mlir::Location loc,
+ void fir::runtime::genFree(fir::FirOpBuilder &builder, mlir::Location loc,
+                            mlir::Value ptr) {
+   auto runtimeFunc = fir::runtime::getRuntimeFunc<mkRTKey(Free)>(loc, builder);
+-  mlir::Type intPtrTy = builder.getIntPtrType();
+-
++  auto argTy = runtimeFunc.getArgumentTypes()[0];
+   fir::CallOp::create(builder, loc, runtimeFunc,
+-                      builder.createConvert(loc, intPtrTy, ptr));
++                      builder.createConvert(loc, argTy, ptr));
+ }
+ 
+ mlir::Value fir::runtime::genFseek(fir::FirOpBuilder &builder,
 diff --git a/flang/lib/Optimizer/CodeGen/CodeGen.cpp b/flang/lib/Optimizer/CodeGen/CodeGen.cpp
 index cf13475d4f88..b246d3c1e8de 100644
 --- a/flang/lib/Optimizer/CodeGen/CodeGen.cpp

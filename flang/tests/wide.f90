@@ -30,7 +30,7 @@ program wide
   integer(8) :: i, top, down, n, last
   integer(4) :: low, c, j
   integer(4), volatile :: v1, v2, v3
-  integer(8) :: asked_recl, wide_recl
+  integer(8) :: asked_recl, wide_recl, block_addr
   integer(8), allocatable :: built(:)
   real(8) :: x
   real(4) :: y
@@ -144,6 +144,11 @@ program wide
   o2 = o1
   if (o2%inner(2)%list(1) /= 33 .or. o2%label /= 'tail!') stop 20
   if (o2%inner(2)%third /= 5) stop 21
+
+  ! MALLOC and FREE: an INTEGER(8) holding what is a 32-bit address here
+  block_addr = malloc(32_8)
+  if (block_addr == 0_8) stop 28
+  call free(block_addr)
 
   print '(a)', 'wide-ok'
 end program

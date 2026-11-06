@@ -19,9 +19,14 @@ stage08 and DBT stress test.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
 - gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
   carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
-  oracle: **2,299 of 2,592 agree**, where gfortran has a verdict and the test is one
-  file.  Of the 293 left, LLVM's `DisabledFiles.cmake` lists 271 as failing on
-  flang natively.  This corpus found, in a day, everything in "what it found".
+  oracle: **2,304 of 2,592 agree**, where gfortran has a verdict and the test is one
+  file.  This corpus found, in a day, everything in "what it found".
+  `flang/tests/gfortran-native.py` puts the same tests through native flang from
+  these sources: nearly all of the 288 left fail there too, and those are flang's.
+  Failing here alone: `ieee/ieee_1`, `comparisons_3`, `large_3`, which expect flags
+  this machine does not have; `common_align_2`, 8-byte alignment; `PR49268`, a
+  Cray pointer is 32 bits; `c_sizeof_1`, 4 is right; `bind-c-intent-out`, reads out
+  of bounds; `pr66311`, `INTEGER(16)` I/O.
   `regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
@@ -88,6 +93,8 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 - `do i = 0, 1, huge(0)` ran zero times, the trip count overflowing a 32-bit index.
 - A `character(c_char), value` above 127 reached a C `char` with the wrong sign.
 - `SetRecl` took a `size_t`, cutting a RECL above 4 GB.
+- `ieee_support_flag`, `_halting`, `_standard` and `_rounding` answered true for what
+  the machine does not have (docs/SPEC.md); `FREE` did not compile.
 - Not flang's: a zero-sized global (an empty struct) never linked, from C either,
   in both toolchains (selfhost ISSUES-112).
 

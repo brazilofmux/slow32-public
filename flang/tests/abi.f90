@@ -78,7 +78,11 @@ end module
 
 program abi
   use abi_types
+  use ieee_arithmetic
+  use ieee_exceptions
   implicit none
+  type(ieee_flag_type) :: some_flag
+  type(ieee_round_type) :: some_mode
   type(mixed), target :: m
   integer(c_int), target :: v
   type(child) :: c1, c2
@@ -132,6 +136,18 @@ program abi
   ! a character by value, either side of 127, as C's char reads it
   if (c_char_value('A', 2) /= 65002) stop 17
   if (c_char_value(achar(163), 3) /= -92997) stop 18
+
+  ! docs/SPEC.md: no exception flags, and one rounding mode.  A program is told so,
+  ! whether the question folds at compile time or not.
+  if (ieee_support_flag(ieee_overflow)) stop 19
+  if (ieee_support_halting(ieee_overflow)) stop 20
+  if (ieee_support_standard(1.0)) stop 21
+  if (.not. ieee_support_rounding(ieee_nearest)) stop 22
+  if (ieee_support_rounding(ieee_up)) stop 23
+  some_flag = ieee_overflow
+  if (ieee_support_flag(some_flag)) stop 24
+  some_mode = ieee_up
+  if (ieee_support_rounding(some_mode)) stop 25
 
   print '(a)', 'abi-ok'
 end program
