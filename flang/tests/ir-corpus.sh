@@ -4,6 +4,8 @@
 #   diff -r a b
 # new-dir must not exist.  It keeps the sources it compiled, by relative path,
 # because a source's name goes into the IR.
+# Expected difference between hosts: a last bit in a constant flang folds through
+# the host's libm (FM828 between macOS and musl).  Anything else is a bug.
 HERE=${0:A:h}; ROOT=${HERE:h:h}; O=${1:A}; B=${2:-$HOME/llvm-project/build-flang/bin/flang}; M=${3:-$ROOT/flang/out/mod}
 FCVS=${FCVS:-$HOME/refs/fcvs/fcvs21}
 [ ! -e $O ] || { print -u2 "$O exists"; exit 2; }

@@ -59,8 +59,12 @@ ran off the top of memory.  What it took:
   "really 64 bits".  The runtime's headers say `RT_API_INT64` for the second:
   `long long` in the compiler, `int64_t` under `FLANG_RT_BUILD`.  The macOS build
   produces the same IR as the stopgap this replaced, for all 195 files of
-  `flang/tests/ir-corpus.sh`.  `flang/build-linux.sh` builds it on Linux; whether
-  that build produces the same IR is **not yet known**.
+  `flang/tests/ir-corpus.sh`.  `flang/build-linux.sh` builds it on Linux (Alpine,
+  aarch64; `-j2`, g++ on flang runs a 24 GB VM out of memory at `-j4`).  Of 197 files
+  from each host, 196 are the same bytes, as are all the modules.  The other, FM828,
+  is one constant a last bit apart, by all appearances the host's libm through
+  flang's folding of `CEXP`.  **Ruled acceptable:** libm differences between hosts
+  may leak through; libms are improving, and this does not pin them.
 - `FIROpPatterns.cpp`: dimension fields were read at the type asked for, not the
   field's, a 64-bit load from a 4-byte field.
 - `TypeConverter.cpp`: `indexType()` was a fixed 64 against MLIR's own index.
