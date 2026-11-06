@@ -48,6 +48,17 @@ OUT=/tmp/fc S32_F77=$PWD/flang/fcvs-f77 S32_LD=$PWD/flang/fcvs-ld fortran/tests/
 -DCLANG_INCLUDE_TESTS=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF`.
 The changes to flang itself are `llvm-backend/patches/07-flang.patch`.
 
+`flang/tests/gfortran-native.py` wants a native flang from the same sources, in
+`build-flang-native`: the configure above with `-DLLVM_TARGETS_TO_BUILD=AArch64`,
+`-DLLVM_ENABLE_RUNTIMES=flang-rt` and `-DDEFAULT_SYSROOT=$(xcrun --show-sdk-path)`,
+no default triple, then `ninja flang runtimes`.
+
+The patch leaves 64-bit targets as they were, checked 2026-11-06 against upstream
+built pristine on arm64: of 3,222 corpus files the IR is the same bytes for 3,220.
+The others are `nint_2`, `llvm.llround` for `llvm.lround`, the same call there, and
+`unlimited_polymorphic_31`, which prints flang's own version and options.  The modules
+differ by one private parameter, `__address_kind = 8`, and their checksums.
+
 ## The real work: flang assumes a 64-bit target
 
 Its docs say so ("flang is not supported on 32 bit CPUs").  A small test passes
