@@ -1,7 +1,8 @@
 #!/bin/zsh
 # run-tests.sh [mod-dir]: flang's own tests, each self-checking, on every engine
 # that can run them: abi (Fortran's layouts against clang's, with C on the other
-# side), wide (what is wider than index) and oor (OUT_OF_RANGE with no wider real).
+# side), wide (what is wider than index), oor (OUT_OF_RANGE with no wider real) and
+# files (common blocks across files).
 # Needs flang/build.sh first.
 # Exit 0 only if each prints its success line everywhere.  ~10 s.
 HERE=${0:A:h}; FL=${HERE:h}; ROOT=${FL:h}; L=${LLVM_PROJECT:-$HOME/llvm-project}
@@ -27,5 +28,8 @@ $L/build/bin/clang -target slow32-unknown-none -O2 -S -emit-llvm -I$R/include $H
 one abi driver.s32o
 one wide
 one oor
+$B/flang -fc1 -triple slow32-unknown-none -O2 -fintrinsic-modules-path $M -module-dir . -emit-llvm $HERE/files2.f90 -o files2.ll \
+  && $B/llc -mtriple=slow32-unknown-none -O2 files2.ll -o files2.s && $AS files2.s files2.s32o >/dev/null || { print "FAIL files2: did not build"; bad=$((bad+1)); }
+one files files2.s32o
 print "flang tests: $bad failed"
 [ $bad -eq 0 ]

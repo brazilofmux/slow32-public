@@ -70,6 +70,7 @@ typedef struct {
 #define S32O_BIND_LOCAL   0x00  // Local symbol
 #define S32O_BIND_GLOBAL  0x01  // Global symbol
 #define S32O_BIND_WEAK    0x02  // Weak symbol
+#define S32O_BIND_COMMON  0x03  // Common: section 0, value the alignment, size the size
 
 // Relocation entry (16 bytes)
 typedef struct {

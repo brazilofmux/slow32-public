@@ -148,6 +148,27 @@ if [ ${#corpus[@]} -eq 0 ]; then
     } > "$W/gen_literals.s"
     corpus+=("$W/gen_literals.s")
 
+    # Common symbols: a binding of their own, on either side of a definition.
+    {
+        echo ".text"
+        echo ".globl comuse"
+        echo "comuse:"
+        echo "    lui r1, %hi(blk)"
+        echo "    addi r1, r1, %lo(blk)"
+        echo "    lui r2, %hi(defd)"
+        echo "    addi r2, r2, %lo(defd)"
+        echo "    jalr r0, r31, 0"
+        echo ".comm blk, 64, 16"
+        echo ".comm blk, 128, 8"
+        echo ".comm noref, 12, 4"
+        echo ".comm defd, 4, 4"
+        echo ".data"
+        echo ".globl defd"
+        echo "defd:"
+        echo "    .word 9"
+    } > "$W/gen_common.s"
+    corpus+=("$W/gen_common.s")
+
     # ...and stage08 cc's own output, the other producer.
     if [ -f "$ROOT/selfhost/stage08/cc.s32x" ]; then
         n=0

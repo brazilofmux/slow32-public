@@ -73,6 +73,7 @@ static const char *symbol_binding_name(uint8_t binding) {
         case S32O_BIND_LOCAL:  return "LOCAL";
         case S32O_BIND_GLOBAL: return "GLOBAL";
         case S32O_BIND_WEAK:   return "WEAK";
+        case S32O_BIND_COMMON: return "COMMON";
         default:               return "UNKNOWN";
     }
 }

@@ -35,6 +35,8 @@ static char *g_lbl_defd;
 static char *g_lbl_glob;
 static char *g_lbl_refd;
 static char *g_lbl_abs;
+static int *g_lbl_comm_sz;   /* .comm, and not defined here: for the linker */
+static int *g_lbl_comm_al;
 /* Indexed by LABEL index, so it grows with the label tables below.  It
  * was a fixed 32,768 back when MAX_LBL capped labels at that same
  * number; once labels became unbounded, that pairing silently turned
@@ -52,6 +54,8 @@ static void grow_lbl(int need) {
     c = g_lbl_cap; g_lbl_glob     = sv_grow(g_lbl_glob, &c, need, 1, "labels");
     c = g_lbl_cap; g_lbl_refd     = sv_grow(g_lbl_refd, &c, need, 1, "labels");
     c = g_lbl_cap; g_lbl_abs      = sv_grow(g_lbl_abs,  &c, need, 1, "labels");
+    c = g_lbl_cap; g_lbl_comm_sz  = (int *)sv_grow((char *)g_lbl_comm_sz, &c, need, 4, "labels");
+    c = g_lbl_cap; g_lbl_comm_al  = (int *)sv_grow((char *)g_lbl_comm_al, &c, need, 4, "labels");
     c = g_lbl_cap; g_lbl_to_sym   = (int *)sv_grow((char *)g_lbl_to_sym, &c, need, 4, "labels");
     g_lbl_cap = c;
 }
@@ -106,6 +110,7 @@ static int *g_sym_lbl;
 static int *g_sym_name;
 static int *g_sym_val;
 static int *g_sym_sec;
+static int *g_sym_size;
 static char *g_sym_bind;
 static int g_sym_cap;
 
@@ -116,6 +121,7 @@ static void grow_sym(int need) {
     c = g_sym_cap; g_sym_name = (int *)sv_grow((char *)g_sym_name, &c, need, 4, "symbols");
     c = g_sym_cap; g_sym_val  = (int *)sv_grow((char *)g_sym_val,  &c, need, 4, "symbols");
     c = g_sym_cap; g_sym_sec  = (int *)sv_grow((char *)g_sym_sec,  &c, need, 4, "symbols");
+    c = g_sym_cap; g_sym_size = (int *)sv_grow((char *)g_sym_size, &c, need, 4, "symbols");
     c = g_sym_cap; g_sym_bind = sv_grow(g_sym_bind, &c, need, 1, "symbols");
     g_sym_cap = c;
 }
@@ -1123,21 +1129,13 @@ int handle(char *line) {
                 align = parse_num_or_abs(tok[3], &ok);
                 if (!ok || align <= 0) return -1;
             }
-            note_sec_align(SEC_BSS, align);
             li = get_lbl(tok[1]);
             if (li < 0) return -1;
-            while ((g_bsz % align) != 0) {
-                g_bsz = g_bsz + 1;
-                if (g_bsz >= MAX_BSS) return -1;
-            }
-            g_lbl_defd[li] = 1;
-            g_lbl_sec[li] = SEC_BSS;
-            g_lbl_val[li] = g_bsz;
-            g_lbl_abs[li] = 0;
-            /* Subtract, don't add: g_bsz + cnt is signed int and can
-             * wrap past MAX_BSS (GitHub issue 58). */
-            if (cnt > MAX_BSS - g_bsz) return -1;
-            g_bsz = g_bsz + cnt;
+            /* For the linker to place, one block for all the objects naming
+             * it; a definition in this file, before or after, stands. */
+            g_lbl_glob[li] = 1;
+            if (cnt > g_lbl_comm_sz[li]) g_lbl_comm_sz[li] = cnt;
+            if (align > g_lbl_comm_al[li]) g_lbl_comm_al[li] = align;
             return 0;
         }
         if (strcmp(tok[0], ".space") == 0 || strcmp(tok[0], ".zero") == 0) {
@@ -1615,6 +1613,10 @@ static int add_sym(int i, int sec, int bind) {
     if (g_sym_name[g_nsym] < 0) return -1;
     if (g_lbl_defd[i]) g_sym_val[g_nsym] = g_lbl_val[i];
     else g_sym_val[g_nsym] = 0;
+    if (bind == S32O_BIND_COMMON) {
+        g_sym_val[g_nsym] = g_lbl_comm_al[i];
+        g_sym_size[g_nsym] = g_lbl_comm_sz[i];
+    }
     g_sym_sec[g_nsym] = sec;
     g_sym_bind[g_nsym] = bind;
     g_lbl_to_sym[i] = g_nsym;
@@ -1650,7 +1652,10 @@ int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, i
         if (!(g_lbl_glob[i] || g_lbl_refd[i])) continue;
         if (g_lbl_glob[i]) bind = S32O_BIND_GLOBAL;
         else bind = S32O_BIND_LOCAL;
-        if (!g_lbl_defd[i]) bind = S32O_BIND_GLOBAL;
+        if (!g_lbl_defd[i]) {
+            bind = S32O_BIND_GLOBAL;
+            if (g_lbl_comm_al[i] > 0) bind = S32O_BIND_COMMON;
+        }
         if (add_sym(i, sec, bind) < 0) return -1;
     }
     /* Every other name this file defines, LOCAL, so that a map or a
@@ -2102,7 +2107,7 @@ int write_obj(char *out) {
         w16(g_sym_sec[i]);
         fputc(S32O_SYM_NOTYPE, g_out);
         fputc(g_sym_bind[i], g_out);
-        v = 0; w32(v);
+        v = g_sym_size[i]; w32(v);
     }
 
     for (i = 0; i < g_nrel; i = i + 1) {

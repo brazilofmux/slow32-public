@@ -48,6 +48,7 @@
 #define S32O_BIND_LOCAL  0x00
 #define S32O_BIND_GLOBAL 0x01
 #define S32O_BIND_WEAK   0x02
+#define S32O_BIND_COMMON 0x03
 
 #define S32O_REL_NONE       0x0000
 #define S32O_REL_32         0x0001

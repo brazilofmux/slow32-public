@@ -61,6 +61,7 @@ void exit(int status);
 #define BIND_LOCAL  0
 #define BIND_GLOBAL 1
 #define BIND_WEAK   2
+#define BIND_COMMON 3
 
 #define MASK5   0x1F
 #define MASK6   0x3F
@@ -354,6 +355,9 @@ void lout_add(char *name, int sec, int val) {
     lout_nbuf_sz = lout_nbuf_sz + n + 1;
 }
 
+int *gsym_comm_sz;  /* the largest size and alignment of its common symbols */
+int *gsym_comm_al;
+
 void gsym_room(int need) {
     int c;
     if (need <= gsym_cap) return;
@@ -363,6 +367,8 @@ void gsym_room(int need) {
     c = gsym_cap; gsym_sec = (int *)sv_grow((char *)gsym_sec, &c, need, 4, "symbols");
     c = gsym_cap; gsym_bind = (int *)sv_grow((char *)gsym_bind, &c, need, 4, "symbols");
     c = gsym_cap; gsym_def = (int *)sv_grow((char *)gsym_def, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_comm_sz = (int *)sv_grow((char *)gsym_comm_sz, &c, need, 4, "symbols");
+    c = gsym_cap; gsym_comm_al = (int *)sv_grow((char *)gsym_comm_al, &c, need, 4, "symbols");
     gsym_cap = c;
 }
 
@@ -841,6 +847,10 @@ void merge_symbols() {
                 gidx = -1;
             } else {
                 gidx = gsym_add_undef(name, sy_bind);
+                if (sy_bind == BIND_COMMON) {
+                    if (rd32(file_buf, ent_off + 12) > gsym_comm_sz[gidx]) gsym_comm_sz[gidx] = rd32(file_buf, ent_off + 12);
+                    if (sy_val > gsym_comm_al[gidx]) gsym_comm_al[gidx] = sy_val;
+                }
             }
         } else {
             /* Defined: get section type from section table */
@@ -1169,6 +1179,23 @@ void link_archive(char *path) {
 }
 
 /* === Section layout === */
+
+/* Common symbols no object defined: each its place in .bss, once. */
+void place_common_symbols() {
+    int i;
+    i = 0;
+    while (i < gsym_cnt) {
+        if (gsym_comm_al[i] > 0 && gsym_def[i] == 0) {
+            bss_sz = align_to(bss_sz, gsym_comm_al[i]);
+            if (gsym_comm_al[i] > bss_maxalign) bss_maxalign = gsym_comm_al[i];
+            gsym_sec[i] = SEC_BSS;
+            gsym_val[i] = bss_sz;
+            gsym_def[i] = 1;
+            bss_sz = bss_sz + gsym_comm_sz[i];
+        }
+        i = i + 1;
+    }
+}
 
 void layout_sections() {
     int t;
@@ -2147,6 +2174,7 @@ void link_emit(char *out_path) {
 
     /* Layout and resolve.  Islands after inject so slide_addrs can
      * keep __heap_start in lockstep with heap_va (linker ISSUES-11). */
+    place_common_symbols();
     layout_sections();
     inject_linker_symbols();
     insert_veneer_islands();

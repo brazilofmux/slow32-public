@@ -84,6 +84,7 @@ char *sym_bind_name(int b) {
     if (b == S32O_BIND_LOCAL) return "LOCAL";
     if (b == S32O_BIND_GLOBAL) return "GLOBAL";
     if (b == S32O_BIND_WEAK) return "WEAK";
+    if (b == S32O_BIND_COMMON) return "COMMON";
     return "UNKNOWN";
 }
 

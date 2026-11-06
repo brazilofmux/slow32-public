@@ -93,6 +93,7 @@ typedef struct {
     bool is_global;
     bool is_defined;
     bool force_local;   // .local: never export, even via .comm
+    uint32_t common_size, common_align;  // .comm, and not defined here
     bool is_absolute;   // .equ/.set constant: not an address, never shifted
     bool is_weak;       // .weak: global, and another definition may win
     bool is_hidden;     // .hidden: S32O_SYM_HIDDEN on its symbol
@@ -1307,6 +1308,8 @@ static void add_label(assembler_t *as, const char *name, uint32_t addr) {
     as->labels[as->num_labels].is_global = false;  // Default to local
     as->labels[as->num_labels].is_defined = true;
     as->labels[as->num_labels].force_local = false;
+    as->labels[as->num_labels].common_size = 0;
+    as->labels[as->num_labels].common_align = 0;
     as->labels[as->num_labels].is_absolute = false;
     as->labels[as->num_labels].is_weak = false;
     as->labels[as->num_labels].is_hidden = false;
@@ -2516,7 +2519,23 @@ static bool assemble_line(assembler_t *as, char *line) {
             // .comm symbol, size[, alignment] - declare common symbol
             char *symbol = tokens[1];
             int size = parse_immediate(tokens[2]);
-            
+
+            // Global: for the linker to place, one block for all the objects
+            // naming it.  A definition in this file, before or after, stands.
+            label_t *common = find_label(as, symbol);
+            if (!common || !common->force_local) {
+                int align = num_tokens > 3 ? parse_immediate(tokens[3]) : 1;
+                if (!common) {
+                    add_label(as, symbol, 0);
+                    common = &as->labels[as->num_labels - 1];
+                    common->is_defined = false;
+                }
+                common->is_global = true;
+                if ((uint32_t)size > common->common_size) common->common_size = (uint32_t)size;
+                if ((uint32_t)align > common->common_align) common->common_align = (uint32_t)align;
+                return true;
+            }
+
             // Add to BSS section
             section_t saved_section = as->current_section;
             uint32_t saved_addr = as->current_addr;
@@ -3403,6 +3422,11 @@ static int write_object_file(assembler_t *as, const char *filename) {
         symbols[num_symbols].type = as->labels[i].is_hidden ? S32O_SYM_HIDDEN : S32O_SYM_NOTYPE;
         symbols[num_symbols].binding = as->labels[i].is_weak ? S32O_BIND_WEAK : S32O_BIND_GLOBAL;
         symbols[num_symbols].size = 0;
+        if (!defined && as->labels[i].common_align) {
+            symbols[num_symbols].binding = S32O_BIND_COMMON;
+            symbols[num_symbols].value = as->labels[i].common_align;
+            symbols[num_symbols].size = as->labels[i].common_size;
+        }
         s32_hashmap_put(&sym_dedup, as->labels[i].name, num_symbols);
         num_symbols++;
     }

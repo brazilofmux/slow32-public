@@ -145,6 +145,120 @@ if [ -x "$LLVM_BIN/clang" ]; then
     fi
 fi
 
+# Common symbols (.comm, a Fortran common block): one place for every object naming
+# one, the largest size and alignment among them; a definition stands, with its
+# data; .local .comm is the file's own.  Each object prints nothing of its own: main
+# prints what the others left, and it must be the right thing, not only the same
+# thing from both linkers.
+cat > "$W/common1.s" <<'ASM'
+	.text
+	.globl main
+main:
+	addi sp, sp, -4
+	stw sp, lr, 0
+	lui r5, %hi(block)
+	addi r5, r5, %lo(block)
+	addi r6, r0, 55
+	stw r5, r6, 0
+	lui r7, %hi(mine)
+	addi r7, r7, %lo(mine)
+	addi r6, r0, 49
+	stw r7, r6, 0
+	jal lr, other
+	ldw r5, r7, 0
+	debug r5
+	lui r5, %hi(block)
+	addi r5, r5, %lo(block)
+	andi r6, r5, 63
+	addi r6, r6, 48
+	debug r6
+	lui r5, %hi(given)
+	addi r5, r5, %lo(given)
+	ldw r6, r5, 0
+	debug r6
+	addi r6, r0, 10
+	debug r6
+	ldw lr, sp, 0
+	addi sp, sp, 4
+	addi r1, r0, 0
+	jalr r0, lr, 0
+	.local mine
+	.comm mine, 4, 4
+	.comm block, 4, 4
+	.comm given, 4, 4
+ASM
+cat > "$W/common2.s" <<'ASM'
+	.text
+	.globl other
+other:
+	lui r5, %hi(block)
+	addi r5, r5, %lo(block)
+	ldw r6, r5, 0
+	debug r6
+	lui r8, %hi(mine)
+	addi r8, r8, %lo(mine)
+	addi r9, r0, 50
+	stw r8, r9, 0
+	addi r9, r0, 77
+	addi r10, r5, 4
+	addi r11, r5, 128
+fill:
+	stw r10, r9, 0
+	addi r10, r10, 4
+	bne r10, r11, fill
+	lui r8, %hi(after)
+	addi r8, r8, %lo(after)
+	ldw r6, r8, 0
+	addi r6, r6, 48
+	debug r6
+	addi r9, r0, 90
+	stw r8, r9, 0
+	ldw r6, r5, 124
+	addi r6, r6, -29
+	debug r6
+	jalr r0, lr, 0
+	.local mine
+	.comm mine, 4, 4
+	.comm block, 128, 64
+	.comm after, 4, 4
+ASM
+cat > "$W/common3.s" <<'ASM'
+	.comm given, 4, 4
+	.data
+	.globl given
+given:
+	.word 65
+ASM
+for f in common1 common2 common3; do
+    "$ROOT/tools/assembler/slow32asm" "$W/$f.s" "$W/$f.s32o" >/dev/null 2>&1 ||
+        { printf "  %-26s DIFFER (host assembler rejects)\n" "$f"; fail=$((fail+1)); }
+done
+SELF_REJECT=FAIL
+check "common-symbols" --mmio 64K --stack-size 64K --heap-size 1M \
+    "$RT/crt0.s32o" "$W/common1.s32o" "$W/common2.s32o" "$W/common3.s32o" \
+    "$RT/libc_mmio.s32a" "$RT/libs32.s32a"
+# 7: the other file sees block.  0: filling all of its 128 bytes leaves after alone.
+# 0: writing after leaves its last word alone.  1: mine is not the other file's.
+# 0: aligned to 64.  A: given's data.
+"$HOST_LD" -o "$W/h.s32x" --mmio 64K --stack-size 64K --heap-size 1M "$RT/crt0.s32o" \
+    "$W/common1.s32o" "$W/common2.s32o" "$W/common3.s32o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >/dev/null 2>&1
+got="$("$RUN" -q "$W/h.s32x" 2>&1)"
+if [ "$got" = "70010A" ]; then
+    printf "  %-26s AGREE\n" "common-symbols: right"; pass=$((pass+1))
+else
+    printf "  %-26s DIFFER (printed '%s', want 70010A)\n" "common-symbols: right" "$got"; fail=$((fail+1))
+fi
+# A partial link keeps them common: the same program through -r.
+"$HOST_LD" -r -o "$W/partial.s32o" "$W/common1.s32o" "$W/common2.s32o" "$W/common3.s32o" >/dev/null 2>&1
+"$HOST_LD" -o "$W/h.s32x" --mmio 64K --stack-size 64K --heap-size 1M "$RT/crt0.s32o" \
+    "$W/partial.s32o" "$RT/libc_mmio.s32a" "$RT/libs32.s32a" >/dev/null 2>&1
+got="$("$RUN" -q "$W/h.s32x" 2>&1)"
+if [ "$got" = "70010A" ]; then
+    printf "  %-26s AGREE\n" "common-symbols: -r"; pass=$((pass+1))
+else
+    printf "  %-26s DIFFER (printed '%s', want 70010A)\n" "common-symbols: -r" "$got"; fail=$((fail+1))
+fi
+
 echo ""
 echo "linker differential: $pass agree, $fail differ"
 [ "$fail" -eq 0 ]

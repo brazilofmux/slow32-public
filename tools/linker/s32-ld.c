@@ -266,7 +266,8 @@ static void register_object_globals_for_archive(linker_state_t *ld,
                                                 const input_file_t *inf) {
     for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
         if (inf->symbols[j].binding != S32O_BIND_GLOBAL &&
-            inf->symbols[j].binding != S32O_BIND_WEAK) {
+            inf->symbols[j].binding != S32O_BIND_WEAK &&
+            inf->symbols[j].binding != S32O_BIND_COMMON) {
             continue;
         }
         const char *name = safe_string(inf, inf->symbols[j].name_offset);
@@ -732,6 +733,87 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
 // Find or create a combined section
 // Get the canonical (base) section name for subsection merging.
 // ELF convention: ".text.foo" merges into ".text", ".bss.bar" into ".bss", etc.
+// Common symbols no object defines get one object of their own, loaded like any
+// other: a .bss holding each, of the largest size and alignment asked for.
+static bool place_common_symbols(linker_state_t *ld) {
+    typedef struct { const char *name; uint32_t size, align, name_offset; } common_t;
+    common_t *commons = NULL;
+    int ncommons = 0, cap = 0;
+    s32_hashmap_t defined, seen;
+    s32_hashmap_init(&defined, 256);
+    s32_hashmap_init(&seen, 256);
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
+            s32o_symbol_t *y = &inf->symbols[s];
+            if (y->binding == S32O_BIND_LOCAL || y->section == 0) continue;
+            s32_hashmap_put(&defined, safe_string(inf, y->name_offset), 1);
+        }
+    }
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
+            s32o_symbol_t *y = &inf->symbols[s];
+            if (y->binding != S32O_BIND_COMMON) continue;
+            const char *name = safe_string(inf, y->name_offset);
+            if (s32_hashmap_get(&defined, name) >= 0) continue;
+            int i = s32_hashmap_get(&seen, name);
+            if (i < 0) {
+                DARR_PUSH(commons, ncommons, cap, common_t);
+                commons[ncommons] = (common_t){name, 0, 1, 0};
+                s32_hashmap_put(&seen, name, ncommons);
+                i = ncommons++;
+            }
+            if (y->size > commons[i].size) commons[i].size = y->size;
+            if (y->value > commons[i].align) commons[i].align = y->value;
+        }
+    }
+    bool ok = true;
+    if (ncommons) {
+        // .bss, then its name, then each symbol's.
+        static const char sec_name[] = ".bss";
+        uint32_t str_size = 1 + sizeof sec_name;
+        for (int i = 0; i < ncommons; i++) str_size += (uint32_t)strlen(commons[i].name) + 1;
+        size_t sym_off = sizeof(s32o_header_t) + sizeof(s32o_section_t);
+        size_t str_off = sym_off + (size_t)ncommons * sizeof(s32o_symbol_t);
+        uint8_t *image = calloc(1, str_off + str_size);
+        if (!image) { fprintf(stderr, "Error: Out of memory placing common symbols\n"); exit(1); }
+        s32o_section_t *sec = (s32o_section_t *)(image + sizeof(s32o_header_t));
+        s32o_symbol_t *ys = (s32o_symbol_t *)(image + sym_off);
+        char *str = (char *)image + str_off;
+        memcpy(str + 1, sec_name, sizeof sec_name);
+        uint32_t str_at = 1 + sizeof sec_name, bss = 0, max_align = 1;
+        for (int i = 0; i < ncommons; i++) {
+            uint32_t a = commons[i].align;
+            bss = (bss + a - 1) & ~(a - 1);
+            if (a > max_align) max_align = a;
+            ys[i].name_offset = str_at;
+            ys[i].value = bss;
+            ys[i].section = 1;
+            ys[i].type = S32O_SYM_OBJECT;
+            ys[i].binding = S32O_BIND_GLOBAL;
+            ys[i].size = commons[i].size;
+            strcpy(str + str_at, commons[i].name);
+            str_at += (uint32_t)strlen(commons[i].name) + 1;
+            bss += commons[i].size;
+        }
+        *sec = (s32o_section_t){.name_offset = 1, .type = S32_SEC_BSS,
+                                .flags = S32_SEC_FLAG_WRITE | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
+                                .size = bss, .align = max_align};
+        *(s32o_header_t *)image = (s32o_header_t){
+            .magic = S32O_MAGIC, .version = 1, .endian = S32_ENDIAN_LITTLE, .machine = S32_MACHINE_SLOW32,
+            .nsections = 1, .sec_offset = sizeof(s32o_header_t),
+            .nsymbols = (uint32_t)ncommons, .sym_offset = (uint32_t)sym_off,
+            .str_offset = (uint32_t)str_off, .str_size = str_size};
+        ok = load_object_from_memory(ld, "<common symbols>", image, str_off + str_size);
+        free(image);
+    }
+    free(commons);
+    s32_hashmap_free(&defined);
+    s32_hashmap_free(&seen);
+    return ok;
+}
+
 static const char *canonical_section_name(const char *name) {
     static const char *const bases[] = {
         ".text.", ".data.", ".bss.", ".rodata.",
@@ -945,7 +1027,7 @@ static void build_symbol_table(linker_state_t *ld) {
                     nsym->name = ld_strdup(name);
                 }
                 nsym->type = isym->type;
-                nsym->binding = isym->binding;
+                nsym->binding = isym->binding == S32O_BIND_COMMON ? S32O_BIND_GLOBAL : isym->binding;
                 nsym->size = isym->size;
                 nsym->is_weak = (isym->binding == S32O_BIND_WEAK);
 
@@ -2816,6 +2898,7 @@ typedef struct {
     char *name;
     s32o_symbol_t sym;      // section is the output's, 1-based; 0 undefined
     bool strong_ref;        // an undefined entry some input references non-weakly
+    uint32_t common_size, common_align;  // inputs' common symbols of the name
     int from_file, from_sec;  // the definition's input section; -1 if undefined
 } rel_sym_t;
 
@@ -2878,7 +2961,7 @@ static void write_relocatable(linker_state_t *ld) {
                 DARR_PUSH(syms, nsyms, syms_cap, rel_sym_t);
                 memset(&syms[nsyms], 0, sizeof(syms[nsyms]));
                 syms[nsyms].name = ld_strdup(name);
-                syms[nsyms].sym.binding = isym->binding;
+                syms[nsyms].sym.binding = isym->binding == S32O_BIND_COMMON ? S32O_BIND_GLOBAL : isym->binding;
                 syms[nsyms].from_file = syms[nsyms].from_sec = -1;
                 s32_hashmap_put(&globals, syms[nsyms].name, nsyms);
                 idx = nsyms++;
@@ -2887,6 +2970,10 @@ static void write_relocatable(linker_state_t *ld) {
             o->sym.type |= isym->type & S32O_SYM_HIDDEN;
             if (isym->section == 0) {
                 if (isym->binding != S32O_BIND_WEAK) o->strong_ref = true;
+                if (isym->binding == S32O_BIND_COMMON) {
+                    if (isym->size > o->common_size) o->common_size = isym->size;
+                    if (isym->value > o->common_align) o->common_align = isym->value;
+                }
             } else {
                 bool take = (o->sym.section == 0)
                          || (o->sym.binding == S32O_BIND_WEAK && isym->binding != S32O_BIND_WEAK);
@@ -2913,6 +3000,11 @@ static void write_relocatable(linker_state_t *ld) {
     for (int i = 0; i < nsyms; i++) {
         if (syms[i].sym.section == 0) {
             syms[i].sym.binding = syms[i].strong_ref ? S32O_BIND_GLOBAL : S32O_BIND_WEAK;
+            if (syms[i].common_align) {  // still for the final link to place
+                syms[i].sym.binding = S32O_BIND_COMMON;
+                syms[i].sym.value = syms[i].common_align;
+                syms[i].sym.size = syms[i].common_size;
+            }
         }
         s32_hashmap_put(&used, syms[i].name, i);
     }
@@ -3354,6 +3446,10 @@ int main(int argc, char *argv[]) {
     }
 
     // Link everything
+    if (!place_common_symbols(&ld)) {
+        cleanup(&ld);
+        return 1;
+    }
     merge_sections(&ld);
     create_eh_frame_hdr(&ld);
     build_symbol_table(&ld);

@@ -489,7 +489,16 @@ without it.
 #define S32O_BIND_LOCAL   0x00  // Local symbol
 #define S32O_BIND_GLOBAL  0x01  // Global symbol
 #define S32O_BIND_WEAK    0x02  // Weak symbol
+#define S32O_BIND_COMMON  0x03  // Common symbol
 ```
+
+A common symbol is what `.comm NAME, SIZE, ALIGN` declares and a Fortran common block
+is: `section` 0, as for a reference, `value` its alignment and `size` its size.  The
+linker gives every common symbol of one name a single place in `.bss`, of the largest
+size and alignment among them, unless an object defines the name, as `BLOCK DATA`
+does, and then the definition stands.  A definition in an archive member is pulled in
+for it; `s32-ar` does not index a common symbol, which defines nothing.  `.local`
+before `.comm` is a plain local in the file's own `.bss`.
 
 ### Relocation Entry (16 bytes)
 
