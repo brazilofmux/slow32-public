@@ -1721,7 +1721,7 @@ index 66ae5c4c653a..91b4d34e4791 100644
                 mlir::StringAttr::get(mod.getContext(), target));
  }
 diff --git a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
-index b12cabf6cd73..603a502922ef 100644
+index b12cabf6cd73..dca1e389e19d 100644
 --- a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
 +++ b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
 @@ -6,10 +6,12 @@
@@ -1757,7 +1757,7 @@ index b12cabf6cd73..603a502922ef 100644
      auto *firstBlock =
          rewriter.splitBlock(conditionalBlock, conditionalBlock->begin());
      auto *lastBlock = &loop.getRegion().back();
-@@ -79,24 +92,37 @@ public:
+@@ -79,27 +92,50 @@ public:
      // Initalization block
      rewriter.setInsertionPointToEnd(initBlock);
      auto toIndex = [&](mlir::Value value) -> mlir::Value {
@@ -1776,12 +1776,13 @@ index b12cabf6cd73..603a502922ef 100644
 -    mlir::Value iters =
 -        mlir::arith::DivSIOp::create(rewriter, loc, distance, stepIndex);
 +    // A DO variable as wide as a 32-bit index overflows the usual formula, and
-+    // can run more than 2**31 times.
-+    const bool unsignedCount = countTy.isIndex() &&
-+                               !low.getType().isIndex() &&
-+                               fir::getTargetSizeBits() == 32;
++    // can run more than 2**31 times.  Such a loop has no counter: it tests the
++    // variable against its value at the end, in wrapping arithmetic.
++    const bool testFinalValue = countTy.isIndex() &&
++                                low.getType().isInteger(32) &&
++                                fir::getTargetSizeBits() == 32;
 +    mlir::Value iters;
-+    if (unsignedCount) {
++    if (testFinalValue) {
 +      iters = fir::factory::genUnsignedTripCount(rewriter, loc, lowIndex,
 +                                                 highIndex, stepIndex);
 +    } else {
@@ -1799,13 +1800,35 @@ index b12cabf6cd73..603a502922ef 100644
 -          rewriter, loc, arith::CmpIPredicate::sle, iters, zero);
 -      auto one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
 +          rewriter, loc,
-+          unsignedCount ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sle,
++          testFinalValue ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sle,
 +          iters, zero);
 +      mlir::Value one = countConstant(1);
        iters = mlir::arith::SelectOp::create(rewriter, loc, cond, one, iters);
      }
  
-@@ -117,7 +143,7 @@ public:
++    mlir::Value finalValue;
++    if (testFinalValue) {
++      mlir::Value span =
++          mlir::arith::MulIOp::create(rewriter, loc, iters, stepIndex);
++      finalValue = fir::ConvertOp::create(
++          rewriter, loc, low.getType(),
++          mlir::arith::AddIOp::create(rewriter, loc, lowIndex, span));
++    }
++
+     llvm::SmallVector<mlir::Value> loopOperands;
+     loopOperands.push_back(low);
+     auto operands = loop.getIterOperands();
+@@ -112,12 +148,16 @@ public:
+     auto *terminator = lastBlock->getTerminator();
+     rewriter.setInsertionPointToEnd(lastBlock);
+     auto iv = conditionalBlock->getArgument(0);
++    // (it may wrap, reaching the final value: no overflow flags then)
+     mlir::Value steppedIndex =
+-        mlir::arith::AddIOp::create(rewriter, loc, iv, step, iofAttr);
++        testFinalValue
++            ? mlir::arith::AddIOp::create(rewriter, loc, iv, step).getResult()
++            : mlir::arith::AddIOp::create(rewriter, loc, iv, step, iofAttr)
++                  .getResult();
      assert(steppedIndex && "must be a Value");
      auto lastArg = conditionalBlock->getNumArguments() - 1;
      auto itersLeft = conditionalBlock->getArgument(lastArg);
@@ -1814,17 +1837,22 @@ index b12cabf6cd73..603a502922ef 100644
      mlir::Value itersMinusOne =
          mlir::arith::SubIOp::create(rewriter, loc, itersLeft, one);
  
-@@ -138,9 +164,11 @@ public:
+@@ -138,9 +178,15 @@ public:
  
      // Conditional block
      rewriter.setInsertionPointToEnd(conditionalBlock);
 -    auto zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
-+    mlir::Value zero = countConstant(0);
-     auto comparison = mlir::arith::CmpIOp::create(
+-    auto comparison = mlir::arith::CmpIOp::create(
 -        rewriter, loc, arith::CmpIPredicate::sgt, itersLeft, zero);
-+        rewriter, loc,
-+        unsignedCount ? arith::CmpIPredicate::ne : arith::CmpIPredicate::sgt,
-+        itersLeft, zero);
++    mlir::Value zero = countConstant(0);
++    mlir::Value comparison =
++        testFinalValue
++            ? mlir::arith::CmpIOp::create(rewriter, loc,
++                                          arith::CmpIPredicate::ne, iv,
++                                          finalValue)
++            : mlir::arith::CmpIOp::create(rewriter, loc,
++                                          arith::CmpIPredicate::sgt, itersLeft,
++                                          zero);
  
      mlir::cf::CondBranchOp::create(rewriter, loc, comparison, firstBlock,
                                     llvm::ArrayRef<mlir::Value>(), endBlock,

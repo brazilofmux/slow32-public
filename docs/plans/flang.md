@@ -90,6 +90,9 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 
 - A loop over every `INTEGER(4)`, by a step of 1, is 2**32 iterations: the unsigned
   count wraps to zero and it does not run.
+- That correctness costs: an `INTEGER(4)` loop has about two more instructions per
+  entry (3.7% on loops of 7 iterations, a kernel made to show it), and a variable
+  step calls `__udivsi3`, there being no unsigned divide (11% on the same kind).
 - `INTEGER(16)` I/O does not link: no 128-bit type in clang's SLOW-32 target.
 - `bessel_yn` in `REAL(4)` is a unit in the last place off, enough to fail
   `bessel_5` through the recurrence (runtime ISSUES-29).

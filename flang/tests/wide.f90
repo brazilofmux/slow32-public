@@ -29,6 +29,7 @@ program wide
   implicit none
   integer(8) :: i, top, down, n, last
   integer(4) :: low, c, j
+  integer(4), volatile :: v1, v2, v3
   integer(8) :: asked_recl, wide_recl
   integer(8), allocatable :: built(:)
   real(8) :: x
@@ -64,28 +65,43 @@ program wide
   end do
   if (n /= 0 .or. i /= 9000000000_8) stop 6
 
-  ! INTEGER(4) as wide as index: the usual trip count formula overflows on these
+  ! INTEGER(4) as wide as index: the usual trip count formula overflows on these.
+  ! The bounds are volatile: with constants the compiler works it out at 64 bits.
+  v1 = 0; v2 = 1; v3 = huge(0)
   c = 0
-  do j = 0, 1, huge(0)
+  do j = v1, v2, v3
     c = c + 1
   end do
   if (c /= 1 .or. j /= huge(0)) stop 22
+  v1 = 1; v2 = 0; v3 = -huge(0) - 1
   c = 0
-  do j = 1, 0, -huge(0) - 1
+  do j = v1, v2, v3
     c = c + 1
   end do
   if (c /= 1 .or. j /= -huge(0)) stop 23
+  v1 = -huge(0); v2 = huge(0); v3 = huge(0)
   c = 0
-  do j = -huge(0), huge(0), huge(0)
+  do j = v1, v2, v3
     c = c + 1
   end do
   if (c /= 3) stop 24
+  ! the other kind of loop: a GOTO out of it
+  v1 = 0; v2 = 1; v3 = huge(0)
   c = 0
-  do j = huge(0) - 2, huge(0) - 1
+  do j = v1, v2, v3
     c = c + 1
-    if (c == 2) exit   ! an exit makes it the other kind of loop
+    if (c == 50) go to 100
   end do
-  if (c /= 2 .or. j /= huge(0) - 1) stop 25
+  if (c /= 1 .or. j /= huge(0)) stop 25
+  ! more than 2**31 times would be a long test; that many is a count above HUGE,
+  ! so a loop that does not run must still say so
+  v1 = 5; v2 = 4; v3 = 1
+  c = 0
+  do j = v1, v2, v3
+    c = c + 1
+  end do
+  if (c /= 0 .or. j /= 5) stop 27
+100 continue
 
   ! a record length past 4 GB survives the trip through the runtime
   asked_recl = 7777777777_8
