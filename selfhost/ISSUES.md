@@ -3941,3 +3941,14 @@ Gates: run-tests 184/184 with the self-rebuild, check-stage08 identical,
 xbc stage08, run-stage08-fuzz 2,000 x 2, stage07 differential; the
 cross-compilers share hir_licm.h, and their emulators print benchmark_core's
 checksum on x86-64 (kagura) and arm64 (podman).
+
+### 110. [RESOLVED 2026-11-05] Local names, and the tables that would not have held them
+
+The self-hosted tools kept only globals and referenced labels, as the host
+tools did, so a profile credited a static function to the global before it.
+`s32-as` and `s32-ld` now keep the host's list (not `.L*`, numeric or `.set`
+names).  That would have walked into three fixed tables, all gone: `s32-as`
+stopped at 32,768 symbols and a 128 KB string table ("write object failed"),
+and `s32-ld` refused an object of more than 8,192 symbols.  Weak definitions
+were also missing from an executable's table.  Gate:
+regression/run-local-symbols.sh, mutation-tested.

@@ -46,6 +46,7 @@ The clang-built suite and the kit corpus catch different engine bugs
 | `run-libc-differential.sh` | `libc-tests/` against `runtime/` and the stage08 libc (and the host, for `HOSTLEG` tests) |
 | `run-as-differential.sh` | host `slow32asm` vs the self-hosted `s32-as`, object bytes |
 | `run-ld-differential.sh` | host `s32-ld` vs the self-hosted `s32-ld`, program behaviour |
+| `run-local-symbols.sh` | static functions and tables named in objects and executables, both toolchains; no hook binds to a local; tables past the old fixed sizes |
 | `run-builtins64-differential.sh` | `selfhost/stage08/builtins64.s` vs `runtime/builtins.c` |
 | `run-tools-smoke.sh` | each self-hosted tool produces output on a real input |
 | `run-libcxx.sh` | `libcxx/*.cpp` on libc++, at -O0 and -O2, on every engine |

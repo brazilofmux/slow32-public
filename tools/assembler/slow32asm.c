@@ -3421,7 +3421,31 @@ static int write_object_file(assembler_t *as, const char *filename) {
         s32_hashmap_put(&sym_dedup, sym, num_symbols);
         num_symbols++;
     }
-    
+
+    // 3) Every other name this file defines, LOCAL, so that a map or a
+    //    profile can name a static function or table: without them an
+    //    address in one is credited to whichever global precedes it.
+    //    Assembler-private labels (.L*, numeric) name nothing.  The
+    //    self-hosted assembler's build_syms keeps the same list.
+    for (int i = 0; i < as->num_labels; i++) {
+        const char *name = as->labels[i].name;
+        if (as->labels[i].is_global || !as->labels[i].is_defined) continue;
+        if (as->labels[i].is_absolute) continue;                // a .set constant is not a place
+        if (name[0] == '.' || (name[0] >= '0' && name[0] <= '9')) continue;
+        if (section_map[as->labels[i].section] == 0) continue;  // an empty section is not written
+        if (s32_hashmap_get(&sym_dedup, name) >= 0) continue;
+
+        DARR_PUSH(symbols, num_symbols, symbols_cap, s32o_symbol_t);
+        symbols[num_symbols].name_offset = add_string(as, name);
+        symbols[num_symbols].value = as->labels[i].address;
+        symbols[num_symbols].section = section_map[as->labels[i].section];
+        symbols[num_symbols].type = S32O_SYM_NOTYPE;
+        symbols[num_symbols].binding = S32O_BIND_LOCAL;
+        symbols[num_symbols].size = 0;
+        s32_hashmap_put(&sym_dedup, name, num_symbols);
+        num_symbols++;
+    }
+
     // Calculate file layout
     uint32_t offset = sizeof(s32o_header_t);
     uint32_t section_table_offset = offset;
@@ -3740,7 +3764,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
 
     printf("Generated object file: %s\n", filename);
     printf("  Sections: %d\n", num_sections);
-    printf("  Symbols: %d (global only)\n", num_symbols);
+    printf("  Symbols: %d\n", num_symbols);
 
     return 0;
 }

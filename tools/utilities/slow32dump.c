@@ -381,8 +381,44 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
         }
     }
 
-    if (opts->show_symbols || opts->show_relocations) {
-        fprintf(stderr, "Note: symbols/relocations are not stored in .s32x files\n");
+    if (opts->show_symbols) {
+        // The linker's table (none under -s): a SYMTAB section, then its names
+        s32x_section_t symsec, namesec;
+        bool have_syms = false, have_names = false;
+        fseek(f, header.sec_offset, SEEK_SET);
+        for (uint32_t i = 0; i < header.nsections; i++) {
+            s32x_section_t section;
+            if (!read_fully(&section, sizeof(section), f)) break;
+            if (section.type == S32_SEC_SYMTAB) { symsec = section; have_syms = true; }
+            else if (section.type == S32_SEC_STRTAB) { namesec = section; have_names = true; }
+        }
+        if (have_syms && have_names) {
+            uint32_t nsyms = symsec.size / sizeof(s32o_symbol_t);
+            s32o_symbol_t *syms = malloc(symsec.size ? symsec.size : 1);
+            char *names = malloc((size_t)namesec.size + 1);
+            if (syms && names &&
+                fseek(f, symsec.offset, SEEK_SET) == 0 && read_fully(syms, symsec.size, f) &&
+                fseek(f, namesec.offset, SEEK_SET) == 0 && read_fully(names, namesec.size, f)) {
+                names[namesec.size] = '\0';
+                printf("\nSymbol Table:\n");
+                printf("Num Value    Size     Type     Bind     Sec  Name\n");
+                printf("--- -------- -------- -------- -------- ---- -----------------\n");
+                for (uint32_t i = 0; i < nsyms; i++) {
+                    const char *name = syms[i].name_offset < namesec.size ? &names[syms[i].name_offset] : "<invalid>";
+                    printf("%3d %08X %8d %-8s %-8s %4d %s\n", i, syms[i].value, syms[i].size,
+                           symbol_type_name(syms[i].type), symbol_binding_name(syms[i].binding),
+                           syms[i].section, name);
+                }
+            } else {
+                fprintf(stderr, "Error: Cannot read the symbol table\n");
+            }
+            free(syms);
+            free(names);
+        }
+    }
+
+    if (opts->show_relocations) {
+        fprintf(stderr, "Note: relocations are not stored in .s32x files\n");
     }
 
     if (opts->show_hex) {

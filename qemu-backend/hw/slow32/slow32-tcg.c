@@ -224,7 +224,10 @@ static void slow32_load_intrinsics(Slow32CPU *cpu, FILE *f,
     for (size_t k = 0; k < G_N_ELEMENTS(lookups); k++) {
         for (const char **n = lookups[k].names; *n; n++) {
             for (uint32_t i = 0; i < nsyms; i++) {
-                if (syms[i].name_offset < sym_strtab_size &&
+                /* not a program's own static of that name: the table
+                 * names local symbols too, for profiles */
+                if (syms[i].binding != 0 &&
+                    syms[i].name_offset < sym_strtab_size &&
                     strcmp(&sym_str[syms[i].name_offset], *n) == 0 &&
                     syms[i].value != 0) {
                     *lookups[k].dest = syms[i].value;

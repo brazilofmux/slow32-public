@@ -395,6 +395,11 @@ cd ~/slow-32/regression && ./run-libcxx.sh
 # from both linkers.  After touching either side of either tool.
 cd ~/slow-32/regression && ./run-as-differential.sh && ./run-ld-differential.sh
 
+# Static functions and tables have their names in objects and executables, both
+# toolchains (what a profile reads); no engine's hook binds to a program's own
+# static memcpy.  After touching the assemblers, the linkers, or a hook lookup.
+cd ~/slow-32/regression && ./run-local-symbols.sh
+
 # And another axis: random programs.  cfuzz.py generates
 # deterministic C with no undefined behaviour (unsigned arithmetic, masked
 # array indexes, counted loops that the unroller and peeler take, switch,

@@ -12,13 +12,11 @@ void exit(int status);
 #define MAX_LINE 65536
 #define MAX_TOK 8       /* a line's tokens to begin with; the array grows */
 #define MAX_LBL 32768
-#define MAX_SYM 32768
 #define MAX_TEXT 1048576
 #define MAX_RODATA 1048576
 #define MAX_DATA 1048576
 #define MAX_INIT_ARRAY 262144
 #define MAX_BSS 251658240   /* BSS is only counted here; the 256MB address space less 16MB is the bound (stage08 cc with SQLite-sized tables asks for >16MB) */
-#define MAX_STR 131072
 #define LBL_POOL_SZ 524288
 #define MAX_DIFF 16384
 
@@ -104,13 +102,26 @@ static int g_bsz;
 static int g_sec;
 
 static int g_nsym;
-static int g_sym_lbl[32768];
-static int g_sym_name[32768];
-static int g_sym_val[32768];
-static int g_sym_sec[32768];
-static char g_sym_bind[32768];
+static int *g_sym_lbl;
+static int *g_sym_name;
+static int *g_sym_val;
+static int *g_sym_sec;
+static char *g_sym_bind;
+static int g_sym_cap;
 
-static char g_str[131072];
+static void grow_sym(int need) {
+    int c;
+    if (need <= g_sym_cap) return;
+    c = g_sym_cap; g_sym_lbl  = (int *)sv_grow((char *)g_sym_lbl,  &c, need, 4, "symbols");
+    c = g_sym_cap; g_sym_name = (int *)sv_grow((char *)g_sym_name, &c, need, 4, "symbols");
+    c = g_sym_cap; g_sym_val  = (int *)sv_grow((char *)g_sym_val,  &c, need, 4, "symbols");
+    c = g_sym_cap; g_sym_sec  = (int *)sv_grow((char *)g_sym_sec,  &c, need, 4, "symbols");
+    c = g_sym_cap; g_sym_bind = sv_grow(g_sym_bind, &c, need, 1, "symbols");
+    g_sym_cap = c;
+}
+
+static char *g_str;
+static int g_str_cap;
 /* fdgets is told how much it may write, so this bound must be the
  * BUFFER's size, not MAX_LINE -- they were 1024 and 65536, which let a
  * long enough input line write 64KB into a 1KB buffer and straight
@@ -1578,7 +1589,7 @@ int s_add(char *s) {
     int n;
     off = g_ssz;
     n = strlen(s) + 1;
-    if (g_ssz + n > MAX_STR) return -1;
+    g_str = sv_grow(g_str, &g_str_cap, g_ssz + n, 1, "the string table");
     memcpy(g_str + g_ssz, s, n);
     g_ssz = g_ssz + n;
     return off;
@@ -1596,6 +1607,21 @@ void w32(int v) {
     fputc((v >> 24) & 255, g_out);
 }
 
+/* Append label i to the symbol table; -1 when its name will not fit. */
+static int add_sym(int i, int sec, int bind) {
+    grow_sym(g_nsym + 1);
+    g_sym_lbl[g_nsym] = i;
+    g_sym_name[g_nsym] = s_add(g_lbl_name_pool + g_lbl_name_off[i]);
+    if (g_sym_name[g_nsym] < 0) return -1;
+    if (g_lbl_defd[i]) g_sym_val[g_nsym] = g_lbl_val[i];
+    else g_sym_val[g_nsym] = 0;
+    g_sym_sec[g_nsym] = sec;
+    g_sym_bind[g_nsym] = bind;
+    g_lbl_to_sym[i] = g_nsym;
+    g_nsym = g_nsym + 1;
+    return 0;
+}
+
 int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, int bss_idx) {
     int i;
     char *name;
@@ -1606,8 +1632,6 @@ int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, i
     for (i = 0; i < g_nlbl; i = i + 1) {
         name = g_lbl_name_pool + g_lbl_name_off[i];
         sec = 0;
-        if (!(g_lbl_glob[i] || g_lbl_refd[i])) continue;
-        if (g_nsym >= MAX_SYM) return -1;
         if (g_lbl_defd[i]) {
             if (g_lbl_sec[i] == SEC_TEXT) sec = text_idx;
             else if (g_lbl_sec[i] == SEC_RODATA) sec = rodata_idx;
@@ -1615,18 +1639,27 @@ int build_syms(int text_idx, int rodata_idx, int data_idx, int init_array_idx, i
             else if (g_lbl_sec[i] == SEC_INIT_ARRAY) sec = init_array_idx;
             else sec = bss_idx;
         }
+        if (!(g_lbl_glob[i] || g_lbl_refd[i])) continue;
         if (g_lbl_glob[i]) bind = S32O_BIND_GLOBAL;
         else bind = S32O_BIND_LOCAL;
         if (!g_lbl_defd[i]) bind = S32O_BIND_GLOBAL;
-        g_sym_lbl[g_nsym] = i;
-        g_sym_name[g_nsym] = s_add(g_lbl_name_pool + g_lbl_name_off[i]);
-        if (g_sym_name[g_nsym] < 0) return -1;
-        if (g_lbl_defd[i]) g_sym_val[g_nsym] = g_lbl_val[i];
-        else g_sym_val[g_nsym] = 0;
-        g_sym_sec[g_nsym] = sec;
-        g_sym_bind[g_nsym] = bind;
-        g_lbl_to_sym[i] = g_nsym;
-        g_nsym = g_nsym + 1;
+        if (add_sym(i, sec, bind) < 0) return -1;
+    }
+    /* Every other name this file defines, LOCAL, so that a map or a
+     * profile can name a static function or table.  The list the host
+     * assembler keeps too: not .L* or numeric labels, not a .set value,
+     * not a label in a section that is not written. */
+    for (i = 0; i < g_nlbl; i = i + 1) {
+        if (g_lbl_to_sym[i] >= 0 || !g_lbl_defd[i] || g_lbl_abs[i]) continue;
+        name = g_lbl_name_pool + g_lbl_name_off[i];
+        if (name[0] == '.' || (name[0] >= '0' && name[0] <= '9')) continue;
+        if (g_lbl_sec[i] == SEC_TEXT) sec = text_idx;
+        else if (g_lbl_sec[i] == SEC_RODATA) sec = rodata_idx;
+        else if (g_lbl_sec[i] == SEC_DATA) sec = data_idx;
+        else if (g_lbl_sec[i] == SEC_INIT_ARRAY) sec = init_array_idx;
+        else sec = bss_idx;
+        if (sec == 0) continue;
+        if (add_sym(i, sec, S32O_BIND_LOCAL) < 0) return -1;
     }
     return 0;
 }
@@ -1951,6 +1984,7 @@ int write_obj(char *out) {
     }
 
     g_ssz = 0;
+    g_str = sv_grow(g_str, &g_str_cap, 1, 1, "the string table");
     g_str[g_ssz] = 0;
     g_ssz = g_ssz + 1;
     if (text_idx) text_name = s_add(".text");

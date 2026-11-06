@@ -372,6 +372,7 @@ typedef struct {
     const char *name;       // Points into sym_strtab (caller must keep alive)
     uint32_t value;         // Resolved address
     uint8_t type;           // Symbol type (S32O_SYM_*)
+    uint8_t binding;        // Symbol binding (S32O_BIND_*)
 } s32x_symbol_t;
 
 // Result of symbol table loading
@@ -486,6 +487,7 @@ static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
         }
         syms[i].value = raw_syms[i].value;
         syms[i].type = raw_syms[i].type;
+        syms[i].binding = raw_syms[i].binding;
     }
 
     free(raw_syms);
@@ -497,13 +499,16 @@ static s32x_symtab_result_t load_s32x_symtab(const char *filename) {
     return result;
 }
 
-// Look up a symbol by name in a loaded symbol table
+// Look up a symbol by name in a loaded symbol table.  Only an external one:
+// the table also names static functions, for profiles, and a program's own
+// static memcpy is not the library's (a hook must never bind to it).
 // Returns the symbol value (address), or 0 if not found
 static uint32_t s32x_symtab_lookup(s32x_symtab_result_t *st, const char *name) __attribute__((unused));
 static uint32_t s32x_symtab_lookup(s32x_symtab_result_t *st, const char *name) {
     if (!st->symbols) return 0;
     for (uint32_t i = 0; i < st->num_symbols; i++) {
-        if (st->symbols[i].name && strcmp(st->symbols[i].name, name) == 0) {
+        if (st->symbols[i].binding != S32O_BIND_LOCAL &&
+            st->symbols[i].name && strcmp(st->symbols[i].name, name) == 0) {
             return st->symbols[i].value;
         }
     }

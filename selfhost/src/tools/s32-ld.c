@@ -124,7 +124,6 @@ char *memset(char *dst, int c, int n);
  * inliner's ~7 functions were enough), and a per-object symbol ceiling
  * is a poor thing to fail a self-host on.  Costs one int array --
  * sym_map, 8KB -> 32KB. */
-#define MAX_FILE_SYM 8192
 #define MAX_MEMBERS  512
 #define OUT_STRTAB_SZ 32768
 
@@ -220,15 +219,16 @@ char file_buf[FILE_BUFSZ];
 /* === Per-file state === */
 #define MAX_OBJ_SEC 32
 int sec_base_by_idx[MAX_OBJ_SEC];
-int sym_map[MAX_FILE_SYM];
+int *sym_map;
 /* An object's local symbols stay its own: their section and value are
  * kept here while the object is merged and copied onto each relocation
  * that names one (grel_lsec, grel_lval), and sym_map holds -2 - i for
  * local i.  They used to take gsym slots, and a unit with 4,000 string
  * literals -- stage08 cc labels every one -- filled the 4096-entry table
  * (GitHub issue 125). */
-int lsym_sec[MAX_FILE_SYM];
-int lsym_val[MAX_FILE_SYM];
+int *lsym_sec;
+int *lsym_val;
+int file_sym_cap;
 #define SYM_LOCAL_REL (-2)
 
 /* Object header parse state */
@@ -308,6 +308,53 @@ int sym_strtab_cap;
 int gsym_cap;
 int grel_cap;
 int emit_sym_cap;
+
+void file_sym_room(int need) {
+    int c;
+    if (need <= file_sym_cap) return;
+    c = file_sym_cap; sym_map = (int *)sv_grow((char *)sym_map, &c, need, 4, "object symbols");
+    c = file_sym_cap; lsym_sec = (int *)sv_grow((char *)lsym_sec, &c, need, 4, "object symbols");
+    c = file_sym_cap; lsym_val = (int *)sv_grow((char *)lsym_val, &c, need, 4, "object symbols");
+    file_sym_cap = c;
+}
+
+/* The objects' named locals, for the executable's symbol table: a static
+ * function or table, so that a profile can tell it from the global before
+ * it.  Assembler-private labels and sections not linked are left out. */
+char *lout_nbuf;
+int lout_nbuf_cap;
+int lout_nbuf_sz;
+int *lout_noff;
+int *lout_sec;
+int *lout_val;
+int lout_cap;
+int lout_cnt;
+
+void lout_add(char *name, int sec, int val) {
+    int c;
+    int n;
+    int i;
+    if (name[0] == '.' || (name[0] >= '0' && name[0] <= '9')) return;
+    if (sec != SEC_CODE && sec != SEC_DATA && sec != SEC_BSS && sec != SEC_RODATA) return;
+    n = strlen(name);
+    lout_nbuf = sv_grow(lout_nbuf, &lout_nbuf_cap, lout_nbuf_sz + n + 1, 1, "local symbol names");
+    i = 0;
+    while (i <= n) {
+        lout_nbuf[lout_nbuf_sz + i] = name[i];
+        i = i + 1;
+    }
+    if (lout_cnt + 1 > lout_cap) {
+        c = lout_cap; lout_noff = (int *)sv_grow((char *)lout_noff, &c, lout_cnt + 1, 4, "local symbols");
+        c = lout_cap; lout_sec = (int *)sv_grow((char *)lout_sec, &c, lout_cnt + 1, 4, "local symbols");
+        c = lout_cap; lout_val = (int *)sv_grow((char *)lout_val, &c, lout_cnt + 1, 4, "local symbols");
+        lout_cap = c;
+    }
+    lout_noff[lout_cnt] = lout_nbuf_sz;
+    lout_sec[lout_cnt] = sec;
+    lout_val[lout_cnt] = val;
+    lout_cnt = lout_cnt + 1;
+    lout_nbuf_sz = lout_nbuf_sz + n + 1;
+}
 
 void gsym_room(int need) {
     int c;
@@ -780,11 +827,7 @@ void merge_symbols() {
     int name_len;
     int gidx;
 
-    if (obj_nsym > MAX_FILE_SYM) {
-        fputs("error: object symbol table too large\n", stderr);
-        link_error = 1;
-        return;
-    }
+    file_sym_room(obj_nsym);
 
     i = 0;
     while (i < obj_nsym) {
@@ -819,6 +862,7 @@ void merge_symbols() {
                 /* Locals are file-scoped: kept here, not in gsym */
                 lsym_sec[i] = sy_sectype;
                 lsym_val[i] = sy_val;
+                lout_add(name, sy_sectype, sy_val);
                 gidx = -2 - i;
             } else {
                 gidx = gsym_upsert(name, sy_sectype, sy_val, sy_bind);
@@ -885,7 +929,7 @@ void merge_relocs() {
                 grel_typ[grel_cnt] = rl_typ;
 
                 /* Map file-local symbol to gsym, or carry a local's place */
-                if (rl_sym < MAX_FILE_SYM) {
+                if (rl_sym < obj_nsym) {
                     mapped_sym = sym_map[rl_sym];
                 } else {
                     mapped_sym = -1;
@@ -942,7 +986,7 @@ void link_obj(char *path) {
 
     /* Clear sym_map */
     i = 0;
-    while (i < MAX_FILE_SYM) {
+    while (i < file_sym_cap) {
         sym_map[i] = 0;
         i = i + 1;
     }
@@ -1021,7 +1065,7 @@ void load_ar_member(FILE *ar_fh, int midx) {
 
     /* Clear sym_map */
     i = 0;
-    while (i < MAX_FILE_SYM) {
+    while (i < file_sym_cap) {
         sym_map[i] = 0;
         i = i + 1;
     }
@@ -1252,17 +1296,20 @@ int gap_phys(int gi) {
     return off;
 }
 
+/* The address of offset off in the merged section sec */
+int place_va(int sec, int off) {
+    if (sec == SEC_CODE) {
+        off = map_code_off(off);
+    }
+    return sec_va_get(sec) + off;
+}
+
 int gsym_va(int idx) {
-    int off;
     if (gsym_def[idx] == 2) {
         /* Linker-defined: value is absolute */
         return gsym_val[idx];
     }
-    off = gsym_val[idx];
-    if (gsym_sec[idx] == SEC_CODE) {
-        off = map_code_off(off);
-    }
-    return sec_va_get(gsym_sec[idx]) + off;
+    return place_va(gsym_sec[idx], gsym_val[idx]);
 }
 
 /* Get gsym name as NUL-terminated string pointer */
@@ -1493,13 +1540,55 @@ void inject_linker_symbols() {
 
 /* === Collect symbol table for output === */
 
+/* The output section index of a symbol in merged section sec */
+int out_sec_idx(int sec) {
+    int sec_idx;
+    sec_idx = 0;
+    if (sec == SEC_CODE && text_sz > 0) {
+        sec_idx = 1;
+    } else if (sec == SEC_DATA && data_sz > 0) {
+        sec_idx = 1;
+        if (text_sz > 0) sec_idx = sec_idx + 1;
+    } else if (sec == SEC_BSS && bss_sz > 0) {
+        sec_idx = 1;
+        if (text_sz > 0) sec_idx = sec_idx + 1;
+        if (data_sz > 0) sec_idx = sec_idx + 1;
+    } else if (sec == SEC_RODATA && rodata_sz > 0) {
+        sec_idx = 1;
+        if (text_sz > 0) sec_idx = sec_idx + 1;
+        if (data_sz > 0) sec_idx = sec_idx + 1;
+        if (bss_sz > 0) sec_idx = sec_idx + 1;
+    }
+    return sec_idx;
+}
+
+/* One entry of the executable's symbol table, its name nlen bytes at name */
+void emit_sym_add(char *name, int nlen, int val, int sec_idx, int bind) {
+    int soff;
+    int j;
+    emit_sym_room(emit_sym_cnt + 1);
+    sym_strtab = sv_grow(sym_strtab, &sym_strtab_cap, sym_strtab_sz + nlen + 1, 1, "symbol names");
+    soff = sym_strtab_sz;
+    j = 0;
+    while (j < nlen) {
+        sym_strtab[soff + j] = name[j];
+        j = j + 1;
+    }
+    sym_strtab[soff + nlen] = 0;
+    sym_strtab_sz = soff + nlen + 1;
+
+    emit_sym_noff[emit_sym_cnt] = soff;
+    emit_sym_val[emit_sym_cnt] = val;
+    emit_sym_sec[emit_sym_cnt] = sec_idx;
+    emit_sym_type[emit_sym_cnt] = 0;
+    emit_sym_bind[emit_sym_cnt] = bind;
+    emit_sym_size[emit_sym_cnt] = 0;
+    emit_sym_cnt = emit_sym_cnt + 1;
+}
+
 void collect_symtab() {
     int i;
-    int noff;
-    int nlen;
-    int soff;
     int sec_idx;
-    int j;
 
     sym_strtab = sv_grow(sym_strtab, &sym_strtab_cap, 1, 1, "symbol names");
     sym_strtab[0] = 0;
@@ -1508,55 +1597,17 @@ void collect_symtab() {
 
     i = 0;
     while (i < gsym_cnt) {
-        if (gsym_bind[i] == BIND_GLOBAL && gsym_def[i] != 0) {
-            emit_sym_room(emit_sym_cnt + 1);
-
-            /* Add name to symbol string table */
-            noff = gsym_noff[i];
-            nlen = gsym_nlen[i];
-            sym_strtab = sv_grow(sym_strtab, &sym_strtab_cap, sym_strtab_sz + nlen + 1, 1, "symbol names");
-            if (1) {
-                soff = sym_strtab_sz;
-                j = 0;
-                while (j < nlen) {
-                    sym_strtab[soff + j] = gsym_nbuf[noff + j];
-                    j = j + 1;
-                }
-                sym_strtab[soff + nlen] = 0;
-                sym_strtab_sz = soff + nlen + 1;
-            } else {
-                soff = 0;
-            }
-
-            emit_sym_noff[emit_sym_cnt] = soff;
-            emit_sym_val[emit_sym_cnt] = gsym_va(i);
-
-            /* Map gsym section type to output section index */
+        if ((gsym_bind[i] == BIND_GLOBAL || gsym_bind[i] == BIND_WEAK) && gsym_def[i] != 0) {
             sec_idx = 0;
-            if (gsym_def[i] != 2) {
-                if (gsym_sec[i] == SEC_CODE && text_sz > 0) {
-                    sec_idx = 1;
-                } else if (gsym_sec[i] == SEC_DATA && data_sz > 0) {
-                    sec_idx = 1;
-                    if (text_sz > 0) sec_idx = sec_idx + 1;
-                } else if (gsym_sec[i] == SEC_BSS && bss_sz > 0) {
-                    sec_idx = 1;
-                    if (text_sz > 0) sec_idx = sec_idx + 1;
-                    if (data_sz > 0) sec_idx = sec_idx + 1;
-                } else if (gsym_sec[i] == SEC_RODATA && rodata_sz > 0) {
-                    sec_idx = 1;
-                    if (text_sz > 0) sec_idx = sec_idx + 1;
-                    if (data_sz > 0) sec_idx = sec_idx + 1;
-                    if (bss_sz > 0) sec_idx = sec_idx + 1;
-                }
-            }
-
-            emit_sym_sec[emit_sym_cnt] = sec_idx;
-            emit_sym_type[emit_sym_cnt] = 0;
-            emit_sym_bind[emit_sym_cnt] = BIND_GLOBAL;
-            emit_sym_size[emit_sym_cnt] = 0;
-            emit_sym_cnt = emit_sym_cnt + 1;
+            if (gsym_def[i] != 2) sec_idx = out_sec_idx(gsym_sec[i]);
+            emit_sym_add(gsym_nbuf + gsym_noff[i], gsym_nlen[i], gsym_va(i), sec_idx, gsym_bind[i]);
         }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < lout_cnt) {
+        emit_sym_add(lout_nbuf + lout_noff[i], strlen(lout_nbuf + lout_noff[i]),
+                     place_va(lout_sec[i], lout_val[i]), out_sec_idx(lout_sec[i]), BIND_LOCAL);
         i = i + 1;
     }
 }

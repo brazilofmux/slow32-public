@@ -2409,6 +2409,23 @@ static uint32_t find_entry_point(linker_state_t *ld) {
 }
 
 // Write memory map file
+// Does this symbol go in the executable's table?  A defined global or weak
+// one (the hooks look those up by name), and a defined local one with a name
+// of its own: a static function or table, so that a profile can tell it from
+// the global before it.  An assembler-private label names nothing.
+static bool symbol_is_emitted(const symbol_entry_t *sym) {
+    if (sym->defined_in_file == -1) return false;
+    if (sym->binding != S32O_BIND_LOCAL) return true;
+    return sym->name[0] != '.' && !(sym->name[0] >= '0' && sym->name[0] <= '9');
+}
+
+// The length of a symbol's name as its source wrote it: a local one is
+// entered as "name@file" (ld_local_name).
+static size_t symbol_source_len(const symbol_entry_t *sym) {
+    const char *at = sym->binding == S32O_BIND_LOCAL ? strrchr(sym->name, '@') : NULL;
+    return at ? (size_t)(at - sym->name) : strlen(sym->name);
+}
+
 static void write_memory_map(linker_state_t *ld) {
     if (!ld->print_map) return;
     
@@ -2482,7 +2499,20 @@ static void write_memory_map(linker_state_t *ld) {
             fprintf(f, "  0x%08X 0x%08X %s\n", sym->value, sym->size, sym->name);
         }
     }
-    
+
+    // Local symbols: a static function or table, under the name in its source
+    fprintf(f, "\nLocal Symbols:\n");
+    fprintf(f, "  Address    Size       Name\n");
+    fprintf(f, "  ---------  ---------  -----------\n");
+
+    for (int i = 0; i < ld->num_symbols; i++) {
+        symbol_entry_t *sym = &ld->symbols[i];
+        if (sym->binding == S32O_BIND_LOCAL && symbol_is_emitted(sym)) {
+            fprintf(f, "  0x%08X 0x%08X %.*s\n", sym->value, sym->size,
+                    (int)symbol_source_len(sym), sym->name);
+        }
+    }
+
     fprintf(f, "\n================================================================================\n");
     fprintf(f, "Total memory usage: %u bytes (%.1f KB)\n",
             ld->bss_limit, ld->bss_limit / 1024.0);
@@ -2521,10 +2551,7 @@ static void write_executable(linker_state_t *ld) {
     s32o_symbol_t *emit_syms = NULL;
     if (!ld->strip_symbols) {
         for (int i = 0; i < ld->num_symbols; i++) {
-            symbol_entry_t *sym = &ld->symbols[i];
-            if (sym->binding == S32O_BIND_GLOBAL && sym->defined_in_file != -1) {
-                max_emit_syms++;
-            }
+            if (symbol_is_emitted(&ld->symbols[i])) max_emit_syms++;
         }
     }
     if (max_emit_syms > 0) {
@@ -2532,17 +2559,18 @@ static void write_executable(linker_state_t *ld) {
         int si = 0;
         for (int i = 0; i < ld->num_symbols; i++) {
             symbol_entry_t *sym = &ld->symbols[i];
-            if (sym->binding != S32O_BIND_GLOBAL || sym->defined_in_file == -1)
+            if (!symbol_is_emitted(sym))
                 continue;
             // Add name to sym strtab
             uint32_t name_off = sym_strtab_size;
-            size_t nlen = strlen(sym->name) + 1;
-            while (name_off + nlen > sym_strtab_cap) {
+            size_t nlen = symbol_source_len(sym);
+            while (name_off + nlen + 1 > sym_strtab_cap) {
                 sym_strtab_cap *= 2;
                 sym_strtab = realloc(sym_strtab, sym_strtab_cap);
             }
             memcpy(&sym_strtab[name_off], sym->name, nlen);
-            sym_strtab_size += (uint32_t)nlen;
+            sym_strtab[name_off + nlen] = '\0';
+            sym_strtab_size += (uint32_t)nlen + 1;
             emit_syms[si].name_offset = name_off;
             emit_syms[si].value = sym->value;
             emit_syms[si].section = (uint16_t)sym->section_idx;
