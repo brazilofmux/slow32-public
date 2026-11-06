@@ -96,6 +96,18 @@ static inline void setSLOW32LibcallImpls(LibcallSink &Sink) {
   Sink.setLibcallImpl(RTLIB::ROUND_F32, RTLIB::impl_roundf);
   Sink.setLibcallImpl(RTLIB::ROUND_F64, RTLIB::impl_round);
   Sink.setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
+  // To an integer: Fortran's NINT is llvm.lround, and so is C's lround without
+  // math errno.  Unbound, each was "no libcall available for lround".
+  Sink.setLibcallImpl(RTLIB::LROUND_F32, RTLIB::impl_lroundf);
+  Sink.setLibcallImpl(RTLIB::LROUND_F64, RTLIB::impl_lround);
+  Sink.setLibcallImpl(RTLIB::LLROUND_F32, RTLIB::impl_llroundf);
+  Sink.setLibcallImpl(RTLIB::LLROUND_F64, RTLIB::impl_llround);
+  Sink.setLibcallImpl(RTLIB::LRINT_F32, RTLIB::impl_lrintf);
+  Sink.setLibcallImpl(RTLIB::LRINT_F64, RTLIB::impl_lrint);
+  Sink.setLibcallImpl(RTLIB::LLRINT_F32, RTLIB::impl_llrintf);
+  Sink.setLibcallImpl(RTLIB::LLRINT_F64, RTLIB::impl_llrint);
+  Sink.setLibcallImpl(RTLIB::ROUNDEVEN_F32, RTLIB::impl_roundevenf);
+  Sink.setLibcallImpl(RTLIB::ROUNDEVEN_F64, RTLIB::impl_roundeven);
   Sink.setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
 
   // libm, for the llvm.* math intrinsics clang emits when errno is not in

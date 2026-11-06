@@ -272,3 +272,4 @@ islisp/out/
 # what chainbad.bas and chainbad2.bas write and stop on
 sbc/tests/native/CHTB.TMP
 sbc/tests/native/CHTC.TMP
+/flang/out/

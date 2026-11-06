@@ -1,0 +1,6 @@
+#!/bin/bash
+# run-fcvs.sh's f77 interface over flang: S32_F77=flang/fcvs-f77 S32_LD=flang/fcvs-ld
+HERE="$(cd "$(dirname "$0")" && pwd)"; L="${LLVM_PROJECT:-$HOME/llvm-project}"; O="${FLANG_OUT:-$HERE/out}"; B="$L/build-flang/bin"
+set -e
+"$B/flang" -fc1 -triple slow32-unknown-none -O2 -ffixed-form -fintrinsic-modules-path "$O/mod" -module-dir "$(dirname "$2")" -emit-llvm "$1" -o "$2.ll"
+"$B/llc" -mtriple=slow32-unknown-none -O2 "$2.ll" -o "$2"

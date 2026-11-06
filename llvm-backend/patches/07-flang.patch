@@ -1,0 +1,260 @@
+diff --git a/flang-rt/include/flang-rt/runtime/lock.h b/flang-rt/include/flang-rt/runtime/lock.h
+index 7147c3a6b940..00ea0306db03 100644
+--- a/flang-rt/include/flang-rt/runtime/lock.h
++++ b/flang-rt/include/flang-rt/runtime/lock.h
+@@ -16,13 +16,17 @@
+ 
+ // Avoid <mutex> if possible to avoid introduction of C++ runtime
+ // library dependence.
+-#if !defined(_WIN32) && !RT_GPU_TARGET
++#if RT_USE_PSEUDO_LOCK
++#undef USE_PTHREADS
++#elif !defined(_WIN32) && !RT_GPU_TARGET
+ #define USE_PTHREADS 1
+ #else
+ #undef USE_PTHREADS
+ #endif
+ 
+-#if USE_PTHREADS
++#if RT_USE_PSEUDO_LOCK
++// no lock, no header
++#elif USE_PTHREADS
+ #include <pthread.h>
+ #elif defined(_WIN32)
+ #include "flang/Common/windows-include.h"
+@@ -88,7 +92,7 @@ public:
+   }
+ 
+ private:
+-#if RT_USE_PSEUDO_FILE_UNIT
++#if RT_USE_PSEUDO_LOCK
+   // No state.
+ #elif USE_PTHREADS
+   pthread_mutex_t mutex_{};
+diff --git a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
+index 67bdf6867251..fc065c0d0773 100644
+--- a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
++++ b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
+@@ -17,6 +17,7 @@
+ #ifndef FORTRAN_OPTIMIZER_BUILDER_RUNTIME_RTBUILDER_H
+ #define FORTRAN_OPTIMIZER_BUILDER_RUNTIME_RTBUILDER_H
+ 
++#include "flang/Optimizer/Support/TargetLongBytes.h"
+ #include "flang/Common/uint128.h"
+ #include "flang/Optimizer/Builder/FIRBuilder.h"
+ #include "flang/Optimizer/Dialect/FIRType.h"
+@@ -85,7 +86,7 @@ using FuncTypeBuilderFunc = mlir::FunctionType (*)(mlir::MLIRContext *);
+       auto voidTy = fir::LLVMPointerType::get(                                 \
+           context, mlir::IntegerType::get(context, 8));                        \
+       auto size_tTy =                                                          \
+-          mlir::IntegerType::get(context, 8 * sizeof(std::size_t));            \
++          mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);            \
+       auto refTy = fir::ReferenceType::get(f(context));                        \
+       return mlir::FunctionType::get(                                          \
+           context, {refTy, size_tTy, refTy, refTy, size_tTy, size_tTy},        \
+@@ -260,7 +261,7 @@ getModel<void *(*)(void *, const void *, unsigned long)>() {
+     auto voidPtrTy =
+         fir::LLVMPointerType::get(context, mlir::IntegerType::get(context, 8));
+     auto unsignedLongTy =
+-        mlir::IntegerType::get(context, 8 * sizeof(unsigned long));
++        mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
+     auto funcTy = mlir::FunctionType::get(
+         context, {voidPtrTy, voidPtrTy, unsignedLongTy}, {voidPtrTy});
+     return fir::LLVMPointerType::get(context, funcTy);
+@@ -298,7 +299,7 @@ constexpr TypeBuilderFunc getModel<void **>() {
+ template <>
+ constexpr TypeBuilderFunc getModel<long>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
+-    return mlir::IntegerType::get(context, 8 * sizeof(long));
++    return mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
+   };
+ }
+ template <>
+@@ -347,7 +348,7 @@ constexpr TypeBuilderFunc getModel<const long long *>() {
+ template <>
+ constexpr TypeBuilderFunc getModel<unsigned long>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
+-    return mlir::IntegerType::get(context, 8 * sizeof(unsigned long));
++    return mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
+   };
+ }
+ template <>
+@@ -487,7 +488,7 @@ template <>
+ constexpr TypeBuilderFunc getModel<unsigned long *>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
+     return fir::ReferenceType::get(
+-        mlir::IntegerType::get(context, 8 * sizeof(unsigned long)));
++        mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES));
+   };
+ }
+ template <>
+diff --git a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h b/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
+index b9a8a670d079..049a4c8938b9 100644
+--- a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
++++ b/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
+@@ -22,6 +22,7 @@
+ #ifndef OPTIMIZER_DESCRIPTOR_MODEL_H
+ #define OPTIMIZER_DESCRIPTOR_MODEL_H
+ 
++#include "flang/Optimizer/Support/TargetLongBytes.h"
+ #include "flang/Common/ISO_Fortran_binding_wrapper.h"
+ #include "flang/Runtime/descriptor-consts.h"
+ #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+@@ -58,7 +59,7 @@ constexpr TypeBuilderFunc getModel<int>() {
+ template <>
+ constexpr TypeBuilderFunc getModel<unsigned long>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
+-    return mlir::IntegerType::get(context, sizeof(unsigned long) * 8);
++    return mlir::IntegerType::get(context, FLANG_TARGET_LONG_BYTES * 8);
+   };
+ }
+ template <>
+@@ -90,7 +91,7 @@ constexpr TypeBuilderFunc getModel<Fortran::ISO::CFI_type_t>() {
+ template <>
+ constexpr TypeBuilderFunc getModel<long>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
+-    return mlir::IntegerType::get(context, sizeof(long) * 8);
++    return mlir::IntegerType::get(context, FLANG_TARGET_LONG_BYTES * 8);
+   };
+ }
+ template <>
+diff --git a/flang/include/flang/Optimizer/Support/TargetLongBytes.h b/flang/include/flang/Optimizer/Support/TargetLongBytes.h
+new file mode 100644
+index 000000000000..31c382973e63
+--- /dev/null
++++ b/flang/include/flang/Optimizer/Support/TargetLongBytes.h
+@@ -0,0 +1,22 @@
++//===-- TargetLongBytes.h - The size of the target's long -------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++//
++// The models of the runtime's interfaces and of the descriptor take long and
++// size_t from the machine flang runs on, which is why flang is not supported
++// on 32-bit targets.  This build targets SLOW-32 alone (ILP32), so it says so
++// here.  std::int64_t on the host is long long on macOS; on a host where it is
++// long this is not enough.
++//
++//===----------------------------------------------------------------------===//
++
++#ifndef FORTRAN_OPTIMIZER_SUPPORT_TARGETLONGBYTES_H
++#define FORTRAN_OPTIMIZER_SUPPORT_TARGETLONGBYTES_H
++
++#define FLANG_TARGET_LONG_BYTES 4
++
++#endif
+diff --git a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp b/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
+index 995a2efba25a..3efea2073df3 100644
+--- a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
++++ b/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
+@@ -146,9 +146,12 @@ mlir::Value ConvertFIRToLLVMPattern::loadDimFieldFromBox(
+          "in memory");
+   mlir::LLVM::GEPOp p = genGEP(loc, boxTy.llvm, rewriter, box, 0,
+                                static_cast<int>(kDimsPosInBox), dim, off);
+-  auto loadOp = mlir::LLVM::LoadOp::create(rewriter, loc, ty, p);
++  // The field's own type, then the one asked for: they differ on a target
++  // whose descriptor fields are not 64 bits wide.
++  auto fldTy = getBoxEleTy(boxTy.llvm, {kDimsPosInBox, 0, off});
++  auto loadOp = mlir::LLVM::LoadOp::create(rewriter, loc, fldTy, p);
+   attachTBAATag(loadOp, boxTy.fir, nullptr, p);
+-  return loadOp;
++  return integerCast(loc, rewriter, ty, loadOp);
+ }
+ 
+ mlir::Value ConvertFIRToLLVMPattern::getDimFieldFromBox(
+@@ -157,13 +160,15 @@ mlir::Value ConvertFIRToLLVMPattern::getDimFieldFromBox(
+   if (mlir::isa<mlir::LLVM::LLVMPointerType>(box.getType())) {
+     mlir::LLVM::GEPOp p = genGEP(loc, boxTy.llvm, rewriter, box, 0,
+                                  static_cast<int>(kDimsPosInBox), dim, off);
+-    auto loadOp = mlir::LLVM::LoadOp::create(rewriter, loc, ty, p);
++    auto fldTy = getBoxEleTy(boxTy.llvm, {kDimsPosInBox, 0, off});
++    auto loadOp = mlir::LLVM::LoadOp::create(rewriter, loc, fldTy, p);
+     attachTBAATag(loadOp, boxTy.fir, nullptr, p);
+-    return loadOp;
++    return integerCast(loc, rewriter, ty, loadOp);
+   }
+-  return mlir::LLVM::ExtractValueOp::create(
++  mlir::Value field = mlir::LLVM::ExtractValueOp::create(
+       rewriter, loc, box,
+       llvm::ArrayRef<std::int64_t>{kDimsPosInBox, dim, off});
++  return integerCast(loc, rewriter, ty, field);
+ }
+ 
+ mlir::Value ConvertFIRToLLVMPattern::getStrideFromBox(
+diff --git a/flang/lib/Optimizer/CodeGen/Target.cpp b/flang/lib/Optimizer/CodeGen/Target.cpp
+index 3e6a2151fb31..8bd80591ce02 100644
+--- a/flang/lib/Optimizer/CodeGen/Target.cpp
++++ b/flang/lib/Optimizer/CodeGen/Target.cpp
+@@ -1453,6 +1453,43 @@ struct TargetRISCV64 : public GenericTarget<TargetRISCV64> {
+ };
+ } // namespace
+ 
++//===----------------------------------------------------------------------===//
++// SLOW-32 target specifics.
++//===----------------------------------------------------------------------===//
++
++namespace {
++struct TargetSLOW32 : public GenericTarget<TargetSLOW32> {
++  using GenericTarget::GenericTarget;
++
++  static constexpr int defaultWidth = 32;
++
++  // As clang has C's _Complex here: no aggregate travels in registers.
++  CodeGenSpecifics::Marshalling
++  complexArgumentType(mlir::Location, mlir::Type eleTy) const override {
++    assert(fir::isa_real(eleTy));
++    CodeGenSpecifics::Marshalling marshal;
++    // { t, t }   struct of 2 eleTy, byval, align 4
++    auto structTy =
++        mlir::TupleType::get(eleTy.getContext(), mlir::TypeRange{eleTy, eleTy});
++    marshal.emplace_back(fir::ReferenceType::get(structTy),
++                         AT{/*alignment=*/4, /*byval=*/true});
++    return marshal;
++  }
++
++  CodeGenSpecifics::Marshalling
++  complexReturnType(mlir::Location, mlir::Type eleTy) const override {
++    assert(fir::isa_real(eleTy));
++    CodeGenSpecifics::Marshalling marshal;
++    // { t, t }   struct of 2 eleTy, sret, align 4
++    auto structTy =
++        mlir::TupleType::get(eleTy.getContext(), mlir::TypeRange{eleTy, eleTy});
++    marshal.emplace_back(fir::ReferenceType::get(structTy),
++                         AT{/*alignment=*/4, /*byval=*/false, /*sret=*/true});
++    return marshal;
++  }
++};
++} // namespace
++
+ //===----------------------------------------------------------------------===//
+ // AMDGPU linux target specifics.
+ //===----------------------------------------------------------------------===//
+@@ -2082,6 +2119,10 @@ std::unique_ptr<fir::CodeGenSpecifics> fir::CodeGenSpecifics::get(
+     return std::make_unique<TargetSparcV9>(ctx, std::move(trp),
+                                            std::move(kindMap), targetCPU,
+                                            targetFeatures, targetABI, dl);
++  case llvm::Triple::ArchType::slow32:
++    return std::make_unique<TargetSLOW32>(ctx, std::move(trp),
++                                          std::move(kindMap), targetCPU,
++                                          targetFeatures, targetABI, dl);
+   case llvm::Triple::ArchType::riscv64:
+     return std::make_unique<TargetRISCV64>(ctx, std::move(trp),
+                                            std::move(kindMap), targetCPU,
+diff --git a/flang/lib/Optimizer/CodeGen/TypeConverter.cpp b/flang/lib/Optimizer/CodeGen/TypeConverter.cpp
+index 31194f9c274f..cf719eb62514 100644
+--- a/flang/lib/Optimizer/CodeGen/TypeConverter.cpp
++++ b/flang/lib/Optimizer/CodeGen/TypeConverter.cpp
+@@ -176,7 +176,9 @@ mlir::Type LLVMTypeConverter::offsetType() const {
+ 
+ // i64 can be used to index into aggregates like arrays
+ mlir::Type LLVMTypeConverter::indexType() const {
+-  return mlir::IntegerType::get(&getContext(), 64);
++  // What MakeLowerOptions set: 32 bits where pointers are.  A fixed 64 here
++  // met MLIR's own index in casts nothing could lower.
++  return getIndexType();
+ }
+ 
+ // fir.type<name(p : TY'...){f : TY...}>  -->  llvm<"%name = { ty... }">

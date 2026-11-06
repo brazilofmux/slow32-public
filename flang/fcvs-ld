@@ -1,0 +1,6 @@
+#!/bin/bash
+# run-fcvs.sh's link line, the flang runtime in libf77's place
+HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"; L="${LLVM_PROJECT:-$HOME/llvm-project}"; O="${FLANG_OUT:-$HERE/out}"; LX="$L/build-slow32-libcxx/install/lib"
+args=()
+for a in "$@"; do case "$a" in *libf77*) args+=("$O/shim.s32o" "$O/libflangrt.s32a" "$LX/libc++.a" "$LX/libc++abi.a");; *) args+=("$a");; esac; done
+exec "$ROOT/tools/linker/s32-ld" --heap-size 16M "${args[@]}" "$ROOT/runtime/libs32cxx.s32a"

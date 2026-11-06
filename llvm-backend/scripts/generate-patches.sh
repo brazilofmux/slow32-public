@@ -116,6 +116,11 @@ git diff $BASE HEAD -- \
 lines=$(wc -l < "$PATCHES_DIR/06-libcxx.patch")
 echo "   Created: 06-libcxx.patch ($lines lines)"
 
+echo "7. Generating flang patch..."
+git diff $BASE HEAD -- flang flang-rt > "$PATCHES_DIR/07-flang.patch" 2>/dev/null || true
+lines=$(wc -l < "$PATCHES_DIR/07-flang.patch")
+echo "   Created: 07-flang.patch ($lines lines)"
+
 echo ""
 echo "Patch generation complete!"
 echo "=========================="
