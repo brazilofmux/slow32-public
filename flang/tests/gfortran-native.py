@@ -8,7 +8,7 @@ patch reached 64 bits.  NATIVE_FLANG= says which flang (default build-flang-nati
 built by docs/plans/flang.md's recipe).  OUT must not exist; OUT/native.tsv has every
 verdict, OUT/ours.txt the tests that fail only on SLOW-32.  Not a gate: a report.
 """
-import argparse, collections, importlib.util, os, sys
+import argparse, collections, importlib.util, os, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +17,8 @@ suite = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(suite)
 
 FLANG = os.environ.get('NATIVE_FLANG', os.path.expanduser('~/llvm-project/build-flang-native/bin/flang'))
+FLANG_HEADERS = os.path.expanduser('~/llvm-project/flang/include/flang')
+CLANG, SDK = 'clang', subprocess.run(['xcrun', '--show-sdk-path'], capture_output=True, text=True).stdout.strip()
 AGREE = suite.AGREE
 
 
@@ -27,7 +29,10 @@ def native(rel, out):
     _, opts, shouldfail = suite.directives(text)
     work = os.path.join(out, 'w', rel.replace('/', '__'))
     os.makedirs(work)
-    rc, _, _ = suite.proc([suite.FC, '-w', '-O1'] + opts + [src, '-o', 'h'], work, suite.BUILD_TIMEOUT)
+    aux, more = suite.companions(src, text)
+    for m in aux:
+        suite.proc([suite.FC, '-w', '-O1', '-c'] + opts + [m], work, suite.BUILD_TIMEOUT)
+    rc, _, _ = suite.proc([suite.FC, '-w', '-O1'] + opts + [src] + more + ['-o', 'h'], work, suite.BUILD_TIMEOUT)
     if rc != 0:
         return rel, 'oracle-refuses', ''
     hrc, hout, _ = suite.proc(['./h'], work, suite.HOST_TIMEOUT)
@@ -35,7 +40,16 @@ def native(rel, out):
     if hrc is None or (hrc != 0) != shouldfail:
         return rel, 'oracle-fails', ''
     flags = [o for o in opts if suite.PASS_ON.match(o)]
-    rc, _, err = suite.proc([FLANG, '-w', '-O2'] + flags + [src, '-o', 'n'], work, suite.BUILD_TIMEOUT)
+    for m in aux:
+        suite.proc([FLANG, '-w', '-O2', '-c'] + flags + [m, '-o', 'aux.o'], work, suite.BUILD_TIMEOUT)
+    linked = []
+    for i, m in enumerate(more):  # flang's driver compiles no C
+        if m.endswith('.c'):
+            suite.proc([CLANG, '-w', '-O2', '-I', FLANG_HEADERS, '-isysroot', SDK] + suite.C_FOR_FLANG + ['-c', m, '-o', f'c{i}.o'], work, suite.BUILD_TIMEOUT)
+            linked.append(f'c{i}.o')
+        else:
+            linked.append(m)
+    rc, _, err = suite.proc([FLANG, '-w', '-O2'] + flags + [src] + linked + ['-o', 'n'], work, suite.BUILD_TIMEOUT)
     if rc is None:
         return rel, 'build-timeout', ''
     if rc != 0:

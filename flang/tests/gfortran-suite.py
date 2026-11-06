@@ -30,8 +30,11 @@ EXT = re.compile(r'\.(f|f90|f95|f03|f08|for)$', re.I)
 # Not what this measures: another machine's parallelism, sanitizers, debuggers.
 SKIPDIRS = {'coarray', 'gomp', 'goacc', 'asan', 'ubsan', 'lto', 'guality', 'debug', 'vect', 'graphite', 'analyzer'}
 PASS_ON = re.compile(r'^-(fdefault-(real|integer|double)-\d+|ffree-form|ffixed-form|fbackslash|ffixed-line-length-\S+|funsigned|cpp)$')
-PHASE = {11: 'flang', 12: 'llc', 13: 'as', 14: 'ld'}
+PHASE = {11: 'flang', 12: 'llc', 13: 'as', 14: 'ld', 15: 'clang'}
 HOST_TIMEOUT, BUILD_TIMEOUT, RUN_TIMEOUT = 30, 300, 120
+# The tests' C is written to gfortran's ISO_Fortran_binding.h.  flang's spells these types
+# otherwise, in a helper that dumps descriptors to stderr, and doesn't bring in stdint.h.
+C_FOR_FLANG = ['-DCFI_type_ucs4_char=CFI_type_char32_t', '-DCFI_type_cfunptr=CFI_type_cptr', '-include', 'stdint.h']
 
 
 def directives(text):
@@ -43,18 +46,35 @@ def directives(text):
     return run, opts, 'dg-shouldfail' in text
 
 
+def companions(src, text):
+    """What else the test is made of: Fortran read for its modules, and sources linked in."""
+    def named(what):
+        return [os.path.join(os.path.dirname(src), x) for m in re.finditer(r'dg-' + what + r'\s+"?\{?([^"}\n]*)', text)
+                for x in m.group(1).split()]
+    return named('compile-aux-modules'), named('additional-sources')
+
+
+def driver(src, text, work, opts, target='t.s32x', extra_env=None):
+    """The command and environment that build a test for SLOW-32."""
+    aux, more = companions(src, text)
+    env = dict(os.environ, FFLAGS=' '.join(o for o in opts if PASS_ON.match(o)), AUX_MODULES=' '.join(aux),
+               CFLAGS=' '.join(C_FOR_FLANG))
+    env.update(extra_env or {})
+    return ['zsh', DRIVER, src, os.path.join(work, target)] + more, env
+
+
 def skip_reason(rel, text, opts):
     parts = rel.split('/')
     if len(parts) > 1 and parts[0] in SKIPDIRS:
         return 'skip-dir'
-    if re.search(r'dg-(additional-sources|compile-aux-modules)', text):
-        return 'skip-multifile'
     if re.search(r'dg-do\s+run\s*\{', text) or 'dg-require-' in text:
         return 'skip-conditional'
     if any(o.startswith(('-fopenmp', '-fopenacc', '-fcoarray=lib', '-flto', '-fsanitize')) for o in opts):
         return 'skip-option'
     if any(o.startswith(('-fcheck', '-fbounds-check', '-finit-', '-fsign-zero', '-fno-sign-zero', '-fno-automatic', '-freal-')) for o in opts):
         return 'skip-flag'  # gfortran's run-time checks, fill values, kind remapping; flang has no such options
+    if '-ff2c' in opts and 'dg-additional-sources' in text:
+        return 'skip-flag'  # C on the other side expecting f2c's names; alone, the flag changes nothing to test
     return None
 
 
@@ -119,7 +139,10 @@ def one(rel, out):
     os.makedirs(work)
 
     # the oracle first: if it has no verdict, flang's costs nothing
-    rc, _, err = proc([FC, '-w', '-O1'] + opts + [src, '-o', 'h'], work, BUILD_TIMEOUT)
+    aux, more = companions(src, text)
+    for m in aux:
+        proc([FC, '-w', '-O1', '-c'] + opts + [m], work, BUILD_TIMEOUT)  # for its .mod
+    rc, _, err = proc([FC, '-w', '-O1'] + opts + [src] + more + ['-o', 'h'], work, BUILD_TIMEOUT)
     if rc != 0:
         return rel, 'oracle-refuses', first_error(err)
     hrc, hout, _ = proc(['./h'], work, HOST_TIMEOUT)
@@ -129,8 +152,8 @@ def one(rel, out):
     if (hrc != 0) != shouldfail:
         return rel, 'oracle-fails', f'rc={hrc}'
 
-    env = dict(os.environ, FFLAGS=' '.join(o for o in opts if PASS_ON.match(o)))
-    rc, _, err = proc(['zsh', DRIVER, src, os.path.join(work, 't.s32x')], work, BUILD_TIMEOUT, env)
+    cmd, env = driver(src, text, work, opts)
+    rc, _, err = proc(cmd, work, BUILD_TIMEOUT, env)
     if rc is None:
         return rel, 'build-timeout', ''
     if rc != 0:
@@ -250,7 +273,7 @@ def main():
     if judged:
         good = counts['pass'] + counts['format-only']
         lines.append(f'agree where gfortran has a verdict: {good}/{judged} ({100 * good / judged:.1f}%)')
-    for phase in ('flang', 'llc', 'as', 'ld', 'exit-differs'):
+    for phase in ('flang', 'clang', 'llc', 'as', 'ld', 'exit-differs'):
         c = collections.Counter(cluster(n) for _, v, n in results if v == phase)
         if c:
             lines.append(f'--- {phase}')

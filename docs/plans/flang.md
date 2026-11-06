@@ -19,17 +19,24 @@ stage08 and DBT stress test.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
 - gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
   carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
-  oracle: **2,293 of 2,584 agree**, where gfortran has a verdict and the test is one
-  file.  This corpus found, in a day, everything in "what it found".
+  oracle: **2,379 of 2,701 agree**, where gfortran has a verdict; a test of several
+  files, 142 of them with C, is built with the rest of it (`dg-additional-sources`,
+  `dg-compile-aux-modules`).  This corpus found, in a day, everything in "what it found".
   `flang/tests/gfortran-native.py` puts the same tests through native flang from
-  these sources: nearly all of the 291 left fail there too, and those are flang's.
+  these sources: 314 of the 322 left fail there too, and those are flang's.
   Failing here alone: `ieee/ieee_1`, `comparisons_3`, `large_3`, which expect flags
   this machine does not have; `common_align_2`, 8-byte alignment; `PR49268`, a
   Cray pointer is 32 bits; `c_sizeof_1`, 4 is right; `bind-c-intent-out`, reads out
   of bounds; `pr66311`, `INTEGER(16)` I/O.
-  `regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
-- `flang/tests/gfortran-axes.py`, a report: what the gate does not vary.  Of the 2,438
-  programs flang builds, every engine agrees on 2,437 (`matmul_15` outlasts the
+    None of the programs of several files is on that list: the 86 in `c-interop/`, which
+  check descriptors from C, agree or fail as native flang does, so descriptors have the
+  layout C expects on 32 bits.  flang's header is not gfortran's, so their C is compiled
+  with two of gfortran's type names defined and `stdint.h` included (`C_FOR_FLANG`);
+  that leaves `CFI_type_mask` in 2 tests, and `__int128` in 1, which this machine lacks.
+  They called `mkdir` with mode bits `<sys/stat.h>` did not define; it does now.
+`regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
+- `flang/tests/gfortran-axes.py`, a report: what the gate does not vary.  Of the 2,547
+  programs flang builds, every engine agrees on 2,546 (`matmul_15` outlasts the
   reference interpreter's 3 minutes), and the machine verifier passes all of them.
   Its first run: `cshift_2` needs more than the linker's 64 KB stack, and passed on
   the DBT by writing past `stack_end`, where only the interpreter faults (SPEC 6.2);
@@ -42,7 +49,7 @@ stage08 and DBT stress test.
   (`llvm-backend/test/fp-branch-cc.ll`); `.word` refused a quoted name
   (`asm-quoted-symbol`); `OUT_OF_RANGE` of a `REAL(8)` went to `REAL(16)` whether or
   not there is one (`flang/tests/oor.f90`); `s32-ld` had fixed archive tables.
-  Differ still, 15 of 2,438, none ours: native flang does the same with
+  Differ still, 15 of 2,547, none ours: native flang does the same with
   `aliasing_array_result_1` (`-O1`), `inline_matmul_1`, `matmul_5`, `ptr_func_assign_1`,
   `transfer_array_intrinsic_4` and `typebound_call_32` (`-O0`); `whole_file_14` and
   `bind-c-intent-out` read what they may not, `c_ptr_tests_10` prints an address,
@@ -146,8 +153,8 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 - Not flang's: a zero-sized global (an empty struct) never linked, from C either,
   in both toolchains (selfhost ISSUES-112).
 - Not flang's, found by LAPACK: `.comm` was a strong definition, so a common block in
-  two files did not link.  The corpus skips its programs of several files; LAPACK has
-  no other kind.  Now `S32O_BIND_COMMON` (docs/file-formats.md), all four tools.
+  two files did not link.  The corpus then skipped its programs of several files; LAPACK
+  has no other kind.  Now `S32O_BIND_COMMON` (docs/file-formats.md), all four tools.
 - Not flang's, wrong-code, found by LAPACK: `llvm.powi` had no libcall, so LLVM called
   `pow` with the exponent converted to the base's type.  `(-1.0)**16777217` was `+1`,
   from C's `__builtin_powif` too; small powers were a last place off everyone else's,
@@ -171,6 +178,5 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
   `EXECUTE_COMMAND_LINE` answers `cmdstat = -1`, no command processor.
 - `REAL(4)` and `(8)` are all there is: 2, 3, 10 and 16 are off.
 - `flang-rt` by its own CMake, a driver (`flang` itself, not `-fc1`), an image.
-- The corpus's 153 programs of several files are still skipped (`skip-multifile`).
 - Speed and code size are unmeasured.  `hello` is 1.2 MB; the runtime and libc++
   are most of it.

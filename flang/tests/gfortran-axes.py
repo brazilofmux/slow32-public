@@ -56,6 +56,8 @@ OWN = re.compile(r'^(Starting execution|MMIO enabled|HALT at|Program halted|Exit
 def guest(text):
     """What the program said on one stream, faults canonical."""
     lines = []
+    # c-interop's helper dumps descriptors to stderr, and an address moves with the build
+    text = re.sub(rb'base_addr=0x[0-9a-fA-F]+', b'base_addr=ADDR', text)
     for line in text.decode('latin-1').replace('\r\n', '\n').split('\n'):
         for pat, tag in FAULTS:
             m = pat.match(line)
@@ -84,11 +86,12 @@ def verify(work):
 def one(rel, verdict, out):
     src = os.path.join(suite.SUITE, rel)
     with open(src, encoding='latin-1') as f:
-        _, opts, _ = suite.directives(f.read())
+        text = f.read()
+    _, opts, _ = suite.directives(text)
     work = os.path.join(out, 'w', rel.replace('/', '__'))
     os.makedirs(work)
-    env = dict(os.environ, FFLAGS=' '.join(o for o in opts if suite.PASS_ON.match(o)))
-    rc, _, err = suite.proc(['zsh', suite.DRIVER, src, os.path.join(work, 't.s32x')], work, suite.BUILD_TIMEOUT, env)
+    cmd, env = suite.driver(src, text, work, opts)
+    rc, _, err = suite.proc(cmd, work, suite.BUILD_TIMEOUT, env)
     if rc != 0:
         return rel, 'build', f'rc={rc} {suite.first_error(err)[:150]}', {}
     bad = verify(work)
@@ -137,12 +140,12 @@ VARIANTS = {
 VARIANT_TIMEOUT = 120
 
 
-def behaviour(work, name, src, base):
+def behaviour(work, name, src, text, opts):
     """(rc, output) of src built with base + VARIANTS[name], or a phase's refusal."""
     d = os.path.join(work, name)
     os.makedirs(os.path.join(d, 'run'))
-    env = dict(base, LLCFLAGS='-verify-machineinstrs', **VARIANTS.get(name, {}))
-    rc, _, err = suite.proc(['zsh', suite.DRIVER, src, os.path.join(d, 't.s32x')], d, suite.BUILD_TIMEOUT, env)
+    cmd, env = suite.driver(src, text, d, opts, extra_env=dict(LLCFLAGS='-verify-machineinstrs', **VARIANTS.get(name, {})))
+    rc, _, err = suite.proc(cmd, d, suite.BUILD_TIMEOUT, env)
     if rc != 0:
         return f'{suite.PHASE.get(rc, rc)}: {suite.first_error(err)[:150]}', None, b'', b''
     r = suite.proc([suite.DBT, '../t.s32x'], os.path.join(d, 'run'), VARIANT_TIMEOUT)
@@ -152,11 +155,11 @@ def behaviour(work, name, src, base):
 def variants(rel, verdict, out):
     src = os.path.join(suite.SUITE, rel)
     with open(src, encoding='latin-1') as f:
-        _, opts, _ = suite.directives(f.read())
+        text = f.read()
+    _, opts, _ = suite.directives(text)
     work = os.path.join(out, 'w', rel.replace('/', '__'))
     os.makedirs(work)
-    env = dict(os.environ, FFLAGS=' '.join(o for o in opts if suite.PASS_ON.match(o)))
-    refused, brc, bout, berr = behaviour(work, 'plain', src, env)
+    refused, brc, bout, berr = behaviour(work, 'plain', src, text, opts)
     if refused:
         return rel, 'build', refused, {}
     if brc is None:
@@ -164,7 +167,7 @@ def variants(rel, verdict, out):
         return rel, 'late', 'plain', {}
     notes, late = [], []
     for name in VARIANTS:
-        refused, rc, o, e = behaviour(work, name, src, env)
+        refused, rc, o, e = behaviour(work, name, src, text, opts)
         if refused:
             notes.append(f'{name}:{refused}')
         elif rc is None:

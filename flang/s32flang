@@ -1,12 +1,26 @@
 #!/bin/zsh
-# s32flang src.f90 out.s32x   Fortran to .s32x through flang, llc and the host tools.
+# s32flang src.f90 out.s32x [more.f90 more.c ...]   Fortran to .s32x through flang, llc and
+# the host tools, with what else the program is made of.  AUX_MODULES: Fortran read only
+# for its .mod files, before src.  C sees flang's ISO_Fortran_binding.h.
 # FC_OPT, LLC_OPT, LLCFLAGS, S32_AS, S32_LD change a step; flang/tests/gfortran-axes.py does.
 # flang puts arrays on the stack: 8 MB as on a host, not the linker's 64 KB (past
 # stack_end only the reference interpreter faults; docs/SPEC.md 6.2).
 HERE=${0:A:h}; ROOT=${HERE:h}; L=${LLVM_PROJECT:-$HOME/llvm-project}; O=${FLANG_OUT:-$HERE/out}
 B=$L/build-flang/bin; LX=$L/build-slow32-libcxx/install/lib; R=$ROOT/runtime
-s=$1; o=$2; b=${o:r}
-$B/flang -fc1 -triple slow32-unknown-none ${FC_OPT:--O2} -fintrinsic-modules-path $O/mod -module-dir ${o:h} ${=FFLAGS} -emit-llvm $s -o $b.ll || exit 11
-$B/llc -mtriple=slow32-unknown-none ${LLC_OPT:--O2} ${=LLCFLAGS} $b.ll -o $b.s || exit 12
-${=S32_AS:-$ROOT/tools/assembler/slow32asm} $b.s $b.s32o >/dev/null || exit 13
-${=S32_LD:-$ROOT/tools/linker/s32-ld} -o $o --mmio 64K --heap-size 16M --stack-size 8M $R/crt0.s32o $b.s32o $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14
+s=$1; o=$2; b=${o:r}; shift 2
+fc() { $B/flang -fc1 -triple slow32-unknown-none ${FC_OPT:--O2} -fintrinsic-modules-path $O/mod -module-dir ${o:h} ${=FFLAGS} -emit-llvm $1 -o $2 || exit 11 }
+back() { # .ll to .s32o
+  $B/llc -mtriple=slow32-unknown-none ${LLC_OPT:--O2} ${=LLCFLAGS} $1.ll -o $1.s || exit 12
+  ${=S32_AS:-$ROOT/tools/assembler/slow32asm} $1.s $1.s32o >/dev/null || exit 13
+}
+for a in ${=AUX_MODULES}; do fc $a $b.aux.ll; done
+fc $s $b.ll; back $b
+objs=($b.s32o); n=0
+for x in "$@"; do n=$((n+1)); e=$b.$n
+  case $x in
+    *.c) $L/build/bin/clang -target slow32-unknown-none ${CC_OPT:--O2} -I$R/include -I$L/flang/include/flang ${=CFLAGS} -w -S -emit-llvm $x -o $e.ll || exit 15 ;;
+    *) fc $x $e.ll ;;
+  esac
+  back $e; objs+=($e.s32o)
+done
+${=S32_LD:-$ROOT/tools/linker/s32-ld} -o $o --mmio 64K --heap-size 16M --stack-size 8M $R/crt0.s32o $objs $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14
