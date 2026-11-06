@@ -51,7 +51,7 @@ SLOW32_DBT="${SLOW32_DBT:-$ROOT/tools/dbt/slow32-dbt}"
 
 KIT="${KIT:-$HOME/s32x}"
 SH="$KIT/selfhost"
-WORK="$SCRIPT_DIR/results-kit-tools"
+WORK="${WORK:-$SCRIPT_DIR/results-kit-tools}"
 TIMEOUT="${TIMEOUT:-900}"
 
 RED='\033[0;31m'
@@ -142,11 +142,31 @@ run_tool() {
 
 ok_rc() { [ "$1" = "0" ] || [ "$1" = "96" ]; }
 
+# A step that did not work.  On the reference there is nothing to compare with:
+# stale or empty files on both sides are not agreement.  From 2026-10-20 to
+# 2026-11-06 this harness printed "21 agree" on kagura over root-owned results
+# a container had left, none of them rewritten, every tool failing to open
+# them.  On an engine under test it is a divergence, whatever the output says.
+tool_failed() {
+    local name="$1" tool="$2" rc="$3"
+    if [ "$name" = "ref" ]; then
+        echo -e "${RED}SETUP ERROR${NC}: the reference's $tool failed (rc=$rc); nothing to compare" >&2
+        exit 2
+    fi
+    TOTAL=$((TOTAL + 1)); DIVERGED=$((DIVERGED + 1))
+    DIVERGED_ITEMS+=("$name: $tool rc=$rc")
+    echo "    ($name: $tool rc=$rc)"
+}
+
 # Compare one produced artifact (or stdout) across engines.
 # check <label> <ref-file> <engine-name:file> ...
 check() {
     local label="$1"; shift
     local ref="$1"; shift
+    if [ ! -s "$ref" ]; then
+        echo -e "${RED}SETUP ERROR${NC}: $label: the reference produced nothing ($ref)" >&2
+        exit 2
+    fi
     TOTAL=$((TOTAL + 1))
     printf "  %-42s " "$label"
     local bad=()
@@ -189,17 +209,20 @@ do_source() {
     for spec in "${all[@]}"; do
         name="${spec%%|*}"; path="${spec#*|}"
         dir="$WORK/$base/$name"
-        rm -rf "$dir"; mkdir -p "$dir"
+        if ! rm -rf "$dir" || ! mkdir -p "$dir"; then
+            echo -e "${RED}SETUP ERROR${NC}: cannot make a clean $dir (WORK= names another place)" >&2
+            exit 2
+        fi
 
         rc=$(run_tool "$path" "$dir/cc.log" "$KIT/cc.s32x" "$ROOT/$src" "$dir/out.s")
-        ok_rc "$rc" || echo "    ($name: cc rc=$rc)"
+        ok_rc "$rc" || tool_failed "$name" cc "$rc"
         rc=$(run_tool "$path" "$dir/as.log" "$KIT/s32-as.s32x" "$dir/out.s" "$dir/out.s32o")
-        ok_rc "$rc" || echo "    ($name: as rc=$rc)"
+        ok_rc "$rc" || tool_failed "$name" as "$rc"
         rc=$(run_tool "$path" "$dir/ld.log" "$KIT/s32-ld.s32x" -o "$dir/out.s32x" \
                 --mmio 64K "$SH/crt0.s32o" "$dir/out.s32o" "$SH/libc.s32a")
-        ok_rc "$rc" || echo "    ($name: ld rc=$rc)"
+        ok_rc "$rc" || tool_failed "$name" ld "$rc"
         rc=$(run_tool "$path" "$dir/ar.log" "$KIT/s32-ar.s32x" rc "$dir/out.s32a" "$dir/out.s32o")
-        ok_rc "$rc" || echo "    ($name: ar rc=$rc)"
+        ok_rc "$rc" || tool_failed "$name" ar "$rc"
 
         # Readers all run over the REFERENCE's artifacts, so a divergence here
         # is the reader engine's fault and not an inherited bad input.

@@ -41,7 +41,7 @@ KIT="${KIT:-$HOME/s32x}"
 SH="$KIT/selfhost"
 SRC_DIR="${SRC_DIR:-$SLOW32_BASE/selfhost/stage08/tests}"
 CORPUS_INC="${CORPUS_INC:-$(dirname "$SRC_DIR")}"
-RESULTS_DIR="$SCRIPT_DIR/results-kit"
+RESULTS_DIR="${RESULTS_DIR:-$SCRIPT_DIR/results-kit}"
 TIMEOUT="${TIMEOUT:-20}"
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-180}"
 
@@ -241,6 +241,12 @@ run_test() {
     fi
 
     mkdir -p "$diff_dir"
+    # Files it cannot rewrite are last month's results, and they agree with
+    # themselves (kagura, 2026-11-06: a container had left root-owned ones).
+    if ! : > "$diff_dir/.writable" || ! rm -f "$diff_dir/.writable" || ! : > "$diff_dir/ref.out"; then
+        echo "SETUP ERROR: cannot write results in $diff_dir (RESULTS_DIR= names another place)" >&2
+        exit 2
+    fi
 
     local ref_rc
     ref_rc=$(run_engine ref "$SLOW32" "$s32x" "$diff_dir/ref.out")
