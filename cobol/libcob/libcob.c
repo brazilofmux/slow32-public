@@ -7018,9 +7018,14 @@ static void scr_render(const cob_scr_field *f, char *buf)
     cob_move(scr_item(f), (const cob_desc *)f->item_desc, buf, (const cob_desc *)f->pic);
 }
 
-/* Where a positioned slot (COB_SX_POS) goes: LINE 0 is the line after the
- * last positioned statement, POSITION 0 is column 1, and a CONT slot follows
- * the slot painted before it.  A SCREEN SECTION slot keeps its numbers. */
+/* Where a positioned slot (COB_SX_POS) goes: a line not given is the line
+ * after the last positioned statement, a column not given is column 1, and a
+ * CONT slot follows the slot painted before it, column 1 of a line following
+ * the last column of the one above (Micro Focus's rule 16.3).  A column past
+ * the edge is reduced by the line length, a line each time (16.1); a line
+ * past the bottom is the bottom line (16.2, less its scroll: the terminal's
+ * shadow does not scroll, docs/SPEC.md 8.14).  A SCREEN SECTION slot keeps
+ * its numbers. */
 
 static int scr_off_line, scr_off_col;           /* the screen record's placing (cob_screen.line_off/col_off), while its statement runs */
 static int scr_errs;                            /* COB_SCR_E_* found by the statement under way */
@@ -7061,11 +7066,33 @@ static void scr_pos(const cob_scr_field *f, int *line, int *col)
     if (f->ext & COB_SX_CONT) { if (!*line) *line = scr_last_line; if (!*col) *col = scr_last_col + scr_last_width; }
     if (!*line) *line = scr_next_line ? scr_next_line : 1;
     if (!*col) *col = 1;
+    while (*col > scr_cols) { *col -= scr_cols; (*line)++; }
+    if (*line > scr_rows) *line = scr_rows;
 }
 
-void cob_scr_at(cob_scr_field *f, int rrcc)
+/* the rule of parse_pos_clauses (display.h), on the values the statement stored */
+void cob_scr_place(cob_scr_field *f, int how)
 {
-    f->line = (unsigned short)(rrcc / 100); f->col = (unsigned short)(rrcc % 100);
+    int lz = (how & 1) && !f->line, cz = (how & 2) && !f->col;
+    if ((how & 8) || cz || (lz && (how & 4))) f->ext |= COB_SX_CONT;
+    else f->ext &= (unsigned char)~COB_SX_CONT;
+}
+
+/* the same rule for a screen's AT: offsets of -1 are the zeros it stored */
+void cob_scr_origin(cob_screen *s)
+{
+    int line = s->line_off + 1, col = s->col_off + 1;
+    if (!col) { col = scr_last_col + scr_last_width; if (!line) line = scr_last_line; }
+    if (!line) line = scr_next_line ? scr_next_line : 1;
+    while (col > scr_cols) { col -= scr_cols; line++; }
+    s->line_off = line - 1; s->col_off = col - 1;
+}
+
+void cob_scr_at(cob_scr_field *f, int v, int digits)
+{
+    int base = digits == 6 ? 1000 : 100;
+    f->line = (unsigned short)(v / base); f->col = (unsigned short)(v % base);
+    cob_scr_place(f, 3);
 }
 
 /* a national slot (cobol ISSUES-92): PIC N, or a national VALUE, whose
@@ -7097,7 +7124,11 @@ static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
 static void scr_paint_end(const cob_scr_field *f, int line, int col)
 {
     scr_attr_off(f);
-    if (f->ext & COB_SX_POS) { scr_rm_mode = 1; con_col = 1; scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width; scr_next_line = line + 1; }
+    /* where it ended, for a zero in the next AT (Micro Focus's rule 16: any
+     * Format 2 or 3 DISPLAY); plain DISPLAY reads this only once positioned */
+    scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width;
+    scr_next_line = line + (col + (f->width ? (int)f->width : 1) - 2) / scr_cols + 1;
+    if (f->ext & COB_SX_POS) { scr_rm_mode = 1; con_col = 1; }
 }
 
 /* a national slot's clusters into its columns: SECURE shows an asterisk

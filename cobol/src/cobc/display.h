@@ -81,17 +81,11 @@ static int stmt_positioned(void)
 
 /* LINE n / POSITION n: an integer literal, or an identifier whose value the
  * statement stores into the slot at run time (tp: where it sits) */
-static SField *g_pos_field;    /* the slot pos_int is filling: an explicit 0 marks it CONT */
 static void pos_int(int *val, Ref **rp, const char *what)
 {
     accept_word("is"); accept_word("number");
     if (cur()->kind == T_NUM) {
         *val = atoi(cur()->s); advance();
-        /* RM: LINE 0 / POSITION 0 is "where the cursor is", the position after
-         * the last thing painted (APPKJRNL builds a title from three DISPLAYs);
-         * an omitted clause is the next line / column 1.  The runtime's
-         * continue-after-the-last-slot rule covers the explicit zero. */
-        if (*val == 0 && g_pos_field) g_pos_field->ext |= COB_SX_CONT;
         return;
     }
     if (cur()->kind != T_WORD || !rp) die_at(cur()->line, "%s needs an integer%s", what, rp ? " or a numeric identifier" : "");
@@ -102,19 +96,19 @@ static void pos_int(int *val, Ref **rp, const char *what)
 
 static void parse_pos_clauses(SField *f, int is_accept)
 {
-    int said_line = 0, said_column = 0;
-    g_pos_field = f;
+    int said_line = 0, said_column = 0, said_pos = 0;
     for (;;) {
         if (accept_word("with")) continue;
         if (at_word("line") || at_word("position") || pos_column_at(g_tp) || at_word("at"))
             bp(BP_E7_POSITIONED_IO, cur()->line);
         if (accept_word("line")) { said_line = 1; pos_int(&f->line, &f->line_r, "LINE"); continue; }
         if (pos_column_at(g_tp)) { said_column = 1; advance(); pos_int(&f->col, &f->col_r, "COLUMN"); continue; }
-        if (accept_word("position")) { pos_int(&f->col, &f->col_r, "POSITION"); continue; }
+        if (accept_word("position")) { said_pos = 1; pos_int(&f->col, &f->col_r, "POSITION"); continue; }
         if (accept_word("at")) {
             if (at_word("line") || pos_column_at(g_tp)) continue;   /* the phrases, in either order: AT COLUMN alone is the standard's too */
-            said_line = 1;
-            if (cur()->kind == T_NUM) { int v = atoi(cur()->s); advance(); f->line = v / 100; f->col = v % 100; continue; }
+            said_line = said_column = 1;
+            /* rrcc, or rrrccc at six digits (Micro Focus's rule 15; GnuCOBOL) */
+            if (cur()->kind == T_NUM) { int v = atoi(cur()->s), base = strlen(cur()->s) == 6 ? 1000 : 100; advance(); f->line = v / base; f->col = v % base; continue; }
             if (cur()->kind != T_WORD) die_at(cur()->line, "AT needs rrcc or a numeric identifier");
             { Ref r; parse_ref(&r); if (!is_numeric_sym(r.sym)) die_at(r.line, "AT needs a numeric identifier");
               f->at_r = xmalloc(sizeof *f->at_r); *f->at_r = r; }
@@ -163,6 +157,18 @@ static void parse_pos_clauses(SField *f, int is_accept)
     /* COLUMN without LINE: line 1 (2023 14.9.11.4 rule 15; GnuCOBOL likewise).
      * RM's POSITION keeps its own rule, the next line. */
     if (said_column && !said_line) f->line = 1;
+    f->said_line = said_line; f->said_col = said_column || said_pos; f->said_pos = said_pos;
+    /* A zero the statement wrote says where the last paint ended (Micro
+     * Focus's rule 16, GnuCOBOL; RM, where APPKJRNL builds a title from three
+     * DISPLAYs).  Column 0 is the column after it, on the line named if one
+     * is.  Line 0 is the next line, but with RM's POSITION this one.  An
+     * omitted phrase is a value of its own: no column is column 1.
+     * cob_scr_place decides the same for identifiers, at run time. */
+    {
+        int lz = said_line && !f->line && !f->line_r && !f->at_r;
+        int cz = f->said_col && !f->col && !f->col_r && !f->at_r;
+        if (cz || (lz && said_pos)) f->ext |= COB_SX_CONT;
+    }
 }
 
 /* does the slot name a line, or a place at all?  (what its clauses said, at
@@ -218,7 +224,11 @@ static void emit_pos_stmt(int si, const char *fn)
         SField *f = &sc->f[k];
         if (f->line_r) { emit_pos_int(f->line_r); emit_la_off("r2", rec, k * SCRF_SIZE + 2); emit("\tsth r2+0, r1"); }
         if (f->col_r)  { emit_pos_int(f->col_r);  emit_la_off("r2", rec, k * SCRF_SIZE + 4); emit("\tsth r2+0, r1"); }
-        if (f->at_r)    { emit_pos_int(f->at_r); emit("\tadd r4, r0, r1"); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+        if (f->at_r)    { emit_pos_int(f->at_r); emit("\tadd r4, r0, r1"); emit_li("r5", f->at_r->sym->pi.digits); emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_at"); }
+        else if (f->line_r || f->col_r) {
+            emit_li("r4", (f->said_line ? 1 : 0) | (f->said_col ? 2 : 0) | (f->said_pos ? 4 : 0) | ((f->ext & COB_SX_CONT) ? 8 : 0));
+            emit_la_off("r3", rec, k * SCRF_SIZE); emit_call("cob_scr_place");
+        }
         if (f->dynlen) {
             /* the part's length -- in columns, a national character two
              * bytes -- into the width, or under SIZE into the value word */
@@ -261,7 +271,7 @@ static void parse_display_positioned(void)
         /* Each operand has its own phrases (Micro Focus's rules 15 and 17,
          * GnuCOBOL, cobol ISSUES-126).  One after the first with no line
          * follows the one before it; LINE alone is column 1. */
-        if (!first && !sfield_has_line(f)) f->ext |= COB_SX_CONT;
+        if (!first && !f->said_line) f->ext |= COB_SX_CONT;
         /* WITH an attribute and no place: at the cursor (GnuCOBOL) */
         if (first && with_attr && !sfield_placed(f)) f->ext |= COB_SX_CONT;
         first = 0;
@@ -504,14 +514,16 @@ static void screen_at_origin(int line, const char *scrlab)
     /* the screen record's placing (2023 14.9.1.2 format 4, 14.9.11.2 format
      * 2; 14.9.1.3 rule 5: unsigned integers, literals or items): stored in
      * the record's line_off / col_off (cob_screen, offsets 12 and 16) as
-     * offsets from (1, 1) -- zero when the phrase is absent */
+     * offsets from (1, 1) -- zero when the phrase is absent; a line or
+     * column of zero is cob_scr_origin's */
     int l = 1, c = 1; Ref *lr = NULL, *cr = NULL;
     if (accept_word("at")) {
-        if (cur()->kind == T_NUM && strlen(cur()->s) == 4) {
-            int v = atoi(cur()->s); l = v / 100; c = v % 100; advance();
+        if (cur()->kind == T_NUM && (strlen(cur()->s) == 4 || strlen(cur()->s) == 6)) {
+            int base = strlen(cur()->s) == 6 ? 1000 : 100;
+            int v = atoi(cur()->s); l = v / base; c = v % base; advance();
         } else if (cur()->kind == T_WORD && !at_word("line") && !at_word("column") && !at_word("col") && !at_word("position") && !is_verb(cur()->s)) {
             lr = cr = xmalloc(sizeof *lr); parse_ref(lr); l = c = -2;    /* AT identifier: rrcc */
-            if (!is_int_item(lr->sym)) die_at(line, "AT needs an unsigned integer item of four digits (line and column)");
+            if (!is_int_item(lr->sym)) die_at(line, "AT needs an unsigned integer item of four or six digits (line and column)");
         } else {
             if (accept_word("line")) {
                 accept_word("number");
@@ -526,16 +538,18 @@ static void screen_at_origin(int line, const char *scrlab)
         }
     }
     if (lr && lr == cr) {
-        /* rrcc: the line is the hundreds, the column the rest */
-        emit_pos_int(lr); emit_li("r2", 100); emit("\tdiv r3, r1, r2"); emit("\trem r4, r1, r2");
+        /* rrcc, or rrrccc at six digits */
+        emit_pos_int(lr); emit_li("r2", lr->sym->pi.digits == 6 ? 1000 : 100); emit("\tdiv r3, r1, r2"); emit("\trem r4, r1, r2");
         emit("\taddi r3, r3, -1"); emit("\taddi r4, r4, -1");
         emit_la("r2", scrlab); emit("\tstw r2+12, r3"); emit("\tstw r2+16, r4");
+        emit_la("r3", scrlab); emit_call("cob_scr_origin");
         return;
     }
     if (lr) { emit_pos_int(lr); emit("\taddi r1, r1, -1"); } else emit_li("r1", l - 1);
     emit_la("r2", scrlab); emit("\tstw r2+12, r1");
     if (cr) { emit_pos_int(cr); emit("\taddi r1, r1, -1"); } else emit_li("r1", c - 1);
     emit_la("r2", scrlab); emit("\tstw r2+16, r1");
+    if (lr || cr || !l || !c) { emit_la("r3", scrlab); emit_call("cob_scr_origin"); }
 }
 
 /* the screen's run-time clauses before a statement paints it: LINE,
@@ -614,9 +628,7 @@ static int screen_with_phrase(int line, int is_accept)
     if (!at_word("with")) return 0;
     int from = g_tp, upd = 0, other = 0;
     SField dummy; memset(&dummy, 0, sizeof dummy); dummy.fg = dummy.bg = 255; dummy.kind = -1;
-    SField *save = g_pos_field;
     parse_pos_clauses(&dummy, is_accept);
-    g_pos_field = save;
     for (int k = from; k < g_tp; k++) {
         if (is_word(&g_tok[k], "with")) continue;
         if (is_accept && is_word(&g_tok[k], "update")) upd = 1;

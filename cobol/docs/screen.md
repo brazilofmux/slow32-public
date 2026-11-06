@@ -258,9 +258,15 @@ spelling (GitHub #32, #33). Each such statement becomes a screen of its own,
 one slot per operand, on this runtime; the slot record grew by a word for
 it (`ext`, `prompt`; 32 bytes on the guest, `SCRF_SIZE` in the compiler):
 
-- `COB_SX_POS`: LINE 0 is the line after the last positioned statement,
-  POSITION 0 is column 1 (a SCREEN SECTION slot keeps its numbers);
-  `COB_SX_CONT`: a second operand follows the first on its line;
+- `COB_SX_POS`: no line is the line after the last positioned statement, no
+  column is column 1 (a SCREEN SECTION slot keeps its numbers); a column past
+  the edge rolls onto the next line, and a line past the bottom is the bottom
+  line, not scrolled (the terminal's shadow does not scroll);
+  `COB_SX_CONT`: follows the last paint: a later operand with no line, or a
+  zero written (Micro Focus's rule 16, literal or item's value, `AT rrcc`,
+  `AT rrrccc`, `LINE`/`COLUMN`): column 0 is the column after it, line 0 the
+  next line, both zero the very next cell; RM's `LINE 0 POSITION n` stays on
+  this line;
 - `COB_SX_ERASE_EOS` / `_EOL` / `_ALL` (`ERASE`, `ERASE SCREEN`): cleared
   before painting, from the slot's position;
 - `COB_SX_PROMPT`: an input slot shows `prompt` (`_`, or `PROMPT "c"`)

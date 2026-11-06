@@ -6679,3 +6679,35 @@ literal, to an alphanumeric operand converted per 8.8.4.2.6), EVALUATE,
 a condition-name THRU range, HIGH-VALUE/LOW-VALUE and SEARCH ALL all
 keep code-unit order, on both arithmetic paths, while an alphanumeric
 relation follows the alphabet. Test 2002/natifcoll keeps it so.
+
+### 135. A zero in AT, and AT rrrccc (2026-11-05, fixed)
+
+`AT 0000` should go on where the last DISPLAY ended, and `AT 0500` keep that
+column on line 5 (Micro Focus's general rules 16.3 and 16.5).  Both took
+column 1, `AT 0000` on the next line; `AT 0005` on a later operand stayed on
+the line instead of 16.4's next one.  Six digits are `rrrccc` (rule 15):
+`AT 003010` was line 30, off the screen, so the text was lost, and on a
+screen-name the literal did not compile.  A screen-name's `AT 0000` made an
+offset of -1 and painted on line 1.  An item's value of zero in `LINE` or
+`COLUMN` did not do what the literal did.  GnuCOBOL 3.3 and 4.0 on a terminal
+agree with the text on all of these, and were run for each.
+
+The rule is in one place, `parse_pos_clauses`, on what the statement wrote;
+`cob_scr_place`, `cob_scr_at` and `cob_scr_origin` take it to run time for
+items.  A lone `LINE 0` used to continue, for RM, but the Open Systems corpus
+only ever writes `LINE 0 POSITION 0`; it is now the next line, column 1, as
+GnuCOBOL has it and as an omitted column means.  RM's `LINE 0 POSITION n`
+stays on the line.  A screen's paint now counts as the DISPLAY before.
+
+Past the edge: Micro Focus's 16.1 rolls the column onto the next line, 16.2
+scrolls and uses the bottom line.  GnuCOBOL refuses these and paints at the
+cursor; ours lost the text.  The column now rolls, and the line is the bottom
+one, **not scrolled**: the terminal service's shadow does not scroll
+(docs/SPEC.md 8.14), and that is the machine's to change, not this runtime's.
+A screen-name's own out-of-range AT keeps the standard's rules for a screen
+item (13.18.14.4 rules 18-19).
+
+An `AT` item is told by its digits, as the text says; a `PIC 9(4) COMP` is
+rrcc here, where GnuCOBOL goes by its byte size and ignores it.
+
+Test: free/posat0.

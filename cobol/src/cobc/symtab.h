@@ -656,6 +656,7 @@ int natlit;                 /* a VALUE slot's literal is national: its columns a
 int dynlen;                 /* a positioned DISPLAY of a part of computed length: its width stored at run time */
 int dispval;                /* a positioned DISPLAY of a binary or packed item: shown as a plain DISPLAY shows it */
 struct Ref_ *line_r, *col_r, *at_r;   /* LINE / POSITION / AT given as identifiers, stored at run time */
+int said_line, said_col, said_pos;    /* which phrases the statement wrote: a zero in one says where the last paint ended; said_pos is RM's POSITION */
 int idesc;                  /* the item a reference-modified part: its descriptor + 1 (the part's, not the item's) */
 int dynpart;                /* ... of computed length: the descriptor is writable, its size stored by the statement */
 int from_lit;               /* FROM literal-1: a VALUE slot that must have its PICTURE */

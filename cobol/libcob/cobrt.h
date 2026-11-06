@@ -230,7 +230,8 @@ typedef struct {
     unsigned short rsv;          /* COB_SR_DYNLEN: a part of computed length, its bytes the field (width set by the statement) */
 } cob_scr_field;                 /* 32 bytes on the guest: the compiler lays slots out by that */
 
-void cob_scr_at(cob_scr_field *f, int rrcc);   /* AT rrcc from an identifier: line rr, column cc */
+void cob_scr_at(cob_scr_field *f, int v, int digits);   /* AT from an identifier: rrcc, or rrrccc at six digits */
+void cob_scr_place(cob_scr_field *f, int how);   /* LINE/COLUMN from identifiers, now stored: does a zero among them continue?  1 LINE, 2 COLUMN or POSITION, 4 POSITION, 8 continues regardless */
 
 typedef struct {
     unsigned int nfields;
@@ -238,6 +239,7 @@ typedef struct {
     cob_scr_field *fields;
     int line_off, col_off;       /* ACCEPT/DISPLAY screen-name AT LINE l COLUMN c (14.9.1.2 format 4, 14.9.11.2 format 2): the screen record placed at (l, c), as offsets from (1, 1); the statement stores them */
 } cob_screen;
+void cob_scr_origin(cob_screen *s);   /* a screen's AT, stored: a line or column of zero is said of the last paint */
 /* what a screen statement found (2023 9.2.x; EC-SCREEN): bits the compiler
  * raises as conditions when they are checked, and DISPLAY's ON EXCEPTION */
 enum { COB_SCR_E_STARTING_COLUMN = 1, COB_SCR_E_LINE_NUMBER = 2, COB_SCR_E_FIELD_OVERLAP = 4, COB_SCR_E_ITEM_VALUE = 8 };
