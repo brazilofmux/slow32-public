@@ -29,7 +29,7 @@ FC = os.environ.get('GFORTRAN', 'gfortran')
 EXT = re.compile(r'\.(f|f90|f95|f03|f08|for)$', re.I)
 # Not what this measures: another machine's parallelism, sanitizers, debuggers.
 SKIPDIRS = {'coarray', 'gomp', 'goacc', 'asan', 'ubsan', 'lto', 'guality', 'debug', 'vect', 'graphite', 'analyzer'}
-PASS_ON = re.compile(r'^-(fdefault-(real|integer|double)-\d+|ffree-form|ffixed-form|fbackslash|ffixed-line-length-\S+|funsigned)$')
+PASS_ON = re.compile(r'^-(fdefault-(real|integer|double)-\d+|ffree-form|ffixed-form|fbackslash|ffixed-line-length-\S+|funsigned|cpp)$')
 PHASE = {11: 'flang', 12: 'llc', 13: 'as', 14: 'ld'}
 HOST_TIMEOUT, BUILD_TIMEOUT, RUN_TIMEOUT = 30, 300, 120
 
@@ -37,7 +37,7 @@ HOST_TIMEOUT, BUILD_TIMEOUT, RUN_TIMEOUT = 30, 300, 120
 def directives(text):
     run = re.search(r'dg-do\s+run(\s*\{[^}]*\})?', text)
     opts = []
-    for m in re.finditer(r'dg-options\s+"([^"]*)"(\s*\{[^}]*target[^}]*\})?', text):
+    for m in re.finditer(r'dg-(?:additional-)?options\s+"([^"]*)"(\s*\{[^}]*target[^}]*\})?', text):
         if not m.group(2):
             opts += m.group(1).split()
     return run, opts, 'dg-shouldfail' in text
@@ -53,8 +53,8 @@ def skip_reason(rel, text, opts):
         return 'skip-conditional'
     if any(o.startswith(('-fopenmp', '-fopenacc', '-fcoarray=lib', '-flto', '-fsanitize')) for o in opts):
         return 'skip-option'
-    if any(o.startswith(('-fcheck', '-fbounds-check', '-finit-', '-fsign-zero', '-fno-sign-zero', '-fno-automatic')) for o in opts):
-        return 'skip-flag'  # gfortran's run-time checks and fill values; flang has no such options
+    if any(o.startswith(('-fcheck', '-fbounds-check', '-finit-', '-fsign-zero', '-fno-sign-zero', '-fno-automatic', '-freal-')) for o in opts):
+        return 'skip-flag'  # gfortran's run-time checks, fill values, kind remapping; flang has no such options
     return None
 
 

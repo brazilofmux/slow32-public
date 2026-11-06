@@ -1,9 +1,11 @@
 #!/bin/zsh
 # s32flang src.f90 out.s32x   Fortran to .s32x through flang, llc and the host tools.
+# flang puts arrays on the stack: 8 MB as on a host, not the linker's 64 KB (past
+# stack_end only the reference interpreter faults; docs/SPEC.md 6.2).
 HERE=${0:A:h}; ROOT=${HERE:h}; L=${LLVM_PROJECT:-$HOME/llvm-project}; O=${FLANG_OUT:-$HERE/out}
 B=$L/build-flang/bin; LX=$L/build-slow32-libcxx/install/lib; R=$ROOT/runtime
 s=$1; o=$2; b=${o:r}
 $B/flang -fc1 -triple slow32-unknown-none -O2 -fintrinsic-modules-path $O/mod -module-dir ${o:h} ${=FFLAGS} -emit-llvm $s -o $b.ll || exit 11
 $B/llc -mtriple=slow32-unknown-none -O2 $b.ll -o $b.s || exit 12
 $ROOT/tools/assembler/slow32asm $b.s $b.s32o >/dev/null || exit 13
-$ROOT/tools/linker/s32-ld -o $o --mmio 64K --heap-size 16M $R/crt0.s32o $b.s32o $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14
+$ROOT/tools/linker/s32-ld -o $o --mmio 64K --heap-size 16M --stack-size 8M $R/crt0.s32o $b.s32o $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14

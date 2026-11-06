@@ -19,15 +19,23 @@ stage08 and DBT stress test.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
 - gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
   carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
-  oracle: **2,304 of 2,592 agree**, where gfortran has a verdict and the test is one
+  oracle: **2,293 of 2,584 agree**, where gfortran has a verdict and the test is one
   file.  This corpus found, in a day, everything in "what it found".
   `flang/tests/gfortran-native.py` puts the same tests through native flang from
-  these sources: nearly all of the 288 left fail there too, and those are flang's.
+  these sources: nearly all of the 291 left fail there too, and those are flang's.
   Failing here alone: `ieee/ieee_1`, `comparisons_3`, `large_3`, which expect flags
   this machine does not have; `common_align_2`, 8-byte alignment; `PR49268`, a
   Cray pointer is 32 bits; `c_sizeof_1`, 4 is right; `bind-c-intent-out`, reads out
   of bounds; `pr66311`, `INTEGER(16)` I/O.
   `regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
+- `flang/tests/gfortran-axes.py`, a report: what the gate does not vary.  Of the 2,438
+  programs flang builds, every engine agrees on 2,437 (`matmul_15` outlasts the
+  reference interpreter's 3 minutes), and the machine verifier passes all of them.
+  Its first run: `cshift_2` needs more than the linker's 64 KB stack, and passed on
+  the DBT by writing past `stack_end`, where only the interpreter faults (SPEC 6.2);
+  `s32flang` now links 8 MB, a host's.  And `bounds_check_fail_5` was running without
+  its `-fcheck`, because the runner read `dg-options` and not `dg-additional-options`,
+  the oracle's flags too.  With them read, 25 more tests want a flag flang lacks.
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
 
