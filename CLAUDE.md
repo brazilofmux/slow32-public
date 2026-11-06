@@ -404,7 +404,7 @@ python3 ~/slow-32/flang/tests/gfortran-axes.py OUT [--variants]
 # Reference LAPACK and its own test suite, beside gfortran with the same arithmetic: not
 # a count of what agrees but the same 5,199,980 tests and the same digits.  After a change
 # to anything that touches floating point.  Mac only, like the corpus (~/refs/lapack; the
-# pin is in the script); OUT holds both builds, a new one for a new compiler.  ~10 min.
+# pin is in the script); OUT holds both builds, a new one for a new compiler.  ~5 min.
 python3 ~/slow-32/flang/tests/lapack/run.py OUT
 
 # The host assembler and linker against the self-hosted ones: the same

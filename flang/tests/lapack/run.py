@@ -73,7 +73,8 @@ def count(path):
 
 def fix_upstream(tree):
     """The complex xGEQP3RK test an uninitialized MAXC2NRM in 3.12.1; the real ones assign
-    it.  What the stack holds decides KFACT, so the count of tests moves with the compiler."""
+    it.  What the stack holds decides KFACT, so the count of tests moves with the compiler.
+    Reference-LAPACK has since fixed it (their PR 1131); this goes when the pin moves past."""
     for name, idamax in (('c', 'ISAMAX'), ('z', 'IDAMAX')):
         p = os.path.join(tree, 'SRC', name + 'geqp3rk.f')
         with open(p, newline='') as f:
