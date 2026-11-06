@@ -36,6 +36,20 @@ stage08 and DBT stress test.
   `s32flang` now links 8 MB, a host's.  And `bounds_check_fail_5` was running without
   its `-fcheck`, because the runner read `dg-options` and not `dg-additional-options`,
   the oracle's flags too.  With them read, 25 more tests want a flag flang lacks.
+  `--variants` builds each at other levels, flang's and llc's apart, the verifier on,
+  and links it with stage08's `s32-ld`.  Its first run: `llc` never returned on a
+  float compare stored, loaded and branched on, which only `-O0` Fortran leaves in
+  (`llvm-backend/test/fp-branch-cc.ll`); `.word` refused a quoted name
+  (`asm-quoted-symbol`); `OUT_OF_RANGE` of a `REAL(8)` went to `REAL(16)` whether or
+  not there is one (`flang/tests/oor.f90`); `s32-ld` had fixed archive tables.
+  Differ still, 15 of 2,438, none ours: native flang does the same with
+  `aliasing_array_result_1` (`-O1`), `inline_matmul_1`, `matmul_5`, `ptr_func_assign_1`,
+  `transfer_array_intrinsic_4` and `typebound_call_32` (`-O0`); `whole_file_14` and
+  `bind-c-intent-out` read what they may not, `c_ptr_tests_10` prints an address,
+  `unlimited_polymorphic_31` its options, `c_char_tests_5` cheats its prototypes;
+  `internal_dummy_2` needs a trampoline until optimized; `out_of_range_1`, `reduce_1`
+  and `zero_sized_1` fail at every level, here and natively.
+  stage08's `s32-as` reads only stage08's output, by ruling, so it is no axis.
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
 
@@ -66,6 +80,8 @@ built pristine on arm64: of 3,222 corpus files the IR is the same bytes for 3,22
 The others are `nint_2`, `llvm.llround` for `llvm.lround`, the same call there, and
 `unlimited_polymorphic_31`, which prints flang's own version and options.  The modules
 differ by one private parameter, `__address_kind = 8`, and their checksums.
+Since then one change reaches a 64-bit target: where `REAL(16)` is disabled, macOS
+included, `OUT_OF_RANGE` of a `REAL(8)` no longer needs it (native `-O0` did not link).
 
 ## The real work: flang assumes a 64-bit target
 

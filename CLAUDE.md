@@ -74,7 +74,7 @@ make
 ✅ LLVM backend makes tail calls (Oct 2026): `jal r0, sym` / `jalr r0, r2, 0` after the epilogue; a function whose only call is a tail call has no frame
 ✅ LLVM backend shrink-wraps (2026-10-28): the prologue moves off early-exit paths, CFI functions included; the constant 0 is r0; a global's `%lo` folds into the loads/stores when every use shares one offset
 ✅ Clang driver links too: `SLOW32_HOME=~/slow-32 clang --target=slow32-unknown-none prog.c -o prog.s32x` (crt0, libc_mmio, libs32, `--mmio 64K`)
-✅ Regression tests: 138 in regression/tests, all passing on every engine (run-differential.sh)
+✅ Regression tests: 139 in regression/tests, all passing on every engine (run-differential.sh)
 ✅ Runtime libraries built as archives: libs32.s32a, libc_debug.s32a, libc_mmio.s32a, libs32cxx.s32a (C++ ABI), plus crt0.s32o and locales.s32o -- all tracked, so a backend change means `make -B -C runtime` and committing them
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
 ✅ Fixed emulator MMIO bug: no longer treats address 0x0-0xFFFF as MMIO when mmio_base=0
@@ -397,6 +397,10 @@ cd ~/slow-32/regression && ./run-libcxx.sh
 # and linkers.  Mac only: the corpus is in ~/refs (GPL; the script says how), and
 # gfortran varies by host.  Exit 2 if anything it needs is missing.  ~5 min.
 cd ~/slow-32/regression && ./run-flang-corpus.sh
+# A report beside it, no oracle needed: each program on all four engines under the
+# machine verifier, or with --variants at other optimization levels and through
+# stage08's s32-ld.  Expected differences: docs/plans/flang.md.  ~6 and ~12 min.
+python3 ~/slow-32/flang/tests/gfortran-axes.py OUT [--variants]
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour

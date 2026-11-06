@@ -10,6 +10,10 @@ on slow32, slow32-fast, slow32-dbt and qemu, each in its own directory, since th
 tests write files.  Exit code and output must match the reference interpreter.  An
 engine out of time is counted, not a difference: the interpreter is ~30x the DBT.
 
+--variants instead builds each at other optimization levels (the verifier on for
+all) and links it with the self-hosted s32-ld, and each must behave as the plain build
+does on the DBT.  stage08's s32-as cannot read LLVM's assembly, so it is not an axis.
+
 OUT must not exist; OUT/results.tsv has every test, OUT/w/TEST what each engine did
 for the tests that differ.  Not a gate: a report.  QEMU_S32= says which qemu.
 """
@@ -121,14 +125,78 @@ def one(rel, verdict, out):
     return rel, 'same', '', {}
 
 
+# name: what s32flang is told.  Each must behave as the plain build does, on the DBT.
+VARIANTS = {
+    'fc0-llc0': {'FC_OPT': '-O0', 'LLC_OPT': '-O0'},
+    'fc1-llc1': {'FC_OPT': '-O1', 'LLC_OPT': '-O1'},
+    'fc0-llc2': {'FC_OPT': '-O0'},
+    'fc2-llc0': {'LLC_OPT': '-O0'},
+    'fc3-llc3': {'FC_OPT': '-O3', 'LLC_OPT': '-O3'},
+    'selfld': {'S32_LD': suite.DBT + ' ' + os.path.join(ROOT, 'selfhost/stage08/s32-ld.s32x')},
+}
+VARIANT_TIMEOUT = 120
+
+
+def behaviour(work, name, src, base):
+    """(rc, output) of src built with base + VARIANTS[name], or a phase's refusal."""
+    d = os.path.join(work, name)
+    os.makedirs(os.path.join(d, 'run'))
+    env = dict(base, LLCFLAGS='-verify-machineinstrs', **VARIANTS.get(name, {}))
+    rc, _, err = suite.proc(['zsh', suite.DRIVER, src, os.path.join(d, 't.s32x')], d, suite.BUILD_TIMEOUT, env)
+    if rc != 0:
+        return f'{suite.PHASE.get(rc, rc)}: {suite.first_error(err)[:150]}', None, b'', b''
+    r = suite.proc([suite.DBT, '../t.s32x'], os.path.join(d, 'run'), VARIANT_TIMEOUT)
+    return None, r[0], r[1], r[2]
+
+
+def variants(rel, verdict, out):
+    src = os.path.join(suite.SUITE, rel)
+    with open(src, encoding='latin-1') as f:
+        _, opts, _ = suite.directives(f.read())
+    work = os.path.join(out, 'w', rel.replace('/', '__'))
+    os.makedirs(work)
+    env = dict(os.environ, FFLAGS=' '.join(o for o in opts if suite.PASS_ON.match(o)))
+    refused, brc, bout, berr = behaviour(work, 'plain', src, env)
+    if refused:
+        return rel, 'build', refused, {}
+    if brc is None:
+        shutil.rmtree(work)
+        return rel, 'late', 'plain', {}
+    notes, late = [], []
+    for name in VARIANTS:
+        refused, rc, o, e = behaviour(work, name, src, env)
+        if refused:
+            notes.append(f'{name}:{refused}')
+        elif rc is None:
+            late.append(name)
+        elif rc != brc:
+            notes.append(f'{name}:rc {rc} not {brc}')
+        elif guest(o) + guest(e) != guest(bout) + guest(berr):
+            notes.append(f'{name}:output')
+        for ext, data in (('.out', o), ('.err', e)):
+            with open(os.path.join(work, name + ext), 'wb') as f:
+                f.write(data)
+    if notes:
+        for ext, data in (('.out', bout), ('.err', berr)):
+            with open(os.path.join(work, 'plain' + ext), 'wb') as f:
+                f.write(data)
+        return rel, 'differ', ' | '.join(notes), {}
+    shutil.rmtree(work)
+    return rel, ('late' if late else 'same'), ' '.join(late), {}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
     ap.add_argument('-j', type=int, default=12)
     ap.add_argument('--match')
     ap.add_argument('--sample', type=int)
+    ap.add_argument('--variants', nargs='?', const=','.join(VARIANTS), help='optimization levels and the self-hosted linker; or these, comma-separated')
     a = ap.parse_args()
     out = os.path.abspath(a.out)
+    chosen = a.variants.split(',') if a.variants else []
+    for name in set(VARIANTS) - set(chosen):
+        del VARIANTS[name]
     for cmd in ENGINES.values():
         if not os.access(cmd[0], os.X_OK):
             sys.exit(f'no engine {cmd[0]}')
@@ -144,7 +212,7 @@ def main():
         tests = tests[::a.sample]
     counts = collections.Counter()
     with ThreadPoolExecutor(a.j) as pool, open(os.path.join(out, 'results.tsv'), 'w') as tsv:
-        for t, kind, note, _ in pool.map(lambda x: one(x[0], x[1], out), tests):
+        for t, kind, note, _ in pool.map(lambda x: (variants if a.variants else one)(x[0], x[1], out), tests):
             counts[kind] += 1
             tsv.write(f'{kind}\t{t}\t{note}\n')
             tsv.flush()

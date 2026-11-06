@@ -1,7 +1,8 @@
 #!/bin/zsh
 # run-tests.sh [mod-dir]: flang's own tests, each self-checking, on every engine
 # that can run them: abi (Fortran's layouts against clang's, with C on the other
-# side) and wide (what is wider than index).  Needs flang/build.sh first.
+# side), wide (what is wider than index) and oor (OUT_OF_RANGE with no wider real).
+# Needs flang/build.sh first.
 # Exit 0 only if each prints its success line everywhere.  ~10 s.
 HERE=${0:A:h}; FL=${HERE:h}; ROOT=${FL:h}; L=${LLVM_PROJECT:-$HOME/llvm-project}
 B=$L/build-flang/bin; R=$ROOT/runtime; LX=$L/build-slow32-libcxx/install/lib
@@ -25,5 +26,6 @@ $L/build/bin/clang -target slow32-unknown-none -O2 -S -emit-llvm -I$R/include $H
   && $L/build/bin/llc -mtriple=slow32-unknown-none -O2 driver.ll -o driver.s && $AS driver.s driver.s32o >/dev/null || { print "FAIL abi-driver"; exit 1; }
 one abi driver.s32o
 one wide
+one oor
 print "flang tests: $bad failed"
 [ $bad -eq 0 ]

@@ -248,6 +248,18 @@ index 3857d2b73c4e..8e02a101e38a 100644
  using fir::genDimInfoFromBox;
  
  //===----------------------------------------------------------------------===//
+diff --git a/flang/include/flang/Optimizer/Builder/IntrinsicCall.h b/flang/include/flang/Optimizer/Builder/IntrinsicCall.h
+index 53c975e4b3f6..d93db496285d 100644
+--- a/flang/include/flang/Optimizer/Builder/IntrinsicCall.h
++++ b/flang/include/flang/Optimizer/Builder/IntrinsicCall.h
+@@ -339,6 +339,7 @@ struct IntrinsicLibrary {
+   mlir::Value genNint(mlir::Type, llvm::ArrayRef<mlir::Value>);
+   fir::ExtendedValue genNorm2(mlir::Type, llvm::ArrayRef<fir::ExtendedValue>);
+   mlir::Value genNot(mlir::Type, llvm::ArrayRef<mlir::Value>);
++  mlir::Value genOutOfRange(mlir::Type, llvm::ArrayRef<mlir::Value>);
+   fir::ExtendedValue genNull(mlir::Type, llvm::ArrayRef<fir::ExtendedValue>);
+   fir::ExtendedValue genNumImages(mlir::Type,
+                                   llvm::ArrayRef<fir::ExtendedValue>);
 diff --git a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 index 67bdf6867251..89adf494c9b5 100644
 --- a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
@@ -1197,6 +1209,58 @@ index fe6215b7a538..6097334c673e 100644
    // TODO: use target machine data layout to set-up the target characteristics
    // type size and alignment info.
  }
+diff --git a/flang/lib/Evaluate/fold-logical.cpp b/flang/lib/Evaluate/fold-logical.cpp
+index 3be91c0b5882..3ef99714c833 100644
+--- a/flang/lib/Evaluate/fold-logical.cpp
++++ b/flang/lib/Evaluate/fold-logical.cpp
+@@ -152,6 +152,11 @@ public:
+       }
+       if (promote) {
+         constexpr int nextKind{T::kind < 4 ? 4 : T::kind == 4 ? 8 : 16};
++        // No wider real on this target: the caller has another way.
++        if (!context_.targetCharacteristics().IsTypeEnabled(
++                TypeCategory::Real, nextKind)) {
++          return std::nullopt;
++        }
+         using T2 = Type<TypeCategory::Real, nextKind>;
+         hi_ = Expr<SomeReal>{Fold(context_, ConvertToType<T2>(std::move(hi_)))};
+         lo_ = Expr<SomeReal>{Fold(context_, ConvertToType<T2>(std::move(lo_)))};
+@@ -552,7 +557,7 @@ static Expr<Type<TypeCategory::Logical, KIND>> RewriteOutOfRange(
+                       ActualArguments{
+                           ActualArgument{Expr<SomeType>{std::move(rhi)}},
+                           ActualArgument{Expr<SomeType>{std::move(hi)}},
+-                          ActualArgument{std::move(*round)}}))};
++                          ActualArgument{Expr<SomeType>{*round}}}))};
+               lo = std::move(DEREF(UnwrapExpr<Expr<SomeReal>>(mlo)));
+               hi = std::move(DEREF(UnwrapExpr<Expr<SomeReal>>(mhi)));
+             }
+@@ -561,11 +566,25 @@ static Expr<Type<TypeCategory::Logical, KIND>> RewriteOutOfRange(
+           //   TRANSFER(x - lo, int) .UGT. TRANSFER(hi - lo, int)
+           hi = Fold(context, std::move(hi));
+           lo = Fold(context, std::move(lo));
+-          if (auto rhs{RealToIntLimit(context, std::move(hi), lo)}) {
++          if (auto rhs{RealToIntLimit(context, Expr<SomeReal>{hi}, lo)}) {
+             Expr<SomeReal> lhs{std::move(*rXExpr) - std::move(lo)};
+             result = CompareUnsigned(context, "bgt",
+                 GetRealBits(context, std::move(lhs)),
+                 GetRealBits(context, std::move(*rhs)));
++          } else if (IsConstantExpr(*x)) {
++            // No real wide enough for the above.  A constant can be named
++            // twice; anything else stays a call, for lowering.
++            auto ge{Relate(context.messages(), RelationalOperator::GE,
++                AsGenericExpr(Expr<SomeReal>{*rXExpr}),
++                AsGenericExpr(std::move(lo)))};
++            auto le{Relate(context.messages(), RelationalOperator::LE,
++                AsGenericExpr(std::move(*rXExpr)),
++                AsGenericExpr(std::move(hi)))};
++            if (ge && le) {
++              result = LogicalNegation(Expr<LogicalResult>{
++                  LogicalOperation<LogicalResult::kind>{
++                      LogicalOperator::And, std::move(*ge), std::move(*le)}});
++            }
+           }
+         } else if (auto *rMoldExpr{UnwrapExpr<Expr<SomeReal>>(*mold)}) {
+           // REAL -> REAL
 diff --git a/flang/lib/Evaluate/intrinsics.cpp b/flang/lib/Evaluate/intrinsics.cpp
 index f7ea85a455ac..e7b3bc635c5b 100644
 --- a/flang/lib/Evaluate/intrinsics.cpp
@@ -1444,10 +1508,20 @@ index 7f03f3f050d5..edd9362710c1 100644
 +  return choose(empty, zero, count);
 +}
 diff --git a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
-index 43c23ba28fa9..3f87266dc474 100644
+index 43c23ba28fa9..f9f3c88febd0 100644
 --- a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
 +++ b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
-@@ -1455,9 +1455,9 @@ static constexpr MathOperation mathOperations[] = {
+@@ -645,6 +645,9 @@ static constexpr IntrinsicHandler handlers[]{
+      &I::genNumImages,
+      {{{"team_number", asValue}, {"team", asAddr}}},
+      /*isElemental*/ false},
++    {"out_of_range",
++     &I::genOutOfRange,
++     {{{"x", asValue}, {"mold", asValue}, {"round", asValue}}}},
+     {"pack",
+      &I::genPack,
+      {{{"array", asBox},
+@@ -1455,9 +1458,9 @@ static constexpr MathOperation mathOperations[] = {
      {"nearbyint", RTNAME_STRING(NearbyintF128), FuncTypeReal16Real16,
       genLibF128Call},
      // llvm.lround behaves the same way as libm's lround.
@@ -1459,7 +1533,7 @@ index 43c23ba28fa9..3f87266dc474 100644
       genLibCall},
      {"nint", RTNAME_STRING(LlroundF128), FuncTypeInteger8Real16,
       genLibF128Call},
-@@ -6284,6 +6284,8 @@ IntrinsicLibrary::genIeeeSupportFlag(mlir::Type resultType,
+@@ -6284,6 +6287,8 @@ IntrinsicLibrary::genIeeeSupportFlag(mlir::Type resultType,
                                       llvm::ArrayRef<fir::ExtendedValue> args) {
    // Check if a floating point exception flag is supported.
    assert(args.size() == 1 || args.size() == 2);
@@ -1468,7 +1542,7 @@ index 43c23ba28fa9..3f87266dc474 100644
    mlir::Type i1Ty = builder.getI1Type();
    mlir::Type i32Ty = builder.getIntegerType(32);
    auto [fieldRef, fieldTy] = getFieldRef(builder, loc, getBase(args[0]));
-@@ -6372,6 +6374,13 @@ fir::ExtendedValue IntrinsicLibrary::genIeeeSupportRounding(
+@@ -6372,6 +6377,13 @@ fir::ExtendedValue IntrinsicLibrary::genIeeeSupportRounding(
    assert(args.size() == 1 || args.size() == 2);
    auto [fieldRef, fieldTy] = getFieldRef(builder, loc, getBase(args[0]));
    mlir::Value mode = fir::LoadOp::create(builder, loc, fieldRef);
@@ -1482,6 +1556,59 @@ index 43c23ba28fa9..3f87266dc474 100644
    mlir::Value lbOk = mlir::arith::CmpIOp::create(
        builder, loc, mlir::arith::CmpIPredicate::sge, mode,
        builder.createIntegerConstant(loc, fieldTy,
+@@ -7516,6 +7528,52 @@ IntrinsicLibrary::genNorm2(mlir::Type resultType,
+ }
+ 
+ // NOT
++// OUT_OF_RANGE(X, MOLD [, ROUND]), real X and integer MOLD.  Semantics rewrites this
++// to arithmetic in a real wider than X (RewriteOutOfRange) and leaves it here only
++// where the target has none, as for REAL(8) with no REAL(16).
++mlir::Value IntrinsicLibrary::genOutOfRange(mlir::Type resultType,
++                                            llvm::ArrayRef<mlir::Value> args) {
++  assert(args.size() == 3);
++  mlir::Value x = args[0];
++  auto realType = mlir::cast<mlir::FloatType>(x.getType());
++  unsigned bits = args[1].getType().getIntOrFloatBitWidth();
++  // The largest magnitude of the sign that converts: the nearest real inside
++  // 2**(bits-1) less or plus MARGIN.  Rounding toward zero lands inside the limit,
++  // or exactly on it, which is one too far.
++  auto bound = [&](bool negative, const char *margin) {
++    llvm::APFloat limit(realType.getFloatSemantics());
++    limit.convertFromAPInt(llvm::APInt::getOneBitSet(bits + 1, bits - 1),
++                           /*isSigned=*/false,
++                           llvm::APFloat::rmNearestTiesToEven);
++    llvm::APFloat m(realType.getFloatSemantics(), margin);
++    llvm::APFloat::opStatus status =
++        negative ? limit.add(m, llvm::APFloat::rmTowardZero)
++                 : limit.subtract(m, llvm::APFloat::rmTowardZero);
++    if (status == llvm::APFloat::opOK)
++      limit.next(/*nextDown=*/true);
++    if (negative)
++      limit.changeSign();
++    return builder.createRealConstant(loc, realType, limit);
++  };
++  // Truncating: -128.9 and 127.9 fit an INTEGER(1).  Rounding: -128.4 and 127.4.
++  mlir::Value lo = bound(true, "1"), hi = bound(false, "0");
++  if (!isStaticallyAbsent(args, 2)) {
++    mlir::Value round =
++        builder.createConvert(loc, builder.getI1Type(), args[2]);
++    lo = mlir::arith::SelectOp::create(builder, loc, round,
++                                       bound(true, "0.5"), lo);
++    hi = mlir::arith::SelectOp::create(builder, loc, round,
++                                       bound(false, "0.5"), hi);
++  }
++  // Unordered: a NaN is out of range, as an infinity is.
++  mlir::Value below = mlir::arith::CmpFOp::create(
++      builder, loc, mlir::arith::CmpFPredicate::ULT, x, lo);
++  mlir::Value above = mlir::arith::CmpFOp::create(
++      builder, loc, mlir::arith::CmpFPredicate::UGT, x, hi);
++  mlir::Value out = mlir::arith::OrIOp::create(builder, loc, below, above);
++  return builder.createConvert(loc, resultType, out);
++}
++
+ mlir::Value IntrinsicLibrary::genNot(mlir::Type resultType,
+                                      llvm::ArrayRef<mlir::Value> args) {
+   assert(args.size() == 1);
 diff --git a/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp b/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp
 index 9be86f357e74..0447b405b5ca 100644
 --- a/flang/lib/Optimizer/Builder/Runtime/Intrinsics.cpp

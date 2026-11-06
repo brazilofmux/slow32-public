@@ -448,7 +448,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
     setOperationAction(ISD::FTRUNC, VT, Expand);
     setOperationAction(ISD::FCEIL, VT, Expand);
     setOperationAction(ISD::FFLOOR, VT, Expand);
-    setOperationAction(ISD::BR_CC, VT, Expand);
+    // Custom, not Expand: the combiner turns BRCOND into the i32 BR_CC and then
+    // simplifies that into one on the compare's own operands without asking if
+    // it is legal, and Expand on a legal condition rebuilds the same node for ever.
+    setOperationAction(ISD::BR_CC, VT, Custom);
     setOperationAction(ISD::SELECT, VT, Custom);
     setOperationAction(ISD::SELECT_CC, VT, Expand);
   }
@@ -1078,6 +1081,13 @@ SDValue SLOW32TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue Dest = Op.getOperand(4);
   SDLoc DL(Op);
 
+  // BR_* compare integers, and these are floats: the compare, then its result.
+  if (LHS.getValueType().isFloatingPoint()) {
+    SDValue Cmp =
+        DAG.getNode(ISD::SETCC, DL, MVT::i32, LHS, RHS, DAG.getCondCode(CC));
+    return DAG.getNode(SLOW32ISD::BR_NE, DL, MVT::Other, Chain, Cmp,
+                       DAG.getConstant(0, DL, MVT::i32), Dest);
+  }
   return emitBranchForCond(DAG, DL, Chain, CC, LHS, RHS, Dest);
 }
 

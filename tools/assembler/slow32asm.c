@@ -203,7 +203,9 @@ static bool parse_factor(scanner_t *s, expr_result_t *res) {
     if (s->curr.type == TOK_NUMBER) {
         res->val = s->curr.val;
         scanner_next(s);
-    } else if (s->curr.type == TOK_IDENTIFIER) {
+    } else if (s->curr.type == TOK_IDENTIFIER || s->curr.type == TOK_STRING) {
+        /* A quoted name keeps its quotes, here as in a label: LLVM quotes any
+         * name with a character it does not like, flang's _QFEXnX/s1/ for one. */
         res->symbol = sym_intern(s->curr.sval);
         res->has_symbol = true;
         scanner_next(s);

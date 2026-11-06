@@ -109,7 +109,6 @@ char *memset(char *dst, int c, int n);
 /* === End inlined header === */
 
 /* === Buffer size constants === */
-#define GSYM_NBUF_SZ 131072
 /* 8MB text / 4MB file: veneer tests use --code-size 2M/4M and .space
  * gaps over 1MB.  Stage07 s32-as MAX_BSS is 16MB, so these plus data,
  * rodata and the reloc tables must stay under that when this file is
@@ -126,11 +125,6 @@ char *memset(char *dst, int c, int n);
  * sym_map, 8KB -> 32KB. */
 #define MAX_MEMBERS  512
 #define OUT_STRTAB_SZ 32768
-
-/* Archive table sizes */
-#define AR_SYMTAB_SZ 32768
-#define AR_MEMTAB_SZ 24576
-#define AR_STRTAB_SZ 32768
 
 /* === Merged section buffers === */
 char text_buf[TEXT_BUFSZ];
@@ -187,7 +181,8 @@ int *gsym_val;
 int *gsym_sec;
 int *gsym_bind;
 int *gsym_def;
-char gsym_nbuf[GSYM_NBUF_SZ];
+char *gsym_nbuf;
+int gsym_nbuf_cap;
 int gsym_cnt;
 int gsym_nptr;
 
@@ -239,9 +234,12 @@ int obj_sym_off;
 int obj_str_off;
 
 /* === Archive state === */
-char ar_symtab[AR_SYMTAB_SZ];
-char ar_memtab[AR_MEMTAB_SZ];
-char ar_strtab[AR_STRTAB_SZ];
+char *ar_symtab;
+int ar_symtab_cap;
+char *ar_memtab;
+int ar_memtab_cap;
+char *ar_strtab;
+int ar_strtab_cap;
 char mem_loaded[MAX_MEMBERS];
 int ar_nmembers;
 int ar_mem_off;
@@ -559,11 +557,7 @@ int gsym_add_name(char *name, int len) {
     int off;
     int i;
     off = gsym_nptr;
-    if (off + len > GSYM_NBUF_SZ) {
-        fputs("error: gsym name buffer overflow\n", stderr);
-        link_error = 1;
-        return 0;
-    }
+    gsym_nbuf = sv_grow(gsym_nbuf, &gsym_nbuf_cap, off + len + 1, 1, "symbol names");
     i = 0;
     while (i < len) {
         gsym_nbuf[off + i] = name[i];
@@ -1126,24 +1120,9 @@ void link_archive(char *path) {
         link_error = 1;
         return;
     }
-    if (ar_nsymbols * 8 > AR_SYMTAB_SZ) {
-        fputs("error: archive symbol table too large\n", stderr);
-        fclose(ar_fh);
-        link_error = 1;
-        return;
-    }
-    if (ar_nmembers * 24 > AR_MEMTAB_SZ) {
-        fputs("error: archive member table too large\n", stderr);
-        fclose(ar_fh);
-        link_error = 1;
-        return;
-    }
-    if (ar_str_sz > AR_STRTAB_SZ) {
-        fputs("error: archive string table too large\n", stderr);
-        fclose(ar_fh);
-        link_error = 1;
-        return;
-    }
+    ar_symtab = sv_grow(ar_symtab, &ar_symtab_cap, ar_nsymbols * 8 + 1, 1, "archive symbols");
+    ar_memtab = sv_grow(ar_memtab, &ar_memtab_cap, ar_nmembers * 24 + 1, 1, "archive members");
+    ar_strtab = sv_grow(ar_strtab, &ar_strtab_cap, ar_str_sz + 1, 1, "archive names");
 
     /* Read symbol index */
     fseek(ar_fh, ar_sym_off, SEEK_SET);
