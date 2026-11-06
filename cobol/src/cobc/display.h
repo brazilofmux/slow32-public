@@ -171,10 +171,8 @@ static void parse_pos_clauses(SField *f, int is_accept)
     }
 }
 
-/* does the slot name a line, or a place at all?  (what its clauses said, at
- * compile time or by an identifier the statement will read) */
-static int sfield_has_line(const SField *f) { return f->line || f->line_r || f->at_r; }
-static int sfield_placed(const SField *f) { return sfield_has_line(f) || f->col || f->col_r; }
+/* did the statement give the slot a place?  (a zero is one: rule 16) */
+static int sfield_placed(const SField *f) { return f->said_line || f->said_col; }
 
 static Screen *screen_synth(void)
 {

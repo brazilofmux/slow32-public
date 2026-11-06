@@ -6710,4 +6710,11 @@ item (13.18.14.4 rules 18-19).
 An `AT` item is told by its digits, as the text says; a `PIC 9(4) COMP` is
 rrcc here, where GnuCOBOL goes by its byte size and ignores it.
 
-Test: free/posat0.
+An ACCEPT at a zero moved as keys came: each repaint asked where its field
+goes, and the repaint before had just said it ended there (3,4 became 3,8,
+then 3,10).  Every `ACCEPT LINE 0 POSITION 0` had done this since ISSUES-29,
+and the suite never typed into one.  The end is now noted once, when the ACCEPT
+finishes.  The rule's "preceding ACCEPT" is one place with the DISPLAYs here:
+RM's prompt followed by `ACCEPT LINE 0 POSITION 0` needs that.
+
+Tests: free/posat0, free/posaccat.

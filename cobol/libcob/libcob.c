@@ -7109,6 +7109,18 @@ static int scr_is_nat(const cob_scr_field *f)
  * keeps its effect. */
 static int scr_accepting;
 
+/* where a slot ended, for a zero in the next AT (Micro Focus's rule 16: any
+ * Format 2 or 3 DISPLAY); plain DISPLAY reads this only once positioned.  An
+ * ACCEPT repaints as keys come, and each repaint asks where its field goes, so
+ * it notes the end once, as it finishes (cob_screen_accept); the rule's "the
+ * preceding ACCEPT" is one place with the DISPLAYs here, for RM's prompt and
+ * ACCEPT LINE 0 POSITION 0. */
+static void scr_note_end(const cob_scr_field *f, int line, int col)
+{
+    scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width;
+    scr_next_line = line + (col + (f->width ? (int)f->width : 1) - 2) / scr_cols + 1;
+}
+
 static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
 {
     int erase = !scr_accepting || (f->ext & COB_SX_POS);
@@ -7124,10 +7136,7 @@ static void scr_paint_begin(const cob_scr_field *f, int *line, int *col)
 static void scr_paint_end(const cob_scr_field *f, int line, int col)
 {
     scr_attr_off(f);
-    /* where it ended, for a zero in the next AT (Micro Focus's rule 16: any
-     * Format 2 or 3 DISPLAY); plain DISPLAY reads this only once positioned */
-    scr_last_line = line; scr_last_col = col; scr_last_width = (int)f->width;
-    scr_next_line = line + (col + (f->width ? (int)f->width : 1) - 2) / scr_cols + 1;
+    if (!scr_accepting) scr_note_end(f, line, col);
     if (f->ext & COB_SX_POS) { scr_rm_mode = 1; con_col = 1; }
 }
 
@@ -7735,6 +7744,11 @@ int cob_screen_accept(const cob_screen *s)
 {
     scr_accepting = 1;
     int r = screen_accept(s);
+    if (s->nfields > 0) {
+        const cob_scr_field *f = &s->fields[s->nfields - 1];
+        int line, col; scr_pos(f, &line, &col);
+        scr_note_end(f, line, col);
+    }
     scr_accepting = 0;
     scr_update_once = 0;
     cursor_item = NULL;
