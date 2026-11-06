@@ -19,8 +19,8 @@ stage08 and DBT stress test.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
 - gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
   carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
-  oracle: **2,297 of 2,592 agree**, where gfortran has a verdict and the test is one
-  file.  Of the 295 left, LLVM's `DisabledFiles.cmake` lists 271 as failing on
+  oracle: **2,299 of 2,592 agree**, where gfortran has a verdict and the test is one
+  file.  Of the 293 left, LLVM's `DisabledFiles.cmake` lists 271 as failing on
   flang natively.  This corpus found, in a day, everything in "what it found".
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
@@ -80,14 +80,16 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 - An `INTEGER(8)` DO variable beyond 32 bits miscounted, in loops and array
   constructors; `NINT` to `INTEGER(8)` read a 32-bit `lround` as 64 bits.
 - `REAL(16)` followed the host's `long double`, so hosts could disagree.
+- `do i = 0, 1, huge(0)` ran zero times, the trip count overflowing a 32-bit index.
+- A `character(c_char), value` above 127 reached a C `char` with the wrong sign.
+- `SetRecl` took a `size_t`, cutting a RECL above 4 GB.
 - Not flang's: a zero-sized global (an empty struct) never linked, from C either,
   in both toolchains (selfhost ISSUES-112).
 
 ## Still wrong
 
-- `do i = 0, 1, huge(0)` runs zero times: the trip count overflows a 32-bit index.
-- A `character(c_char), value` above 127 reaches a C `char` with the wrong sign.
-- `SetRecl` takes a `size_t`, so a RECL above 4 GB is cut short.
+- A loop over every `INTEGER(4)`, by a step of 1, is 2**32 iterations: the unsigned
+  count wraps to zero and it does not run.
 - `INTEGER(16)` I/O does not link: no 128-bit type in clang's SLOW-32 target.
 - `bessel_yn` in `REAL(4)` is a unit in the last place off, enough to fail
   `bessel_5` through the recurrence (runtime ISSUES-29).

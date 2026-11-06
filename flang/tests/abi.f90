@@ -42,6 +42,11 @@ module abi_types
       integer(c_long), value :: k
       integer(c_int), value :: last
     end function
+    integer(c_int) function c_char_value(a, b) bind(c, name='c_char_value')
+      import
+      character(kind=c_char, len=1), value :: a
+      integer(c_int), value :: b
+    end function
     integer(c_int) function c_apply(f, p, x) bind(c, name='c_apply')
       import
       type(c_funptr), value :: f
@@ -123,6 +128,10 @@ program abi
   finals = 0
   deallocate(poly)
   if (finals /= 1) stop 16
+
+  ! a character by value, either side of 127, as C's char reads it
+  if (c_char_value('A', 2) /= 65002) stop 17
+  if (c_char_value(achar(163), 3) /= -92997) stop 18
 
   print '(a)', 'abi-ok'
 end program

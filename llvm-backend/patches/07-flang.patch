@@ -171,6 +171,19 @@ index 0e7d4493385f..ac1154f96ab7 100644
  #define IEEE_CLASS_R(XKIND) \
    simple elemental type(ieee_class_type) function ieee_class_a##XKIND(x); \
      import ieee_class_type; \
+diff --git a/flang-rt/lib/runtime/io-api.cpp b/flang-rt/lib/runtime/io-api.cpp
+index 28f16872ddad..87d56be42cd3 100644
+--- a/flang-rt/lib/runtime/io-api.cpp
++++ b/flang-rt/lib/runtime/io-api.cpp
+@@ -981,7 +981,7 @@ bool IODEF(SetPosition)(
+   return true;
+ }
+ 
+-bool IODEF(SetRecl)(Cookie cookie, std::size_t n) {
++bool IODEF(SetRecl)(Cookie cookie, RT_API_INT64 n) {
+   IoStatementState &io{*cookie};
+   auto *open{io.get_if<OpenStatementState>()};
+   if (!open) {
 diff --git a/flang-rt/lib/runtime/iso_c_binding.f90 b/flang-rt/lib/runtime/iso_c_binding.f90
 index 619b1f2e5c6d..96f606e26342 100644
 --- a/flang-rt/lib/runtime/iso_c_binding.f90
@@ -216,8 +229,27 @@ index 7b38db2db195..a1164c22e658 100644
    }
  
  private:
+diff --git a/flang/include/flang/Optimizer/Builder/FIRBuilder.h b/flang/include/flang/Optimizer/Builder/FIRBuilder.h
+index 3857d2b73c4e..8e02a101e38a 100644
+--- a/flang/include/flang/Optimizer/Builder/FIRBuilder.h
++++ b/flang/include/flang/Optimizer/Builder/FIRBuilder.h
+@@ -777,6 +777,14 @@ private:
+ 
+ namespace fir::factory {
+ 
++/// The iterations of a DO loop, as an unsigned value of the bounds' type: exact
++/// where (ub-lb+step)/step would overflow, as it can when the DO variable is as
++/// wide as index.  Zero if the loop does not run.  All-ones plus one, every
++/// value of the type by a step of 1, comes out as zero.
++mlir::Value genUnsignedTripCount(mlir::OpBuilder &builder, mlir::Location loc,
++                                 mlir::Value lb, mlir::Value ub,
++                                 mlir::Value step);
++
+ using fir::genDimInfoFromBox;
+ 
+ //===----------------------------------------------------------------------===//
 diff --git a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
-index 67bdf6867251..56928940846a 100644
+index 67bdf6867251..89adf494c9b5 100644
 --- a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 +++ b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 @@ -17,6 +17,7 @@
@@ -282,6 +314,28 @@ index 67bdf6867251..56928940846a 100644
    };
  }
  template <>
+@@ -658,8 +661,8 @@ REDUCTION_REF_OPERATION_MODEL(std::int16_t)
+ REDUCTION_VALUE_OPERATION_MODEL(std::int16_t)
+ REDUCTION_REF_OPERATION_MODEL(std::int32_t)
+ REDUCTION_VALUE_OPERATION_MODEL(std::int32_t)
+-REDUCTION_REF_OPERATION_MODEL(std::int64_t)
+-REDUCTION_VALUE_OPERATION_MODEL(std::int64_t)
++REDUCTION_REF_OPERATION_MODEL(RT_API_INT64)
++REDUCTION_VALUE_OPERATION_MODEL(RT_API_INT64)
+ REDUCTION_REF_OPERATION_MODEL(Fortran::common::int128_t)
+ REDUCTION_VALUE_OPERATION_MODEL(Fortran::common::int128_t)
+ 
+@@ -669,8 +672,8 @@ REDUCTION_REF_OPERATION_MODEL(std::uint16_t)
+ REDUCTION_VALUE_OPERATION_MODEL(std::uint16_t)
+ REDUCTION_REF_OPERATION_MODEL(std::uint32_t)
+ REDUCTION_VALUE_OPERATION_MODEL(std::uint32_t)
+-REDUCTION_REF_OPERATION_MODEL(std::uint64_t)
+-REDUCTION_VALUE_OPERATION_MODEL(std::uint64_t)
++REDUCTION_REF_OPERATION_MODEL(RT_API_UINT64)
++REDUCTION_VALUE_OPERATION_MODEL(RT_API_UINT64)
+ REDUCTION_REF_OPERATION_MODEL(Fortran::common::uint128_t)
+ REDUCTION_VALUE_OPERATION_MODEL(Fortran::common::uint128_t)
+ 
 diff --git a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h b/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
 index b9a8a670d079..a38675ee082e 100644
 --- a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
@@ -618,7 +672,7 @@ index 36ef929ed5b2..5bd6e332e59c 100644
  
  void RTDECL(Ubound)(void *result, const Descriptor &array, int kind,
 diff --git a/flang/include/flang/Runtime/io-api.h b/flang/include/flang/Runtime/io-api.h
-index d23b260d2fb8..fd033b0b135b 100644
+index d23b260d2fb8..58c6bd58b9d9 100644
 --- a/flang/include/flang/Runtime/io-api.h
 +++ b/flang/include/flang/Runtime/io-api.h
 @@ -11,6 +11,7 @@
@@ -675,6 +729,15 @@ index d23b260d2fb8..fd033b0b135b 100644
  bool IODECL(OutputReal32)(Cookie, float);
  bool IODECL(InputReal32)(Cookie, float &);
  bool IODECL(OutputReal64)(Cookie, double);
+@@ -316,7 +317,7 @@ bool IODECL(SetEncoding)(Cookie, const char *, std::size_t);
+ bool IODECL(SetForm)(Cookie, const char *, std::size_t);
+ // POSITION=ASIS, REWIND, APPEND
+ bool IODECL(SetPosition)(Cookie, const char *, std::size_t);
+-bool IODECL(SetRecl)(Cookie, std::size_t); // RECL=
++bool IODECL(SetRecl)(Cookie, RT_API_INT64); // RECL=
+ 
+ // STATUS can be set during an OPEN or CLOSE statement.
+ // For OPEN: STATUS=OLD, NEW, SCRATCH, REPLACE, UNKNOWN
 @@ -353,7 +354,7 @@ bool IODECL(InquireLogical)(Cookie, InquiryKeywordHash, bool &);
  bool IODECL(InquirePendingId)(Cookie, AsynchronousId, bool &);
  // NEXTREC, NUMBER, POS, RECL, SIZE
@@ -1193,7 +1256,7 @@ index d4c6b44e1147..c6bc318cf40b 100644
      fortranOptions.predefinitions.emplace_back("__s390x__", "1");
      fortranOptions.predefinitions.emplace_back("__s390x", "1");
 diff --git a/flang/lib/Lower/Bridge.cpp b/flang/lib/Lower/Bridge.cpp
-index 18ce19eafae9..7913293d5d81 100644
+index 18ce19eafae9..a0b493b3d3e2 100644
 --- a/flang/lib/Lower/Bridge.cpp
 +++ b/flang/lib/Lower/Bridge.cpp
 @@ -52,6 +52,7 @@
@@ -1204,7 +1267,59 @@ index 18ce19eafae9..7913293d5d81 100644
  #include "flang/Optimizer/Support/AllocationPolicy.h"
  #include "flang/Optimizer/Support/DataLayout.h"
  #include "flang/Optimizer/Support/FatalError.h"
-@@ -3293,6 +3294,11 @@ private:
+@@ -145,6 +146,12 @@ struct IncrementLoopInfo {
+   mlir::Block *exitBlock = nullptr;   // loop exit target block
+ };
+ 
++/// A DO variable as wide as a 32-bit index overflows (ub-lb+step)/step.
++static bool usesUnsignedTrip(const IncrementLoopInfo &info) {
++  return !info.hasRealControl && fir::getTargetSizeBits() == 32 &&
++         info.getLoopVariableType().isInteger(32);
++}
++
+ /// Information to support stack management, object deallocation, and
+ /// object finalization at early and normal construct exits.
+ struct ConstructContext {
+@@ -3159,6 +3166,9 @@ private:
+             mlir::arith::DivFOp::create(*builder, loc, diff2, stepValue);
+         tripCount =
+             builder->createConvert(loc, builder->getIndexType(), tripCount);
++      } else if (usesUnsignedTrip(info)) {
++        tripCount = fir::factory::genUnsignedTripCount(*builder, loc, lowerValue,
++                                                       upperValue, stepValue);
+       } else {
+         auto diff1 =
+             mlir::arith::SubIOp::create(*builder, loc, upperValue, lowerValue);
+@@ -3170,8 +3180,15 @@ private:
+       if (forceLoopToExecuteOnce) { // minimum tripCount is 1
+         mlir::Value one =
+             builder->createIntegerConstant(loc, tripCount.getType(), 1);
++        mlir::Value below = usesUnsignedTrip(info)
++                                ? builder->createIntegerConstant(
++                                      loc, tripCount.getType(), 0)
++                                : one;
+         auto cond = mlir::arith::CmpIOp::create(
+-            *builder, loc, mlir::arith::CmpIPredicate::slt, tripCount, one);
++            *builder, loc,
++            usesUnsignedTrip(info) ? mlir::arith::CmpIPredicate::eq
++                                   : mlir::arith::CmpIPredicate::slt,
++            tripCount, below);
+         tripCount =
+             mlir::arith::SelectOp::create(*builder, loc, cond, one, tripCount);
+       }
+@@ -3186,7 +3203,10 @@ private:
+       mlir::Value zero =
+           builder->createIntegerConstant(loc, tripCount.getType(), 0);
+       auto cond = mlir::arith::CmpIOp::create(
+-          *builder, loc, mlir::arith::CmpIPredicate::sgt, tripCount, zero);
++          *builder, loc,
++          usesUnsignedTrip(info) ? mlir::arith::CmpIPredicate::ne
++                                 : mlir::arith::CmpIPredicate::sgt,
++          tripCount, zero);
+       if (info.maskExpr) {
+         genConditionalBranch(cond, info.maskBlock, info.exitBlock);
+         startBlock(info.maskBlock);
+@@ -3293,18 +3313,29 @@ private:
          auto doLoopOp = mlir::cast<fir::DoLoopOp>(info.loopOp);
          builder->setInsertionPointAfter(doLoopOp);
          mlir::Type idxTy = builder->getIndexType();
@@ -1216,6 +1331,31 @@ index 18ce19eafae9..7913293d5d81 100644
          mlir::Value lb =
              builder->createConvert(loc, idxTy, doLoopOp.getLowerBound());
          mlir::Value ub =
+             builder->createConvert(loc, idxTy, doLoopOp.getUpperBound());
+         mlir::Value st = builder->createConvert(loc, idxTy, doLoopOp.getStep());
+-        mlir::Value zero = builder->createIntegerConstant(loc, idxTy, 0);
+-        mlir::Value trip = mlir::arith::SubIOp::create(*builder, loc, ub, lb);
+-        trip = mlir::arith::AddIOp::create(*builder, loc, trip, st);
+-        trip = mlir::arith::DivSIOp::create(*builder, loc, trip, st);
+-        mlir::Value empty = mlir::arith::CmpIOp::create(
+-            *builder, loc, mlir::arith::CmpIPredicate::slt, trip, zero);
+-        trip = mlir::arith::SelectOp::create(*builder, loc, empty, zero, trip);
++        mlir::Value trip;
++        if (idxTy.isIndex() && fir::getTargetSizeBits() == 32) {
++          trip = fir::factory::genUnsignedTripCount(*builder, loc, lb, ub, st);
++        } else {
++          mlir::Value zero = builder->createIntegerConstant(loc, idxTy, 0);
++          trip = mlir::arith::SubIOp::create(*builder, loc, ub, lb);
++          trip = mlir::arith::AddIOp::create(*builder, loc, trip, st);
++          trip = mlir::arith::DivSIOp::create(*builder, loc, trip, st);
++          mlir::Value empty = mlir::arith::CmpIOp::create(
++              *builder, loc, mlir::arith::CmpIPredicate::slt, trip, zero);
++          trip =
++              mlir::arith::SelectOp::create(*builder, loc, empty, zero, trip);
++        }
+         mlir::Value last = mlir::arith::MulIOp::create(*builder, loc, trip, st);
+         last = mlir::arith::AddIOp::create(*builder, loc, lb, last);
+         last = builder->createConvert(loc, info.getLoopVariableType(), last);
 diff --git a/flang/lib/Lower/ConvertArrayConstructor.cpp b/flang/lib/Lower/ConvertArrayConstructor.cpp
 index 1d22da615ba0..61f6abd4da66 100644
 --- a/flang/lib/Lower/ConvertArrayConstructor.cpp
@@ -1254,6 +1394,46 @@ index 1d22da615ba0..61f6abd4da66 100644
      return lowerExtentExpr(loc, converter, symMap, stmtCtx, expr);
    };
    mlir::Value lower = lowerIndex(impledDo.lower());
+diff --git a/flang/lib/Optimizer/Builder/FIRBuilder.cpp b/flang/lib/Optimizer/Builder/FIRBuilder.cpp
+index 7f03f3f050d5..edd9362710c1 100644
+--- a/flang/lib/Optimizer/Builder/FIRBuilder.cpp
++++ b/flang/lib/Optimizer/Builder/FIRBuilder.cpp
+@@ -1973,3 +1973,35 @@ std::optional<mlir::Value> fir::factory::genAddressBasedDisjointnessCheck(
+       builder, loc, mlir::arith::CmpIPredicate::ult, rhsEnd, lhsStart);
+   return mlir::arith::OrIOp::create(builder, loc, cond1, cond2);
+ }
++
++mlir::Value fir::factory::genUnsignedTripCount(mlir::OpBuilder &builder,
++                                               mlir::Location loc,
++                                               mlir::Value lb, mlir::Value ub,
++                                               mlir::Value step) {
++  using mlir::arith::CmpIPredicate;
++  mlir::Type ty = lb.getType();
++  auto constant = [&](int64_t n) -> mlir::Value {
++    return mlir::arith::ConstantOp::create(builder, loc, ty,
++                                           builder.getIntegerAttr(ty, n));
++  };
++  auto cmp = [&](CmpIPredicate p, mlir::Value a, mlir::Value b) -> mlir::Value {
++    return mlir::arith::CmpIOp::create(builder, loc, p, a, b);
++  };
++  auto choose = [&](mlir::Value c, mlir::Value a, mlir::Value b) -> mlir::Value {
++    return mlir::arith::SelectOp::create(builder, loc, c, a, b);
++  };
++  mlir::Value zero = constant(0);
++  mlir::Value down = cmp(CmpIPredicate::slt, step, zero);
++  mlir::Value empty = choose(down, cmp(CmpIPredicate::slt, lb, ub),
++                             cmp(CmpIPredicate::sgt, lb, ub));
++  mlir::Value distance =
++      choose(down, mlir::arith::SubIOp::create(builder, loc, lb, ub),
++             mlir::arith::SubIOp::create(builder, loc, ub, lb));
++  mlir::Value stride =
++      choose(down, mlir::arith::SubIOp::create(builder, loc, zero, step), step);
++  mlir::Value count = mlir::arith::AddIOp::create(
++      builder, loc,
++      mlir::arith::DivUIOp::create(builder, loc, distance, stride),
++      constant(1));
++  return choose(empty, zero, count);
++}
 diff --git a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp b/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
 index 43c23ba28fa9..d6fa0a8e4b4e 100644
 --- a/flang/lib/Optimizer/Builder/IntrinsicCall.cpp
@@ -1395,6 +1575,97 @@ index 3e6a2151fb31..8bd80591ce02 100644
    case llvm::Triple::ArchType::riscv64:
      return std::make_unique<TargetRISCV64>(ctx, std::move(trp),
                                             std::move(kindMap), targetCPU,
+diff --git a/flang/lib/Optimizer/CodeGen/TargetRewrite.cpp b/flang/lib/Optimizer/CodeGen/TargetRewrite.cpp
+index f8eb8087a9b9..c93f86fa2aea 100644
+--- a/flang/lib/Optimizer/CodeGen/TargetRewrite.cpp
++++ b/flang/lib/Optimizer/CodeGen/TargetRewrite.cpp
+@@ -477,6 +477,23 @@ public:
+             rewriteCallComplexInputType(loc, cmplx, oper, newInTyAndAttrs,
+                                         newOpers, savedStackPtr);
+           })
++          .Case([&](fir::CharacterType charTy) {
++            mlir::func::FuncOp callee = nullptr;
++            if constexpr (std::is_same_v<std::decay_t<A>, fir::CallOp>)
++              if (auto name = callOp.getCallee())
++                callee = getModule().template lookupSymbol<mlir::func::FuncOp>(
++                    *name);
++            if (callee && isCCharByValue(callee, charTy)) {
++              auto m = specifics->integerArgumentType(loc, rewriter->getIntegerType(8));
++              newInTyAndAttrs.push_back(m[0]);
++              newOpers.push_back(convertValueInMemory(
++                  loc, oper, rewriter->getIntegerType(8), /*inputMayBeBigger=*/true));
++            } else {
++              newInTyAndAttrs.push_back(
++                  fir::CodeGenSpecifics::getTypeAndAttr(charTy));
++              newOpers.push_back(oper);
++            }
++          })
+           .Case([&](fir::RecordType recTy) {
+             rewriteCallStructInputType(loc, recTy, oper, newInTyAndAttrs,
+                                        newOpers, savedStackPtr);
+@@ -820,6 +837,27 @@ public:
+   }
+ 
+   // Returns true if the function should be interoperable with C.
++  /// A CHARACTER(1) by value to a BIND(C) procedure is a C char.  Where that is
++  /// signed and the callee trusts it (SLOW-32's clang: signext), it has to go as
++  /// one: LLVM takes [1 x i8] as an aggregate, with no extension at all.
++  bool isCCharByValue(mlir::Operation *op, fir::CharacterType charTy) {
++    return fir::getTargetTriple(getModule()).isSLOW32() &&
++           isFuncWithCCallingConvention(op) && charTy.getFKind() == 1 &&
++           charTy.hasConstantLen() && charTy.getLen() == 1;
++  }
++
++  /// The same question of a signature, from either end of a call.
++  bool needsCCharRewrite(mlir::Operation *op, mlir::Type ty) {
++    auto charTy = mlir::dyn_cast<fir::CharacterType>(ty);
++    if (!charTy)
++      return false;
++    if (auto call = mlir::dyn_cast<fir::CallOp>(op)) {
++      auto name = call.getCallee();
++      op = name ? getModule().lookupSymbol<mlir::func::FuncOp>(*name) : nullptr;
++    }
++    return op && isCCharByValue(op, charTy);
++  }
++
+   static bool isFuncWithCCallingConvention(mlir::Operation *op) {
+     auto funcOp = mlir::dyn_cast<mlir::func::FuncOp>(op);
+     if (!funcOp)
+@@ -851,6 +889,7 @@ public:
+            !noCharacterConversion) ||
+           (fir::isa_complex(ty) && !noComplexConversion) ||
+           (mlir::isa<mlir::IntegerType>(ty) && hasCCallingConv) ||
++          needsCCharRewrite(op, ty) ||
+           (mlir::isa<fir::RecordType>(ty) && !noStructConversion)) {
+         LLVM_DEBUG(llvm::dbgs() << "rewrite " << signature << " for target\n");
+         return false;
+@@ -997,6 +1036,26 @@ public:
+ 
+             newInTyAndAttrs.push_back(m[0]);
+           })
++          .Case([&](fir::CharacterType charTy) {
++            if (!isCCharByValue(func, charTy)) {
++              newInTyAndAttrs.push_back(
++                  fir::CodeGenSpecifics::getTypeAndAttr(charTy));
++              return;
++            }
++            mlir::IntegerType i8Ty = rewriter->getIntegerType(8);
++            auto m = specifics->integerArgumentType(func.getLoc(),
++                                                    i8Ty);
++            auto attr = std::get<fir::CodeGenSpecifics::Attributes>(m[0]);
++            auto argNo = newInTyAndAttrs.size();
++            llvm::StringRef extensionAttrName = attr.getIntExtensionAttrName();
++            fixups.emplace_back(FixupTy::Codes::ArgumentType, argNo,
++                                [=](FuncOpTy func) {
++                                  func.setArgAttr(
++                                      argNo, extensionAttrName,
++                                      mlir::UnitAttr::get(func.getContext()));
++                                });
++            newInTyAndAttrs.push_back(m[0]);
++          })
+           .Case([&](fir::RecordType recTy) {
+             doStructArg(func, recTy, newInTyAndAttrs, fixups);
+           })
 diff --git a/flang/lib/Optimizer/CodeGen/TypeConverter.cpp b/flang/lib/Optimizer/CodeGen/TypeConverter.cpp
 index 31194f9c274f..cf719eb62514 100644
 --- a/flang/lib/Optimizer/CodeGen/TypeConverter.cpp
@@ -1450,10 +1721,15 @@ index 66ae5c4c653a..91b4d34e4791 100644
                 mlir::StringAttr::get(mod.getContext(), target));
  }
 diff --git a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
-index b12cabf6cd73..8d8bdd2e9502 100644
+index b12cabf6cd73..603a502922ef 100644
 --- a/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
 +++ b/flang/lib/Optimizer/Transforms/ControlFlowConverter.cpp
-@@ -10,6 +10,7 @@
+@@ -6,10 +6,12 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#include "flang/Optimizer/Builder/FIRBuilder.h"
+ #include "flang/Optimizer/Dialect/FIRDialect.h"
  #include "flang/Optimizer/Dialect/FIROps.h"
  #include "flang/Optimizer/Dialect/Support/FIRContext.h"
  #include "flang/Optimizer/Dialect/Support/KindMapping.h"
@@ -1461,7 +1737,7 @@ index b12cabf6cd73..8d8bdd2e9502 100644
  #include "flang/Optimizer/Transforms/Passes.h"
  #include "mlir/Dialect/Affine/IR/AffineOps.h"
  #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-@@ -62,7 +63,18 @@ public:
+@@ -62,7 +64,18 @@ public:
      // conditional block since it already has the induction variable and
      // loop-carried values as arguments.
      auto *conditionalBlock = &loop.getRegion().front();
@@ -1481,7 +1757,7 @@ index b12cabf6cd73..8d8bdd2e9502 100644
      auto *firstBlock =
          rewriter.splitBlock(conditionalBlock, conditionalBlock->begin());
      auto *lastBlock = &loop.getRegion().back();
-@@ -79,10 +91,9 @@ public:
+@@ -79,24 +92,37 @@ public:
      // Initalization block
      rewriter.setInsertionPointToEnd(initBlock);
      auto toIndex = [&](mlir::Value value) -> mlir::Value {
@@ -1494,20 +1770,42 @@ index b12cabf6cd73..8d8bdd2e9502 100644
      };
      mlir::Value lowIndex = toIndex(low);
      mlir::Value highIndex = toIndex(high);
-@@ -93,10 +104,10 @@ public:
-         mlir::arith::DivSIOp::create(rewriter, loc, distance, stepIndex);
+     mlir::Value stepIndex = toIndex(step);
+-    auto diff = mlir::arith::SubIOp::create(rewriter, loc, highIndex, lowIndex);
+-    auto distance = mlir::arith::AddIOp::create(rewriter, loc, diff, stepIndex);
+-    mlir::Value iters =
+-        mlir::arith::DivSIOp::create(rewriter, loc, distance, stepIndex);
++    // A DO variable as wide as a 32-bit index overflows the usual formula, and
++    // can run more than 2**31 times.
++    const bool unsignedCount = countTy.isIndex() &&
++                               !low.getType().isIndex() &&
++                               fir::getTargetSizeBits() == 32;
++    mlir::Value iters;
++    if (unsignedCount) {
++      iters = fir::factory::genUnsignedTripCount(rewriter, loc, lowIndex,
++                                                 highIndex, stepIndex);
++    } else {
++      auto diff =
++          mlir::arith::SubIOp::create(rewriter, loc, highIndex, lowIndex);
++      auto distance =
++          mlir::arith::AddIOp::create(rewriter, loc, diff, stepIndex);
++      iters = mlir::arith::DivSIOp::create(rewriter, loc, distance, stepIndex);
++    }
  
      if (forceLoopToExecuteOnce) {
 -      auto zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
 +      mlir::Value zero = countConstant(0);
        auto cond = mlir::arith::CmpIOp::create(
-           rewriter, loc, arith::CmpIPredicate::sle, iters, zero);
+-          rewriter, loc, arith::CmpIPredicate::sle, iters, zero);
 -      auto one = mlir::arith::ConstantIndexOp::create(rewriter, loc, 1);
++          rewriter, loc,
++          unsignedCount ? arith::CmpIPredicate::eq : arith::CmpIPredicate::sle,
++          iters, zero);
 +      mlir::Value one = countConstant(1);
        iters = mlir::arith::SelectOp::create(rewriter, loc, cond, one, iters);
      }
  
-@@ -117,7 +128,7 @@ public:
+@@ -117,7 +143,7 @@ public:
      assert(steppedIndex && "must be a Value");
      auto lastArg = conditionalBlock->getNumArguments() - 1;
      auto itersLeft = conditionalBlock->getArgument(lastArg);
@@ -1516,15 +1814,20 @@ index b12cabf6cd73..8d8bdd2e9502 100644
      mlir::Value itersMinusOne =
          mlir::arith::SubIOp::create(rewriter, loc, itersLeft, one);
  
-@@ -138,7 +149,7 @@ public:
+@@ -138,9 +164,11 @@ public:
  
      // Conditional block
      rewriter.setInsertionPointToEnd(conditionalBlock);
 -    auto zero = mlir::arith::ConstantIndexOp::create(rewriter, loc, 0);
 +    mlir::Value zero = countConstant(0);
      auto comparison = mlir::arith::CmpIOp::create(
-         rewriter, loc, arith::CmpIPredicate::sgt, itersLeft, zero);
+-        rewriter, loc, arith::CmpIPredicate::sgt, itersLeft, zero);
++        rewriter, loc,
++        unsignedCount ? arith::CmpIPredicate::ne : arith::CmpIPredicate::sgt,
++        itersLeft, zero);
  
+     mlir::cf::CondBranchOp::create(rewriter, loc, comparison, firstBlock,
+                                    llvm::ArrayRef<mlir::Value>(), endBlock,
 diff --git a/flang/lib/Semantics/compute-offsets.cpp b/flang/lib/Semantics/compute-offsets.cpp
 index ce9e19c57a86..7edfa497fd53 100644
 --- a/flang/lib/Semantics/compute-offsets.cpp

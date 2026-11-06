@@ -42,3 +42,9 @@ int c_apply(int (*f)(void *, int), void *p, int x)
 {
     return f(p, x);
 }
+
+/* a character by value above 127, with C's char being signed here */
+int c_char_value(char a, int b)
+{
+    return a * 1000 + b;
+}

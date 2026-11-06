@@ -28,7 +28,8 @@ program wide
   use wide_types
   implicit none
   integer(8) :: i, top, down, n, last
-  integer(4) :: low
+  integer(4) :: low, c, j
+  integer(8) :: asked_recl, wide_recl
   integer(8), allocatable :: built(:)
   real(8) :: x
   real(4) :: y
@@ -62,6 +63,36 @@ program wide
     n = n + 1
   end do
   if (n /= 0 .or. i /= 9000000000_8) stop 6
+
+  ! INTEGER(4) as wide as index: the usual trip count formula overflows on these
+  c = 0
+  do j = 0, 1, huge(0)
+    c = c + 1
+  end do
+  if (c /= 1 .or. j /= huge(0)) stop 22
+  c = 0
+  do j = 1, 0, -huge(0) - 1
+    c = c + 1
+  end do
+  if (c /= 1 .or. j /= -huge(0)) stop 23
+  c = 0
+  do j = -huge(0), huge(0), huge(0)
+    c = c + 1
+  end do
+  if (c /= 3) stop 24
+  c = 0
+  do j = huge(0) - 2, huge(0) - 1
+    c = c + 1
+    if (c == 2) exit   ! an exit makes it the other kind of loop
+  end do
+  if (c /= 2 .or. j /= huge(0) - 1) stop 25
+
+  ! a record length past 4 GB survives the trip through the runtime
+  asked_recl = 7777777777_8
+  open(9, status='scratch', recl=asked_recl, form='unformatted')
+  inquire(9, recl=wide_recl)
+  close(9)
+  if (wide_recl /= asked_recl) stop 26
 
   ! array constructors, in the two ways they are lowered
   if (total([(i, i = top, low + 0_8, down)]) /= 4) stop 7
