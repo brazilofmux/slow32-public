@@ -109,6 +109,11 @@ freely, subject to the following restrictions:
   v2.0 with LLVM Exceptions (SPDX Apache-2.0 WITH LLVM-exception;
   https://llvm.org/LICENSE.txt).
 
+- runtime/powi.c, adapted from compiler-rt's lib/builtins/powisf2.c and
+  powidf2.c, part of the LLVM Project, and the objects built from it in
+  libs32.s32a: LLVM's licence, the Apache License v2.0 with LLVM Exceptions
+  (SPDX Apache-2.0 WITH LLVM-exception; https://llvm.org/LICENSE.txt).
+
 - qemu-backend/ (the slow32 target and machine for QEMU, and the patches
   to QEMU): built into qemu-system-slow32, which as a whole is under
   QEMU's licence, the GNU General Public License, version 2.

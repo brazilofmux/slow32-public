@@ -140,6 +140,11 @@ static inline void setSLOW32LibcallImpls(LibcallSink &Sink) {
   Sink.setLibcallImpl(RTLIB::TANH_F64, RTLIB::impl_tanh);
   Sink.setLibcallImpl(RTLIB::POW_F32, RTLIB::impl_powf);
   Sink.setLibcallImpl(RTLIB::POW_F64, RTLIB::impl_pow);
+  // llvm.powi, multiplication.  Unbound, LLVM falls back on pow with the exponent
+  // converted to the base's type: a float's 24 bits can't hold an odd exponent past
+  // 2^24, so (-1.0f)**16777217 came out +1.
+  Sink.setLibcallImpl(RTLIB::POWI_F32, RTLIB::impl___powisf2);
+  Sink.setLibcallImpl(RTLIB::POWI_F64, RTLIB::impl___powidf2);
   Sink.setLibcallImpl(RTLIB::LOG_F32, RTLIB::impl_logf);
   Sink.setLibcallImpl(RTLIB::LOG_F64, RTLIB::impl_log);
   Sink.setLibcallImpl(RTLIB::LOG2_F32, RTLIB::impl_log2f);

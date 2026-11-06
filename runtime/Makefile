@@ -22,7 +22,7 @@ CXXFLAGS = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables \
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
 COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
-                   builtins.s32o builtins_hk.s32o divsi3.s32o \
+                   builtins.s32o builtins_hk.s32o divsi3.s32o powi.s32o \
                    debug_char.s32o
 
 # The math library (C11 7.12): musl's libm, verbatim in libm/musl (MIT;
@@ -95,7 +95,7 @@ ALL_OBJS = $(STARTUP_OBJ) $(LOCALES_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
            $(LIBC_DEBUG_EXTRA_OBJS) $(CXXRT_OBJS)
 
 # C source files that need compilation
-C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
+C_SOURCES = printf_enhanced.c convert.c builtins.c powi.c string.c malloc.c stdlib_utils.c \
             stdio.c memstream.c stdlib_extra.c string_extra.c ctype.c \
             stdio_minimal.c convert_extra.c \
             stdio_buffered.c flush_mmio.c flush_debug.c \
