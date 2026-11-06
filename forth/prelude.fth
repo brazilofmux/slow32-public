@@ -356,31 +356,65 @@
 
 \ --- File-Access High-level Words ---
 
+256 CONSTANT RL-BUF-SIZE
+VARIABLE RL-FILEID
+VARIABLE RL-POS
+VARIABLE RL-LEN
+VARIABLE RL-COUNT
+VARIABLE RL-DEST
+VARIABLE RL-LIMIT
+RL-BUF-SIZE BUFFER: RL-BUF
+-1 RL-FILEID !
+0 RL-POS !
+0 RL-LEN !
+
+: RL-RESET ( fileid -- )
+  RL-FILEID !
+  0 RL-POS !
+  0 RL-LEN ! ;
+
+: RL-FILL ( fileid -- ior )
+  RL-BUF RL-BUF-SIZE ROT READ-FILE ( u2 ior )
+  DUP 0= IF
+    SWAP RL-LEN !
+    0 RL-POS !
+  ELSE
+    NIP
+  THEN ;
+
 : READ-LINE ( c-addr u1 fileid -- u2 flag ior )
-  ROT 2SWAP ( fileid c-addr u1 )
-  >R OVER R> ( fileid c-addr c-addr u1 )
-  0 ( fileid c-addr u1 count )
-  -ROT 0 DO
-    ( fileid c-addr count )
-    2 PICK OVER + ( fileid c-addr count target-addr )
-    1 4 PICK READ-FILE IF ( ior )
-       2DROP NIP 0 0 ROT EXIT
+  >R
+  RL-LIMIT !
+  RL-DEST !
+  0 RL-COUNT !
+  R@ RL-FILEID @ <> IF R@ RL-RESET THEN
+  BEGIN
+    RL-COUNT @ RL-LIMIT @ = IF
+      R> DROP
+      RL-COUNT @ TRUE 0 EXIT
     THEN
-    0= IF ( EOF )
-       NIP NIP 0 0 EXIT
+    RL-POS @ RL-LEN @ = IF
+      R@ RL-FILL DUP IF
+        DROP R> DROP 0 0 -ROT EXIT
+      THEN
+      RL-LEN @ 0= IF
+        R> DROP
+        RL-COUNT @ DUP 0= IF DROP 0 FALSE 0 EXIT THEN
+        TRUE 0 EXIT
+      THEN
     THEN
-    ( fileid c-addr count )
-    2 PICK OVER + C@ ( char )
-    DUP 10 = IF ( LF )
-      DROP NIP NIP 1 TRUE 0 EXIT
+    RL-BUF RL-POS @ + C@
+    RL-POS @ 1+ RL-POS !
+    DUP 10 = IF
+      DROP R> DROP RL-COUNT @ TRUE 0 EXIT
     THEN
-    13 = IF ( CR )
-      ( skip )
+    DUP 13 = IF
+      DROP
     ELSE
-      1+
+      RL-DEST @ RL-COUNT @ + C!
+      RL-COUNT @ 1+ RL-COUNT !
     THEN
-  LOOP
-  NIP NIP 0 TRUE 0 ( Buffer overflow ) ;
+  AGAIN ;
 
 VARIABLE SOURCE-BUF 128 BUFFER: SOURCE-BUF-DATA
 

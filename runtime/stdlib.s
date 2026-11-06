@@ -6,7 +6,7 @@
 # putint(int n) - output an integer in decimal
 # r1 = integer to print
 putint:
-    addi sp, sp, -16
+    addi sp, sp, -48
     stw  sp+0, lr
     stw  sp+4, r16
     stw  sp+8, r17
@@ -14,7 +14,7 @@ putint:
     
     add  r16, r1, r0    # r16 = number
     addi r17, r0, 0     # r17 = digit count
-    addi r18, sp, -32   # r18 = buffer pointer (below stack)
+    addi r18, sp, 16    # r18 = buffer pointer (in stack frame)
     
     # Handle negative
     slt  r4, r16, r0
@@ -60,5 +60,5 @@ putint_done:
     ldw  r17, sp+8
     ldw  r16, sp+4
     ldw  lr, sp+0
-    addi sp, sp, 16
+    addi sp, sp, 48
     jalr r0, lr, 0

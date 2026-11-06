@@ -33,37 +33,86 @@ llvm.lifetime.end.p0:
 
 # Memory copy (both i32 and i64 versions point here)
 # Args: r3 = dest, r4 = src, r5 = size (bytes)
+# Word-optimized: aligns then copies 4 bytes per iteration when possible
 llvm.memcpy.p0.p0.i64:
 llvm.memcpy.p0.p0.i32:
     addi sp, sp, -32
     stw sp+0, lr
     stw sp+4, fp
     add fp, sp, r0
-    
+
     # Save registers we'll use
     stw sp+8, r11
     stw sp+12, r12
     stw sp+16, r13
     stw sp+20, r14
     stw sp+24, r15
-    
+
     add r11, r3, r0   # dest
-    add r12, r4, r0   # src  
+    add r12, r4, r0   # src
     add r13, r5, r0   # count
-    
-.memcpy_loop:
-    # while (count > 0) { ... }
-    sle r14, r13, r0           # r14 = (count <= 0)
-    beq r14, r0, .memcpy_body  # if !(count<=0) -> body
-    beq r0, r0, .memcpy_done
-.memcpy_body:
-    # Use byte-wise copy to preserve byte ordering for strings
+
+    # Check if count == 0
+    beq r13, r0, .memcpy_done
+
+    # Check alignment compatibility: (src ^ dest) & 3
+    # If different alignment classes, we can never align both simultaneously
+    xor r14, r12, r11
+    andi r14, r14, 3
+    bne r14, r0, .memcpy_byte_loop  # different alignment -> byte-only
+
+    # Phase 1: Align dest (and src) to 4-byte boundary (0-3 bytes)
+.memcpy_align_loop:
+    # Check if count > 0
+    sgt r14, r13, r0
+    beq r14, r0, .memcpy_done      # count <= 0, done
+    # Check if dest is 4-byte aligned
+    andi r14, r11, 3
+    beq r14, r0, .memcpy_word_loop  # aligned, go to word loop
+    # Copy one byte to align
     ldbu r15, r12+0
     stb r11+0, r15
     addi r11, r11, 1
     addi r12, r12, 1
     addi r13, r13, -1
-    beq r0, r0, .memcpy_loop
+    beq r0, r0, .memcpy_align_loop
+
+    # Phase 2: Word-wise loop (both src and dest now aligned)
+.memcpy_word_loop:
+    slti r14, r13, 4               # r14 = (count < 4)
+    beq r14, r0, .memcpy_word_body # if count >= 4, do body
+    beq r0, r0, .memcpy_tail_loop  # else go to tail
+
+.memcpy_word_body:
+    ldw r15, r12+0
+    stw r11+0, r15
+    addi r11, r11, 4
+    addi r12, r12, 4
+    addi r13, r13, -4
+    beq r0, r0, .memcpy_word_loop
+
+    # Phase 3: Tail bytes (0-3 remaining)
+.memcpy_tail_loop:
+    sgt r14, r13, r0
+    beq r14, r0, .memcpy_done
+    ldbu r15, r12+0
+    stb r11+0, r15
+    addi r11, r11, 1
+    addi r12, r12, 1
+    addi r13, r13, -1
+    beq r0, r0, .memcpy_tail_loop
+
+    # Byte-only fallback (misaligned src/dest)
+.memcpy_byte_loop:
+    sgt r14, r13, r0
+    beq r14, r0, .memcpy_done
+    ldbu r15, r12+0
+    stb r11+0, r15
+    addi r11, r11, 1
+    addi r12, r12, 1
+    addi r13, r13, -1
+    beq r0, r0, .memcpy_byte_loop
+
 .memcpy_done:
     # Restore registers
     ldw r11, sp+8
@@ -71,10 +120,10 @@ llvm.memcpy.p0.p0.i32:
     ldw r13, sp+16
     ldw r14, sp+20
     ldw r15, sp+24
-    
+
     # Return dest in r1
     add r1, r3, r0
-    
+
     add sp, fp, r0
     ldw lr, sp+0
     ldw fp, sp+4
