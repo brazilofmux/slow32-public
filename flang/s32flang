@@ -6,4 +6,4 @@ s=$1; o=$2; b=${o:r}
 $B/flang -fc1 -triple slow32-unknown-none -O2 -fintrinsic-modules-path $O/mod -module-dir ${o:h} ${=FFLAGS} -emit-llvm $s -o $b.ll || exit 11
 $B/llc -mtriple=slow32-unknown-none -O2 $b.ll -o $b.s || exit 12
 $ROOT/tools/assembler/slow32asm $b.s $b.s32o >/dev/null || exit 13
-$ROOT/tools/linker/s32-ld -o $o --mmio 64K --heap-size 16M $R/crt0.s32o $b.s32o $O/shim.s32o $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14
+$ROOT/tools/linker/s32-ld -o $o --mmio 64K --heap-size 16M $R/crt0.s32o $b.s32o $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a || exit 14

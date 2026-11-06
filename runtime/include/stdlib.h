@@ -71,6 +71,10 @@ void srand(unsigned int seed);
 #define RAND_MAX 0xFFFF
 
 char *getenv(const char *name);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+int putenv(char *string);
+int mkstemp(char *tmpl);
 
 #ifndef _SLOW32_LOCALE_T
 #define _SLOW32_LOCALE_T

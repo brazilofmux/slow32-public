@@ -93,7 +93,14 @@ int execvp(const char *file, char *const argv[]);
 #define _SC_PAGE_SIZE          _SC_PAGESIZE
 #define _SC_NPROCESSORS_CONF   83
 #define _SC_NPROCESSORS_ONLN   84
+#define _SC_CLK_TCK            2
 long sysconf(int name);
+/* posix_env.c: a guest has no users; the host name is the machine's */
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+int gethostname(char *name, size_t len);
 int getdtablesize(void);
 
 /* 1 when fd is a terminal, else 0 with errno ENOTTY: the term service's

@@ -62,6 +62,7 @@ long sysconf(int name) {
     switch (name) {
     case _SC_OPEN_MAX:         return GUEST_FDS;
     case _SC_PAGESIZE:         return 4096;
+    case _SC_CLK_TCK:          return 100;   /* SLOW32_CLK_TCK, <sys/times.h> */
     case _SC_NPROCESSORS_CONF:
     case _SC_NPROCESSORS_ONLN: return 1;
     default:

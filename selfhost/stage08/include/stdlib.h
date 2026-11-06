@@ -18,6 +18,10 @@ void abort(void);
 int atexit(void (*function)(void));
 int system(const char *command);
 char *getenv(const char *name);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+int putenv(char *string);
+int mkstemp(char *tmpl);
 
 int abs(int n);
 long labs(long n);

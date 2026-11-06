@@ -171,9 +171,19 @@ static int getenv_keep_grow(void) {
     return 1;
 }
 
+/* A change the program made (setenv and the rest, posix_env.c) comes first. */
+char *(*__env_hook)(const char *name, int *found);
+char ***__env_vector;
+
 char *getenv(const char *name) {
     if (!name || !*name) {
         return NULL;
+    }
+
+    if (__env_hook) {
+        int found;
+        char *v = __env_hook(name, &found);
+        if (found) return v;
     }
 
     for (int i = 0; i < getenv_keep_n; ++i) {

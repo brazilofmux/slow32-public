@@ -262,6 +262,11 @@ assemble_gen1 "$WORKDIR/g1_strerror.s" "$LIBC_OUT_DIR/strerror.s32o" "$WORKDIR/g
 # getopt / getopt_long, the same way (tapemgr wanted getopt_long)
 compile_gen1 "$RUNTIME_DIR/getopt.c" "$WORKDIR/g1_getopt.s" "$WORKDIR/g1_getopt.cc.log"     "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_getopt.s" "$LIBC_OUT_DIR/getopt.s32o" "$WORKDIR/g1_getopt.as.log"
+# setenv and the rest of what POSIX adds, the same way
+compile_gen1 "$RUNTIME_DIR/posix_env.c" "$WORKDIR/g1_posix_env.s" "$WORKDIR/g1_posix_env.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_posix_env.s" "$LIBC_OUT_DIR/posix_env.s32o" "$WORKDIR/g1_posix_env.as.log"
+compile_gen1 "$RUNTIME_DIR/getpid.c" "$WORKDIR/g1_getpid.s" "$WORKDIR/g1_getpid.cc.log"     "-I$SCRIPT_DIR/include"
+assemble_gen1 "$WORKDIR/g1_getpid.s" "$LIBC_OUT_DIR/getpid.s32o" "$WORKDIR/g1_getpid.as.log"
 compile_gen1 "$RUNTIME_DIR/time_std.c" "$WORKDIR/g1_time_std.s" "$WORKDIR/g1_time_std.cc.log"     -DS32_LOCALE_STRFTIME "-I$SCRIPT_DIR/include"
 assemble_gen1 "$WORKDIR/g1_time_std.s" "$LIBC_OUT_DIR/time_std.s32o" "$WORKDIR/g1_time_std.as.log"
 # setjmp / longjmp: the clang runtime's, as it stands -- hand-written

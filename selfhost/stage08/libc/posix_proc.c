@@ -98,14 +98,23 @@ void abort(void) {
     _exit(134);
 }
 
+/* <unistd.h> has declared this for a while; nothing defined it.  errno 22 is
+ * EINVAL; the numbers are runtime/process.c's. */
+long sysconf(int name) {
+    if (name == 30) return 4096;   /* _SC_PAGESIZE */
+    if (name == 2) return 100;     /* _SC_CLK_TCK */
+    errno = 22;
+    return -1;
+}
+
 /* getenv over the GETENV request (selfhost ISSUES-68, GitHub issue 55).
  * Protocol: the name (with its NUL) goes in the data buffer, length is the
  * byte count; the reply puts the value at the same offset and returns its
  * length, or fails when the name is not set.
  *
- * Each name's answer is kept, set or not (selfhost ISSUES-89).  Nothing
- * here changes the environment (there is no setenv) and the host does not
- * change it under a running program.  A kept answer has storage of its
+ * Each name's answer is kept, set or not (selfhost ISSUES-89).  The host does
+ * not change it under a running program, and what the program changes itself
+ * (setenv, runtime/posix_env.c) is asked for first.  A kept answer has storage of its
  * own, so a second getenv no longer overwrites the first one's, as
  * glibc's does not; and a name asked for again -- the compiler reads its
  * debugging switches where they act, once per macro expansion or per
@@ -119,6 +128,9 @@ static int   pm_env_n;
 static char *pm_env_buf;
 static int   pm_env_cap;
 
+char *(*__env_hook)(const char *name, int *found);
+char ***__env_vector;
+
 char *getenv(const char *name) {
     unsigned int len;
     int vlen;
@@ -129,6 +141,10 @@ char *getenv(const char *name) {
     char *kv;
 
     if (name == 0 || name[0] == 0) return (char *)0;
+    if (__env_hook != 0) {
+        kv = __env_hook(name, &i);
+        if (i) return kv;
+    }
     i = 0;
     while (i < pm_env_n) {
         if (strcmp(pm_env_name[i], name) == 0) return pm_env_val[i];

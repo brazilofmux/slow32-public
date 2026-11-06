@@ -3952,3 +3952,17 @@ stopped at 32,768 symbols and a 128 KB string table ("write object failed"),
 and `s32-ld` refused an object of more than 8,192 symbols.  Weak definitions
 were also missing from an executable's table.  Gate:
 regression/run-local-symbols.sh, mutation-tested.
+
+### 111. [RESOLVED 2026-11-06] Declared in `<unistd.h>`, defined nowhere
+
+`sysconf`, `getpid` and `getuid` were declared by stage08's `<unistd.h>` and in
+no library, so a program calling one failed at the link.  All three are defined
+now, along with what flang's runtime asked for, in both C libraries:
+`runtime/posix_env.c` has `setenv`, `unsetenv`, `putenv`, `mkstemp`,
+`gethostname`, `times` and the user and group calls.  A guest's environment comes
+from the host, so changes are an overlay that `getenv` asks first (`__env_hook`,
+because the first phase of the library build has no shared files).  Gate:
+`regression/libc-tests/posix_env.c`, against the host's libc as well.
+
+The SQLite shell had its own `getuid` and `getpid` for the old gap; they are gone.
+Also, `selfhost/stage08/Makefile` did not rebuild when `build-s12cc.sh` changed.

@@ -12,15 +12,10 @@ int chmod(const char *path, unsigned mode) { (void)path; (void)mode; return 0; }
 int symlink(const char *target, const char *path) { (void)target; (void)path; errno = EPERM; return -1; }
 long readlink(const char *path, char *buf, size_t n) { (void)path; (void)buf; (void)n; errno = EINVAL; return -1; }
 #endif
-int getuid(void) { return 0; }
-/* getpid: the clang runtime's since 2026-10 (process.c; SHELL_LIBC_HAS_GETPID
- * from build.sh) */
-#ifndef SHELL_LIBC_HAS_GETPID
-int getpid(void) { return 1; }
-#endif
 /* system and atexit were here until both C libraries had their own
  * (2026-10, selfhost ISSUES-75).  This atexit kept what was registered
- * and nothing ever ran it; the library's runs it at exit. */
+ * and nothing ever ran it; the library's runs it at exit.  Likewise getuid
+ * and getpid (2026-11). */
 #include <stdio.h>
 #include <unistd.h>
 /* the guest has no pipes to a shell */

@@ -1,3 +1,15 @@
+diff --git a/flang-rt/CMakeLists.txt b/flang-rt/CMakeLists.txt
+index 52a42c0267a2..262653a750cb 100644
+--- a/flang-rt/CMakeLists.txt
++++ b/flang-rt/CMakeLists.txt
+@@ -218,6 +218,7 @@ if (UNIX AND CMAKE_SYSTEM_NAME MATCHES "AIX")
+ endif ()
+ 
+ # Indicates REAL(16) support via an external library (e.g. libquadmath).
++add_compile_definitions(FLANG_RT_BUILD)
+ add_compile_definitions(FLANG_RT_SUPPORTS_REAL16=$<BOOL:${FORTRAN_SUPPORTS_REAL16}>)
+ 
+ # Check whether the compiler can undefine a macro using the "-Wp,-U" flag.
 diff --git a/flang-rt/include/flang-rt/runtime/lock.h b/flang-rt/include/flang-rt/runtime/lock.h
 index 7147c3a6b940..00ea0306db03 100644
 --- a/flang-rt/include/flang-rt/runtime/lock.h
@@ -31,15 +43,29 @@ index 7147c3a6b940..00ea0306db03 100644
    // No state.
  #elif USE_PTHREADS
    pthread_mutex_t mutex_{};
+diff --git a/flang-rt/lib/runtime/main.cpp b/flang-rt/lib/runtime/main.cpp
+index 950d0839863f..dac5766e58af 100644
+--- a/flang-rt/lib/runtime/main.cpp
++++ b/flang-rt/lib/runtime/main.cpp
+@@ -33,7 +33,9 @@ void RTNAME(ProgramStart)(int argc, const char *argv[], const char *envp[],
+   Fortran::runtime::executionEnvironment.Configure(
+       argc, argv, envp, envDefaults);
+   ConfigureFloatingPoint();
++#ifndef RT_NO_RPC_SERVER // io-api-server.cpp needs the GPU's shared headers
+   Fortran::runtime::io::RegisterRPCHandlers();
++#endif
+   // I/O is initialized on demand so that it works for non-Fortran main().
+ }
+ 
 diff --git a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
-index 67bdf6867251..fc065c0d0773 100644
+index 67bdf6867251..56928940846a 100644
 --- a/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 +++ b/flang/include/flang/Optimizer/Builder/Runtime/RTBuilder.h
 @@ -17,6 +17,7 @@
  #ifndef FORTRAN_OPTIMIZER_BUILDER_RUNTIME_RTBUILDER_H
  #define FORTRAN_OPTIMIZER_BUILDER_RUNTIME_RTBUILDER_H
  
-+#include "flang/Optimizer/Support/TargetLongBytes.h"
++#include "flang/Optimizer/Support/TargetModel.h"
  #include "flang/Common/uint128.h"
  #include "flang/Optimizer/Builder/FIRBuilder.h"
  #include "flang/Optimizer/Dialect/FIRType.h"
@@ -48,7 +74,7 @@ index 67bdf6867251..fc065c0d0773 100644
            context, mlir::IntegerType::get(context, 8));                        \
        auto size_tTy =                                                          \
 -          mlir::IntegerType::get(context, 8 * sizeof(std::size_t));            \
-+          mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);            \
++          mlir::IntegerType::get(context, fir::getTargetLongBits());            \
        auto refTy = fir::ReferenceType::get(f(context));                        \
        return mlir::FunctionType::get(                                          \
            context, {refTy, size_tTy, refTy, refTy, size_tTy, size_tTy},        \
@@ -57,7 +83,7 @@ index 67bdf6867251..fc065c0d0773 100644
          fir::LLVMPointerType::get(context, mlir::IntegerType::get(context, 8));
      auto unsignedLongTy =
 -        mlir::IntegerType::get(context, 8 * sizeof(unsigned long));
-+        mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
++        mlir::IntegerType::get(context, fir::getTargetLongBits());
      auto funcTy = mlir::FunctionType::get(
          context, {voidPtrTy, voidPtrTy, unsignedLongTy}, {voidPtrTy});
      return fir::LLVMPointerType::get(context, funcTy);
@@ -66,7 +92,7 @@ index 67bdf6867251..fc065c0d0773 100644
  constexpr TypeBuilderFunc getModel<long>() {
    return [](mlir::MLIRContext *context) -> mlir::Type {
 -    return mlir::IntegerType::get(context, 8 * sizeof(long));
-+    return mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
++    return mlir::IntegerType::get(context, fir::getTargetLongBits());
    };
  }
  template <>
@@ -75,28 +101,37 @@ index 67bdf6867251..fc065c0d0773 100644
  constexpr TypeBuilderFunc getModel<unsigned long>() {
    return [](mlir::MLIRContext *context) -> mlir::Type {
 -    return mlir::IntegerType::get(context, 8 * sizeof(unsigned long));
-+    return mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES);
++    return mlir::IntegerType::get(context, fir::getTargetLongBits());
    };
  }
  template <>
-@@ -487,7 +488,7 @@ template <>
+@@ -380,6 +381,8 @@ constexpr TypeBuilderFunc getModel<const double *>() {
+ template <>
+ constexpr TypeBuilderFunc getModel<long double>() {
+   return [](mlir::MLIRContext *context) -> mlir::Type {
++    if (fir::targetLongDoubleIsDouble())
++      return mlir::Float64Type::get(context);
+     // See TODO at the top of the file. This is configuring for the host system
+     // - it might be incorrect when cross-compiling!
+     constexpr size_t size = sizeof(long double);
+@@ -487,7 +490,7 @@ template <>
  constexpr TypeBuilderFunc getModel<unsigned long *>() {
    return [](mlir::MLIRContext *context) -> mlir::Type {
      return fir::ReferenceType::get(
 -        mlir::IntegerType::get(context, 8 * sizeof(unsigned long)));
-+        mlir::IntegerType::get(context, 8 * FLANG_TARGET_LONG_BYTES));
++        mlir::IntegerType::get(context, fir::getTargetLongBits()));
    };
  }
  template <>
 diff --git a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h b/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
-index b9a8a670d079..049a4c8938b9 100644
+index b9a8a670d079..a38675ee082e 100644
 --- a/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
 +++ b/flang/include/flang/Optimizer/CodeGen/DescriptorModel.h
 @@ -22,6 +22,7 @@
  #ifndef OPTIMIZER_DESCRIPTOR_MODEL_H
  #define OPTIMIZER_DESCRIPTOR_MODEL_H
  
-+#include "flang/Optimizer/Support/TargetLongBytes.h"
++#include "flang/Optimizer/Support/TargetModel.h"
  #include "flang/Common/ISO_Fortran_binding_wrapper.h"
  #include "flang/Runtime/descriptor-consts.h"
  #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -105,7 +140,7 @@ index b9a8a670d079..049a4c8938b9 100644
  constexpr TypeBuilderFunc getModel<unsigned long>() {
    return [](mlir::MLIRContext *context) -> mlir::Type {
 -    return mlir::IntegerType::get(context, sizeof(unsigned long) * 8);
-+    return mlir::IntegerType::get(context, FLANG_TARGET_LONG_BYTES * 8);
++    return mlir::IntegerType::get(context, fir::getTargetLongBits());
    };
  }
  template <>
@@ -114,17 +149,17 @@ index b9a8a670d079..049a4c8938b9 100644
  constexpr TypeBuilderFunc getModel<long>() {
    return [](mlir::MLIRContext *context) -> mlir::Type {
 -    return mlir::IntegerType::get(context, sizeof(long) * 8);
-+    return mlir::IntegerType::get(context, FLANG_TARGET_LONG_BYTES * 8);
++    return mlir::IntegerType::get(context, fir::getTargetLongBits());
    };
  }
  template <>
-diff --git a/flang/include/flang/Optimizer/Support/TargetLongBytes.h b/flang/include/flang/Optimizer/Support/TargetLongBytes.h
+diff --git a/flang/include/flang/Optimizer/Support/TargetModel.h b/flang/include/flang/Optimizer/Support/TargetModel.h
 new file mode 100644
-index 000000000000..31c382973e63
+index 000000000000..d2d2f6350da5
 --- /dev/null
-+++ b/flang/include/flang/Optimizer/Support/TargetLongBytes.h
-@@ -0,0 +1,22 @@
-+//===-- TargetLongBytes.h - The size of the target's long -------*- C++ -*-===//
++++ b/flang/include/flang/Optimizer/Support/TargetModel.h
+@@ -0,0 +1,34 @@
++//===-- TargetModel.h - C types of the target, for the runtime model -*- C++ -*-//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 +// See https://llvm.org/LICENSE.txt for license information.
@@ -132,20 +167,756 @@ index 000000000000..31c382973e63
 +//
 +//===----------------------------------------------------------------------===//
 +//
-+// The models of the runtime's interfaces and of the descriptor take long and
-+// size_t from the machine flang runs on, which is why flang is not supported
-+// on 32-bit targets.  This build targets SLOW-32 alone (ILP32), so it says so
-+// here.  std::int64_t on the host is long long on macOS; on a host where it is
-+// long this is not enough.
++// The models of the runtime's interfaces and of the descriptor are templates
++// on the C++ types in the runtime's headers, as the machine flang runs on sees
++// them.  On a 32-bit target long, size_t and ptrdiff_t are not those sizes.
++// fir::setTargetTriple records the target here; a model takes only a context,
++// so this is per process, as a compilation has one target.
++//
++// A 64-bit target gets the host's sizes, as it always has.
 +//
 +//===----------------------------------------------------------------------===//
 +
-+#ifndef FORTRAN_OPTIMIZER_SUPPORT_TARGETLONGBYTES_H
-+#define FORTRAN_OPTIMIZER_SUPPORT_TARGETLONGBYTES_H
++#ifndef FORTRAN_OPTIMIZER_SUPPORT_TARGETMODEL_H
++#define FORTRAN_OPTIMIZER_SUPPORT_TARGETMODEL_H
 +
-+#define FLANG_TARGET_LONG_BYTES 4
++namespace llvm {
++class Triple;
++}
++
++namespace fir {
++void setTargetModel(const llvm::Triple &triple);
++unsigned getTargetLongBits();
++unsigned getTargetSizeBits();
++/// The target's long double is its double, whatever the host's is.
++bool targetLongDoubleIsDouble();
++} // namespace fir
 +
 +#endif
+diff --git a/flang/include/flang/Runtime/CUDA/allocator.h b/flang/include/flang/Runtime/CUDA/allocator.h
+index 4b38e3090380..1d58c225d00a 100644
+--- a/flang/include/flang/Runtime/CUDA/allocator.h
++++ b/flang/include/flang/Runtime/CUDA/allocator.h
+@@ -9,6 +9,7 @@
+ #ifndef FORTRAN_RUNTIME_CUDA_ALLOCATOR_H_
+ #define FORTRAN_RUNTIME_CUDA_ALLOCATOR_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "common.h"
+ #include "flang/Runtime/descriptor-consts.h"
+ #include "flang/Runtime/entry-names.h"
+@@ -37,16 +38,16 @@ void insertAsyncDeviceAllocation(
+ cudaStream_t getAsyncDeviceAllocationStream(int pos);
+ void eraseAsyncDeviceAllocation(int pos);
+ 
+-void *CUFAllocPinned(std::size_t, std::size_t, std::int64_t *);
++void *CUFAllocPinned(std::size_t, std::size_t, RT_API_INT64 *);
+ void CUFFreePinned(void *);
+ 
+-void *CUFAllocDevice(std::size_t, std::size_t, std::int64_t *);
++void *CUFAllocDevice(std::size_t, std::size_t, RT_API_INT64 *);
+ void CUFFreeDevice(void *);
+ 
+-void *CUFAllocManaged(std::size_t, std::size_t, std::int64_t *);
++void *CUFAllocManaged(std::size_t, std::size_t, RT_API_INT64 *);
+ void CUFFreeManaged(void *);
+ 
+-void *CUFAllocUnified(std::size_t, std::size_t, std::int64_t *);
++void *CUFAllocUnified(std::size_t, std::size_t, RT_API_INT64 *);
+ void CUFFreeUnified(void *);
+ 
+ } // namespace Fortran::runtime::cuda
+diff --git a/flang/include/flang/Runtime/allocatable.h b/flang/include/flang/Runtime/allocatable.h
+index ba065331e392..5bc858a2132d 100644
+--- a/flang/include/flang/Runtime/allocatable.h
++++ b/flang/include/flang/Runtime/allocatable.h
+@@ -11,6 +11,7 @@
+ #ifndef FORTRAN_RUNTIME_ALLOCATABLE_H_
+ #define FORTRAN_RUNTIME_ALLOCATABLE_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/descriptor-consts.h"
+ #include "flang/Runtime/entry-names.h"
+ #include "flang/Runtime/freestanding-tools.h"
+@@ -97,12 +98,12 @@ int RTDECL(AllocatableCheckLengthParameter)(Descriptor &,
+ // Performs all necessary coarray synchronization and validation actions.
+ #ifdef RT_DEVICE_COMPILATION
+ int RTDECL(AllocatableAllocate)(Descriptor &,
+-    std::int64_t *asyncObject = nullptr, bool hasStat = false,
++    RT_API_INT64 *asyncObject = nullptr, bool hasStat = false,
+     const Descriptor *errMsg = nullptr, const char *sourceFile = nullptr,
+     int sourceLine = 0, MemcpyFct memcpyFct = &MemcpyWrapper);
+ #else
+ int RTDECL(AllocatableAllocate)(Descriptor &,
+-    std::int64_t *asyncObject = nullptr, bool hasStat = false,
++    RT_API_INT64 *asyncObject = nullptr, bool hasStat = false,
+     const Descriptor *errMsg = nullptr, const char *sourceFile = nullptr,
+     int sourceLine = 0, MemcpyFct memcpyFct = &Fortran::runtime::memcpy);
+ #endif
+diff --git a/flang/include/flang/Runtime/api-int64.h b/flang/include/flang/Runtime/api-int64.h
+new file mode 100644
+index 000000000000..8a68f88b95b1
+--- /dev/null
++++ b/flang/include/flang/Runtime/api-int64.h
+@@ -0,0 +1,29 @@
++//===-- include/flang/Runtime/api-int64.h -----------------------*- C++ -*-===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++//
++//===----------------------------------------------------------------------===//
++
++// The runtime's interfaces say std::int64_t for what is 64 bits on any target
++// and std::size_t or a subscript for what follows the target.  The compiler
++// reads these headers to model those interfaces, by C++ type.  On an LP64 host
++// int64_t and ptrdiff_t are both long, and the two meanings could not be told
++// apart for a target whose long is not 64 bits.  So the compiler sees long long.
++// The runtime itself (FLANG_RT_BUILD) sees what it has always seen.
++
++#ifndef FORTRAN_RUNTIME_API_INT64_H_
++#define FORTRAN_RUNTIME_API_INT64_H_
++
++#include <cstdint>
++
++#ifdef FLANG_RT_BUILD
++#define RT_API_INT64 std::int64_t
++#define RT_API_UINT64 std::uint64_t
++#else
++#define RT_API_INT64 long long
++#define RT_API_UINT64 unsigned long long
++#endif
++
++#endif // FORTRAN_RUNTIME_API_INT64_H_
+diff --git a/flang/include/flang/Runtime/character.h b/flang/include/flang/Runtime/character.h
+index 93f36d077a53..a51e7e8bd517 100644
+--- a/flang/include/flang/Runtime/character.h
++++ b/flang/include/flang/Runtime/character.h
+@@ -11,6 +11,7 @@
+ 
+ #ifndef FORTRAN_RUNTIME_CHARACTER_H_
+ #define FORTRAN_RUNTIME_CHARACTER_H_
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cstddef>
+ #include <cstdint>
+@@ -89,7 +90,7 @@ std::size_t RTDECL(LenTrim4)(const char32_t *, std::size_t);
+ void RTDECL(LenTrim)(Descriptor &result, const Descriptor &, int kind,
+     const char *sourceFile = nullptr, int sourceLine = 0);
+ void RTDECL(Repeat)(Descriptor &result, const Descriptor &string,
+-    std::int64_t ncopies, const char *sourceFile = nullptr, int sourceLine = 0);
++    RT_API_INT64 ncopies, const char *sourceFile = nullptr, int sourceLine = 0);
+ void RTDECL(Trim)(Descriptor &result, const Descriptor &string,
+     const char *sourceFile = nullptr, int sourceLine = 0);
+ 
+diff --git a/flang/include/flang/Runtime/descriptor-consts.h b/flang/include/flang/Runtime/descriptor-consts.h
+index acd7bc5ddbde..4b7b3b9f6622 100644
+--- a/flang/include/flang/Runtime/descriptor-consts.h
++++ b/flang/include/flang/Runtime/descriptor-consts.h
+@@ -9,6 +9,7 @@
+ #ifndef FORTRAN_RUNTIME_DESCRIPTOR_CONSTS_H_
+ #define FORTRAN_RUNTIME_DESCRIPTOR_CONSTS_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/Fortran-consts.h"
+ #include "flang/Common/ISO_Fortran_binding_wrapper.h"
+ #include "flang/Common/api-attrs.h"
+@@ -23,7 +24,7 @@
+ #define _CFI_ALLOCATOR_IDX_MASK 0b00001110
+ 
+ namespace Fortran::runtime::typeInfo {
+-using TypeParameterValue = std::int64_t;
++using TypeParameterValue = RT_API_INT64;
+ class DerivedType;
+ } // namespace Fortran::runtime::typeInfo
+ 
+diff --git a/flang/include/flang/Runtime/extensions.h b/flang/include/flang/Runtime/extensions.h
+index 7746116c7f1f..aa0ccd82ccc6 100644
+--- a/flang/include/flang/Runtime/extensions.h
++++ b/flang/include/flang/Runtime/extensions.h
+@@ -12,6 +12,7 @@
+ #ifndef FORTRAN_RUNTIME_EXTENSIONS_H_
+ #define FORTRAN_RUNTIME_EXTENSIONS_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cstddef>
+ #include <cstdint>
+@@ -42,14 +43,14 @@ void FORTRAN_PROCEDURE_NAME(flush)(const int &unit);
+ void RTNAME(Flush)(int unit);
+ 
+ // GNU extension subroutine FDATE
+-void FORTRAN_PROCEDURE_NAME(fdate)(char *string, std::int64_t length);
++void FORTRAN_PROCEDURE_NAME(fdate)(char *string, RT_API_INT64 length);
+ 
+ void RTNAME(Free)(std::intptr_t ptr);
+ 
+ // Common extensions FSEEK & FTELL, variously named
+-std::int32_t RTNAME(Fseek)(int unit, std::int64_t zeroBasedPos, int whence,
++std::int32_t RTNAME(Fseek)(int unit, RT_API_INT64 zeroBasedPos, int whence,
+     const char *sourceFileName, int lineNumber);
+-std::int64_t RTNAME(Ftell)(int unit);
++RT_API_INT64 RTNAME(Ftell)(int unit);
+ 
+ // FNUM maps a Fortran unit number to its UNIX file descriptor
+ std::int32_t FORTRAN_PROCEDURE_NAME(fnum)(const int &unitNumber);
+@@ -59,7 +60,7 @@ std::int32_t FORTRAN_PROCEDURE_NAME(iargc)();
+ 
+ // GNU Fortran 77 compatibility subroutine GETARG(N, ARG).
+ void FORTRAN_PROCEDURE_NAME(getarg)(
+-    std::int32_t &n, char *arg, std::int64_t length);
++    std::int32_t &n, char *arg, RT_API_INT64 length);
+ 
+ // Calls getgid()
+ gid_t RTNAME(GetGID)();
+@@ -68,7 +69,7 @@ gid_t RTNAME(GetGID)();
+ uid_t RTNAME(GetUID)();
+ 
+ // GNU extension subroutine GETLOG(C).
+-void FORTRAN_PROCEDURE_NAME(getlog)(char *name, std::int64_t length);
++void FORTRAN_PROCEDURE_NAME(getlog)(char *name, RT_API_INT64 length);
+ 
+ // GNU extension subroutine HOSTNM(C)
+ int FORTRAN_PROCEDURE_NAME(hostnm)(char *hn, int length);
+@@ -76,19 +77,19 @@ int FORTRAN_PROCEDURE_NAME(hostnm)(char *hn, int length);
+ std::intptr_t RTNAME(Malloc)(std::size_t size);
+ 
+ // GNU extension function STATUS = SIGNAL(number, handler)
+-std::int64_t RTNAME(Signal)(std::int64_t number, void (*handler)(int));
++RT_API_INT64 RTNAME(Signal)(RT_API_INT64 number, void (*handler)(int));
+ 
+ // GNU extension subroutine SLEEP(SECONDS)
+-void RTNAME(Sleep)(std::int64_t seconds);
++void RTNAME(Sleep)(RT_API_INT64 seconds);
+ 
+ // GNU extension function TIME()
+-std::int64_t RTNAME(time)();
++RT_API_INT64 RTNAME(time)();
+ 
+ // GNU extension function ACCESS(NAME, MODE)
+ // TODO: not supported on Windows
+ #ifndef _WIN32
+-std::int64_t FORTRAN_PROCEDURE_NAME(access)(const char *name,
+-    std::int64_t nameLength, const char *mode, std::int64_t modeLength);
++RT_API_INT64 FORTRAN_PROCEDURE_NAME(access)(const char *name,
++    RT_API_INT64 nameLength, const char *mode, RT_API_INT64 modeLength);
+ #endif
+ 
+ // GNU extension subroutine CHDIR(NAME, [STATUS])
+diff --git a/flang/include/flang/Runtime/inquiry.h b/flang/include/flang/Runtime/inquiry.h
+index 36ef929ed5b2..5bd6e332e59c 100644
+--- a/flang/include/flang/Runtime/inquiry.h
++++ b/flang/include/flang/Runtime/inquiry.h
+@@ -12,6 +12,7 @@
+ #ifndef FORTRAN_RUNTIME_INQUIRY_H_
+ #define FORTRAN_RUNTIME_INQUIRY_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cinttypes>
+ 
+@@ -21,7 +22,7 @@ class Descriptor;
+ 
+ extern "C" {
+ 
+-std::int64_t RTDECL(LboundDim)(const Descriptor &array, int dim,
++RT_API_INT64 RTDECL(LboundDim)(const Descriptor &array, int dim,
+     const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Lbound)(void *result, const Descriptor &array, int kind,
+@@ -29,10 +30,10 @@ void RTDECL(Lbound)(void *result, const Descriptor &array, int kind,
+ 
+ void RTDECL(Shape)(void *result, const Descriptor &array, int kind,
+     const char *sourceFile = nullptr, int line = 0);
+-std::int64_t RTDECL(Size)(
++RT_API_INT64 RTDECL(Size)(
+     const Descriptor &array, const char *sourceFile = nullptr, int line = 0);
+ 
+-std::int64_t RTDECL(SizeDim)(const Descriptor &array, int dim,
++RT_API_INT64 RTDECL(SizeDim)(const Descriptor &array, int dim,
+     const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Ubound)(void *result, const Descriptor &array, int kind,
+diff --git a/flang/include/flang/Runtime/io-api.h b/flang/include/flang/Runtime/io-api.h
+index d23b260d2fb8..fd033b0b135b 100644
+--- a/flang/include/flang/Runtime/io-api.h
++++ b/flang/include/flang/Runtime/io-api.h
+@@ -11,6 +11,7 @@
+ #ifndef FORTRAN_RUNTIME_IO_API_H_
+ #define FORTRAN_RUNTIME_IO_API_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/uint128.h"
+ #include "flang/Runtime/entry-names.h"
+ #include "flang/Runtime/iostat-consts.h"
+@@ -36,11 +37,11 @@ static constexpr ExternalUnit DefaultInputUnit{FORTRAN_DEFAULT_INPUT_UNIT};
+ 
+ // INQUIRE specifiers are encoded as simple base-26 packings of
+ // the spellings of their keywords.
+-using InquiryKeywordHash = std::uint64_t;
++using InquiryKeywordHash = RT_API_UINT64;
+ constexpr InquiryKeywordHash HashInquiryKeyword(const char *p) {
+   InquiryKeywordHash hash{1};
+   while (char ch{*p++}) {
+-    std::uint64_t letter{0};
++    RT_API_UINT64 letter{0};
+     if (ch >= 'a' && ch <= 'z') {
+       letter = ch - 'a';
+     } else {
+@@ -136,7 +137,7 @@ Cookie IODECL(BeginInternalFormattedInput)(const char *internal,
+ // If handleError is false, and the unit number is out of range, the program
+ // will be terminated. Otherwise, if unit is out of range, a nonzero Iostat
+ // code is returned and ioMsg is set if it is not a nullptr.
+-enum Iostat IODECL(CheckUnitNumberInRange64)(std::int64_t unit,
++enum Iostat IODECL(CheckUnitNumberInRange64)(RT_API_INT64 unit,
+     bool handleError, char *ioMsg = nullptr, std::size_t ioMsgLength = 0,
+     const char *sourceFile = nullptr, int sourceLine = 0);
+ enum Iostat IODECL(CheckUnitNumberInRange128)(common::int128_t unit,
+@@ -232,8 +233,8 @@ bool IODECL(SetDecimal)(Cookie, const char *, std::size_t);
+ bool IODECL(SetDelim)(Cookie, const char *, std::size_t);
+ // PAD=YES, NO
+ bool IODECL(SetPad)(Cookie, const char *, std::size_t);
+-bool IODECL(SetPos)(Cookie, std::int64_t);
+-bool IODECL(SetRec)(Cookie, std::int64_t);
++bool IODECL(SetPos)(Cookie, RT_API_INT64);
++bool IODECL(SetRec)(Cookie, RT_API_INT64);
+ // ROUND=UP, DOWN, ZERO, NEAREST, COMPATIBLE, PROCESSOR_DEFINED
+ bool IODECL(SetRound)(Cookie, const char *, std::size_t);
+ // SIGN=PLUS, SUPPRESS, PROCESSOR_DEFINED
+@@ -261,9 +262,9 @@ bool IODECL(InputDescriptor)(Cookie, const Descriptor &);
+ bool IODECL(OutputInteger8)(Cookie, std::int8_t);
+ bool IODECL(OutputInteger16)(Cookie, std::int16_t);
+ bool IODECL(OutputInteger32)(Cookie, std::int32_t);
+-bool IODECL(OutputInteger64)(Cookie, std::int64_t);
++bool IODECL(OutputInteger64)(Cookie, RT_API_INT64);
+ bool IODECL(OutputInteger128)(Cookie, common::int128_t);
+-bool IODECL(InputInteger)(Cookie, std::int64_t &, int kind = 8);
++bool IODECL(InputInteger)(Cookie, RT_API_INT64 &, int kind = 8);
+ bool IODECL(OutputReal32)(Cookie, float);
+ bool IODECL(InputReal32)(Cookie, float &);
+ bool IODECL(OutputReal64)(Cookie, double);
+@@ -353,7 +354,7 @@ bool IODECL(InquireLogical)(Cookie, InquiryKeywordHash, bool &);
+ bool IODECL(InquirePendingId)(Cookie, AsynchronousId, bool &);
+ // NEXTREC, NUMBER, POS, RECL, SIZE
+ bool IODECL(InquireInteger64)(
+-    Cookie, InquiryKeywordHash, std::int64_t &, int kind = 8);
++    Cookie, InquiryKeywordHash, RT_API_INT64 &, int kind = 8);
+ 
+ // This function must be called to end an I/O statement, and its
+ // cookie value may not be used afterwards unless it is recycled
+diff --git a/flang/include/flang/Runtime/misc-intrinsic.h b/flang/include/flang/Runtime/misc-intrinsic.h
+index 3fb3aaed49c0..0cac7afd979f 100644
+--- a/flang/include/flang/Runtime/misc-intrinsic.h
++++ b/flang/include/flang/Runtime/misc-intrinsic.h
+@@ -11,6 +11,7 @@
+ #ifndef FORTRAN_RUNTIME_MISC_INTRINSIC_H_
+ #define FORTRAN_RUNTIME_MISC_INTRINSIC_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cstdint>
+ 
+@@ -25,7 +26,7 @@ void RTDECL(Transfer)(Descriptor &result, const Descriptor &source,
+     const Descriptor &mold, const char *sourceFile, int line);
+ void RTDECL(TransferSize)(Descriptor &result, const Descriptor &source,
+     const Descriptor &mold, const char *sourceFile, int line,
+-    std::int64_t size);
++    RT_API_INT64 size);
+ } // extern "C"
+ } // namespace Fortran::runtime
+ #endif // FORTRAN_RUNTIME_MISC_INTRINSIC_H_
+diff --git a/flang/include/flang/Runtime/numeric.h b/flang/include/flang/Runtime/numeric.h
+index 17ed31ab8790..417795c23269 100644
+--- a/flang/include/flang/Runtime/numeric.h
++++ b/flang/include/flang/Runtime/numeric.h
+@@ -12,6 +12,7 @@
+ #ifndef FORTRAN_RUNTIME_NUMERIC_H_
+ #define FORTRAN_RUNTIME_NUMERIC_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/float128.h"
+ #include "flang/Runtime/cpp-type.h"
+ #include "flang/Runtime/entry-names.h"
+@@ -344,30 +345,30 @@ CppTypeFor<TypeCategory::Real, 16> RTDECL(RRSpacing16)(
+ 
+ // SET_EXPONENT's I= argument can be any INTEGER kind; upcast it to 64-bit
+ CppTypeFor<TypeCategory::Real, 4> RTDECL(SetExponent4)(
+-    CppTypeFor<TypeCategory::Real, 4>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 4>, RT_API_INT64);
+ CppTypeFor<TypeCategory::Real, 8> RTDECL(SetExponent8)(
+-    CppTypeFor<TypeCategory::Real, 8>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 8>, RT_API_INT64);
+ #if HAS_FLOAT80
+ CppTypeFor<TypeCategory::Real, 10> RTDECL(SetExponent10)(
+-    CppTypeFor<TypeCategory::Real, 10>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 10>, RT_API_INT64);
+ #endif
+ #if HAS_LDBL128 || HAS_FLOAT128
+ CppTypeFor<TypeCategory::Real, 16> RTDECL(SetExponent16)(
+-    CppTypeFor<TypeCategory::Real, 16>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 16>, RT_API_INT64);
+ #endif
+ 
+ // SCALE
+ CppTypeFor<TypeCategory::Real, 4> RTDECL(Scale4)(
+-    CppTypeFor<TypeCategory::Real, 4>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 4>, RT_API_INT64);
+ CppTypeFor<TypeCategory::Real, 8> RTDECL(Scale8)(
+-    CppTypeFor<TypeCategory::Real, 8>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 8>, RT_API_INT64);
+ #if HAS_FLOAT80
+ CppTypeFor<TypeCategory::Real, 10> RTDECL(Scale10)(
+-    CppTypeFor<TypeCategory::Real, 10>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 10>, RT_API_INT64);
+ #endif
+ #if HAS_LDBL128 || HAS_FLOAT128
+ CppTypeFor<TypeCategory::Real, 16> RTDECL(Scale16)(
+-    CppTypeFor<TypeCategory::Real, 16>, std::int64_t);
++    CppTypeFor<TypeCategory::Real, 16>, RT_API_INT64);
+ #endif
+ 
+ // SELECTED_CHAR_KIND
+diff --git a/flang/include/flang/Runtime/ragged.h b/flang/include/flang/Runtime/ragged.h
+index 341d062dff39..002ebe166bb9 100644
+--- a/flang/include/flang/Runtime/ragged.h
++++ b/flang/include/flang/Runtime/ragged.h
+@@ -9,6 +9,7 @@
+ #ifndef FORTRAN_RUNTIME_RAGGED_H_
+ #define FORTRAN_RUNTIME_RAGGED_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cstdint>
+ 
+@@ -25,9 +26,9 @@ namespace Fortran::runtime {
+ // This layout is runtime ABI; compiler-generated code from older flang
+ // versions may allocate and access ragged arrays with it.
+ struct RaggedArrayHeader {
+-  std::uint64_t flags;
++  RT_API_UINT64 flags;
+   void *bufferPointer;
+-  std::int64_t *extentPointer;
++  RT_API_INT64 *extentPointer;
+ };
+ 
+ extern "C" {
+@@ -51,7 +52,7 @@ extern "C" {
+ // of non-negative extents. elementSize is the size of a data element in the
+ // rectangular space defined by the extentVector.
+ void *RTDECL(RaggedArrayAllocate)(void *header, bool isHeader,
+-    std::int64_t rank, std::int64_t elementSize, std::int64_t *extentVector);
++    RT_API_INT64 rank, RT_API_INT64 elementSize, RT_API_INT64 *extentVector);
+ 
+ // Runtime helper for deallocation of ragged array buffers. The root header of
+ // the ragged array structure is passed to deallocate the entire ragged array.
+diff --git a/flang/include/flang/Runtime/reduce.h b/flang/include/flang/Runtime/reduce.h
+index 4c126900bce8..345cc11c3043 100644
+--- a/flang/include/flang/Runtime/reduce.h
++++ b/flang/include/flang/Runtime/reduce.h
+@@ -17,6 +17,7 @@
+ #ifndef FORTRAN_RUNTIME_REDUCE_H_
+ #define FORTRAN_RUNTIME_REDUCE_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/float128.h"
+ #include "flang/Common/uint128.h"
+ #include "flang/Runtime/cpp-type.h"
+@@ -87,22 +88,22 @@ void RTDECL(ReduceInteger4DimValue)(Descriptor &result, const Descriptor &array,
+     ValueReductionOperation<std::int32_t>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+     const std::int32_t *identity = nullptr, bool ordered = true);
+-std::int64_t RTDECL(ReduceInteger8Ref)(const Descriptor &,
+-    ReferenceReductionOperation<std::int64_t>, const char *source, int line,
++RT_API_INT64 RTDECL(ReduceInteger8Ref)(const Descriptor &,
++    ReferenceReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
+-std::int64_t RTDECL(ReduceInteger8Value)(const Descriptor &,
+-    ValueReductionOperation<std::int64_t>, const char *source, int line,
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
++RT_API_INT64 RTDECL(ReduceInteger8Value)(const Descriptor &,
++    ValueReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceInteger8DimRef)(Descriptor &result, const Descriptor &array,
+-    ReferenceReductionOperation<std::int64_t>, const char *source, int line,
++    ReferenceReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceInteger8DimValue)(Descriptor &result, const Descriptor &array,
+-    ValueReductionOperation<std::int64_t>, const char *source, int line,
++    ValueReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(ReduceInteger16Ref)(const Descriptor &,
+     ReferenceReductionOperation<common::int128_t>, const char *source, int line,
+@@ -170,22 +171,22 @@ void RTDECL(ReduceUnsigned4DimValue)(Descriptor &result,
+     const Descriptor &array, ValueReductionOperation<std::uint32_t>,
+     const char *source, int line, int dim, const Descriptor *mask = nullptr,
+     const std::uint32_t *identity = nullptr, bool ordered = true);
+-std::uint64_t RTDECL(ReduceUnsigned8Ref)(const Descriptor &,
+-    ReferenceReductionOperation<std::uint64_t>, const char *source, int line,
++RT_API_UINT64 RTDECL(ReduceUnsigned8Ref)(const Descriptor &,
++    ReferenceReductionOperation<RT_API_UINT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::uint64_t *identity = nullptr, bool ordered = true);
+-std::uint64_t RTDECL(ReduceUnsigned8Value)(const Descriptor &,
+-    ValueReductionOperation<std::uint64_t>, const char *source, int line,
++    const RT_API_UINT64 *identity = nullptr, bool ordered = true);
++RT_API_UINT64 RTDECL(ReduceUnsigned8Value)(const Descriptor &,
++    ValueReductionOperation<RT_API_UINT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::uint64_t *identity = nullptr, bool ordered = true);
++    const RT_API_UINT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceUnsigned8DimRef)(Descriptor &result, const Descriptor &array,
+-    ReferenceReductionOperation<std::uint64_t>, const char *source, int line,
++    ReferenceReductionOperation<RT_API_UINT64>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+-    const std::uint64_t *identity = nullptr, bool ordered = true);
++    const RT_API_UINT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceUnsigned8DimValue)(Descriptor &result,
+-    const Descriptor &array, ValueReductionOperation<std::uint64_t>,
++    const Descriptor &array, ValueReductionOperation<RT_API_UINT64>,
+     const char *source, int line, int dim, const Descriptor *mask = nullptr,
+-    const std::uint64_t *identity = nullptr, bool ordered = true);
++    const RT_API_UINT64 *identity = nullptr, bool ordered = true);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(ReduceUnsigned16Ref)(const Descriptor &,
+     ReferenceReductionOperation<common::uint128_t>, const char *source,
+@@ -509,21 +510,21 @@ void RTDECL(ReduceLogical4DimValue)(Descriptor &result, const Descriptor &array,
+     int dim, const Descriptor *mask = nullptr,
+     const std::int32_t *identity = nullptr, bool ordered = true);
+ bool RTDECL(ReduceLogical8Ref)(const Descriptor &,
+-    ReferenceReductionOperation<std::int64_t>, const char *source, int line,
++    ReferenceReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ bool RTDECL(ReduceLogical8Value)(const Descriptor &,
+-    ValueReductionOperation<std::int64_t>, const char *source, int line,
++    ValueReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceLogical8DimRef)(Descriptor &result, const Descriptor &array,
+-    ReferenceReductionOperation<std::int64_t>, const char *source, int line,
++    ReferenceReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ void RTDECL(ReduceLogical8DimValue)(Descriptor &result, const Descriptor &array,
+-    ValueReductionOperation<std::int64_t>, const char *source, int line,
++    ValueReductionOperation<RT_API_INT64>, const char *source, int line,
+     int dim, const Descriptor *mask = nullptr,
+-    const std::int64_t *identity = nullptr, bool ordered = true);
++    const RT_API_INT64 *identity = nullptr, bool ordered = true);
+ 
+ void RTDECL(ReduceChar1)(char *result, const Descriptor &array,
+     ReductionCharOperation<char>, const char *source, int line, int dim = 0,
+diff --git a/flang/include/flang/Runtime/reduction.h b/flang/include/flang/Runtime/reduction.h
+index 8e296337c794..f13b45b90ab3 100644
+--- a/flang/include/flang/Runtime/reduction.h
++++ b/flang/include/flang/Runtime/reduction.h
+@@ -11,6 +11,7 @@
+ #ifndef FORTRAN_RUNTIME_REDUCTION_H_
+ #define FORTRAN_RUNTIME_REDUCTION_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/float128.h"
+ #include "flang/Common/uint128.h"
+ #include "flang/Runtime/cpp-type.h"
+@@ -49,7 +50,7 @@ std::int16_t RTDECL(SumInteger2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(SumInteger4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(SumInteger8)(const Descriptor &, const char *source,
++RT_API_INT64 RTDECL(SumInteger8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(SumInteger16)(const Descriptor &, const char *source,
+@@ -61,7 +62,7 @@ std::uint16_t RTDECL(SumUnsigned2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::uint32_t RTDECL(SumUnsigned4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::uint64_t RTDECL(SumUnsigned8)(const Descriptor &, const char *source,
++RT_API_UINT64 RTDECL(SumUnsigned8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(SumUnsigned16)(const Descriptor &, const char *source,
+@@ -121,7 +122,7 @@ std::int16_t RTDECL(ProductInteger2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(ProductInteger4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(ProductInteger8)(const Descriptor &, const char *source,
++RT_API_INT64 RTDECL(ProductInteger8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(ProductInteger16)(const Descriptor &,
+@@ -134,7 +135,7 @@ std::uint16_t RTDECL(ProductUnsigned2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::uint32_t RTDECL(ProductUnsigned4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::uint64_t RTDECL(ProductUnsigned8)(const Descriptor &, const char *source,
++RT_API_UINT64 RTDECL(ProductUnsigned8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(ProductUnsigned16)(const Descriptor &,
+@@ -194,7 +195,7 @@ std::int16_t RTDECL(IAll2)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(IAll4)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(IAll8)(const Descriptor &, const char *source, int line,
++RT_API_INT64 RTDECL(IAll8)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(IAll16)(const Descriptor &, const char *source,
+@@ -209,7 +210,7 @@ std::int16_t RTDECL(IAny2)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(IAny4)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(IAny8)(const Descriptor &, const char *source, int line,
++RT_API_INT64 RTDECL(IAny8)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(IAny16)(const Descriptor &, const char *source,
+@@ -224,7 +225,7 @@ std::int16_t RTDECL(IParity2)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(IParity4)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(IParity8)(const Descriptor &, const char *source, int line,
++RT_API_INT64 RTDECL(IParity8)(const Descriptor &, const char *source, int line,
+     int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(IParity16)(const Descriptor &, const char *source,
+@@ -347,7 +348,7 @@ std::int16_t RTDECL(MaxvalInteger2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(MaxvalInteger4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(MaxvalInteger8)(const Descriptor &, const char *source,
++RT_API_INT64 RTDECL(MaxvalInteger8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(MaxvalInteger16)(const Descriptor &, const char *source,
+@@ -359,7 +360,7 @@ std::uint16_t RTDECL(MaxvalUnsigned2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::uint32_t RTDECL(MaxvalUnsigned4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::uint64_t RTDECL(MaxvalUnsigned8)(const Descriptor &, const char *source,
++RT_API_UINT64 RTDECL(MaxvalUnsigned8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(MaxvalUnsigned16)(const Descriptor &,
+@@ -392,7 +393,7 @@ std::int16_t RTDECL(MinvalInteger2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::int32_t RTDECL(MinvalInteger4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::int64_t RTDECL(MinvalInteger8)(const Descriptor &, const char *source,
++RT_API_INT64 RTDECL(MinvalInteger8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(MinvalInteger16)(const Descriptor &, const char *source,
+@@ -404,7 +405,7 @@ std::uint16_t RTDECL(MinvalUnsigned2)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ std::uint32_t RTDECL(MinvalUnsigned4)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+-std::uint64_t RTDECL(MinvalUnsigned8)(const Descriptor &, const char *source,
++RT_API_UINT64 RTDECL(MinvalUnsigned8)(const Descriptor &, const char *source,
+     int line, int dim = 0, const Descriptor *mask = nullptr);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(MinvalUnsigned16)(const Descriptor &,
+@@ -465,7 +466,7 @@ void RTDECL(AllDim)(Descriptor &result, const Descriptor &, int dim,
+ bool RTDECL(Any)(const Descriptor &, const char *source, int line, int dim = 0);
+ void RTDECL(AnyDim)(Descriptor &result, const Descriptor &, int dim,
+     const char *source, int line);
+-std::int64_t RTDECL(Count)(
++RT_API_INT64 RTDECL(Count)(
+     const Descriptor &, const char *source, int line, int dim = 0);
+ void RTDECL(CountDim)(Descriptor &result, const Descriptor &, int dim, int kind,
+     const char *source, int line);
+@@ -481,7 +482,7 @@ std::int16_t RTDECL(DotProductInteger2)(const Descriptor &, const Descriptor &,
+     const char *source = nullptr, int line = 0);
+ std::int32_t RTDECL(DotProductInteger4)(const Descriptor &, const Descriptor &,
+     const char *source = nullptr, int line = 0);
+-std::int64_t RTDECL(DotProductInteger8)(const Descriptor &, const Descriptor &,
++RT_API_INT64 RTDECL(DotProductInteger8)(const Descriptor &, const Descriptor &,
+     const char *source = nullptr, int line = 0);
+ #ifdef __SIZEOF_INT128__
+ common::int128_t RTDECL(DotProductInteger16)(const Descriptor &,
+@@ -493,7 +494,7 @@ std::uint16_t RTDECL(DotProductUnsigned2)(const Descriptor &,
+     const Descriptor &, const char *source = nullptr, int line = 0);
+ std::uint32_t RTDECL(DotProductUnsigned4)(const Descriptor &,
+     const Descriptor &, const char *source = nullptr, int line = 0);
+-std::uint64_t RTDECL(DotProductUnsigned8)(const Descriptor &,
++RT_API_UINT64 RTDECL(DotProductUnsigned8)(const Descriptor &,
+     const Descriptor &, const char *source = nullptr, int line = 0);
+ #ifdef __SIZEOF_INT128__
+ common::uint128_t RTDECL(DotProductUnsigned16)(const Descriptor &,
+diff --git a/flang/include/flang/Runtime/time-intrinsic.h b/flang/include/flang/Runtime/time-intrinsic.h
+index 4df151451d73..649616bff741 100644
+--- a/flang/include/flang/Runtime/time-intrinsic.h
++++ b/flang/include/flang/Runtime/time-intrinsic.h
+@@ -12,6 +12,7 @@
+ #ifndef FORTRAN_RUNTIME_TIME_INTRINSIC_H_
+ #define FORTRAN_RUNTIME_TIME_INTRINSIC_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Runtime/entry-names.h"
+ #include <cinttypes>
+ #include <cstddef>
+@@ -36,9 +37,9 @@ double RTNAME(Timef)();
+ // The kind argument to SystemClockCount and SystemClockCountMax is the
+ // kind of the integer actual arguments, which are required to be the same
+ // when both appear.
+-std::int64_t RTNAME(SystemClockCount)(int kind = 8);
+-std::int64_t RTNAME(SystemClockCountRate)(int kind = 8);
+-std::int64_t RTNAME(SystemClockCountMax)(int kind = 8);
++RT_API_INT64 RTNAME(SystemClockCount)(int kind = 8);
++RT_API_INT64 RTNAME(SystemClockCountRate)(int kind = 8);
++RT_API_INT64 RTNAME(SystemClockCountMax)(int kind = 8);
+ 
+ // Interface for DATE_AND_TIME intrinsic.
+ void RTNAME(DateAndTime)(char *date, std::size_t dateChars, char *time,
+diff --git a/flang/include/flang/Runtime/transformational.h b/flang/include/flang/Runtime/transformational.h
+index 3393ed1dc981..9705e3e339e9 100644
+--- a/flang/include/flang/Runtime/transformational.h
++++ b/flang/include/flang/Runtime/transformational.h
+@@ -17,6 +17,7 @@
+ #ifndef FORTRAN_RUNTIME_TRANSFORMATIONAL_H_
+ #define FORTRAN_RUNTIME_TRANSFORMATIONAL_H_
+ 
++#include "flang/Runtime/api-int64.h"
+ #include "flang/Common/float128.h"
+ #include "flang/Runtime/cpp-type.h"
+ #include "flang/Runtime/entry-names.h"
+@@ -133,13 +134,13 @@ void RTDECL(Cshift)(Descriptor &result, const Descriptor &source,
+     const Descriptor &shift, int dim = 1, const char *sourceFile = nullptr,
+     int line = 0);
+ void RTDECL(CshiftVector)(Descriptor &result, const Descriptor &source,
+-    std::int64_t shift, const char *sourceFile = nullptr, int line = 0);
++    RT_API_INT64 shift, const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Eoshift)(Descriptor &result, const Descriptor &source,
+     const Descriptor &shift, const Descriptor *boundary = nullptr, int dim = 1,
+     const char *sourceFile = nullptr, int line = 0);
+ void RTDECL(EoshiftVector)(Descriptor &result, const Descriptor &source,
+-    std::int64_t shift, const Descriptor *boundary = nullptr,
++    RT_API_INT64 shift, const Descriptor *boundary = nullptr,
+     const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Pack)(Descriptor &result, const Descriptor &source,
+@@ -168,7 +169,7 @@ void RTDECL(ShallowCopyDirect)(const Descriptor &result,
+     const Descriptor &source, const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Spread)(Descriptor &result, const Descriptor &source, int dim,
+-    std::int64_t ncopies, const char *sourceFile = nullptr, int line = 0);
++    RT_API_INT64 ncopies, const char *sourceFile = nullptr, int line = 0);
+ 
+ void RTDECL(Transpose)(Descriptor &result, const Descriptor &matrix,
+     const char *sourceFile = nullptr, int line = 0);
 diff --git a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp b/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
 index 995a2efba25a..3efea2073df3 100644
 --- a/flang/lib/Optimizer/CodeGen/FIROpPatterns.cpp
@@ -258,3 +1029,42 @@ index 31194f9c274f..cf719eb62514 100644
  }
  
  // fir.type<name(p : TY'...){f : TY...}>  -->  llvm<"%name = { ty... }">
+diff --git a/flang/lib/Optimizer/Dialect/Support/FIRContext.cpp b/flang/lib/Optimizer/Dialect/Support/FIRContext.cpp
+index 66ae5c4c653a..91b4d34e4791 100644
+--- a/flang/lib/Optimizer/Dialect/Support/FIRContext.cpp
++++ b/flang/lib/Optimizer/Dialect/Support/FIRContext.cpp
+@@ -10,15 +10,34 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#include "flang/Optimizer/Support/TargetModel.h"
+ #include "flang/Optimizer/Dialect/Support/FIRContext.h"
+ #include "flang/Optimizer/Dialect/Support/KindMapping.h"
+ #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+ #include "mlir/IR/BuiltinAttributes.h"
+ #include "mlir/IR/BuiltinOps.h"
+ #include "llvm/TargetParser/Host.h"
++#include <atomic>
++#include <cstddef>
++
++// One target to a compilation: see TargetModel.h.  Until one is set, the host.
++static std::atomic<unsigned> targetLongBits{8 * sizeof(long)};
++static std::atomic<unsigned> targetSizeBits{8 * sizeof(std::size_t)};
++static std::atomic<bool> longDoubleIsDouble{false};
++
++void fir::setTargetModel(const llvm::Triple &triple) {
++  bool is32{triple.isArch32Bit()};
++  targetLongBits = is32 ? 32 : 8 * sizeof(long);
++  targetSizeBits = is32 ? 32 : 8 * sizeof(std::size_t);
++  longDoubleIsDouble = triple.isSLOW32();
++}
++unsigned fir::getTargetLongBits() { return targetLongBits; }
++unsigned fir::getTargetSizeBits() { return targetSizeBits; }
++bool fir::targetLongDoubleIsDouble() { return longDoubleIsDouble; }
+ 
+ void fir::setTargetTriple(mlir::ModuleOp mod, llvm::StringRef triple) {
+   auto target = fir::determineTargetTriple(triple);
++  fir::setTargetModel(llvm::Triple(target));
+   mod->setAttr(mlir::LLVM::LLVMDialect::getTargetTripleAttrName(),
+                mlir::StringAttr::get(mod.getContext(), target));
+ }

@@ -49,7 +49,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  strerror.s32o getopt.s32o signal.s32o system.s32o \
                  setjmp.s32o emutls.s32o atomic.s32o \
                  unwind.s32o unwind_asm.s32o posix_extra.s32o locale.s32o locale_state.s32o \
-                 netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o \
+                 netdb.s32o process.s32o getpid.s32o mman.s32o environ.s32o posix_env.s32o \
                  fenv.s32o math_hw.s32o math_cordic.s32o strtof.s32o assert.s32o inttypes.s32o quick_exit.s32o timespec_get.s32o \
                  wchar.s32o wctype.s32o wcs.s32o complex_rt.s32o $(LIBM_OBJS)
 
@@ -111,7 +111,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             sched_mmio.c poll.c crypto_mmio.c \
             math_hw.c math_cordic.c fenv.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
             wchar.c wctype.c wcs.c wstdio.c complex_rt.c \
-            unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c getpid.c mman.c environ.c \
+            unwind.c posix_extra.c locale.c locale_state.c locales.c netdb.c process.c posix_env.c getpid.c mman.c environ.c \
             cxa_support.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
 # Default target builds everything

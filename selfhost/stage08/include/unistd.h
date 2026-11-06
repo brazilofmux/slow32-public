@@ -13,8 +13,12 @@
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
+#include <stddef.h>
+#include <sys/types.h>
+
 #define _SC_PAGESIZE     30
 #define _SC_PAGE_SIZE    _SC_PAGESIZE
+#define _SC_CLK_TCK      2
 
 int   read(int fd, void *buf, int len);
 int   write(int fd, const void *buf, int len);
@@ -22,6 +26,12 @@ int   close(int fd);
 int   lseek(int fd, int offset, int whence);
 void  _exit(int code);
 long  sysconf(int name);
+/* posix_env.c: a guest has no users; the host name is the machine's */
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+int gethostname(char *name, size_t len);
 int   getpid(void);
 int   isatty(int fd);
 int   unlink(const char *path);
@@ -40,7 +50,6 @@ int rmdir(const char *path);
 char *getcwd(char *buf, unsigned long size);   /* size_t */
 int fsync(int fd);
 int getpid(void);
-int getuid(void);
 int isatty(int fd);
 
 /* Command-line options (runtime/getopt.c); <getopt.h> has the long ones */

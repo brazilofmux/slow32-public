@@ -3,8 +3,16 @@
 
 #include <stddef.h>
 
+/* A change the program made (setenv and the rest, posix_env.c) comes first. */
+char *(*__env_hook)(const char *name, int *found);
+char ***__env_vector;
+
 char *getenv(const char *name) {
-    (void)name;
+    if (__env_hook) {
+        int found;
+        char *v = __env_hook(name, &found);
+        if (found) return v;
+    }
     return NULL;
 }
 

@@ -11,7 +11,7 @@ COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h ctype.h parser.h sema.h optimize.h p
 # to it left the old one in place)
 LIBC_SRCS = $(wildcard libc/*.c) \
             $(addprefix ../../runtime/,dtoa.c printf_enhanced.c convert.c sscanf.c convert_extra.c \
-                strerror.c getopt.c time_std.c setjmp.s fenv.c math_cordic.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
+                strerror.c getopt.c posix_env.c getpid.c time_std.c setjmp.s fenv.c math_cordic.c strtof.c assert.c inttypes.c quick_exit.c timespec_get.c \
                 wchar.c wctype.c wcs.c wstdio.c utf/wctype_tables.h \
                 locale.c locale_state.c locale_none.c locale_impl.h locales.c locales_data.h complex_rt.c) \
             $(wildcard ../../runtime/libm/*.c ../../runtime/libm/*.h ../../runtime/libm/sources.txt \
@@ -32,7 +32,7 @@ all: cc.s32x tools
 # Build the compiler executable
 cc.s32x: $(CC_STAMP)
 
-$(CC_STAMP): $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
+$(CC_STAMP): $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP) build-s12cc.sh
 	@echo "Building cc.s32x (stage08, bootstrapped from stage07)..."
 	@bash build-s12cc.sh
 	@touch $(CC_STAMP)

@@ -8,8 +8,7 @@ int system(const char *cmd);
 int chmod(const char *path, unsigned mode);
 int symlink(const char *target, const char *path);
 long readlink(const char *path, char *buf, size_t n);
-int getuid(void);
-int getpid(void);
+#include <unistd.h> /* getuid, getpid: both C libraries have them */
 int atexit(void (*fn)(void));
 int isatty(int fd);
 #endif
