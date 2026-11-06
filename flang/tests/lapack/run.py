@@ -71,6 +71,14 @@ def count(path):
     return run, fail, illegal, info, ended
 
 
+def printed(path):
+    """What a suite said, less the clock, an engine's banner and how wide a number is."""
+    drop = re.compile(r'time|Time|seconds|Fortran STOP|signalling|Starting execution|Program halted'
+                      r'|Instructions executed|Cycles:|Performance:|Wall|Simulated')
+    with open(path, encoding='latin-1') as f:
+        return [' '.join(line.split()) for line in f if line.strip() and not drop.search(line)]
+
+
 def fix_upstream(tree):
     """The complex xGEQP3RK test an uninitialized MAXC2NRM in 3.12.1; the real ones assign
     it.  What the stack holds decides KFACT, so the count of tests moves with the compiler.
@@ -171,6 +179,11 @@ def main():
             totals['hostfail'] += h[3]
             totals['illegal'] += r[4]
             totals['info'] += r[5]
+    # A report, not a verdict: the host's libm is the host's, and a new one can move these.
+    same = [s[0] for s, r, h in zip(list_, s32, host) if r and h
+            and printed(os.path.join(out, 's32', 'TESTING', s[0] + '.out')) == printed(os.path.join(out, 'host', 'TESTING', s[0] + '.out'))]
+    print(f'{len(same)} of {sum(1 for r in s32 if r)} suites print what the host prints; others: '
+          + ' '.join(s[0] for s, r in zip(list_, s32) if r and s[0] not in same))
     print(f'{totals["tests"]} tests; failing the threshold: {totals["fail"]} on SLOW-32, {totals["hostfail"]} on the host; '
           f'illegal {totals["illegal"]}, info {totals["info"]}; {bad} suites worse or unfinished')
     return 1 if bad else 0

@@ -401,11 +401,13 @@ cd ~/slow-32/regression && ./run-flang-corpus.sh
 # machine verifier, or with --variants at other optimization levels and through
 # stage08's s32-ld.  Expected differences: docs/plans/flang.md.  ~6 and ~12 min.
 python3 ~/slow-32/flang/tests/gfortran-axes.py OUT [--variants]
-# Reference LAPACK and its own test suite, beside gfortran with the same arithmetic: not
-# a count of what agrees but the same 5,199,980 tests and the same digits.  After a change
-# to anything that touches floating point.  Mac only, like the corpus (~/refs/lapack; the
-# pin is in the script); OUT holds both builds, a new one for a new compiler.  ~5 min.
-python3 ~/slow-32/flang/tests/lapack/run.py OUT
+# And reference LAPACK, its own test suite, beside gfortran with the same arithmetic: the
+# corpus asks whether a program passes, this looks at numbers.  5,199,980 tests on both,
+# no more over the threshold than the host, and it reports which suites print otherwise.
+# After a change to flang, flang-rt, the backend or the C library.  Mac only, like the
+# corpus (~/refs/lapack; run.py has the pin).  Exit 2 if anything it needs is missing.
+# ~5 min.
+cd ~/slow-32/regression && ./run-lapack.sh
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour

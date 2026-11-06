@@ -57,8 +57,8 @@ stage08 and DBT stress test.
   `internal_dummy_2` needs a trampoline until optimized; `out_of_range_1`, `reduce_1`
   and `zero_sized_1` fail at every level, here and natively.
   stage08's `s32-as` reads only stage08's output, by ruling, so it is no axis.
-- Reference LAPACK 3.12.1 (`flang/tests/lapack/run.py`; BSD, in `~/refs/lapack`, never
-  in git), built by its own Makefiles, its own test suite, gfortran beside it with
+- Reference LAPACK 3.12.1 (`regression/run-lapack.sh`, the standing gate, runs
+  `flang/tests/lapack/run.py`; BSD, in `~/refs/lapack`, never in git), built by its own Makefiles, its own test suite, gfortran beside it with
   `-ffp-contract=off`, which is the arithmetic this machine has: **5,199,980 tests in
   94 suites, the same number on both, one over the threshold on both, the same one**
   (`DGGES`, `INFO=9`).  The suites print the same digits but for how wide a list-directed
