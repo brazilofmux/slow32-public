@@ -22,6 +22,7 @@ stage08 and DBT stress test.
   oracle: **2,299 of 2,592 agree**, where gfortran has a verdict and the test is one
   file.  Of the 293 left, LLVM's `DisabledFiles.cmake` lists 271 as failing on
   flang natively.  This corpus found, in a day, everything in "what it found".
+  `regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
 

@@ -158,12 +158,70 @@ def one(rel, out):
     return rel, verdict, note
 
 
+HEADER = """# flang/tests/gfortran-suite.py's verdict on each of gfortran's execute tests.
+# regression/run-flang-corpus.sh holds a run to this; --update records one.
+"""
+AGREE = ('pass', 'format-only')
+# More than this leaving for "gfortran has no verdict" is the oracle broken, not a
+# new gfortran's opinion of a few tests.
+ORACLE_SLACK = 20
+
+
+def check(path, results, out):
+    """0 if nothing that agreed stopped agreeing, and every test was run."""
+    recorded = {}
+    with open(path) as f:
+        for line in f:
+            if not line.startswith('#'):
+                v, t = line.rstrip('\n').split('\t')
+                recorded[t] = v
+    now = {t: v for t, v, _ in results}
+    bad = 0
+    for t in sorted(set(recorded) - set(now)):
+        print(f'MISSING   {t}: recorded {recorded[t]}, not run')
+        bad += 1
+    for t in sorted(set(now) - set(recorded)):
+        print(f'NEW       {t}: {now[t]}, not recorded (--update)')
+        bad += 1
+    lost = []
+    oracle = 0
+    for t in sorted(set(recorded) & set(now)):
+        was, is_ = recorded[t], now[t]
+        if was in AGREE and is_ not in AGREE:
+            if is_.startswith('oracle-'):
+                oracle += 1
+                print(f'NOTE      {t}: gfortran has no verdict now ({is_})')
+            else:
+                lost.append(t)
+        elif was not in AGREE and is_ in AGREE:
+            print(f'BETTER    {t}: {was} -> {is_} (--update to keep it)')
+        elif was != is_ and was not in AGREE:
+            print(f'NOTE      {t}: {was} -> {is_}')
+    if oracle > ORACLE_SLACK:
+        print(f'WORSE     {oracle} tests lost their oracle: is gfortran working?')
+        bad += 1
+    # A timeout under load is not a regression: alone, it has to fail again.
+    retry = os.path.join(out, 'retry')
+    os.makedirs(retry)
+    for t in lost:
+        _, v, note = one(t, retry)
+        if v in AGREE:
+            print(f'NOTE      {t}: {now[t]} under load, {v} alone')
+        else:
+            print(f'WORSE     {t}: {recorded[t]} -> {v}  {note[:90]}')
+            bad += 1
+    print(f'flang corpus: {sum(v in AGREE for v in now.values())} agree, {bad} worse than recorded')
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
     ap.add_argument('-j', type=int, default=8)
     ap.add_argument('--match')
     ap.add_argument('--sample', type=int, help='every Kth test')
+    ap.add_argument('--check', help='hold the run to these recorded verdicts; exit 1 if worse')
+    ap.add_argument('--update', help='record the verdicts of this run here')
     a = ap.parse_args()
     out = os.path.abspath(a.out)
     os.makedirs(out)  # refuses one that exists
@@ -201,6 +259,12 @@ def main():
     with open(os.path.join(out, 'summary.txt'), 'w') as f:
         f.write(report)
     sys.stdout.write(report)
+    if a.update:
+        with open(a.update, 'w') as f:
+            f.write(HEADER + ''.join(f'{v}\t{t}\n' for t, v, _ in sorted(results)))
+        print(f'recorded {len(results)} verdicts in {a.update}')
+    if a.check:
+        sys.exit(check(a.check, results, out))
 
 
 if __name__ == '__main__':

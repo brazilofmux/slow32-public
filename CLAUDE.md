@@ -390,6 +390,14 @@ cd ~/slow-32/selfhost/c-conformance && ./probe.sh --check
 # pieces C++ leans on.  SKIPs without the libc++ install build-libcxx.sh makes.
 cd ~/slow-32/regression && ./run-libcxx.sh
 
+# flang: gfortran's own 3,222 execute tests on SLOW-32, native gfortran as the
+# oracle, held to recorded verdicts (flang/tests/gfortran-verdicts.txt); fails if
+# one that agreed stops, names any that got better (--update, commit the file).
+# After a change to flang, flang-rt, the backend, the C library, or the assemblers
+# and linkers.  Mac only: the corpus is in ~/refs (GPL; the script says how), and
+# gfortran varies by host.  Exit 2 if anything it needs is missing.  ~5 min.
+cd ~/slow-32/regression && ./run-flang-corpus.sh
+
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour
 # from both linkers.  After touching either side of either tool.
