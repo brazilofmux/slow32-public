@@ -1,0 +1,27 @@
+#!/bin/zsh
+# s32fc: what LAPACK's Makefiles call FC.  -c: Fortran to a .s32o, under the name
+# asked for.  Otherwise a link: objects and archives to a .s32x.
+HERE=${0:A:h}; FL=${HERE:h:h}; ROOT=${FL:h}; L=${LLVM_PROJECT:-$HOME/llvm-project}
+B=$L/build-flang/bin; R=$ROOT/runtime; LX=$L/build-slow32-libcxx/install/lib; O=${FLANG_OUT:-$FL/out}
+compile=0; out=; src=; objs=()
+while (( $# )); do
+  case $1 in
+    -c) compile=1 ;;
+    -o) out=$2; shift ;;
+    -O*|-frecursive|-fno-*|-g) ;;
+    *.f|*.F|*.f90|*.F90) src=$1 ;;
+    -I*) ;;
+    *) objs+=($1) ;;
+  esac
+  shift
+done
+if (( compile )); then
+  [[ -n $out ]] || out=${src:t:r}.o
+  t=$out.$$; dir=${out:h}
+  $B/flang -fc1 -triple slow32-unknown-none ${LAPACK_FC_OPT:--O2} -cpp -fintrinsic-modules-path $O/mod -module-dir . -I. -emit-llvm $src -o $t.ll || exit 1
+  $B/llc -mtriple=slow32-unknown-none ${LAPACK_LLC_OPT:--O2} $t.ll -o $t.s || { rm -f $t.ll; exit 1; }
+  $ROOT/tools/assembler/slow32asm $t.s $out >/dev/null; rc=$?
+  rm -f $t.ll $t.s
+  exit $rc
+fi
+exec $ROOT/tools/linker/s32-ld -o $out --mmio 64K --heap-size 64M --stack-size 256M $R/crt0.s32o $objs $O/libflangrt.s32a $LX/libc++.a $LX/libc++abi.a $R/libc_mmio.s32a $R/libs32.s32a $R/libs32cxx.s32a

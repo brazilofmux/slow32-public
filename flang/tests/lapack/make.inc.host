@@ -1,0 +1,18 @@
+# The same, gfortran on the host: the comparison.
+SHELL = /bin/sh
+CC = false
+FC = gfortran
+# No FMA: arm64 gfortran contracts a*b+c by default, which SLOW-32 has no instruction for.
+FFLAGS = -O2 -frecursive -w -ffp-contract=off
+FFLAGS_DRV = $(FFLAGS)
+FFLAGS_NOOPT = -O0 -frecursive -w
+LDFLAGS =
+AR = ar
+ARFLAGS = cr
+RANLIB = ranlib
+TIMER = INT_CPU_TIME
+BLASLIB = $(TOPSRCDIR)/librefblas.a
+CBLASLIB = $(TOPSRCDIR)/libcblas.a
+LAPACKLIB = $(TOPSRCDIR)/liblapack.a
+TMGLIB = $(TOPSRCDIR)/libtmglib.a
+LAPACKELIB = $(TOPSRCDIR)/liblapacke.a

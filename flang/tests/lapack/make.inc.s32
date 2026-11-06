@@ -1,0 +1,17 @@
+# LAPACK's make.inc for SLOW-32; S32FC, S32AR come from the environment.
+SHELL = /bin/sh
+CC = false
+FC = $(S32FC)
+FFLAGS = -O2
+FFLAGS_DRV = $(FFLAGS)
+FFLAGS_NOOPT = -O0
+LDFLAGS =
+AR = $(S32AR)
+ARFLAGS = cr
+RANLIB = true
+TIMER = INT_CPU_TIME
+BLASLIB = $(TOPSRCDIR)/librefblas.a
+CBLASLIB = $(TOPSRCDIR)/libcblas.a
+LAPACKLIB = $(TOPSRCDIR)/liblapack.a
+TMGLIB = $(TOPSRCDIR)/libtmglib.a
+LAPACKELIB = $(TOPSRCDIR)/liblapacke.a

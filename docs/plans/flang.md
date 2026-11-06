@@ -50,6 +50,19 @@ stage08 and DBT stress test.
   `internal_dummy_2` needs a trampoline until optimized; `out_of_range_1`, `reduce_1`
   and `zero_sized_1` fail at every level, here and natively.
   stage08's `s32-as` reads only stage08's output, by ruling, so it is no axis.
+- Reference LAPACK 3.12.1 (`flang/tests/lapack/run.py`; BSD, in `~/refs/lapack`, never
+  in git), built by its own Makefiles, its own test suite, gfortran beside it with
+  `-ffp-contract=off`, which is the arithmetic this machine has: **5,199,980 tests in
+  94 suites, the same number on both, one over the threshold on both, the same one**
+  (`DGGES`, `INFO=9`).  The suites print the same digits but for how wide a list-directed
+  integer is.  About 11 times slower than native on the DBT.
+  Runs with the DBT's `-I`: its stubs call the host's libm, allowed to be a last place
+  off, and on them the order-20 matrix of `ssep` fails its threshold.  Native flang
+  fails it the same on Apple's libm and passes on musl, so that is a marginal
+  eigenproblem and not the machine; a verdict should not depend on a host's libm.
+  `run.py` adds a line to its copies of `cgeqp3rk.f` and `zgeqp3rk.f`, which in 3.12.1
+  test `MAXC2NRM` before setting it (the real ones set it): without the line the count
+  of tests moves with what the stack holds.
 - `flang/tests/run-tests.sh`: `abi` (Fortran's layouts against clang's, with C on
   the other side) and `wide` (what is wider than `index`), each engine.
 
@@ -132,6 +145,13 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
   the machine does not have (docs/SPEC.md); `FREE` did not compile.
 - Not flang's: a zero-sized global (an empty struct) never linked, from C either,
   in both toolchains (selfhost ISSUES-112).
+- Not flang's, found by LAPACK: `.comm` was a strong definition, so a common block in
+  two files did not link.  The corpus skips its programs of several files; LAPACK has
+  no other kind.  Now `S32O_BIND_COMMON` (docs/file-formats.md), all four tools.
+- Not flang's, wrong-code, found by LAPACK: `llvm.powi` had no libcall, so LLVM called
+  `pow` with the exponent converted to the base's type.  `(-1.0)**16777217` was `+1`,
+  from C's `__builtin_powif` too; small powers were a last place off everyone else's,
+  enough to fail `csep`.  Now `__powisf2`, `__powidf2` (`runtime/powi.c`).
 
 ## Still wrong
 
@@ -151,6 +171,6 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
   `EXECUTE_COMMAND_LINE` answers `cmdstat = -1`, no command processor.
 - `REAL(4)` and `(8)` are all there is: 2, 3, 10 and 16 are off.
 - `flang-rt` by its own CMake, a driver (`flang` itself, not `-fc1`), an image.
-  Only `slow32-dbt` and `slow32-fast` have been run.
+- The corpus's 153 programs of several files are still skipped (`skip-multifile`).
 - Speed and code size are unmeasured.  `hello` is 1.2 MB; the runtime and libc++
   are most of it.
