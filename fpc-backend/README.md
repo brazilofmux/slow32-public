@@ -18,10 +18,12 @@ fpc-backend/
 
 ## Quick Start
 
-The `slow32:toolchain` image (`docker.io/hurriedreformist/slow32:toolchain`)
-carries a built `ppcs32`, its RTL (`/opt/slow32/lib/fpc`, and
-`/opt/slow32/lib/fpc-fpu` for `-CfSLOW32`) and `s32pc input.pas
-[output.s32x]`, which compiles, assembles and links in one step.  The steps
+The `slow32:pascal` image (`docker.io/hurriedreformist/slow32:pascal`, FROM
+slow32:base; in slow32:toolchain until 2026-11-07) carries a built `ppcs32`,
+its RTL (`/opt/slow32/lib/fpc`, and `/opt/slow32/lib/fpc-fpu` for
+`-CfSLOW32`) and `s32pc [--fpu] [-O2] input.pas [output.s32x]`, which
+compiles, assembles and links in one step.  `fpc-backend/tests/run-image.sh`
+is its gate.  The steps
 below build the same from source.
 
 ### Prerequisites

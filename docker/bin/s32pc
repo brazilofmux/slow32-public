@@ -1,0 +1,40 @@
+#!/bin/bash
+# s32pc -- Free Pascal to a SLOW-32 executable: ppcs32, slow32asm, s32-ld.
+#   s32pc [--fpu] [-O1|-O2|-O3] [-Fu dir] prog.pas [prog.s32x]
+# --fpu compiles with -CfSLOW32 (the f32 hardware FPU) and links the RTL
+# built the same way; units must match the program's -Cf mode.  The RTL is
+# one archive per mode (librtl.s32a), so the linker takes only the units
+# the program uses.  The result runs under s32run (any engine): it uses the
+# MMIO runtime.
+set -eu
+LIB="${SLOW32_LIB:-/opt/slow32/lib}"
+fpu=0; opt=""; src=""; out=""; units=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fpu) fpu=1 ;;
+        -O1|-O2|-O3) opt="$1" ;;
+        -Fu) units+=("-Fu$2"); shift ;;
+        -Fu*) units+=("$1") ;;
+        *.pas|*.pp|*.lpr) [ -z "$src" ] && src="$1" || { echo "s32pc: one program at a time" >&2; exit 2; } ;;
+        *.s32x) out="$1" ;;
+        *) echo "s32pc: what is $1?" >&2; exit 2 ;;
+    esac
+    shift
+done
+[ -n "$src" ] || { echo "usage: s32pc [--fpu] [-O2] [-Fu dir] prog.pas [prog.s32x]" >&2; exit 2; }
+base="$(basename "$src")"; base="${base%.*}"
+[ -n "$out" ] || out="${src%.*}.s32x"
+RTL="$LIB/fpc"; flags=()
+if [ $fpu = 1 ]; then RTL="$LIB/fpc-fpu"; flags=(-CfSLOW32); fi
+W="$(mktemp -d "${TMPDIR:-/tmp}/s32pc.XXXXXX")"
+trap 'rm -rf "${W:?}"' EXIT
+ppcs32 -Tembedded -s -n ${opt:+"$opt"} ${flags[@]+"${flags[@]}"} -Fu"$RTL" ${units[@]+"${units[@]}"} \
+    -FE"$W" "$src" >"$W/pas.log" 2>&1 || { cat "$W/pas.log" >&2; exit 1; }
+# slow32asm and s32-ld narrate on stdout: keep it for a failure
+for s in "$W"/*.s; do
+    slow32asm "$s" "${s%.s}.s32o" >"$W/as.log" 2>&1 || { cat "$W/as.log" >&2; exit 1; }
+done
+s32-ld --mmio 64K -o "$out" "$LIB/crt0.s32o" "$LIB/fpc/fpc_startup.s32o" "$W/$base.s32o" \
+    $(ls "$W"/*.s32o | grep -v "/$base\.s32o\$" || true) "$RTL/librtl.s32a" \
+    "$LIB/libc_mmio.s32a" "$LIB/libs32.s32a" >"$W/ld.log" 2>&1 || { cat "$W/ld.log" >&2; exit 1; }
+echo "$out"

@@ -46,7 +46,8 @@ for amd64 and arm64 as `hurriedreformist/slow32:<variant>` on Docker Hub
 |---|---|
 | `emulator` | the four engines (`slow32`, `slow32-fast`, `slow32-dbt`, `qemu-system-slow32`) and `s32run` |
 | `base` | assembler, linker, librarian, dump/disassembler, runtime archives and headers |
-| `toolchain` | LLVM/clang, libc++/libc++abi and `s32c++`, Free Pascal `ppcs32`, the cc-x64/cc-a64 cross-compilers |
+| `toolchain` | LLVM/clang, libc++/libc++abi and `s32c++`, flang and `s32flang`, the cc-x64/cc-a64 cross-compilers |
+| `pascal` | Free Pascal `ppcs32`, its RTL (soft float and `-CfSLOW32`), and the `s32pc` driver |
 | `cobol` | `s32-cobc`, libcob, and the `s32cob` driver |
 | `fortran` | `f77`, libf77, and the `s32f77` driver |
 | `forth` | the Forth kernel and `s32forth`; `forthc` as `s32forthc` |

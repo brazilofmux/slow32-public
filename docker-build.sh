@@ -17,8 +17,12 @@ echo "Building base container (emulator + as/ld/ar/utilities + runtime)..."
 docker build -f Dockerfile.base -t slow32:base .
 
 echo ""
-echo "Building toolchain container (base + LLVM + FPC + cc-x64/cc-a64)..."
+echo "Building toolchain container (base + LLVM + flang + cc-x64/cc-a64)..."
 docker build -f Dockerfile.toolchain -t slow32:toolchain .
+
+echo ""
+echo "Building Pascal container (base + ppcs32 + RTL)..."
+docker build -f Dockerfile.pascal -t slow32:pascal .
 
 echo ""
 echo "Building COBOL 85 container (base + s32-cobc + libcob)..."
