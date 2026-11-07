@@ -143,10 +143,24 @@ index 875cb597fa07..fb82bb7c6128 100644
  
  } // namespace Fortran::runtime
 diff --git a/flang-rt/lib/runtime/ieee_arithmetic.f90 b/flang-rt/lib/runtime/ieee_arithmetic.f90
-index 0e7d4493385f..ac1154f96ab7 100644
+index 0e7d4493385f..5d19ddbfcd2d 100644
 --- a/flang-rt/lib/runtime/ieee_arithmetic.f90
 +++ b/flang-rt/lib/runtime/ieee_arithmetic.f90
-@@ -288,6 +288,24 @@ module ieee_arithmetic
+@@ -166,8 +166,13 @@ module ieee_arithmetic
+ ! the type of the first argument. The result type of a SPECIFICS_rRR
+ ! function call is the highest precision argument type.
+ 
++#if __slow32__
++#define SPECIFICS_I(G) \
++  G(1) G(2) G(4) G(8)
++#else
+ #define SPECIFICS_I(G) \
+   G(1) G(2) G(4) G(8) G(16)
++#endif
+ #define SPECIFICS_L(G) \
+   G(1) G(2) G(4) G(8)
+ 
+@@ -288,6 +293,24 @@ module ieee_arithmetic
  #endif
  #endif
  
@@ -1189,10 +1203,10 @@ index 3393ed1dc981..9705e3e339e9 100644
  void RTDECL(Transpose)(Descriptor &result, const Descriptor &matrix,
      const char *sourceFile = nullptr, int line = 0);
 diff --git a/flang/include/flang/Tools/TargetSetup.h b/flang/include/flang/Tools/TargetSetup.h
-index fe6215b7a538..6097334c673e 100644
+index fe6215b7a538..fac0b2fe0275 100644
 --- a/flang/include/flang/Tools/TargetSetup.h
 +++ b/flang/include/flang/Tools/TargetSetup.h
-@@ -97,6 +97,32 @@ namespace Fortran::tools {
+@@ -97,6 +97,34 @@ namespace Fortran::tools {
    targetCharacteristics.set_integerKindForPointer(
        targetTriple.getArchPointerBitWidth() / 8);
  
@@ -1205,8 +1219,10 @@ index fe6215b7a538..6097334c673e 100644
 +      targetCharacteristics.EnableType(category, 8, 8, 4);
 +    }
 +    targetCharacteristics.EnableType(TypeCategory::Complex, 8, 16, 4);
-+    targetCharacteristics.EnableType(TypeCategory::Integer, 16, 16, 4);
-+    targetCharacteristics.EnableType(TypeCategory::Unsigned, 16, 16, 4);
++    // No 128-bit integers: clang's target has none, so the runtime couldn't read,
++    // write or do arithmetic on them, and libs32 has no __multi3 or __divti3.
++    targetCharacteristics.DisableType(TypeCategory::Integer, 16);
++    targetCharacteristics.DisableType(TypeCategory::Unsigned, 16);
 +    // docs/SPEC.md: no exception flags, no halting on them, and one rounding mode.
 +    // A program that asks has to be told.  (Rounding off leaves the question to
 +    // lowering: otherwise it folds to all four modes for a constant argument.)

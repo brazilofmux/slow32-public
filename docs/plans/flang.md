@@ -19,18 +19,18 @@ stage08 and DBT stress test.
 - `flang/tests/cplx.f90`: `bind(c)` with C both ways, `COMPLEX(4)` and `(8)`.
 - gfortran's own execute tests (`flang/tests/gfortran-suite.py`; LLVM's test suite
   carries them, in `~/refs/llvm-test-suite`, never in git), gfortran 16 as the
-  oracle: **2,457 of 2,810 agree**, where gfortran has a verdict; a test of several
+  oracle: **2,441 of 2,784 agree**, where gfortran has a verdict; a test of several
   files, 142 of them with C, is built with the rest of it (`dg-additional-sources`,
   `dg-compile-aux-modules`), and a test with a target condition runs when DejaGnu would
   run it here (`applies`, which stops on a name it has no answer for; 54 do not apply).
-  `INTEGER(16)` exists here, `REAL(10)` and `(16)` do not.  This corpus found, in a day, everything in "what it found".
+  `INTEGER(16)`, `REAL(10)` and `(16)` do not exist here.  This corpus found, in a day, everything in "what it found".
   `flang/tests/gfortran-native.py` puts the same tests through native flang from
-  these sources: 341 of the 353 left fail there too, and those are flang's.
+  these sources: 335 of the 343 left fail there too, and those are flang's.
   Failing here alone: `ieee/ieee_1`, `comparisons_3`, `large_3`, which expect flags
   this machine does not have; `common_align_2`, 8-byte alignment; `PR49268`, a
   Cray pointer is 32 bits; `c_sizeof_1`, 4 is right; `bind-c-intent-out`, reads out
-  of bounds; `pr66311`, `large_integer_kind_1`, `unsigned_write`, `date_and_time_4`,
-  `pr47757-2`, `INTEGER(16)` in the runtime.
+  of bounds; `pr66311`, a literal that wants `INTEGER(16)`.  (`secnds` compares clocks in
+  single precision: native flang fails it too, most runs.)
     None of the programs of several files is on that list: the 86 in `c-interop/`, which
   check descriptors from C, agree or fail as native flang does, so descriptors have the
   layout C expects on 32 bits.  flang's header is not gfortran's, so their C is compiled
@@ -38,8 +38,8 @@ stage08 and DBT stress test.
   that leaves `CFI_type_mask` in 2 tests, and `__int128` in 1, which this machine lacks.
   They called `mkdir` with mode bits `<sys/stat.h>` did not define; it does now.
 `regression/run-flang-corpus.sh` holds a run to `flang/tests/gfortran-verdicts.txt`.
-- `flang/tests/gfortran-axes.py`, a report: what the gate does not vary.  Of the 2,639
-  programs flang builds, every engine agrees on 2,638 (`matmul_15` outlasts the
+- `flang/tests/gfortran-axes.py`, a report: what the gate does not vary.  Of the 2,620
+  programs flang builds, every engine agrees on 2,619 (`matmul_15` outlasts the
   reference interpreter's 3 minutes), and the machine verifier passes all of them.
   Its first run: `cshift_2` needs more than the linker's 64 KB stack, and passed on
   the DBT by writing past `stack_end`, where only the interpreter faults (SPEC 6.2);
@@ -52,7 +52,7 @@ stage08 and DBT stress test.
   (`llvm-backend/test/fp-branch-cc.ll`); `.word` refused a quoted name
   (`asm-quoted-symbol`); `OUT_OF_RANGE` of a `REAL(8)` went to `REAL(16)` whether or
   not there is one (`flang/tests/oor.f90`); `s32-ld` had fixed archive tables.
-  Differ still, 16 of 2,639, none ours: `noreturn-4` links only when optimized, as it
+  Differ still, 16 of 2,620, none ours: `noreturn-4` links only when optimized, as it
   says it must; native flang does the same with
   `aliasing_array_result_1` (`-O1`), `inline_matmul_1`, `matmul_5`, `ptr_func_assign_1`,
   `transfer_array_intrinsic_4` and `typebound_call_32` (`-O0`); `whole_file_14` and
@@ -173,9 +173,6 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 - That correctness costs: an `INTEGER(4)` loop has about two more instructions per
   entry (3.7% on loops of 7 iterations, a kernel made to show it), and a variable
   step calls `__udivsi3`, there being no unsigned divide (11% on the same kind).
-- `INTEGER(16)` compiles, but the runtime has none of it: no 128-bit type in clang's
-  SLOW-32 target, so its I/O does not link and `DATE_AND_TIME`, `IANY` and the like stop
-  with "not yet implemented".  5 of the corpus.
 - `bessel_yn` in `REAL(4)` is a unit in the last place off, enough to fail
   `bessel_5` through the recurrence (runtime ISSUES-29).
 
@@ -185,6 +182,13 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
   need code made at run time, and W^X forbids it.  `llc` says so; 2 of the corpus.
   `EXECUTE_COMMAND_LINE` answers `cmdstat = -1`, no command processor.
 - `REAL(4)` and `(8)` are all there is: 2, 3, 10 and 16 are off.
+- `INTEGER(16)` and `UNSIGNED(16)` are off, by ruling: a 128-bit integer is a compile
+  error here, as on other 32-bit targets, and `SELECTED_INT_KIND(30)` is -1.  Bit
+  operations and array moves did work, LLVM splitting them, and 16 tests that passed
+  no longer apply.  Multiplying, dividing, conversions and I/O had nothing behind them:
+  no `__multi3` or `__divti3`, no `__int128` in clang's target for the runtime.  With no
+  carry flag each word of those is its own run of compares.  A 64-bit machine gets them
+  for the price of what 64 bits cost here.
 - `flang-rt` by its own CMake, a driver (`flang` itself, not `-fc1`), an image.
 - Speed and code size are unmeasured.  `hello` is 1.2 MB; the runtime and libc++
   are most of it.

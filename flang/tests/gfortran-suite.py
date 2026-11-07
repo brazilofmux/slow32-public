@@ -46,13 +46,13 @@ def directives(text):
     return run, opts, 'dg-shouldfail' in text
 
 
-# What DejaGnu would ask of a target, answered for this one.  INTEGER(16) exists here;
-# REAL(10) and (16) do not.  Whether the C library can truncate a file and so on is for the
+# What DejaGnu would ask of a target, answered for this one.  INTEGER(16), REAL(10) and
+# (16) do not exist here.  Whether the C library can truncate a file and so on is for the
 # tests to show.  An xfail isn't a condition: the oracle says what it does on this host.
 TRIPLE = 'slow32-unknown-none'
 EFFECTIVE = dict.fromkeys(('fd_truncate', 'c99_runtime', 'stdint_types', 'le', 'ilp32', 'nonpic',
-                           'fortran_integer_16', 'fortran_large_int', 'fortran_largest_fp_has_sqrt'), True)
-EFFECTIVE.update(dict.fromkeys(('fortran_large_real', 'fortran_real_10', 'fortran_real_16', 'fortran_real_c_float128',
+                           'fortran_largest_fp_has_sqrt'), True)
+EFFECTIVE.update(dict.fromkeys(('fortran_integer_16', 'fortran_large_int', 'fortran_large_real', 'fortran_real_10', 'fortran_real_16', 'fortran_real_c_float128',
                                 'lto', 'static_libgfortran', 'be', 'ia32', 'newlib', 'pie_enabled', 'sse2_runtime'), False))
 
 

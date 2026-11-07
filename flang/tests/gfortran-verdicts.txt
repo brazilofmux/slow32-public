@@ -454,7 +454,7 @@ pass	binding_label_tests_23.f90
 pass	binding_label_tests_32.f90
 pass	binding_label_tests_33.f90
 pass	bit_comparison_1.F90
-pass	bit_comparison_2.F90
+skip-conditional	bit_comparison_2.F90
 pass	block_1.f08
 pass	block_13.f08
 pass	block_14.f90
@@ -626,12 +626,12 @@ format-only	c-interop/size.f90
 exit-differs	c-interop/typecodes-array-basic.f90
 flang	c-interop/typecodes-array-char.f90
 skip-conditional	c-interop/typecodes-array-float128.f90
-clang	c-interop/typecodes-array-int128.f90
+skip-conditional	c-interop/typecodes-array-int128.f90
 flang	c-interop/typecodes-array-longdouble.f90
 clang	c-interop/typecodes-sanity.f90
 exit-differs	c-interop/typecodes-scalar-basic.f90
 skip-conditional	c-interop/typecodes-scalar-float128.f90
-clang	c-interop/typecodes-scalar-int128.f90
+skip-conditional	c-interop/typecodes-scalar-int128.f90
 flang	c-interop/typecodes-scalar-longdouble.f90
 pass	c-interop/ubound-bindc.f90
 pass	c-interop/ubound-poly.f90
@@ -655,7 +655,7 @@ pass	c_funloc_tests.f03
 pass	c_funloc_tests_3.f03
 text-differs	c_funloc_tests_4.f03
 pass	c_funptr_1_mod.f90
-pass	c_kind_int128_test2.f03
+skip-conditional	c_kind_int128_test2.f03
 flang	c_kind_params.f90
 pass	c_loc_test.f90
 pass	c_loc_test_20.f90
@@ -997,7 +997,7 @@ skip-flag	cshift_bounds_1.f90
 skip-flag	cshift_bounds_2.f90
 skip-flag	cshift_bounds_3.f90
 skip-flag	cshift_bounds_4.f90
-pass	cshift_large_1.f90
+skip-conditional	cshift_large_1.f90
 pass	cshift_nan_1.f90
 pass	csqrt_2.f
 pass	data_array_1.f90
@@ -1012,7 +1012,7 @@ pass	data_stmt_pointer.f90
 format-only	data_vector_section.f90
 pass	date_and_time_1.f90
 pass	date_and_time_3.f90
-exit-differs	date_and_time_4.f90
+skip-conditional	date_and_time_4.f90
 exit-differs	deallocate_alloc_opt_3.f90
 exit-differs	deallocate_error_1.f90
 pass	deallocate_error_2.f90
@@ -1224,7 +1224,7 @@ pass	dos_eol.f
 pass	dot_product_1.f03
 pass	dot_product_4.f90
 pass	dshift_1.F90
-pass	dshift_2.F90
+skip-conditional	dshift_2.F90
 pass	dtio_1.f90
 exit-differs	dtio_10.f90
 pass	dtio_12.f90
@@ -1330,7 +1330,7 @@ pass	eoshift_4.f90
 pass	eoshift_5.f90
 pass	eoshift_6.f90
 skip-flag	eoshift_bounds_1.f90
-pass	eoshift_large_1.f90
+skip-conditional	eoshift_large_1.f90
 pass	equiv_6.f90
 flang	equiv_7.f90
 pass	equiv_9.f90
@@ -1794,7 +1794,7 @@ pass	internal_pack_21.f90
 pass	internal_pack_22.f90
 pass	internal_pack_23.f90
 pass	internal_pack_24.f90
-pass	internal_pack_3.f90
+skip-conditional	internal_pack_3.f90
 pass	internal_pack_4.f90
 pass	internal_pack_6a.f90
 pass	internal_pack_8.f90
@@ -1812,7 +1812,7 @@ pass	intrinsic_intkinds_1.f90
 pass	intrinsic_modulo_1.f90
 pass	intrinsic_pack_1.f90
 skip-conditional	intrinsic_pack_2.f90
-pass	intrinsic_pack_3.f90
+skip-conditional	intrinsic_pack_3.f90
 pass	intrinsic_pack_4.f90
 pass	intrinsic_pack_5.f90
 format-only	intrinsic_pack_6.f90
@@ -1821,11 +1821,11 @@ pass	intrinsic_sign_1.f90
 pass	intrinsic_sign_2.f90
 pass	intrinsic_spread_1.f90
 skip-conditional	intrinsic_spread_2.f90
-pass	intrinsic_spread_3.f90
+skip-conditional	intrinsic_spread_3.f90
 exit-differs	intrinsic_std_4.f90
 pass	intrinsic_unpack_1.f90
 skip-conditional	intrinsic_unpack_2.f90
-pass	intrinsic_unpack_3.f90
+skip-conditional	intrinsic_unpack_3.f90
 pass	intrinsic_verify_1.f90
 pass	io_err_1.f90
 pass	io_real_boz.f90
@@ -1857,8 +1857,8 @@ pass	iso_fortran_env_3.f90
 pass	iso_fortran_env_8.f90
 ld	itime_idate_1.f
 ld	itime_idate_2.f
-ld	large_integer_kind_1.f90
-pass	large_integer_kind_2.f90
+skip-conditional	large_integer_kind_1.f90
+skip-conditional	large_integer_kind_2.f90
 skip-conditional	large_real_kind_1.f90
 skip-conditional	large_real_kind_2.F90
 skip-conditional	large_real_kind_3.F90
@@ -1869,9 +1869,9 @@ text-differs	large_unit_1.f90
 pass	large_unit_2.f90
 pass	largeequiv_1.f90
 pass	leadz_trailz_1.f90
-pass	leadz_trailz_2.f90
+skip-conditional	leadz_trailz_2.f90
 pass	leadz_trailz_3.f90
-exit-differs	list_directed_large.f90
+skip-conditional	list_directed_large.f90
 pass	list_read_1.f90
 pass	list_read_10.f90
 exit-differs	list_read_11.f90
@@ -1904,7 +1904,7 @@ pass	mapping_1.f90
 pass	mapping_2.f90
 pass	mapping_3.f90
 pass	masklr_1.F90
-pass	masklr_2.F90
+skip-conditional	masklr_2.F90
 pass	matmul_1.f90
 pass	matmul_10.f90
 pass	matmul_12.f90
@@ -1973,7 +1973,7 @@ pass	maxval_parameter_1.f90
 ld	mclock.f90
 pass	merge_1.f90
 pass	merge_bits_1.F90
-pass	merge_bits_2.F90
+skip-conditional	merge_bits_2.F90
 pass	merge_bits_4.f90
 pass	merge_char_1.f90
 skip-flag	merge_char_3.f90
@@ -2225,7 +2225,7 @@ pass	optional_dim_2.f90
 pass	optional_dim_3.f90
 exit-differs	out_of_range_1.f90
 flang	out_of_range_2.f90
-flang	out_of_range_3.f90
+skip-conditional	out_of_range_3.f90
 pass	output_exponents_1.f90
 pass	overload_1.f90
 pass	overload_3.f90
@@ -2327,7 +2327,7 @@ skip-flag	pointer_remapping_6.f08
 pass	pointer_remapping_9.f90
 pass	pointer_target_1.f90
 pass	popcnt_poppar_1.F90
-pass	popcnt_poppar_2.F90
+skip-conditional	popcnt_poppar_2.F90
 pass	power.f90
 pass	power1.f90
 pass	power_3.f90
@@ -2449,8 +2449,8 @@ pass	pr46945.f90
 pass	pr47008.f03
 skip-conditional	pr47614.f
 text-differs	pr47757-1.f90
-exit-differs	pr47757-2.f90
-pass	pr47757-3.f90
+skip-conditional	pr47757-2.f90
+skip-conditional	pr47757-3.f90
 pass	pr47878.f90
 skip-flag	pr48958.f90
 pass	pr49103.f90
@@ -2476,7 +2476,7 @@ pass	pr65429.f90
 pass	pr65450.f90
 pass	pr65504.f90
 pass	pr65903.f90
-ld	pr66311.f90
+flang	pr66311.f90
 pass	pr66864.f90
 pass	pr67140.f90
 pass	pr67524.f90
@@ -2572,7 +2572,7 @@ pass	pr96859.f90
 pass	pr97272.f90
 pass	pr97500.f90
 pass	pr98017.f90
-ld	pr98076.f90
+skip-conditional	pr98076.f90
 pass	pr98408.f90
 pass	pr99210.f90
 skip-flag	pr99602b.f90
@@ -2851,7 +2851,7 @@ pass	selected_char_kind_1.f90
 pass	selected_char_kind_4.f90
 pass	selected_kind_1.f90
 pass	selected_logical_kind_1.f90
-flang	selected_logical_kind_3.f90
+skip-conditional	selected_logical_kind_3.f90
 pass	selected_logical_kind_4.f90
 exit-differs	selected_real_kind_2.f90
 format-only	set_exponent_1.f90
@@ -2865,7 +2865,7 @@ skip-conditional	shape_9.f90
 pass	shift-alloc.f90
 pass	shift-kind_2.f90
 pass	shiftalr_1.F90
-pass	shiftalr_2.F90
+skip-conditional	shiftalr_2.F90
 pass	shiftalr_3.f90
 pass	short_circuiting_2.f90
 exit-differs	short_circuiting_3.f90
@@ -3131,14 +3131,14 @@ pass	unsigned_39.f90
 exit-differs	unsigned_4.f90
 pass	unsigned_40.f90
 oracle-refuses	unsigned_43.f90
-oracle-refuses	unsigned_44.f90
+skip-conditional	unsigned_44.f90
 pass	unsigned_5.f90
 pass	unsigned_6.f90
 pass	unsigned_7.f90
 pass	unsigned_8.f90
 pass	unsigned_9.f90
 pass	unsigned_kiss.f90
-ld	unsigned_write.f90
+skip-conditional	unsigned_write.f90
 pass	unsigned_write_2.f90
 pass	use_10.f90
 pass	use_11.f90

@@ -29,12 +29,10 @@ program p
   if (out_of_range(x(13), 0_4, fails) .neqv. .true.) stop 5
   fails = .false.
   if (out_of_range(x(13), 0_4, fails) .neqv. .false.) stop 6
-  ! Not numbers, and INTEGER(16)
+  ! Not numbers
   inf = huge(0.0_8); inf = inf * 2.0_8; nan = inf - inf
   x(15:16) = [inf, nan]
   if (any(.not. out_of_range(x(15:16), 0_4))) stop 7
-  x(17:18) = [1.0e38_8, 1.0e39_8]
-  if (any(out_of_range(x(17:18), 0_16) .neqv. [.false.,.true.])) stop 8
   ! Evaluated once
   i = 0
   if (out_of_range(once(), 0_1)) stop 9
