@@ -105,6 +105,13 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+Rebuilt 2026-11-07 (tree at `a305c576`).  `cc.s32x` and the tools, `libc.s32a`,
+and the BASIC side built by them.  Three wrong-code fixes in the HIR backend, in
+`cc.s32x` and in `s32-bc`'s own copy of it:
+- selfhost ISSUES-113: a value in two fp64 pairs.
+- selfhost ISSUES-114: an address folded through what BURG deleted.
+- selfhost ISSUES-115: a spilled parameter's slot taken from function entry.
+
 Rebuilt 2026-11-05 a third time (tree at `c44ba897`).  The BASIC side only:
 `RUN` line and file, `LINE`, its style, `PAINT` and tiles, `COLOR` in graphics,
 `PLAY`, `SOUND` and `VARPTR$`.
