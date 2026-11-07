@@ -3977,3 +3977,29 @@ exists if it has bytes or a label.  Found through flang, an empty derived type i
 gfortran's `class_array_16`.  Gate: regression/run-local-symbols.sh, which
 requires a non-null address in all four sections and the same object from both
 assemblers; mutation-tested on the linker.
+
+### 113. [RESOLVED 2026-11-07] A value in two fp64 pairs: wrong code
+
+`ra_build_pairs` records each half of a double's partner, so the allocator can
+place the two in an aligned register pair: the CALL of an fp64 result with its
+CALLHI, and the lo and hi arguments of each fp64 pseudo-call.  A value can be
+offered twice.  Clearing a double's sign through a union keeps its lo word and
+makes a new hi, so the CALL that made the double is also the lo argument of the
+next operation, with a different hi beside it.  The second pairing overwrote
+`ra_pair_of` on one side only, and the table was no longer symmetric.  Pair
+claiming and share-fate spilling act on the partner, and between them the hi
+word's spill was stored where the lo word was made, before the hi existed: the
+operation read whatever that register held.  The comment over the pair code
+said it "can never produce wrong code -- only fewer or more instructions"; that
+stopped being true when claiming and shared fate arrived.
+
+A value is half of one pair now (`ra_pair_link`): the first pairing stands.
+Fixed in all three copies of the allocator (here, `fortran/src`, `cobol/src/hir`),
+which were identical.  fortran/ is where it showed: f77 builds `ABS(D)` that way,
+and `MIN`/`MAX` of doubles select into the same shape, so `D2 - ABS(D1)` came out
+`D2`.  Found by the Fortran random-program differential (regression/fuzz/ffuzz.py,
+f77 against flang) on its first run, seeds 3 and 33 of 40.  COBOL's generated
+code is unchanged (asm-snapshot over 1,657 programs); LINPACK under f77 is 0.2%
+fewer instructions.  Gates: `tests/test_fp64_pair_shared.c` (fails on the
+compiler before the fix, passes after), `fortran/tests/f77/pairabs1.f`
+(likewise against f77).

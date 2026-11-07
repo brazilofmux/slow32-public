@@ -600,6 +600,29 @@ Gate 3 in `tests/run-tests.sh` runs every `tests/f77/*.f` under both the
 oracle and (once it exists) our compiler, requiring stdout and exit
 status to match. It reports SKIP until milestone 3 lands the driver.
 
+### flang as a second compiler (2026-11-07)
+
+flang builds SLOW-32 programs too (docs/plans/flang.md), so f77 can be held to
+another compiler on the same machine and the same libm, with nothing to allow
+for.  On `tests/f77` (85 programs, each run on `slow32-dbt -I`): 69 print the same
+bytes.  The 12 that differ are all explained: list-directed and NAMELIST output in
+8 (the layout is the compiler's; f77's is gfortran's), `int2h1` (INTEGER*2
+arithmetic in fullwords, as FORTRAN H does it), `powneg1` (the 2026-10-19 ruling:
+f77 gives the better answer), `fmtlen1` (flang accepts a format with no closing
+parenthesis), and `negdiv1`, whose -2**31/-1 is undefined to LLVM, which deletes
+the program down to `unreachable`.  flang refuses 4 for extensions f77 takes:
+BOZ in DATA for a LOGICAL, a whole character array as a format, `INTEGER FUNCTION
+F*2`, and INCLUDE without the extension or in parentheses.
+
+Speed on SLOW-32, instructions: LINPACK 508.6M under f77 against 537.7M under
+flang at -O2; mandel 20.4M against 25.5M.  The two print the same results.
+
+`regression/fuzz/ffuzz.py` makes random programs both must agree on, gfortran
+deciding when they do not.  Its first run found selfhost ISSUES-113, wrong code
+in the pair allocator f77 shares with stage08; after the fix, 1,000 of 1,000
+agree.  It writes fixed form within F77, explicit FORMATs only and no integer
+overflow, so the differences above cannot arise.
+
 ## What not to do
 
 - No native x64/a64 backends (ruling 2). slow32-dbt is the path.

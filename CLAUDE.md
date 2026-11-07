@@ -439,6 +439,18 @@ cd ~/slow-32/regression && ./run-local-symbols.sh
 cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds x 2 profiles
 cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink one
 
+# Its Fortran sibling: ffuzz.py generates fixed-form Fortran 77 with one answer
+# (integers kept under 2**15 -- flang hands LLVM overflow as undefined, and LLVM
+# uses it -- doubles reduced through a temporary, explicit FORMATs only, no
+# aliasing, every variable set first) and requires fortran/'s f77 and flang to
+# print the same bytes on slow32-dbt -I; where they differ, gfortran says which
+# is wrong.  The same machine and libm on both sides, so there is nothing to
+# allow for.  Its first run (2026-11-07) found selfhost ISSUES-113, wrong code
+# in the fp64 pair allocator all three HIR backends share.  ~2,000/min.
+# After a change to fortran/, the HIR backends, flang or flang-rt.
+cd ~/slow-32/regression/fuzz && ./ffuzz.py run -n 2000
+cd ~/slow-32/regression/fuzz && ./ffuzz.py reduce SEED -o small.f
+
 # And random MACHINE CODE, below every compiler: isafuzz.py generates SLOW-32
 # assembly with every Unspecified case of docs/SPEC.md avoided by construction
 # (masked memory, NaNs canonicalized, safe conversion operands, labelled jump

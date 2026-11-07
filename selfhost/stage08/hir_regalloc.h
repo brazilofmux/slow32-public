@@ -2669,6 +2669,22 @@ static int ra_pair_share_fate = 1;
 static int *ra_pair_of;
 static int *ra_pair_lo;
 
+/* Link lo and hi as one fp64 pair.  A value is half of ONE pair: the
+ * first pairing stands.  A value can be offered two -- the CALL of an
+ * fp64 result is paired with its CALLHI, and the same CALL may later be
+ * the lo argument of a pseudo-call whose hi is another value (f77's
+ * ABS(D) keeps D's lo and clears the sign of its hi).  Overwriting
+ * ra_pair_of[lo] left the table asymmetric -- lo's partner the new hi,
+ * the old hi's partner still lo -- and pair claiming and share-fate
+ * spilling, which act on the partner, then stored the wrong value to a
+ * pair's slot: wrong code (fortran/ ffuzz seed 3). */
+static void ra_pair_link(int lo, int hi) {
+    if (lo == hi) return;
+    if (ra_pair_of[lo] >= 0 || ra_pair_of[hi] >= 0) return;
+    ra_pair_of[lo] = hi; ra_pair_lo[lo] = 1;
+    ra_pair_of[hi] = lo; ra_pair_lo[hi] = 0;
+}
+
 static void ra_build_pairs(void) {
     int i;
     int base;
@@ -2686,24 +2702,17 @@ static void ra_build_pairs(void) {
                 int b;
                 a = h_carg[base + 0];
                 b = h_carg[base + 1];
-                if (a >= 0 && b >= 0) {
-                    ra_pair_of[a] = b; ra_pair_lo[a] = 1;
-                    ra_pair_of[b] = a; ra_pair_lo[b] = 0;
-                }
+                if (a >= 0 && b >= 0) ra_pair_link(a, b);
                 if (n >= 4) {
                     a = h_carg[base + 2];
                     b = h_carg[base + 3];
-                    if (a >= 0 && b >= 0) {
-                        ra_pair_of[a] = b; ra_pair_lo[a] = 1;
-                        ra_pair_of[b] = a; ra_pair_lo[b] = 0;
-                    }
+                    if (a >= 0 && b >= 0) ra_pair_link(a, b);
                 }
             }
             /* The result pair: the CALL is the lo word, its CALLHI the hi. */
             if (i + 1 < h_ninst && h_kind[i + 1] == HI_CALLHI &&
                 h_src1[i + 1] == i) {
-                ra_pair_of[i] = i + 1; ra_pair_lo[i] = 1;
-                ra_pair_of[i + 1] = i; ra_pair_lo[i + 1] = 0;
+                ra_pair_link(i, i + 1);
             }
         }
         i = i + 1;
