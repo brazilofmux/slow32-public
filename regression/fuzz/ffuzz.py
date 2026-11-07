@@ -2,7 +2,9 @@
 """ffuzz.py -- random-program differential for the two Fortran compilers.
 
 Each seed makes one deterministic fixed-form Fortran 77 program that the
-standard gives one answer: INTEGER values kept under 2**15 (every
+standard gives one answer -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX and
+CHARACTER, EQUIVALENCE, DATA and BLOCK DATA (the rules for each are over
+the generator below): INTEGER values kept under 2**15 (every
 assignment reduces MOD 32749, and an expression is at most a sum of two
 products of such values, so nothing reaches 2**31 -- flang hands LLVM
 overflow as undefined, and it uses it), DOUBLE PRECISION reduced the same
@@ -43,12 +45,29 @@ ND = 3   # double scalars per unit
 LIM = 32749
 
 # ------------------------------------------------------------------ program
-# A unit: kind 'main' | 'sub' | 'fn'; params [(name, 'i'|'d'|'a')] ('a' an
-# INTEGER(10) array); body a list of statements:
-#   ('ai', lhs, expr)  ('ad', lhs, expr)  ('do', var, lo, hi, body)
+# A unit: kind 'main' | 'sub' | 'fn'; params [(name, type)] with type
+# 'i' INTEGER, 'd' DOUBLE PRECISION, 'r' REAL, 'z' COMPLEX, 'c' CHARACTER*(*)
+# (its actual is at least 8 long) or 'a' INTEGER(10); body a list of:
+#   ('ai'|'ad'|'ar'|'az'|'as', lhs, expr)  ('do', var, lo, hi, step, body)
 #   ('if', cond, then, else)  ('lif', cond, stmt)  ('aif', expr, neg, zero, pos)
 #   ('call', name, args)  ('print',)
 # Expressions are strings: generation is where the care is.
+#
+# What each feature keeps out, and why:
+#   REAL, DOUBLE: every assignment reduces through a temporary (T - AINT(T/m)*m),
+#     divisors are constants of magnitude 1 or more, so nothing overflows.
+#   COMPLEX: + - * and CMPLX/CONJG/REAL/AIMAG only.  Division and ABS have more
+#     than one right answer to the last place (Smith's algorithm or not, hypot or
+#     not); complex times real is left out because whether the imaginary part
+#     goes through (a*0 + b*r) decides the sign of a zero.
+#   CHARACTER: no assignment reads the variable it sets (F77 forbids the
+#     overlap), literals without commas or apostrophes, substrings in bounds.
+#   EQUIVALENCE: only entities of one type are associated -- reading an
+#     INTEGER through a DOUBLE's storage is undefined -- and none is an argument.
+#   DATA: main's variables (once, at start), a BLOCK DATA for /CD/ and /CS/,
+#     and a SAVEd call counter in each subroutine.
+
+CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 '
 
 
 class Unit:
@@ -56,7 +75,15 @@ class Unit:
         self.name, self.kind, self.params = name, kind, params
         self.ints = [f'I{k}' for k in range(1, NI + 1)]
         self.dbls = [f'D{k}' for k in range(1, ND + 1)]
+        self.reals = ['R1', 'R2']
+        self.cplx = ['Z1', 'Z2']
+        self.chars = [('S1', 8), ('S2', 8), ('S3', 12)]
         self.body = []
+        self.data = {}      # main: name -> DATA value list (rendered)
+
+
+def lit(n):
+    return f'({n})' if n < 0 else str(n)
 
 
 class Gen:
@@ -67,26 +94,53 @@ class Gen:
     def pick(self, xs):
         return self.r.choice(xs)
 
+    def ptype(self, u, t):
+        return [p for p, pt in u.params if pt == t]
+
     # -- what a unit may read and write
     def ivars(self, u, loops, write=False):
-        vs = list(u.ints) + [p for p, t in u.params if t == 'i'] + ['KC1', 'KC2']
         if u.kind == 'fn' and write:
-            vs = list(u.ints)                       # pure: no arguments, no COMMON
+            vs = list(u.ints)                       # pure: locals only
+        else:
+            vs = u.ints + self.ptype(u, 'i') + ['KC1', 'KC2', 'KD1', 'KD2']
+            if u.kind == 'main':
+                vs = vs + ['IE1', 'IE2']
         return [v for v in vs if not (write and v in loops)]
 
+    def iarrays(self, u, write=False):
+        if u.kind == 'fn' and write:
+            return [('LA', 10)]
+        a = [(p, 10) for p in self.ptype(u, 'a')] + [('KA', 10), ('LA', 10)]
+        if u.kind == 'main':
+            a.append(('IQ', 6))
+        return a
+
     def dvars(self, u, write=False):
-        vs = list(u.dbls) + [p for p, t in u.params if t == 'd'] + ['DC1']
-        if u.kind == 'fn':
-            vs = list(u.dbls)
+        if u.kind == 'fn' and write:
+            return list(u.dbls)
+        vs = u.dbls + self.ptype(u, 'd') + ['DC1']
+        if u.kind == 'main':
+            vs = vs + ['DE', f'DQ({self.r.randint(1, 3)})']
         return vs
 
-    def arrays(self, u, write=False):
-        a = [p for p, t in u.params if t == 'a']
-        if u.kind != 'fn' or not write:
-            a = a + ['KA']                          # COMMON array
+    def rvars(self, u, write=False):
         if u.kind == 'fn' and write:
-            a = []
-        return a + ['LA']                           # local array
+            return list(u.reals)
+        return u.reals + self.ptype(u, 'r') + ['RD1']
+
+    def zvars(self, u, write=False):
+        if u.kind == 'fn' and write:
+            return list(u.cplx)
+        return u.cplx + self.ptype(u, 'z')
+
+    def svars(self, u, write=False):
+        """(name, length) of the character variables."""
+        if u.kind == 'fn' and write:
+            return list(u.chars)
+        vs = u.chars + [(p, 8) for p in self.ptype(u, 'c')] + [('SD', 6)]
+        if u.kind == 'main':
+            vs = vs + [('SQ', 12), ('SE', 4)]
+        return vs
 
     def index(self, u, loops, n=10):
         if loops and self.r.random() < 0.6:
@@ -97,20 +151,49 @@ class Gen:
             return str(self.r.randint(1, n))
         return f'1+MOD(ABS({self.iatom(u, loops, 1)}),{n})'
 
+    def aelem(self, u, loops, write=False):
+        name, n = self.pick(self.iarrays(u, write))
+        return f'{name}({self.index(u, loops, n)})'
+
+    # -- character pieces
+    def slit(self, n=None):
+        n = n or self.r.randint(1, 6)
+        return "'" + ''.join(self.pick(CHARS) for _ in range(n)) + "'"
+
+    def spiece(self, u, avoid=()):
+        vs = [v for v in self.svars(u) if v[0] not in avoid]
+        r = self.r.random()
+        if not vs or r < 0.3:
+            return self.slit()
+        name, n = self.pick(vs)
+        if r < 0.6:
+            return name
+        i = self.r.randint(1, n)
+        return f'{name}({i}:{self.r.randint(i, min(n, i + 5))})'
+
+    def sexpr(self, u, avoid):
+        return '//'.join(self.spiece(u, avoid) for _ in range(self.r.randint(1, 3)))
+
     # -- integer: |atom| < 2**15
     def iatom(self, u, loops, depth=2):
         r = self.r.random()
-        if depth <= 0 or r < 0.30:
+        if depth <= 0 or r < 0.28:
             return self.pick(self.ivars(u, loops) + list(loops))
-        if r < 0.42:
+        if r < 0.38:
             return lit(self.r.randint(-999, 999))
-        if r < 0.55:
-            return f'{self.pick(self.arrays(u))}({self.index(u, loops)})'
+        if r < 0.50:
+            return self.aelem(u, loops)
+        if r < 0.58:
+            name, n = self.pick(self.svars(u))
+            k = self.r.randint(1, n)
+            return self.pick([f'ICHAR({name}({k}:{k}))', f'LEN({name})',
+                              f'INDEX({self.spiece(u)},{self.spiece(u)})'])
         a = lambda: self.iatom(u, loops, depth - 1)
         c = lit(self.r.choice([x for x in range(-97, 98) if x != 0]))
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()},{a()})',
                  lambda: f'MOD({a()},{c})', lambda: f'({a()}/{c})', lambda: f'ISIGN({a()},{a()})',
-                 lambda: f'INT({self.datom(u, loops, 0)})', lambda: f'IDIM({a()}/2,{a()}/2)']
+                 lambda: f'INT({self.datom(u, loops, 0)})', lambda: f'IDIM({a()}/2,{a()}/2)',
+                 lambda: f'NINT({self.pick(self.rvars(u))})', lambda: f'INT(REAL({self.pick(self.zvars(u))}))']
         fns = [x for x in self.units if x.kind == 'fn']
         if fns and self.r.random() < 0.25:
             f = self.pick(fns)
@@ -131,7 +214,7 @@ class Gen:
             e = f'{e}{self.pick("+-")}{term()}'
         return e
 
-    # -- double: |atom| < about 4e4
+    # -- double
     def datom(self, u, loops, depth=2):
         r = self.r.random()
         if depth <= 0 or r < 0.35:
@@ -139,12 +222,14 @@ class Gen:
         if r < 0.5:
             v = f'{self.r.randint(0, 999)}.{self.r.randint(0, 99):02d}D0'
             return f'(-{v})' if self.r.random() < 0.5 else v
-        if r < 0.65:
+        if r < 0.6:
             return f'DBLE({self.iatom(u, loops, 1)})'
+        if r < 0.65:
+            return f'DBLE({self.pick(self.rvars(u))})'
         a = lambda: self.datom(u, loops, depth - 1)
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()})',
                  lambda: f'SQRT(ABS({a()}))', lambda: f'AINT({a()})', lambda: f'ANINT({a()})',
-                 lambda: f'SIGN({a()},{a()})', lambda: f'({a()}/{self.pick(["3.0D0", "(-7.0D0)", "0.125D0", "1.1D0"])})',
+                 lambda: f'SIGN({a()},{a()})', lambda: f'({a()}/{self.pick(["3.0D0", "(-7.0D0)", "1.1D0"])})',
                  lambda: f'DBLE(REAL({a()}))']
         return self.pick(forms)()
 
@@ -155,30 +240,99 @@ class Gen:
             e = f'{e}{op}{self.datom(u, loops)}' if op != '*' else f'({e})*{self.datom(u, loops, 0)}'
         return e
 
+    # -- real
+    def ratom(self, u, loops, depth=2):
+        r = self.r.random()
+        if depth <= 0 or r < 0.35:
+            return self.pick(self.rvars(u))
+        if r < 0.47:
+            v = f'{self.r.randint(0, 99)}.{self.pick(["0", "5", "25", "75", "125"])}'
+            return f'(-{v})' if self.r.random() < 0.5 else v
+        if r < 0.57:
+            return f'REAL({self.iatom(u, loops, 1)})'
+        if r < 0.65:
+            z = self.pick(self.zvars(u))
+            return self.pick([f'REAL({z})', f'AIMAG({z})', f'REAL({self.pick(self.dvars(u))})'])
+        a = lambda: self.ratom(u, loops, depth - 1)
+        forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()})',
+                 lambda: f'SQRT(ABS({a()}))', lambda: f'AINT({a()})', lambda: f'ANINT({a()})',
+                 lambda: f'SIGN({a()},{a()})', lambda: f'({a()}/{self.pick(["3.0", "(-7.0)", "1.5"])})']
+        return self.pick(forms)()
+
+    def rexpr(self, u, loops):
+        e = self.ratom(u, loops)
+        for _ in range(self.r.randint(0, 2)):
+            op = self.pick('+-*')
+            e = f'{e}{op}{self.ratom(u, loops)}' if op != '*' else f'({e})*{self.ratom(u, loops, 0)}'
+        return e
+
+    # -- complex: components under about 4e4 in an atom
+    def zatom(self, u, loops, depth=1):
+        r = self.r.random()
+        if depth <= 0 or r < 0.4:
+            return self.pick(self.zvars(u))
+        if r < 0.55:
+            return f'({self.r.randint(-60, 60)}.5,{self.r.randint(-60, 60)}.25)'
+        if r < 0.85:
+            return f'CMPLX({self.ratom(u, loops, 0)},{self.ratom(u, loops, 1)})'
+        return f'CONJG({self.zatom(u, loops, depth - 1)})'
+
+    def zexpr(self, u, loops):
+        e = self.zatom(u, loops)
+        r = self.r.random()
+        if r < 0.3:
+            return f'{e}*{self.zatom(u, loops, 0)}'
+        if r < 0.7:
+            return f'{e}{self.pick("+-")}{self.zatom(u, loops)}'
+        return e
+
     def cond(self, u, loops, depth=1):
         r = self.r.random()
         rel = self.pick(['.LT.', '.LE.', '.EQ.', '.NE.', '.GT.', '.GE.'])
-        if depth > 0 and r < 0.2:
+        if depth > 0 and r < 0.15:
             return f'({self.cond(u, loops, 0)}{self.pick([".AND.", ".OR.", ".EQV.", ".NEQV."])}{self.cond(u, loops, 0)})'
-        if depth > 0 and r < 0.28:
+        if depth > 0 and r < 0.2:
             return f'(.NOT.{self.cond(u, loops, 0)})'
-        if r < 0.65:
+        if r < 0.5:
             return f'{self.iexpr(u, loops)}{rel}{self.iatom(u, loops)}'
-        return f'{self.datom(u, loops)}{rel}{self.datom(u, loops)}'
+        if r < 0.65:
+            return f'{self.datom(u, loops)}{rel}{self.datom(u, loops)}'
+        if r < 0.78:
+            return f'{self.ratom(u, loops)}{rel}{self.ratom(u, loops)}'
+        if r < 0.85:
+            return f'{self.pick(self.zvars(u))}{self.pick([".EQ.", ".NE."])}{self.zatom(u, loops)}'
+        if r < 0.93:
+            return f'{self.pick(["LLT", "LLE", "LGT", "LGE"])}({self.spiece(u)},{self.spiece(u)})'
+        return f'{self.spiece(u)}{rel}{self.spiece(u)}'
 
     # -- statements
     def lhs_i(self, u, loops):
         if self.r.random() < 0.25:
-            arrs = self.arrays(u, write=True)
-            return f'{self.pick(arrs)}({self.index(u, loops)})'
+            return self.aelem(u, loops, write=True)
         return self.pick(self.ivars(u, loops, write=True))
+
+    def assign(self, u, loops):
+        r = self.r.random()
+        if r < 0.36:
+            return ('ai', self.lhs_i(u, loops), self.iexpr(u, loops))
+        if r < 0.54:
+            return ('ad', self.pick(self.dvars(u, write=True)), self.dexpr(u, loops))
+        if r < 0.70:
+            return ('ar', self.pick(self.rvars(u, write=True)), self.rexpr(u, loops))
+        if r < 0.82:
+            return ('az', self.pick(self.zvars(u, write=True)), self.zexpr(u, loops))
+        name, n = self.pick(self.svars(u, write=True))
+        avoid = {name} | ({'SQ', 'SE'} if name in ('SQ', 'SE') else set())
+        lhs = name
+        if self.r.random() < 0.3:
+            i = self.r.randint(1, n)
+            lhs = f'{name}({i}:{self.r.randint(i, n)})'
+        return ('as', lhs, self.sexpr(u, avoid))
 
     def stmt(self, u, loops, depth):
         r = self.r.random()
-        if r < 0.32:
-            return ('ai', self.lhs_i(u, loops), self.iexpr(u, loops))
         if r < 0.50:
-            return ('ad', self.pick(self.dvars(u, write=True)), self.dexpr(u, loops))
+            return self.assign(u, loops)
         if r < 0.60 and depth < 2:
             free = [v for v in ('J1', 'J2', 'J3') if v not in loops]
             v = free[0]
@@ -194,37 +348,44 @@ class Gen:
             return ('if', self.cond(u, loops), self.block(u, loops, depth + 1, 3),
                     self.block(u, loops, depth + 1, 2) if self.r.random() < 0.5 else [])
         if r < 0.80:
-            s = self.stmt(u, loops, 9)
-            while s[0] not in ('ai', 'ad'):
-                s = self.stmt(u, loops, 9)
-            return ('lif', self.cond(u, loops), s)
+            return ('lif', self.cond(u, loops), self.assign(u, loops))
         if r < 0.86 and depth < 2:
             return ('aif', self.iexpr(u, loops), self.block(u, loops, depth + 1, 2),
                     self.block(u, loops, depth + 1, 1), self.block(u, loops, depth + 1, 2))
         subs = [x for x in self.units if x.kind == 'sub']
         if u.kind != 'fn' and subs and r < 0.97:
             return self.call(u, loops, self.pick(subs))
-        return ('ai', self.lhs_i(u, loops), self.iexpr(u, loops))
+        return self.assign(u, loops)
 
     def call(self, u, loops, s):
         """Distinct variables for the arguments a subroutine may change; no
-        COMMON variable passed (the subroutine may change it through COMMON)."""
-        args = []
-        ifree = [v for v in u.ints + [p for p, t in u.params if t == 'i'] if v not in loops]
-        dfree = list(u.dbls) + [p for p, t in u.params if t == 'd']
-        self.r.shuffle(ifree)
-        self.r.shuffle(dfree)
-        for p, t in s.params:
-            if t == 'a':
-                args.append('LA')
-            elif t == 'i':
-                args.append(ifree.pop())            # a variable: the subroutine may set it
-            else:
-                args.append(dfree.pop())
+        COMMON or EQUIVALENCEd variable passed."""
+        free = {
+            'i': [v for v in u.ints + self.ptype(u, 'i') if v not in loops],
+            'd': u.dbls + self.ptype(u, 'd'),
+            'r': u.reals + self.ptype(u, 'r'),
+            'z': u.cplx + self.ptype(u, 'z'),
+            'c': [v for v, n in u.chars if n >= 8] + self.ptype(u, 'c'),
+        }
+        for xs in free.values():
+            self.r.shuffle(xs)
+        args = [('LA' if t == 'a' else free[t].pop()) for p, t in s.params]
         return ('call', s.name, args)
 
     def block(self, u, loops, depth, n):
         return [self.stmt(u, loops, depth) for _ in range(self.r.randint(1, n))]
+
+    def dval(self, t):
+        r = self.r
+        if t == 'i':
+            return str(r.randint(-999, 999))
+        if t == 'd':
+            return f'{r.randint(-999, 999)}.{r.randint(0, 99):02d}D0'
+        if t == 'r':
+            return f'{r.randint(-99, 99)}.{self.pick(["0", "5", "25", "75"])}'
+        if t == 'z':
+            return f'({r.randint(-60, 60)}.5,{r.randint(-60, 60)}.25)'
+        return self.slit(r.randint(1, 8))
 
     def make(self):
         nsub, nfn = self.r.randint(1, 3), self.r.randint(0, 2)
@@ -235,13 +396,24 @@ class Gen:
             self.units.append(f)
         for k in range(nsub):
             ps = [(f'M{j}', 'i') for j in range(1, self.r.randint(1, 3) + 1)]
-            ps += [(f'X{j}', 'd') for j in range(1, self.r.randint(0, 2) + 1)]
+            for t, nm, most in (('d', 'X', 2), ('r', 'Y', 1), ('z', 'W', 1), ('c', 'SA', 1)):
+                ps += [(f'{nm}{j}' if nm != 'SA' else f'SA{j}', t) for j in range(1, self.r.randint(0, most) + 1)]
             if self.r.random() < 0.5:
                 ps.append(('K', 'a'))
             s = Unit(f'SUB{k + 1}', 'sub', ps)
             s.body = self.block(s, {}, 0, 6)
             self.units.append(s)
         m = Unit('FZ', 'main', [])
+        for vs, t in ((m.ints, 'i'), (m.dbls, 'd'), (m.reals, 'r'), (m.cplx, 'z')):
+            for v in vs:
+                m.data[v] = [self.dval(t)]
+        for v, n in m.chars:
+            m.data[v] = [self.dval('c')]
+        m.data['LA'] = [f'{self.r.randint(1, 5)}*{self.dval("i")}']
+        m.data['LA'].append(f'{10 - int(m.data["LA"][0].split("*")[0])}*{self.dval("i")}')
+        m.data['IQ'] = [self.dval('i') for _ in range(6)]
+        m.data['DQ'] = [f'3*{self.dval("d")}']
+        m.data['SQ'] = [self.slit(12)]
         for _ in range(self.r.randint(4, 9)):
             m.body.append(self.stmt(m, {}, 0))
             if self.r.random() < 0.5:
@@ -251,12 +423,15 @@ class Gen:
             m.body.append(('print',))
         m.body.append(('print',))
         self.units.append(m)
+        self.bd = {'KD1': self.dval('i'), 'KD2': self.dval('i'), 'RD1': self.dval('r'), 'SD': self.slit(6)}
         return self.units
 
 
 # ------------------------------------------------------------------ rendering
 def card(text, label=''):
-    """A fixed-form statement, continued past column 72 at a comma or operator."""
+    """A fixed-form statement, continued past column 72 at a comma or an
+    operator -- never inside a character constant, where the blanks a short
+    line is padded with would become part of the constant."""
     out = []
     first = True
     while True:
@@ -265,9 +440,13 @@ def card(text, label=''):
         if len(text) <= room:
             out.append(lead + text)
             return out
-        cut = max(text.rfind(c, 0, room) for c in ',+-*(')
-        if cut <= 10:
-            cut = room
+        quoted, ok = False, []
+        for i, ch in enumerate(text[:room]):
+            if ch == "'":
+                quoted = not quoted
+            ok.append(not quoted)
+        cuts = [i for i in range(11, room) if ok[i] and text[i] in ',+-*(/' and (i == 0 or ok[i - 1])]
+        cut = cuts[-1] if cuts else room
         out.append(lead + text[:cut])
         text = text[cut:]
         first = False
@@ -293,6 +472,16 @@ class Render:
         elif k == 'ad':
             out += card(f'{pad}TD = {s[2]}')
             out += card(f'{pad}{s[1]} = TD - AINT(TD/997.0D0)*997.0D0')
+        elif k == 'ar':
+            out += card(f'{pad}TR = {s[2]}')
+            out += card(f'{pad}{s[1]} = TR - AINT(TR/97.0)*97.0')
+        elif k == 'az':
+            out += card(f'{pad}TZ = {s[2]}')
+            out += card(f'{pad}TR = REAL(TZ) - AINT(REAL(TZ)/97.0)*97.0')
+            out += card(f'{pad}TQ = AIMAG(TZ) - AINT(AIMAG(TZ)/97.0)*97.0')
+            out += card(f'{pad}{s[1]} = CMPLX(TR,TQ)')
+        elif k == 'as':
+            out += card(f'{pad}{s[1]} = {s[2]}')
         elif k == 'do':
             _, v, lo, hi, step, body = s
             l = self.label()
@@ -309,9 +498,9 @@ class Render:
         elif k == 'lif':
             inner = []
             self.stmt(s[2], 0, inner, u)
-            if len(inner) == 1 and s[2][0] == 'ai':
+            if len(inner) == 1 and s[2][0] in ('ai', 'as'):
                 out += card(f'{pad}IF ({s[1]}) {inner[0][6:].strip()}')
-            else:                                   # a double assignment is two statements
+            else:                                   # several statements, or several cards
                 out += card(f'{pad}IF ({s[1]}) THEN')
                 self.stmt(s[2], ind + 2, out, u)
                 out += card(f'{pad}END IF')
@@ -326,43 +515,81 @@ class Render:
         elif k == 'call':
             out += card(f'{pad}CALL {s[1]}({",".join(s[2])})')
         elif k == 'print':
-            out += card(f'{pad}WRITE (6, 901) {",".join(u.ints)}')
-            out += card(f'{pad}WRITE (6, 902) {",".join(u.dbls)}')
-            out += card(f'{pad}WRITE (6, 901) KC1,KC2,(LA(JP),JP=1,10),(KA(JP),JP=1,10)')
-            out += card(f'{pad}WRITE (6, 902) DC1')
+            for fmt, items in (('901', ','.join(u.ints) + ',IE1,IE2'),
+                               ('902', ','.join(u.dbls) + ',DE,DC1'),
+                               ('903', ','.join(u.reals) + ',RD1'),
+                               ('903', ','.join(u.cplx)),
+                               ('904', ','.join(v for v, _ in u.chars) + ',SQ,SE,SD'),
+                               ('901', 'KC1,KC2,KD1,KD2,(LA(JP),JP=1,10),(KA(JP),JP=1,10),(IQ(JP),JP=1,6)'),
+                               ('902', '(DQ(JP),JP=1,3)')):
+                out += card(f'{pad}WRITE (6, {fmt}) {items}')
+
+
+def commons():
+    return ['INTEGER KC1,KC2,KA(10),KD1,KD2', 'DOUBLE PRECISION DC1', 'REAL RD1', 'CHARACTER*6 SD',
+            'COMMON /CB/ KC1,KC2,KA,DC1', 'COMMON /CD/ KD1,KD2,RD1', 'COMMON /CS/ SD']
 
 
 def render(units):
+    bd = getattr(units, 'bd', None)
     out = []
     for u in units:
         rd = Render()
         ps = ','.join(p for p, _ in u.params)
+        pt = lambda t: [p for p, x in u.params if x == t]
         head = {'main': f'PROGRAM {u.name}', 'sub': f'SUBROUTINE {u.name}({ps})',
                 'fn': f'INTEGER FUNCTION {u.name}({ps})'}[u.kind]
         out += card(head)
-        decl = [p for p, t in u.params if t == 'i'] + u.ints + ['J1', 'J2', 'J3', 'JP', 'LA(10)']
+        decl = pt('i') + u.ints + ['J1', 'J2', 'J3', 'JP', 'LA(10)']
+        if u.kind == 'main':
+            decl += ['IQ(6)', 'IE1', 'IE2']
         out += card('INTEGER ' + ','.join(decl))
-        out += card('DOUBLE PRECISION ' + ','.join([p for p, t in u.params if t == 'd'] + u.dbls + ['TD']))
-        if any(t == 'a' for _, t in u.params):
+        out += card('DOUBLE PRECISION ' + ','.join(pt('d') + u.dbls + ['TD'] + (['DQ(3)', 'DE'] if u.kind == 'main' else [])))
+        out += card('REAL ' + ','.join(pt('r') + u.reals + ['TR', 'TQ']))
+        out += card('COMPLEX ' + ','.join(pt('z') + u.cplx + ['TZ']))
+        for v, n in u.chars:
+            out += card(f'CHARACTER*{n} {v}')
+        for p in pt('c'):
+            out += card(f'CHARACTER*(*) {p}')
+        if pt('a'):
             out += card('INTEGER K(10)')
-        out += card('INTEGER KC1,KC2,KA(10)')
-        out += card('DOUBLE PRECISION DC1')
-        out += card('COMMON /CB/ KC1,KC2,KA,DC1')
+        if u.kind == 'main':
+            out += card('CHARACTER*12 SQ')
+            out += card('CHARACTER*4 SE')
+            out += card('EQUIVALENCE (IQ(2),IE1),(IQ(5),IE2),(DQ(2),DE),(SQ(5:8),SE)')
+        for c in commons():
+            out += card(c)
         for f in units:
             if f.kind == 'fn' and f is not u:
                 out += card(f'INTEGER {f.name}')
-        # every local set before it is read
-        for k, v in enumerate(u.ints):
-            out += card(f'{v} = {(k * 7919 + len(u.name) * 31) % 1999 - 999}')
-        for k, v in enumerate(u.dbls):
-            out += card(f'{v} = {(k * 337 + 11) % 997 - 498}.{(k * 53) % 100:02d}D0')
-        out += card('TD = 0.0D0')
-        out += card(f'DO 99 J1 = 1, 10', '')
-        out += card(f'LA(J1) = MOD(J1*{len(u.name) * 97 + 13}, 1999) - 999')
+        if u.kind == 'sub':
+            out += card('INTEGER NCALL')
+            out += card('SAVE NCALL')
+            out += card('DATA NCALL /0/')
         if u.kind == 'main':
+            for v, vals in u.data.items():
+                out += card(f'DATA {v} /{",".join(vals)}/')
+        else:                                       # every local set before it is read
+            for k, v in enumerate(u.ints):
+                out += card(f'{v} = {(k * 7919 + len(u.name) * 31) % 1999 - 999}')
+            for k, v in enumerate(u.dbls):
+                out += card(f'{v} = {(k * 337 + 11) % 997 - 498}.{(k * 53) % 100:02d}D0')
+            for k, v in enumerate(u.reals):
+                out += card(f'{v} = {(k * 31 + len(u.name)) % 97 - 48}.5')
+            for k, v in enumerate(u.cplx):
+                out += card(f'{v} = ({(k * 17 + 3) % 61 - 30}.25,{(k * 29 + 7) % 61 - 30}.5)')
+            for k, (v, n) in enumerate(u.chars):
+                out += card(f"{v} = '{u.name[:3]}{'QRSTUVWXYZ'[k]}{k}'")
+            out += card('DO 99 J1 = 1, 10')
+            out += card(f'LA(J1) = MOD(J1*{len(u.name) * 97 + 13}, 1999) - 999')
+            out += card('CONTINUE', '99')
+        if u.kind == 'sub':
+            out += card('NCALL = NCALL + 1')
+            out += card(f'KD2 = MOD(KD2 + NCALL*{len(u.name) * 7}, {LIM})')
+        if u.kind == 'main':
+            out += card('DO 99 J1 = 1, 10')
             out += card('KA(J1) = MOD(J1*577, 1999) - 999')
-        out += card('CONTINUE', '99')
-        if u.kind == 'main':
+            out += card('CONTINUE', '99')
             out += card('KC1 = 123')
             out += card('KC2 = -4567')
             out += card('DC1 = 31.25D0')
@@ -370,16 +597,28 @@ def render(units):
         if u.kind == 'main':
             out += card('FORMAT (1X, 6I8)', '901')
             out += card('FORMAT (1X, 3E26.17E3)', '902')
+            out += card('FORMAT (1X, 4E17.9E2)', '903')
+            out += card("FORMAT (1X, 6('[',A,']'))", '904')
+        out += card('END')
+    if bd:
+        out += card('BLOCK DATA BDZ')
+        for c in ('INTEGER KD1,KD2', 'REAL RD1', 'CHARACTER*6 SD', 'COMMON /CD/ KD1,KD2,RD1', 'COMMON /CS/ SD'):
+            out += card(c)
+        out += card(f"DATA KD1,KD2,RD1,SD /{bd['KD1']},{bd['KD2']},{bd['RD1']},{bd['SD']}/")
         out += card('END')
     return '\n'.join(out) + '\n'
 
 
-def lit(n):
-    return f'({n})' if n < 0 else str(n)
+class Program(list):
+    """The units, and the BLOCK DATA's values (the reducer keeps them)."""
+    bd = None
 
 
 def make(seed):
-    return Gen(seed).make()
+    g = Gen(seed)
+    p = Program(g.make())
+    p.bd = g.bd
+    return p
 
 
 # ------------------------------------------------------------------ running
@@ -498,7 +737,8 @@ def shrink_once(units, ok):
     for u in units:                                 # subprograms nothing calls
         if u.kind == 'main':
             continue
-        rest = [x for x in units if x is not u]
+        rest = Program(x for x in units if x is not u)
+        rest.bd = units.bd
         if (u.name + '(') not in render(rest) and ok(rest):
             return rest
     return None

@@ -667,6 +667,10 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         chlim = 0;
         while (chain >= 0 && chlim < 64) {
             ck = h_kind[chain];
+            /* As hcg_addr_base_off: what BURG folded away (a NOP) is no
+             * base; the ADDI or COPY that took it in is. */
+            if ((ck == HI_COPY || ck == HI_ADDI) && h_src1[chain] >= 0 &&
+                h_kind[h_src1[chain]] == HI_NOP) break;
             if (ck == HI_COPY) {
                 if (ra_is_reload[chain]) break;   /* the reload's register is the base */
                 chain = h_src1[chain];

@@ -645,6 +645,17 @@ static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
     lim = 0;
     while (inst >= 0 && lim < 64) {
         k = h_kind[inst];
+        /* Never step into what BURG folded away (phase 2 makes it a
+         * NOP): an ADDI that took a frame address into itself is the
+         * base, and computes it; the NOP has no register, and walking
+         * to it gave the base r0 -- a store to LA(1) went to address -4
+         * (fortran/ ffuzz seed 8). */
+        if (h_src1[inst] >= 0 && h_kind[h_src1[inst]] == HI_NOP &&
+            (k == HI_COPY || k == HI_ADDI)) {
+            *base_out = inst;
+            *off_out = off;
+            return 1;
+        }
         if (k == HI_COPY && !ra_is_reload[inst]) {
             inst = h_src1[inst];
             lim = lim + 1;
@@ -3027,7 +3038,7 @@ static int hcg_addi_folds_away_d(int idx, int depth) {
             users = users + 1;
             lnt_i = hcg_addi_lnt(i);
             if (lnt_i != BG_FADDR && lnt_i != BG_SADDR &&
-                hcg_addr_base_off(idx, &base_i, &off) && hcg_is_i12(off))
+                hcg_addr_base_off(idx, &base_i, &off) && base_i != idx && hcg_is_i12(off))
                 folded = folded + 1;
         } else if (h_src1[i] == idx && k2 == HI_ADDI) {
             /* DIVERGENCE (f77, port upstream): an ADDI stacked on an

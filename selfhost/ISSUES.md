@@ -4003,3 +4003,26 @@ code is unchanged (asm-snapshot over 1,657 programs); LINPACK under f77 is 0.2%
 fewer instructions.  Gates: `tests/test_fp64_pair_shared.c` (fails on the
 compiler before the fix, passes after), `fortran/tests/f77/pairabs1.f`
 (likewise against f77).
+
+### 114. [RESOLVED 2026-11-07] An address chain folded through what BURG had deleted: wrong code
+
+A load or store folds its address chain into its displacement: the emitter
+(`hcg_addr_base_off`) and the allocator (`ra_codegen_fold_base`) both walk down
+through ADDIs and COPYs to a base and an offset.  BURG's phase 2 folds a
+single-use child into its parent and makes the child a NOP -- an `ADDI(alloca, 4)`
+taken into an `ADDI(.., -4)` above it, whose pattern then computes the frame
+address itself.  The walks went on through that ADDI into the NOP, which has no
+register: the store's base was r0, and `LA(1)` in a Fortran function was stored
+to address -4.  Both walks now stop at an ADDI or COPY whose operand is a NOP;
+that instruction is the base.  `hcg_addi_folds_away` counted a walk ending at the
+ADDI itself as folding it away, and suppressed the very instruction that was now
+the base; it no longer does.  The three had to change together: the emitter's
+walk alone left the ADDI unemitted, and with the predicate fixed too, the
+allocator, still walking to the NOP, let the ADDI's register die before its use.
+
+The same code in all three backends (here, `fortran/src`, `cobol/src/hir`).
+Found by ffuzz.py once it generated CHARACTER: 15 of 200 programs, all this,
+the INDEX call holding values live across it.  Not shown reachable from C; the
+shape comes from f77's 1-based subscripts.  COBOL's generated code is unchanged
+(1,657 programs).  Gate: `fortran/tests/f77/foldbase1.f`, which faults on the f77
+before the fix and passes after.
