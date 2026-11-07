@@ -189,6 +189,15 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
   no `__multi3` or `__divti3`, no `__int128` in clang's target for the runtime.  With no
   carry flag each word of those is its own run of compares.  A 64-bit machine gets them
   for the price of what 64 bits cost here.
-- `flang-rt` by its own CMake, a driver (`flang` itself, not `-fc1`), an image.
+- `flang-rt` by its own CMake, and a driver that is `flang` itself rather than `-fc1`.
+- The image: `slow32:toolchain` carries flang (`/opt/llvm/bin/flang`), flang-rt and the
+  intrinsic modules (`/opt/slow32/flang`), and `s32flang prog.f90 [more.f90 more.c ...]
+  -o prog.s32x` (`docker/bin/s32flang`, `-fc1` underneath).  Its `flang-builder` stage
+  reconfigures the image's own LLVM build with mlir and flang, so LLVM is built once;
+  g++ wants about 8 GB a compile there (`FLANG_JOB_GB`).  The image's flang-rt is the
+  Mac's byte for byte (`build.sh` maps the source paths and pins the collation that
+  orders the archive), and flang's own output differs only in the source file's name.
+  Checked in the image: the tests above on dbt, slow32-fast and qemu; 81 of the 85
+  `fortran/tests/f77` programs build and run through it.  It adds about 220 MB.
 - Speed and code size are unmeasured.  `hello` is 1.2 MB; the runtime and libc++
   are most of it.

@@ -138,8 +138,10 @@ substituted 1:1.
   commit; LLVM 24 since the 2026-10-20 re-pin), libc++/libc++abi
   (/opt/slow32/libcxx) and the `s32c++` driver (`s32c++ [--locales]
   prog.cpp -o prog.s32x`; a 16 MB heap unless `--heap-size` says
-  otherwise -- s32-ld's own default is 1 MB), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
-  one (~2.9 GB). Plain `clang --target=slow32-unknown-none prog.c -o
+  otherwise -- s32-ld's own default is 1 MB), flang and its driver `s32flang
+  prog.f90 [more.f90 more.c ...] -o prog.s32x` (Fortran 77 through 2018 as
+  flang takes it; docs/plans/flang.md), Free Pascal `ppcs32`, cc-x64/cc-a64. The big
+  one (~3.2 GB). Plain `clang --target=slow32-unknown-none prog.c -o
   prog.s32x` works too: SLOW32_HOME=/opt/slow32 is an installed prefix
   (bin/ lib/ include/), which the driver tells from a tree by runtime/.
 - `slow32:cobol` (FROM base): + `s32-cobc`, `libcob.s32o` and the `s32cob`

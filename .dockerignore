@@ -29,6 +29,11 @@
 !scripts/build-libcxx.sh
 !scripts/slow32-toolchain.cmake
 
+# flang for the toolchain image (its flang-builder stage): the flang-rt build
+# script and its shim; flang and flang-rt themselves come from 07-flang.patch.
+!flang/build.sh
+!flang/shim/
+
 # Self-hosted cross-compilers need (shared frontend tree + container wrappers):
 !selfhost/
 !docker/

@@ -1,0 +1,61 @@
+#!/bin/bash
+# s32flang -- Fortran (77 through 2018, as LLVM's flang takes it) to a SLOW-32
+# executable: flang, llc, slow32asm, s32-ld, on flang-rt built for SLOW-32.
+#   s32flang [-O0|-O1|-O2|-O3|-Os] [-I dir] [-D name[=v]] [--heap-size SIZE]
+#            prog.f90 [more.f90 more.c ...] [-o prog.s32x]
+# Default -O2.  Sources compile in the order given, so a module comes before
+# what uses it.  .F/.F90 (capital) go through the preprocessor.  A .c is
+# compiled by clang and sees ISO_Fortran_binding.h.  No INTEGER(16) or REAL(16):
+# SLOW-32 is a 32-bit machine (docs/plans/flang.md).
+# flang puts arrays on the stack, so the stack is 8 MB, as on a host; --heap-size
+# goes to s32-ld (16M unless given).  The result runs under s32run (any engine).
+set -eu
+RT="${SLOW32_LIB:-/opt/slow32/lib}"
+INC="${SLOW32_INCLUDE:-/opt/slow32/include}"
+FH="${SLOW32_FLANG:-/opt/slow32/flang}"
+CXX_HOME="${SLOW32_LIBCXX:-/opt/slow32/libcxx}"
+LLVM="${LLVM_BIN:-/opt/llvm/bin}"
+opt=-O2; out=""; srcs=(); flags=(); heap=(--heap-size 16M)
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift ;;
+        -O0|-O1|-O2|-O3|-Os|-Oz) opt="$1" ;;
+        --heap-size) heap=(--heap-size "$2"); shift ;;
+        -I|-D) flags+=("$1$2"); shift ;;
+        -I*|-D*) flags+=("$1") ;;
+        *.f|*.for|*.f77|*.f90|*.f95|*.f03|*.f08|*.F|*.FOR|*.F90|*.F95|*.F03|*.F08|*.c) srcs+=("$1") ;;
+        *) echo "s32flang: what is $1?" >&2; exit 2 ;;
+    esac
+    shift
+done
+[ ${#srcs[@]} -gt 0 ] || {
+    echo "usage: s32flang [-O2] [-I dir] [-D x] [--heap-size SIZE] prog.f90 [more.f90 more.c ...] [-o prog.s32x]" >&2
+    exit 2
+}
+[ -n "$out" ] || { out="${srcs[0]##*/}"; out="${out%.*}.s32x"; }
+W="$(mktemp -d "${TMPDIR:-/tmp}/s32flang.XXXXXX")"
+trap 'rm -rf "${W:?}"' EXIT
+case "$opt" in -Os|-Oz) llcopt=-O2 ;; *) llcopt="$opt" ;; esac
+objs=(); i=0
+for src in "${srcs[@]}"; do
+    o="$W/$i"; i=$((i + 1))
+    case "$src" in
+        *.c)
+            "$LLVM/clang" -target slow32-unknown-none "$opt" -S -emit-llvm -isystem "$INC" \
+                -I "$FH/include" ${flags[@]+"${flags[@]}"} "$src" -o "$o.ll" ;;
+        *)
+            cpp=()
+            case "$src" in *.F|*.FOR|*.F90|*.F95|*.F03|*.F08) cpp=(-cpp) ;; esac
+            "$LLVM/flang" -fc1 -triple slow32-unknown-none "$opt" ${cpp[@]+"${cpp[@]}"} \
+                -fintrinsic-modules-path "$FH/mod" -module-dir "$W" -I "$W" \
+                ${flags[@]+"${flags[@]}"} -emit-llvm "$src" -o "$o.ll" ;;
+    esac
+    "$LLVM/llc" -mtriple=slow32-unknown-none "$llcopt" "$o.ll" -o "$o.s"
+    # slow32asm and s32-ld narrate on stdout: keep it for a failure
+    slow32asm "$o.s" "$o.s32o" >"$o.log" 2>&1 || { cat "$o.log" >&2; exit 1; }
+    objs+=("$o.s32o")
+done
+s32-ld -o "$out" --mmio 64K ${heap[@]+"${heap[@]}"} --stack-size 8M "$RT/crt0.s32o" "${objs[@]}" \
+    "$FH/libflangrt.s32a" "$CXX_HOME/lib/libc++.a" "$CXX_HOME/lib/libc++abi.a" \
+    "$RT/libc_mmio.s32a" "$RT/libs32.s32a" "$RT/libs32cxx.s32a" >"$W/ld.log" 2>&1 || { cat "$W/ld.log" >&2; exit 1; }
+echo "$out"
