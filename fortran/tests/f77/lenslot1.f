@@ -1,0 +1,95 @@
+C     THE HIDDEN LENGTH OF A CHARACTER*(*) ARGUMENT, SPILLED: THE ENTRY
+C     STORES EVERY SPILLED ARGUMENT AT ONCE, BUT ITS SLOT WAS COUNTED AS
+C     TAKEN ONLY FROM WHERE THE LENGTH SITS IN THE FUNCTION, LATE.  LDM-1,
+C     FOR THE ADJUSTABLE KM, WAS COMPUTED BEFORE THAT, GIVEN THE SAME SLOT,
+C     AND THE ASSIGNMENT TO SA WROTE LDM-1 CHARACTERS.  THE COMPUTED AND
+C     ARITHMETIC GO TOS ARE THE PRESSURE THAT SPILLS THEM.
+C     FOUND BY REGRESSION/FUZZ/FFUZZ.PY.
+      SUBROUTINE SLEN(M1, M2, X1, X2, Y1, W1, SA, K, KM, LDM)
+      INTEGER M1, M2, K(10), LDM, KM(LDM,*), I3, I4, I5, KD
+      DOUBLE PRECISION X1, X2, D2, D3, TD
+      REAL Y1, R1, R2, TR
+      COMPLEX W1
+      CHARACTER*(*) SA
+      CHARACTER*8 S1, S2
+      CHARACTER*12 S3
+      CHARACTER*60 SB
+      I3 = 214
+      I4 = -667
+      I5 = 629
+      KD = 1789
+      D2 = 41.5D0
+      D3 = -12.25D0
+      R1 = 7.5
+      R2 = -3.25
+      S1 = 'MNOPQRST'
+      S2 = 'UVWXY'
+      S3 = 'ABCDEFGHIJKL'
+      SB = ' '
+      IF (MOD(I3+(MOD(INDEX(SA(2:2),'0N'),97)-(IDIM(KD/2,I4/2)/95))
+     &,32749)) 101, 102, 103
+  101 CONTINUE
+      GO TO 104
+  102 CONTINUE
+      GO TO 104
+  103 CONTINUE
+        IF (MOD((I5/(-14))+I3,32749)) 105, 106, 107
+  105   CONTINUE
+        GO TO 108
+  106   CONTINUE
+        GO TO 108
+  107   CONTINUE
+          WRITE (SB, 905) I5, X1, Y1
+          READ (SB, 905) I3, D2, R2
+          TD = (797.25D0 * X2) * D3
+          X2 = TD - AINT(TD / 997.0D0) * 997.0D0
+        GO TO 108
+  108   CONTINUE
+      GO TO 104
+  104 CONTINUE
+      GO TO (109, 110, 111), 1 + MOD(ABS(MOD(M2 + I5 + K(1)
+     &  + MAX(MIN(M2, M1, I5), I5 / 68), 32749)), 4)
+        M2 = MOD(ICHAR(S1(4:4)) + KM(1 + MOD(ABS(I5 + KD), 4),
+     &    1 + MOD(ABS(NINT(Y1)), 5)), 32749)
+      GO TO 112
+  109 CONTINUE
+        TR = REAL(W1)
+        R1 = TR - AINT(TR / 97.0) * 97.0
+      GO TO 112
+  110 CONTINUE
+      GO TO 112
+  111 CONTINUE
+        SA = S1(4:5)//S2//S3(12:12)
+      GO TO 112
+  112 CONTINUE
+  905 FORMAT (I7, 1X, E25.16E3, 1X, F10.3)
+      END
+      PROGRAM LENSL
+      INTEGER I1, I3, LA(10), MA(4,5), J
+      DOUBLE PRECISION D1, D2
+      REAL R1
+      COMPLEX Z2
+      CHARACTER*8 S1
+      DO 9 J = 1, 10
+        LA(J) = J * 3
+    9 CONTINUE
+      DO 8 J = 1, 20
+        MA(MOD(J - 1, 4) + 1, (J - 1) / 4 + 1) = J
+    8 CONTINUE
+      I1 = 7
+      I3 = 0
+      D1 = 667.55D0
+      D2 = 852.5D0
+      R1 = -13.5
+      Z2 = (-46.25, -21.5)
+      S1 = 'J4XJSFGD'
+      DO 7 J = -3, 3
+        I3 = J
+        S1 = 'J4XJSFGD'
+        CALL SLEN(I1, I3, D1, D2, R1, Z2, S1, LA, MA, 4)
+        WRITE (6, 901) J, S1
+        IF (J .EQ. -3 .AND. S1 .NE. 'PQUVWXY') STOP 1
+    7 CONTINUE
+      STOP 0
+  901 FORMAT (1X, I3, 1X, '[', A, ']')
+      END

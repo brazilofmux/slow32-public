@@ -441,16 +441,17 @@ cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink
 
 # Its Fortran sibling: ffuzz.py generates fixed-form Fortran 77 with one answer
 # -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX and CHARACTER, EQUIVALENCE, DATA,
-# BLOCK DATA, SAVE, CHARACTER*(*) arguments (integers kept under 2**15 -- flang
-# hands LLVM overflow as undefined, and LLVM uses it -- reals reduced through a
-# temporary, no complex division, explicit FORMATs only, no aliasing, every
-# variable set first; the generator's header has the rest) -- and requires
-# fortran/'s f77 and flang to print the same bytes on slow32-dbt -I; where
-# they differ, gfortran says which
-# is wrong.  The same machine and libm on both sides, so there is nothing to
-# allow for.  Its first run (2026-11-07) found selfhost ISSUES-113, wrong code
+# BLOCK DATA, SAVE, CHARACTER*(*) and adjustable-array arguments, 2-D arrays,
+# statement functions, ENTRY, alternate RETURN, computed and assigned GO TO,
+# formatted and list-directed READ from an internal file (integers kept under
+# 2**15 -- flang hands LLVM overflow as undefined, and LLVM uses it -- reals
+# reduced through a temporary, no complex division, explicit FORMATs only, no
+# aliasing, every variable set first; the generator's header has the rest) --
+# and requires fortran/'s f77 and flang to print the same bytes on slow32-dbt
+# -I; where they differ, gfortran says which is wrong.  The same machine and
+# libm on both sides, so there is nothing to allow for.  Its first run (2026-11-07) found selfhost ISSUES-113, wrong code
 # in the fp64 pair allocator all three HIR backends share; CHARACTER found
-# ISSUES-114 the same day.  ~2,000/min.
+# ISSUES-114 and adjustable arrays ISSUES-115 the same day.  ~1,800/min.
 # After a change to fortran/, the HIR backends, flang or flang-rt.
 cd ~/slow-32/regression/fuzz && ./ffuzz.py run -n 2000
 cd ~/slow-32/regression/fuzz && ./ffuzz.py reduce SEED -o small.f

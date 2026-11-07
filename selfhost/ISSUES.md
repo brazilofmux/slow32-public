@@ -4026,3 +4026,21 @@ the INDEX call holding values live across it.  Not shown reachable from C; the
 shape comes from f77's 1-based subscripts.  COBOL's generated code is unchanged
 (1,657 programs).  Gate: `fortran/tests/f77/foldbase1.f`, which faults on the f77
 before the fix and passes after.
+
+### 115. [RESOLVED 2026-11-07] A spilled parameter's slot was counted from where the parameter sits, not from entry
+
+Spill slots are shared by interval: a value holds its slot from `ra_pos` to its
+last reload, and a slot whose occupant has ended is taken by the next.  A
+parameter is not stored at its position, though: `hcg_emit_param_entry` stores
+every spilled parameter at function entry, before anything else.  f77 places the
+hidden length of a CHARACTER*(*) argument late in the function, and `LDM-1`, the
+column offset of an adjustable `KM(LDM,*)`, computed before that position and
+dead before it, was given the same slot: it overwrote the length the entry had
+just stored, and `SA = S1(4:5)//S2//S3(12:12)` wrote 3 characters of 8.  A
+parameter's slot interval starts at 0 now (`ra_slot_range`).
+
+The same code in all three backends.  stage08 puts a C function's parameters
+first, so nothing is computed before one; not shown reachable from C.  Found by
+ffuzz.py once it generated adjustable arrays: 1 of 3,000 programs.  Gate:
+`fortran/tests/f77/lenslot1.f`, which writes 3 characters on the f77 before the fix
+and all of them after.

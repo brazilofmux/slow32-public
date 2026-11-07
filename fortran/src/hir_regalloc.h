@@ -927,6 +927,14 @@ static void ra_slot_range(int v, int *ps, int *pe) {
     s = ra_pos[v];
     e = ra_iend[v];
     if (e < s) e = s;
+    /* A spilled parameter is stored by the entry sequence
+     * (hcg_emit_param_entry), before anything else runs, not at its own
+     * position: its slot is taken from function entry.  f77 places the
+     * hidden length of a CHARACTER*(*) argument late in the function,
+     * and a value computed before that position shared its slot and
+     * overwrote the length the entry had stored -- wrong code
+     * (fortran/ ffuzz seed 102244). */
+    if (h_kind[v] == HI_PARAM) s = 0;
     if (h_kind[v] == HI_PHI && h_pbase[v] >= 0) {
         j = 0;
         while (j < h_pcnt[v]) {

@@ -62,6 +62,9 @@ LIM = 32749
 #     goes through (a*0 + b*r) decides the sign of a zero.
 #   CHARACTER: no assignment reads the variable it sets (F77 forbids the
 #     overlap), literals without commas or apostrophes, substrings in bounds.
+#   SIGN(A,B): B is never zero.  Fortran 77 gives |A| for a B of -0.0
+#     (B >= 0), Fortran 95 on lets it give -|A|; f77 is right by the first,
+#     flang and gfortran by the second.  B is an integer plus one half.
 #   EQUIVALENCE: only entities of one type are associated -- reading an
 #     INTEGER through a DOUBLE's storage is undefined -- and none is an argument.
 #   DATA: main's variables (once, at start), a BLOCK DATA for /CD/ and /CS/,
@@ -80,6 +83,8 @@ class Unit:
         self.chars = [('S1', 8), ('S2', 8), ('S3', 12)]
         self.body = []
         self.data = {}      # main: name -> DATA value list (rendered)
+        self.entry = False  # a subroutine with an ENTRY SUBnE
+        self.alt = False    # a subroutine with two alternate returns
 
 
 def lit(n):
@@ -108,11 +113,13 @@ class Gen:
         return [v for v in vs if not (write and v in loops)]
 
     def iarrays(self, u, write=False):
+        """(name, dimensions) of the INTEGER arrays."""
         if u.kind == 'fn' and write:
-            return [('LA', 10)]
-        a = [(p, 10) for p in self.ptype(u, 'a')] + [('KA', 10), ('LA', 10)]
+            return [('LA', (10,))]
+        a = [(p, (10,)) for p in self.ptype(u, 'a')] + [('KA', (10,)), ('LA', (10,))]
+        a += [(p, (4, 5)) for p in self.ptype(u, 'm')]   # KM(LDM,*): its actual is MA(4,5)
         if u.kind == 'main':
-            a.append(('IQ', 6))
+            a += [('IQ', (6,)), ('MA', (4, 5))]
         return a
 
     def dvars(self, u, write=False):
@@ -120,7 +127,8 @@ class Gen:
             return list(u.dbls)
         vs = u.dbls + self.ptype(u, 'd') + ['DC1']
         if u.kind == 'main':
-            vs = vs + ['DE', f'DQ({self.r.randint(1, 3)})']
+            vs = vs + ['DE', f'DQ({self.r.randint(1, 3)})',
+                       f'DM({self.r.randint(1, 3)},{self.r.randint(1, 2)})']
         return vs
 
     def rvars(self, u, write=False):
@@ -152,8 +160,8 @@ class Gen:
         return f'1+MOD(ABS({self.iatom(u, loops, 1)}),{n})'
 
     def aelem(self, u, loops, write=False):
-        name, n = self.pick(self.iarrays(u, write))
-        return f'{name}({self.index(u, loops, n)})'
+        name, dims = self.pick(self.iarrays(u, write))
+        return f'{name}({",".join(self.index(u, loops, n) for n in dims)})'
 
     # -- character pieces
     def slit(self, n=None):
@@ -193,7 +201,8 @@ class Gen:
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()},{a()})',
                  lambda: f'MOD({a()},{c})', lambda: f'({a()}/{c})', lambda: f'ISIGN({a()},{a()})',
                  lambda: f'INT({self.datom(u, loops, 0)})', lambda: f'IDIM({a()}/2,{a()}/2)',
-                 lambda: f'NINT({self.pick(self.rvars(u))})', lambda: f'INT(REAL({self.pick(self.zvars(u))}))']
+                 lambda: f'NINT({self.pick(self.rvars(u))})', lambda: f'INT(REAL({self.pick(self.zvars(u))}))',
+                 lambda: f'ISF({a()},{a()})']
         fns = [x for x in self.units if x.kind == 'fn']
         if fns and self.r.random() < 0.25:
             f = self.pick(fns)
@@ -229,8 +238,9 @@ class Gen:
         a = lambda: self.datom(u, loops, depth - 1)
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()})',
                  lambda: f'SQRT(ABS({a()}))', lambda: f'AINT({a()})', lambda: f'ANINT({a()})',
-                 lambda: f'SIGN({a()},{a()})', lambda: f'({a()}/{self.pick(["3.0D0", "(-7.0D0)", "1.1D0"])})',
-                 lambda: f'DBLE(REAL({a()}))']
+                 lambda: f'SIGN({a()},DBLE({self.iatom(u, loops, 1)})+0.5D0)',
+                 lambda: f'({a()}/{self.pick(["3.0D0", "(-7.0D0)", "1.1D0"])})',
+                 lambda: f'DBLE(REAL({a()}))', lambda: f'DSF({a()})']
         return self.pick(forms)()
 
     def dexpr(self, u, loops):
@@ -256,7 +266,8 @@ class Gen:
         a = lambda: self.ratom(u, loops, depth - 1)
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()})',
                  lambda: f'SQRT(ABS({a()}))', lambda: f'AINT({a()})', lambda: f'ANINT({a()})',
-                 lambda: f'SIGN({a()},{a()})', lambda: f'({a()}/{self.pick(["3.0", "(-7.0)", "1.5"])})']
+                 lambda: f'SIGN({a()},REAL({self.iatom(u, loops, 1)})+0.5)',
+                 lambda: f'({a()}/{self.pick(["3.0", "(-7.0)", "1.5"])})']
         return self.pick(forms)()
 
     def rexpr(self, u, loops):
@@ -349,13 +360,39 @@ class Gen:
                     self.block(u, loops, depth + 1, 2) if self.r.random() < 0.5 else [])
         if r < 0.80:
             return ('lif', self.cond(u, loops), self.assign(u, loops))
-        if r < 0.86 and depth < 2:
+        if r < 0.84 and depth < 2:
             return ('aif', self.iexpr(u, loops), self.block(u, loops, depth + 1, 2),
                     self.block(u, loops, depth + 1, 1), self.block(u, loops, depth + 1, 2))
-        subs = [x for x in self.units if x.kind == 'sub']
-        if u.kind != 'fn' and subs and r < 0.97:
+        if r < 0.87 and depth < 2:
+            b = lambda: self.block(u, loops, depth + 1, 2)
+            return ('cgoto', self.iexpr(u, loops), b(), b(), b(), b())
+        if r < 0.89 and depth < 2:
+            return ('agoto', self.cond(u, loops), self.block(u, loops, depth + 1, 2),
+                    self.block(u, loops, depth + 1, 2))
+        if r < 0.92 and u.kind != 'fn':
+            return self.iorw(u, loops)
+        subs = [x for x in self.units if x.kind == 'sub' and not x.alt and self.can_call(u, x)]
+        alts = [x for x in self.units if x.kind == 'sub' and x.alt and self.can_call(u, x)]
+        if u.kind != 'fn' and alts and depth < 2 and r < 0.94:
+            c = self.call(u, loops, self.pick(alts))
+            b = lambda: self.block(u, loops, depth + 1, 2)
+            return ('altcall', c[1], c[2], b(), b(), b())
+        if u.kind != 'fn' and subs and r < 0.98:
             return self.call(u, loops, self.pick(subs))
         return self.assign(u, loops)
+
+    def can_call(self, u, s):
+        """A 2-D array dummy needs a 4x5 array to pass: main's MA, or the
+        caller's own KM."""
+        return u.kind == 'main' or not self.ptype(s, 'm') or bool(self.ptype(u, 'm'))
+
+    def iorw(self, u, loops):
+        """Values through the character variable SB: written with a format, read
+        back with it or list-directed.  Variables only -- a function referenced
+        in an I/O statement may not itself do I/O, and this keeps them out."""
+        iv = [v for v in self.ivars(u, loops, write=True) if v in u.ints]
+        return ('iorw', self.r.random() < 0.5, self.pick(iv), self.pick(u.dbls), self.pick(u.reals),
+                self.pick(self.ivars(u, loops)), self.pick(self.dvars(u)), self.pick(self.rvars(u)))
 
     def call(self, u, loops, s):
         """Distinct variables for the arguments a subroutine may change; no
@@ -369,8 +406,18 @@ class Gen:
         }
         for xs in free.values():
             self.r.shuffle(xs)
-        args = [('LA' if t == 'a' else free[t].pop()) for p, t in s.params]
-        return ('call', s.name, args)
+        args = []
+        for p, t in s.params:
+            if t == 'a':
+                args.append('LA')
+            elif t == 'm':
+                args.append('MA' if u.kind == 'main' else self.ptype(u, 'm')[0])
+            elif t == 'n':
+                args.append('4')                    # KM's leading dimension
+            else:
+                args.append(free[t].pop())
+        name = s.name + ('E' if s.entry and self.r.random() < 0.5 else '')
+        return ('call', name, args)
 
     def block(self, u, loops, depth, n):
         return [self.stmt(u, loops, depth) for _ in range(self.r.randint(1, n))]
@@ -400,7 +447,11 @@ class Gen:
                 ps += [(f'{nm}{j}' if nm != 'SA' else f'SA{j}', t) for j in range(1, self.r.randint(0, most) + 1)]
             if self.r.random() < 0.5:
                 ps.append(('K', 'a'))
+            if self.r.random() < 0.4:
+                ps += [('KM', 'm'), ('LDM', 'n')]
             s = Unit(f'SUB{k + 1}', 'sub', ps)
+            s.entry = self.r.random() < 0.4
+            s.alt = (not s.entry) and k > 0 and self.r.random() < 0.4
             s.body = self.block(s, {}, 0, 6)
             self.units.append(s)
         m = Unit('FZ', 'main', [])
@@ -414,12 +465,17 @@ class Gen:
         m.data['IQ'] = [self.dval('i') for _ in range(6)]
         m.data['DQ'] = [f'3*{self.dval("d")}']
         m.data['SQ'] = [self.slit(12)]
+        m.data['MA'] = [self.dval('i') for _ in range(20)]
+        m.data['DM'] = [f'2*{self.dval("d")}', f'4*{self.dval("d")}']
         for _ in range(self.r.randint(4, 9)):
             m.body.append(self.stmt(m, {}, 0))
             if self.r.random() < 0.5:
                 m.body.append(('print',))
         for s in [x for x in self.units if x.kind == 'sub']:
-            m.body.append(self.call(m, {}, s))
+            c = self.call(m, {}, s)
+            if s.alt:
+                c = ('altcall', c[1], c[2], [('print',)], [('print',)], [('print',)])
+            m.body.append(c)
             m.body.append(('print',))
         m.body.append(('print',))
         self.units.append(m)
@@ -514,14 +570,55 @@ class Render:
             out += card(f'{pad}CONTINUE', le)
         elif k == 'call':
             out += card(f'{pad}CALL {s[1]}({",".join(s[2])})')
+        elif k == 'altcall':
+            l1, l2, le = self.label(), self.label(), self.label()
+            out += card(f'{pad}CALL {s[1]}({",".join(s[2] + ["*" + l1, "*" + l2])})')
+            self.stmts(s[3], ind + 2, out, u)
+            out += card(f'{pad}GO TO {le}')
+            out += card(f'{pad}CONTINUE', l1)
+            self.stmts(s[4], ind + 2, out, u)
+            out += card(f'{pad}GO TO {le}')
+            out += card(f'{pad}CONTINUE', l2)
+            self.stmts(s[5], ind + 2, out, u)
+            out += card(f'{pad}CONTINUE', le)
+        elif k == 'cgoto':
+            ls = [self.label() for _ in range(3)]
+            le = self.label()
+            out += card(f'{pad}GO TO ({",".join(ls)}), 1+MOD(ABS(MOD({s[1]},{LIM})),4)')
+            self.stmts(s[5], ind + 2, out, u)        # the index past the list falls through
+            out += card(f'{pad}GO TO {le}')
+            for l, b in zip(ls, s[2:5]):
+                out += card(f'{pad}CONTINUE', l)
+                self.stmts(b, ind + 2, out, u)
+                out += card(f'{pad}GO TO {le}')
+            out += card(f'{pad}CONTINUE', le)
+        elif k == 'agoto':
+            l1, l2, le = self.label(), self.label(), self.label()
+            out += card(f'{pad}IF ({s[1]}) THEN')
+            out += card(f'{pad}  ASSIGN {l1} TO NLAB')
+            out += card(f'{pad}ELSE')
+            out += card(f'{pad}  ASSIGN {l2} TO NLAB')
+            out += card(f'{pad}END IF')
+            out += card(f'{pad}GO TO NLAB, ({l1}, {l2})')
+            out += card(f'{pad}CONTINUE', l1)
+            self.stmts(s[2], ind + 2, out, u)
+            out += card(f'{pad}GO TO {le}')
+            out += card(f'{pad}CONTINUE', l2)
+            self.stmts(s[3], ind + 2, out, u)
+            out += card(f'{pad}CONTINUE', le)
+        elif k == 'iorw':
+            _, listed, il, dl, rl, iv, dv, rv = s
+            out += card(f'{pad}WRITE (SB, 905) {iv},{dv},{rv}')
+            out += card(f'{pad}READ (SB, {"*" if listed else "905"}) {il},{dl},{rl}')
         elif k == 'print':
             for fmt, items in (('901', ','.join(u.ints) + ',IE1,IE2'),
                                ('902', ','.join(u.dbls) + ',DE,DC1'),
                                ('903', ','.join(u.reals) + ',RD1'),
                                ('903', ','.join(u.cplx)),
-                               ('904', ','.join(v for v, _ in u.chars) + ',SQ,SE,SD'),
+                               ('904', ','.join(v for v, _ in u.chars) + ',SQ,SE,SD,SB'),
                                ('901', 'KC1,KC2,KD1,KD2,(LA(JP),JP=1,10),(KA(JP),JP=1,10),(IQ(JP),JP=1,6)'),
-                               ('902', '(DQ(JP),JP=1,3)')):
+                               ('901', 'MA'),
+                               ('902', '(DQ(JP),JP=1,3),DM')):
                 out += card(f'{pad}WRITE (6, {fmt}) {items}')
 
 
@@ -537,14 +634,20 @@ def render(units):
         rd = Render()
         ps = ','.join(p for p, _ in u.params)
         pt = lambda t: [p for p, x in u.params if x == t]
-        head = {'main': f'PROGRAM {u.name}', 'sub': f'SUBROUTINE {u.name}({ps})',
+        sps = ps + (',*,*' if u.alt else '')
+        head = {'main': f'PROGRAM {u.name}', 'sub': f'SUBROUTINE {u.name}({sps})',
                 'fn': f'INTEGER FUNCTION {u.name}({ps})'}[u.kind]
         out += card(head)
-        decl = pt('i') + u.ints + ['J1', 'J2', 'J3', 'JP', 'LA(10)']
+        decl = pt('i') + pt('n') + u.ints + ['J1', 'J2', 'J3', 'JP', 'LA(10)', 'NLAB']
         if u.kind == 'main':
-            decl += ['IQ(6)', 'IE1', 'IE2']
+            decl += ['IQ(6)', 'IE1', 'IE2', 'MA(4,5)']
+        if pt('m'):
+            decl += ['KM(LDM,*)']
+        if u.kind == 'sub':
+            decl += ['NFLAG', 'NALT']
         out += card('INTEGER ' + ','.join(decl))
-        out += card('DOUBLE PRECISION ' + ','.join(pt('d') + u.dbls + ['TD'] + (['DQ(3)', 'DE'] if u.kind == 'main' else [])))
+        out += card('DOUBLE PRECISION ' + ','.join(pt('d') + u.dbls + ['TD', 'DSF', 'XX'] +
+                                                   (['DQ(3)', 'DE', 'DM(3,2)'] if u.kind == 'main' else [])))
         out += card('REAL ' + ','.join(pt('r') + u.reals + ['TR', 'TQ']))
         out += card('COMPLEX ' + ','.join(pt('z') + u.cplx + ['TZ']))
         for v, n in u.chars:
@@ -562,13 +665,28 @@ def render(units):
         for f in units:
             if f.kind == 'fn' and f is not u:
                 out += card(f'INTEGER {f.name}')
+        if u.kind != 'fn':
+            out += card('CHARACTER*60 SB')
         if u.kind == 'sub':
             out += card('INTEGER NCALL')
             out += card('SAVE NCALL')
+        # statement functions, after the specifications
+        out += card('ISF(IX,IY) = MOD(IX*3-IY,1000) + IX/7')
+        out += card('DSF(XX) = XX*0.5D0 - AINT(XX/3.0D0)')
+        if u.kind == 'sub':
             out += card('DATA NCALL /0/')
+        if u.entry:                                 # both ways in join before the locals are set
+            out += card('NFLAG = 1')
+            out += card('GO TO 50')
+            out += card(f'ENTRY {u.name}E({ps})')
+            out += card('NFLAG = 2')
+            out += card('CONTINUE', '50')
+        elif u.kind == 'sub':
+            out += card('NFLAG = 3')
         if u.kind == 'main':
             for v, vals in u.data.items():
                 out += card(f'DATA {v} /{",".join(vals)}/')
+            out += card("DATA SB /' '/")
         else:                                       # every local set before it is read
             for k, v in enumerate(u.ints):
                 out += card(f'{v} = {(k * 7919 + len(u.name) * 31) % 1999 - 999}')
@@ -583,9 +701,11 @@ def render(units):
             out += card('DO 99 J1 = 1, 10')
             out += card(f'LA(J1) = MOD(J1*{len(u.name) * 97 + 13}, 1999) - 999')
             out += card('CONTINUE', '99')
+            if u.kind == 'sub':
+                out += card("SB = ' '")
         if u.kind == 'sub':
             out += card('NCALL = NCALL + 1')
-            out += card(f'KD2 = MOD(KD2 + NCALL*{len(u.name) * 7}, {LIM})')
+            out += card(f'KD2 = MOD(KD2 + NCALL*{len(u.name) * 7} + NFLAG, {LIM})')
         if u.kind == 'main':
             out += card('DO 99 J1 = 1, 10')
             out += card('KA(J1) = MOD(J1*577, 1999) - 999')
@@ -594,6 +714,12 @@ def render(units):
             out += card('KC2 = -4567')
             out += card('DC1 = 31.25D0')
         rd.stmts(u.body, 0, out, u)
+        if u.alt:
+            out += card('NALT = MOD(ABS(M1), 3)')
+            out += card('IF (NALT .EQ. 1) RETURN 1')
+            out += card('IF (NALT .EQ. 2) RETURN 2')
+        if u.kind != 'fn':
+            out += card('FORMAT (I7,1X,E25.16E3,1X,F10.3)', '905')
         if u.kind == 'main':
             out += card('FORMAT (1X, 6I8)', '901')
             out += card('FORMAT (1X, 3E26.17E3)', '902')
@@ -703,6 +829,15 @@ def lists(body, path=()):
             yield from lists(s[3], path + (i, 3))
         elif s[0] == 'aif':
             for k in (2, 3, 4):
+                yield from lists(s[k], path + (i, k))
+        elif s[0] == 'cgoto':
+            for k in (2, 3, 4, 5):
+                yield from lists(s[k], path + (i, k))
+        elif s[0] == 'agoto':
+            for k in (2, 3):
+                yield from lists(s[k], path + (i, k))
+        elif s[0] == 'altcall':
+            for k in (3, 4, 5):
                 yield from lists(s[k], path + (i, k))
 
 
