@@ -6,10 +6,16 @@ Each seed makes one deterministic C program with no undefined behaviour:
 width, division by an odd number, small local arrays indexed under a mask,
 counted loops (constant trip counts, so full unrolling and last-pass
 peeling fire), branches on the loop variable and on data, early returns,
-switch, break and continue, and calls between the generated functions.
-main prints one line per call.  The program is built with clang (the
-oracle) and with stage08's cc.s32x, both run under the reference-speed
-emulator, and the outputs must match.
+switch, break and continue, and calls between the generated functions;
+in the wide profile also doubles, some held in locals across statements
+and calls, and changed through a union the way C libraries write fabs and
+copysign (one word kept, the other made new: selfhost ISSUES-113's shape,
+though 10,000 programs did not re-find it -- ffuzz.py did).  main prints
+one line per call.  The program is built with clang (the oracle) and with
+stage08's cc.s32x, both run under the reference-speed emulator, and the
+outputs must match.  The oracle is built with -ffp-contract=off: stage08
+never contracts, and clang's default folds a - b*c fused where SLOW-32,
+with no FMA, rounds twice at run time.
 
     cfuzz.py run   [-n N] [-s FIRST] [-j JOBS] [--cc CC] [--keep DIR]
     cfuzz.py show  SEED                 # print the program for SEED
@@ -59,6 +65,7 @@ class Fn:
         self.structs = []       # struct S locals
         self.body = []          # statements
         self.ret = None         # expression
+        self.dlocals = []       # double locals, live across statements and calls
 
 
 PROFILE = 'wide'     # 'narrow': scalars, local arrays and counted loops only
@@ -156,8 +163,10 @@ class Gen:
         if c < 0.55:
             return ('sgn', r.choice(['+', '-', '*', '/', '%', '>>', '<', '>=']),
                     self.expr(d - 1), self.expr(d - 1))
-        if c < 0.80:
+        if c < 0.72:
             return ('flt', self.dexpr(2))
+        if c < 0.80:
+            return ('dbits', self.dexpr(2))     # a double's two words, as an unsigned
         u4 = [a for a in f.arrays if a[1] == 'unsigned' and a[2] >= 4] + [('ga', 'unsigned', 8)]
         if c < 0.90:
             return ('sum4', r.choice(u4)[0])
@@ -175,14 +184,26 @@ class Gen:
                 # (selfhost ISSUES-100)
                 return ('dk', r.choice(['0.5', '1.0', '3.25', '-2.75', '1e3', '0.1',
                                         '2', '4', '8', '3', '-2', '16']))
+            if self.cur.dlocals and r.random() < 0.4:
+                return ('dvar', r.choice(self.cur.dlocals))
             return ('dv', self.expr(1))
         c = r.random()
-        if c < 0.55:
+        if c < 0.50:
             return ('dbin', r.choice(['+', '-', '*']), self.dexpr(d - 1), self.dexpr(d - 1))
-        if c < 0.75:
+        if c < 0.66:
             return ('ddiv', self.dexpr(d - 1), self.expr(1))
-        if c < 0.90:
+        if c < 0.78:
             return ('dflt', self.dexpr(d - 1))
+        if c < 0.90:
+            # a double changed through a union, as C libraries write fabs
+            # and copysign: one word kept, the other made new, and the pair
+            # put back together (selfhost ISSUES-113 was such a pair)
+            k = r.choice(['dabs_u', 'dneg_u', 'dcsign_u', 'dlo_u'])
+            if k == 'dcsign_u':
+                return ('dpun', k, self.dexpr(d - 1), self.dexpr(d - 1))
+            if k == 'dlo_u':
+                return ('dpun', k, self.dexpr(d - 1), self.expr(1))
+            return ('dpun', k, self.dexpr(d - 1))
         return ('dsel', r.choice(['<', '>=', '==']), self.dexpr(d - 1), self.dexpr(d - 1),
                 self.dexpr(d - 1), self.dexpr(d - 1))
 
@@ -227,6 +248,8 @@ class Gen:
         if self.depth >= 3:
             c = c * 0.45
         if c < 0.40:
+            if self.cur.dlocals and r.random() < 0.15:
+                return ('dasg', r.choice(self.cur.dlocals), self.dexpr(2))
             return ('asg', r.choice(['=', '+=', '^=', '-=', '|=', '=']), self.lvalue(), self.expr())
         self.depth += 1
         try:
@@ -328,6 +351,8 @@ class Gen:
             f.structs.append('s%d' % k)
         for k in range(r.choice([0, 0, 1, 2]) if self.wide_on else 0):
             f.ptrs.append('q%d' % k)
+        if self.wide_on and r.random() < 0.5:
+            f.dlocals = ['dl0', 'dl1']
         f.locals = [(n, t, self.expr(2)) for (n, t, _) in f.locals]
         f.body = self.stmts(r.randrange(2, 7))
         f.ret = self.expr()
@@ -417,6 +442,8 @@ def rx(e):
         return '(unsigned)(%s %s %s)' % (a, e[1], b)
     if k == 'flt':
         return 'fcv(%s)' % rd(e[1])
+    if k == 'dbits':
+        return 'dbits(%s)' % rd(e[1])
     if k == 'sum4':
         return 'sum4(%s)' % e[1]
     if k == 'shash':
@@ -438,6 +465,12 @@ def rd(e):
         return '(double)(float)%s' % rd(e[1])
     if k == 'dsel':
         return '(%s %s %s ? %s : %s)' % (rd(e[2]), e[1], rd(e[3]), rd(e[4]), rd(e[5]))
+    if k == 'dvar':
+        return e[1]
+    if k == 'dpun':
+        if e[1] == 'dlo_u':
+            return 'dlo_u(%s, %s)' % (rd(e[2]), rx(e[3]))
+        return '%s(%s)' % (e[1], ', '.join(rd(x) for x in e[2:]))
     # an unsigned expression the reducer put in a double's place
     return '(double)%s' % rx(e)
 
@@ -453,6 +486,20 @@ static unsigned fcv(double d) {
     if (d < -1e15) return 3u;
     return (unsigned)(long long)d;
 }
+union dw { double d; unsigned w[2]; };
+static double dred(double x) {      /* finite and under 1024: no Inf, no NaN */
+    if (x != x || x > 1e12 || x < -1e12) return 0.5;
+    return x - (double)(long long)(x / 1024.0) * 1024.0;
+}
+static double dabs_u(double x) { union dw u; u.d = x; u.w[1] &= 0x7fffffffu; return u.d; }
+static double dneg_u(double x) { union dw u; u.d = x; u.w[1] ^= 0x80000000u; return u.d; }
+static double dcsign_u(double x, double y) {
+    union dw a, b; a.d = x; b.d = y;
+    a.w[1] = (a.w[1] & 0x7fffffffu) | (b.w[1] & 0x80000000u);
+    return a.d;
+}
+static double dlo_u(double x, unsigned k) { union dw u; u.d = x; u.w[0] ^= k & 0xffu; return u.d; }
+static unsigned dbits(double x) { union dw u; u.d = x; return u.w[0] ^ (u.w[1] * 3u); }
 static void bump(unsigned *q, unsigned k) { q[0] += k; q[0] ^= k >> 3; }
 static unsigned sum4(const unsigned *q) { return q[0] + q[1] * 3u + q[2] * 5u + q[3] * 7u; }
 static struct S smix(struct S x, unsigned k) {
@@ -522,6 +569,8 @@ def rs(s, ind, out, types):
         out.append('%s}' % p)
     elif k == 'ret':
         out.append('%sif (%s) return %s;' % (p, rx(s[1]), rx(s[2])))
+    elif k == 'dasg':
+        out.append('%s%s = dred(%s);' % (p, s[1], rd(s[2])))
     elif k == 'switch':
         out.append('%sswitch (%s %% 6u) {' % (p, rx(s[1])))
         for (c, body, brk) in s[2]:
@@ -595,6 +644,8 @@ def render(fns, calls):
             out.append('    struct S %s;' % n)
         for n in f.ptrs:
             out.append('    unsigned *%s = &g%d;' % (n, int(n[1:]) % 3))
+        if f.dlocals:
+            out.append('    double dl0 = -487.0 + (double)(p0 & 7u), dl1 = 150.53;')
         for (n, t, sz) in f.arrays:
             out.append('    { int z; for (z = 0; z < %d; z++) %s[z] = (%s)(z * 37u + %du); }' % (sz, n, t, sz))
         for i, n in enumerate(f.structs):
@@ -606,7 +657,10 @@ def render(fns, calls):
         for s in f.body:
             rs(s, 1, out, types)
         out.append('done:')
-        out.append('    return %s;' % rx(f.ret) if f.ret else '    return 0u;')
+        if f.dlocals:      # the doubles' words, so a wrong one is seen
+            out.append('    return (%s) ^ dbits(dl0) ^ (dbits(dl1) * 5u);' % (rx(f.ret) if f.ret else '0u'))
+        else:
+            out.append('    return %s;' % rx(f.ret) if f.ret else '    return 0u;')
         out.append('}')
         out.append('')
     out.append('int main(void) {')
@@ -727,6 +781,9 @@ def sequence(stmts):
         elif k == 'smix':
             (e,) = full_expr(s[3])
             s = ('smix', s[1], s[2], e)
+        elif k == 'dasg':
+            (e,) = full_expr(s[2])
+            s = ('dasg', s[1], e)
         out.append(s)
     return out
 
@@ -768,8 +825,12 @@ def build_clang(src, d, opt='-O2'):
     rt = os.path.join(ROOT, 'runtime')
     d = d + '/' + opt.lstrip('-')
     os.makedirs(d, exist_ok=True)
+    # -ffp-contract=off: clang's default makes a - b*c an fmuladd, which
+    # LLVM folds fused and SLOW-32, with no FMA, computes as two roundings
+    # -- one program, two answers, by whether a value was known.  stage08
+    # never contracts; neither does the oracle.
     steps = [[os.path.join(LLVM, 'clang'), '-target', 'slow32-unknown-none', '-S', '-emit-llvm', opt, '-w',
-              '-I' + os.path.join(rt, 'include'), src, '-o', d + '/c.ll'],
+              '-ffp-contract=off', '-I' + os.path.join(rt, 'include'), src, '-o', d + '/c.ll'],
              # The machine verifier checks every function llc builds, so a
              # backend defect is caught even when this program's output
              # happens to come out right (the GPRPair spill bug of
@@ -830,7 +891,7 @@ def check(text, cc):
             # stage08 agrees with it, the SLOW-32 clang build is the odd
             # one out (the LLVM backend, not stage08).
             cout = couts[odd[0]]
-            hrc, hout = sh(['cc', '-O0', '-w', src, '-o', d + '/h.exe'])
+            hrc, hout = sh(['cc', '-O0', '-w', '-ffp-contract=off', src, '-o', d + '/h.exe'])
             if hrc == 0:
                 hrc, hout = sh([d + '/h.exe'], timeout=60)
                 hout = '\n'.join(l for l in hout.splitlines() if l.strip())
@@ -946,7 +1007,7 @@ def replace_list(body, path, new):
 
 
 EXPR_KINDS = {'bin', 'shl', 'shr', 'sar', 'cmp', 'sel', 'cast', 'div', 'mulhi', 'un', 'call', 'icall', 'addk', 'idx',
-              'w64', 'sgn', 'flt', 'sum4', 'shash', 'deref', 'fld'}
+              'w64', 'sgn', 'flt', 'dbits', 'sum4', 'shash', 'deref', 'fld'}
 
 
 def shrink_tree(t):
