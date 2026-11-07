@@ -17,7 +17,7 @@ test that did not pass.
   timeout       under the engine
   flang llc as ld   the phase that refused it
 """
-import argparse, collections, os, re, subprocess, sys, tempfile
+import argparse, collections, fnmatch, os, re, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +46,62 @@ def directives(text):
     return run, opts, 'dg-shouldfail' in text
 
 
+# What DejaGnu would ask of a target, answered for this one.  INTEGER(16) exists here;
+# REAL(10) and (16) do not.  Whether the C library can truncate a file and so on is for the
+# tests to show.  An xfail isn't a condition: the oracle says what it does on this host.
+TRIPLE = 'slow32-unknown-none'
+EFFECTIVE = dict.fromkeys(('fd_truncate', 'c99_runtime', 'stdint_types', 'le', 'ilp32', 'nonpic',
+                           'fortran_integer_16', 'fortran_large_int', 'fortran_largest_fp_has_sqrt'), True)
+EFFECTIVE.update(dict.fromkeys(('fortran_large_real', 'fortran_real_10', 'fortran_real_16', 'fortran_real_c_float128',
+                                'lto', 'static_libgfortran', 'be', 'ia32', 'newlib', 'pie_enabled', 'sse2_runtime'), False))
+
+
+def selector(tokens):
+    """A DejaGnu selector: names and triplets, {}, !, && and ||; beside each other, any."""
+    def unary(i):
+        t = tokens[i]
+        if t == '!':
+            v, i = unary(i + 1)
+            return not v, i
+        if t == '{':
+            v, i = expr(i + 1)
+            return v, i + 1
+        if '-' in t:
+            return fnmatch.fnmatchcase(TRIPLE, t), i + 1
+        if t not in EFFECTIVE:
+            sys.exit(f'gfortran-suite: no answer for the target selector {t}')
+        return EFFECTIVE[t], i + 1
+
+    def expr(i):
+        v, op = None, 'or'
+        while i < len(tokens) and tokens[i] != '}':
+            if tokens[i] in ('||', '&&'):
+                op = 'or' if tokens[i] == '||' else 'and'
+                i += 1
+                continue
+            u, i = unary(i)
+            v = u if v is None else (v or u) if op == 'or' else (v and u)
+            op = 'or'
+        return bool(v), i
+
+    return expr(0)[0]
+
+
+def applies(text):
+    """Would this test run on SLOW-32?"""
+    words = lambda s: re.findall(r'[{}]|[^\s{}]+', s)
+    for line in text.splitlines():
+        m = re.search(r'dg-do\s+run\s*\{\s*target\s+(.*)', line)
+        if m and not selector(words(m.group(1))):
+            return False
+        m = re.search(r'dg-require-effective-target\s+(\S+)\s*(?:\{\s*target\s+(.*))?', line)
+        if m:
+            name = m.group(1).rstrip('}')
+            if name and (not m.group(2) or selector(words(m.group(2)))) and not selector([name]):
+                return False
+    return True
+
+
 def companions(src, text):
     """What else the test is made of: Fortran read for its modules, and sources linked in."""
     def named(what):
@@ -67,7 +123,7 @@ def skip_reason(rel, text, opts):
     parts = rel.split('/')
     if len(parts) > 1 and parts[0] in SKIPDIRS:
         return 'skip-dir'
-    if re.search(r'dg-do\s+run\s*\{', text) or 'dg-require-' in text:
+    if not applies(text):
         return 'skip-conditional'
     if any(o.startswith(('-fopenmp', '-fopenacc', '-fcoarray=lib', '-flto', '-fsanitize')) for o in opts):
         return 'skip-option'
