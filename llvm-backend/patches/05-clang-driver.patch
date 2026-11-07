@@ -64,10 +64,10 @@ index 7c832ef405fa..54649107e803 100644
      break;
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.cpp b/clang/lib/Driver/ToolChains/SLOW32.cpp
 new file mode 100644
-index 000000000000..dbe9ebc8228f
+index 000000000000..a0240b0799c9
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.cpp
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,179 @@
 +//===--- SLOW32.cpp - SLOW-32 ToolChain Implementations ---------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -220,6 +220,22 @@ index 000000000000..dbe9ebc8228f
 +  return new tools::SLOW32::Linker(*this);
 +}
 +
++// No contraction by default.  SLOW-32 has no fused multiply-add, so with
++// clang's default (-ffp-contract=on) an a*b+c becomes llvm.fmuladd, which
++// LLVM folds as one rounding where the operands are known and the backend
++// computes as two where they are not: one program, two answers, by what the
++// optimizer could see.  Off, a float behaves the same everywhere.  The
++// driver has already passed its own -ffp-contract; this comes after it, so
++// it wins, unless the user asked for contraction or a model that sets it.
++void SLOW32ToolChain::addClangTargetOptions(
++    const ArgList &DriverArgs, ArgStringList &CC1Args, BoundArch BA,
++    Action::OffloadKind DeviceOffloadKind) const {
++  if (!DriverArgs.hasArg(options::OPT_ffp_contract, options::OPT_ffast_math,
++                         options::OPT_ffp_model_EQ,
++                         options::OPT_funsafe_math_optimizations))
++    CC1Args.push_back("-ffp-contract=off");
++}
++
 +void SLOW32ToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 +                                                ArgStringList &CC1Args) const {
 +  // The host's /usr/local/include and /usr/include are never SLOW-32's: a
@@ -233,10 +249,10 @@ index 000000000000..dbe9ebc8228f
 +}
 diff --git a/clang/lib/Driver/ToolChains/SLOW32.h b/clang/lib/Driver/ToolChains/SLOW32.h
 new file mode 100644
-index 000000000000..636656b04ebb
+index 000000000000..e99f78135259
 --- /dev/null
 +++ b/clang/lib/Driver/ToolChains/SLOW32.h
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,101 @@
 +//===--- SLOW32.h - SLOW-32 ToolChain Implementations -----------*- C++ -*-===//
 +//
 +// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -316,6 +332,12 @@ index 000000000000..636656b04ebb
 +  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
 +                            llvm::opt::ArgStringList &CC1Args) const override;
 +
++  // -ffp-contract=off unless asked otherwise (SLOW32.cpp)
++  void addClangTargetOptions(const llvm::opt::ArgList &DriverArgs,
++                             llvm::opt::ArgStringList &CC1Args,
++                             BoundArch BA,
++                             Action::OffloadKind DeviceOffloadKind) const override;
++
 +  StringRef getRuntimeRoot() const { return RuntimeRoot; }
 +
 +protected:
@@ -334,15 +356,17 @@ index 000000000000..636656b04ebb
 +#endif // LLVM_CLANG_LIB_DRIVER_TOOLCHAINS_SLOW32_H
 diff --git a/clang/test/Driver/slow32-toolchain.c b/clang/test/Driver/slow32-toolchain.c
 new file mode 100644
-index 000000000000..8640e76b5874
+index 000000000000..341f64b00d0b
 --- /dev/null
 +++ b/clang/test/Driver/slow32-toolchain.c
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,92 @@
 +// Check the SLOW-32 driver pipeline: clang -cc1, then slow32asm, then s32-ld.
 +
 +// RUN: %clang -### --target=slow32-unknown-none --sysroot=/s32 %s 2>&1 \
 +// RUN:   | FileCheck %s
 +// CHECK: "-cc1" "-triple" "slow32-unknown-none"
++// CHECK-SAME: "-ffp-contract=on"
++// CHECK-SAME: "-ffp-contract=off"
 +// CHECK-SAME: "-nostdsysteminc"
 +// CHECK-SAME: "-internal-isystem" "{{.*}}/s32{{/|\\\\}}runtime{{/|\\\\}}include"
 +// CHECK-SAME: "-femulated-tls"
@@ -418,3 +442,13 @@ index 000000000000..8640e76b5874
 +// CNOCXX-NOT: "-funwind-tables=
 +// CNOCXX-NOT: libs32cxx.s32a
 +// CNOCXX-NOT: "--heap-size"
++
++// No FMA, so no contraction unless asked: off by default, the user's choice
++// otherwise (it would fold fused and run unfused).
++// RUN: %clang -### --target=slow32-unknown-none -ffp-contract=fast -c %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=CONTRACT %s
++// CONTRACT: "-ffp-contract=fast"
++// CONTRACT-NOT: "-ffp-contract=off"
++// RUN: %clang -### --target=slow32-unknown-none -ffast-math -c %s 2>&1 \
++// RUN:   | FileCheck --check-prefix=FASTMATH %s
++// FASTMATH-NOT: "-ffp-contract=off"

@@ -82,6 +82,8 @@ make
 
 ✅ Runtime builds at -O2 throughout (runtime/Makefile OPT_LEVEL)
 
+✅ clang for SLOW-32 does not contract floating point (2026-11-07): the driver passes `-ffp-contract=off` unless `-ffp-contract`, `-ffast-math` or `-ffp-model` is given.  No FMA, so `a*b+c` folded fused at compile time and rounded twice at run time -- one program, two answers.  stage08 never contracts; musl builds its libm the same way
+
 ⚠️ See docs/IMPROVEMENTS.md for known issues
 
 

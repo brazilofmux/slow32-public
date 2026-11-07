@@ -3602,9 +3602,9 @@ f77_cabs:                               # @f77_cabs
 	addi sp, sp, -16
 	stw sp+0, lr
 	fcvt.d.s r6, r3
+	fmul.d r6, r6, r6
 	fcvt.d.s r4, r4
 	fmul.d r4, r4, r4
-	fmul.d r6, r6, r6
 	fadd.d r4, r6, r4
 	add r3, r4, r0
 	add r4, r5, r0
@@ -3728,20 +3728,20 @@ f77_cdiv:                               # @f77_cdiv
 	flt.d r1, r6, r20
 	bne r1, r0, .LBB20_4
 .LBB20_6:
-	fmul.d r6, r16, r16
-	fmul.d r8, r14, r14
-	fadd.d r6, r8, r6
+	fmul.d r6, r14, r14
+	fmul.d r8, r16, r16
+	fadd.d r6, r6, r8
 	fcvt.d.s r8, r13
+	fmul.d r18, r14, r8
 	fcvt.d.s r12, r12
-	fmul.d r18, r16, r12
-	fmul.d r20, r8, r14
-	fadd.d r18, r20, r18
+	fmul.d r20, r16, r12
+	fadd.d r18, r18, r20
 	fdiv.d r18, r18, r6
 	fmul.d r18, r4, r18
 	fcvt.s.d r1, r18
 	stw r11+0, r1
+	fmul.d r12, r14, r12
 	fmul.d r8, r16, r8
-	fmul.d r12, r12, r14
 	fsub.d r8, r12, r8
 	fdiv.d r6, r8, r6
 	fmul.d r4, r4, r6
@@ -3790,12 +3790,12 @@ f77_cpow_i:                             # @f77_cpow_i
 	stw sp+4, r17
 	lui r1, %hi(.LCPI21_0)
 	addi r1, r1, %lo(.LCPI21_0)
-	ldw r9, r1+4
-	ldw r8, r1+0
-	lui r1, %hi(.LCPI21_1)
-	addi r1, r1, %lo(.LCPI21_1)
 	ldw r11, r1+4
 	ldw r10, r1+0
+	lui r1, %hi(.LCPI21_1)
+	addi r1, r1, %lo(.LCPI21_1)
+	ldw r9, r1+4
+	ldw r8, r1+0
 	beq r6, r0, .LBB21_7
 .LBB21_1:
 	srai r1, r6, 31
@@ -3810,21 +3810,21 @@ f77_cpow_i:                             # @f77_cpow_i
 	andi r7, r1, 1
 	beq r7, r0, .LBB21_5
 .LBB21_4:
-	fmul.d r14, r10, r12
-	fmul.d r16, r8, r4
-	fsub.d r14, r16, r14
-	fmul.d r10, r4, r10
-	fmul.d r8, r8, r12
-	fadd.d r10, r8, r10
-	add r8, r14, r0
-	add r9, r15, r0
+	fmul.d r14, r4, r10
+	fmul.d r16, r12, r8
+	fsub.d r14, r14, r16
+	fmul.d r10, r12, r10
+	fmul.d r8, r4, r8
+	fadd.d r8, r8, r10
+	add r10, r14, r0
+	add r11, r15, r0
 .LBB21_5:
 	srli r1, r1, 1
 	beq r1, r0, .LBB21_2
 .LBB21_6:
-	fmul.d r14, r12, r12
-	fmul.d r16, r4, r4
-	fsub.d r14, r16, r14
+	fmul.d r14, r4, r4
+	fmul.d r16, r12, r12
+	fsub.d r14, r14, r16
 	fadd.d r4, r4, r4
 	fmul.d r12, r12, r4
 	add r4, r14, r0
@@ -3837,13 +3837,13 @@ f77_cpow_i:                             # @f77_cpow_i
 	fmul.d r4, r10, r10
 	fmul.d r6, r8, r8
 	fadd.d r4, r6, r4
-	fdiv.d r8, r8, r4
-	fneg.d r6, r10
-	fdiv.d r10, r6, r4
+	fdiv.d r10, r10, r4
+	fneg.d r6, r8
+	fdiv.d r8, r6, r4
 .LBB21_9:
-	fcvt.s.d r1, r8
-	stw r3+0, r1
 	fcvt.s.d r1, r10
+	stw r3+0, r1
+	fcvt.s.d r1, r8
 	stw r3+4, r1
 	ldw r17, sp+4
 	ldw r16, sp+8
@@ -3871,9 +3871,9 @@ f77_clog:                               # @f77_clog
 	stw sp+28, r15
 	add r11, r3, r0
 	fcvt.d.s r12, r4
+	fmul.d r6, r12, r12
 	fcvt.d.s r14, r5
 	fmul.d r4, r14, r14
-	fmul.d r6, r12, r12
 	fadd.d r4, r6, r4
 	add r3, r4, r0
 	add r4, r5, r0
@@ -3994,9 +3994,9 @@ f77_cpow_c:                             # @f77_cpow_c
 	jal r0, .LBB24_4
 .LBB24_3:
 	fcvt.d.s r14, r4
+	fmul.d r6, r14, r14
 	fcvt.d.s r16, r5
 	fmul.d r4, r16, r16
-	fmul.d r6, r14, r14
 	fadd.d r4, r6, r4
 	add r3, r4, r0
 	add r4, r5, r0
@@ -4017,15 +4017,15 @@ f77_cpow_c:                             # @f77_cpow_c
 	fcvt.s.d r1, r4
 	fcvt.d.s r4, r13
 	fcvt.d.s r6, r18
-	fcvt.d.s r8, r12
-	fcvt.d.s r12, r1
-	fmul.d r14, r8, r12
-	fmul.d r16, r4, r6
-	fsub.d r14, r16, r14
-	fmul.d r6, r8, r6
-	fmul.d r4, r4, r12
-	fadd.d r4, r4, r6
-	fcvt.s.d r1, r14
+	fmul.d r8, r4, r6
+	fcvt.d.s r12, r12
+	fcvt.d.s r14, r1
+	fmul.d r16, r12, r14
+	fsub.d r8, r8, r16
+	fmul.d r4, r4, r14
+	fmul.d r6, r12, r6
+	fadd.d r4, r6, r4
+	fcvt.s.d r1, r8
 	fcvt.s.d r14, r4
 	fcvt.d.s r4, r1
 	add r3, r4, r0
@@ -4102,10 +4102,10 @@ f77_csqrt:                              # @f77_csqrt
 	add r13, r4, r0
 	add r11, r3, r0
 	fcvt.d.s r16, r4
-	fcvt.d.s r14, r5
-	fmul.d r4, r14, r14
-	fmul.d r6, r16, r16
-	fadd.d r4, r6, r4
+	fmul.d r4, r16, r16
+	fcvt.d.s r14, r12
+	fmul.d r6, r14, r14
+	fadd.d r4, r4, r6
 	add r3, r4, r0
 	add r4, r5, r0
 	jal r31, sqrt
@@ -5298,10 +5298,10 @@ f77i_cabs:                              # @f77i_cabs
 	stw sp+0, lr
 	ldw r1, r3+0
 	fcvt.d.s r4, r1
+	fmul.d r4, r4, r4
 	ldw r1, r3+4
 	fcvt.d.s r6, r1
 	fmul.d r6, r6, r6
-	fmul.d r4, r4, r4
 	fadd.d r4, r4, r6
 	add r3, r4, r0
 	add r4, r5, r0
@@ -5350,10 +5350,10 @@ f77i_csqrt:                             # @f77i_csqrt
 	ldw r16, r3+0
 	ldw r11, r3+4
 	fcvt.d.s r14, r16
+	fmul.d r4, r14, r14
 	fcvt.d.s r12, r11
-	fmul.d r4, r12, r12
-	fmul.d r6, r14, r14
-	fadd.d r4, r6, r4
+	fmul.d r6, r12, r12
+	fadd.d r4, r4, r6
 	add r3, r4, r0
 	add r4, r5, r0
 	jal r31, sqrt
@@ -5500,10 +5500,10 @@ f77i_clog:                              # @f77i_clog
 	ldw r1, r3+0
 	ldw r3, r3+4
 	fcvt.d.s r12, r1
+	fmul.d r4, r12, r12
 	fcvt.d.s r14, r3
-	fmul.d r4, r14, r14
-	fmul.d r6, r12, r12
-	fadd.d r4, r6, r4
+	fmul.d r6, r14, r14
+	fadd.d r4, r4, r6
 	add r3, r4, r0
 	add r4, r5, r0
 	jal r31, sqrt
@@ -17355,5 +17355,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.82
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 6e2f4f6acee3dfa1eb94cca02246db544722acd0)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git a06e1a6e35103a79b1ae3c6830426b277cc25690)"
 	.section	".note.GNU-stack","",@progbits
