@@ -2164,9 +2164,9 @@ f77_wr_d:                               # @f77_wr_d
 .LBB13_81:
 	add r9, r8, r0
 	fdiv.d r10, r10, r6
-	fle.d r8, r6, r10
-	xori lr, r8, 1
-	addi r8, r9, 1
+	addi r8, r8, 1
+	fle.d lr, r6, r10
+	xori lr, lr, 1
 	bne lr, r0, .LBB13_83
 .LBB13_82:
 	bgt r1, r9, .LBB13_81
@@ -2493,13 +2493,13 @@ fio_list_out_real:                      # @fio_list_out_real
 	xori r3, r3, 1
 	bne r3, r0, .LBB14_24
 .LBB14_9:
+	addi r23, r0, 1
 	lui r1, %hi(.LCPI14_3)
 	addi r1, r1, %lo(.LCPI14_3)
 	ldw r5, r1+4
 	ldw r4, r1+0
 	fle.d r1, r4, r6
 	xori r3, r1, 1
-	addi r23, r0, 1
 	add r1, r23, r0
 	bne r3, r0, .LBB14_12
 .LBB14_10:
@@ -3622,11 +3622,11 @@ f77_cabs:                               # @f77_cabs
 	.p2align	2, 0x0                          # -- Begin function f77_cdiv
 	.type	.LCPI20_0,@object
 .LCPI20_0:
-	.quad	0x43f0000000000000              # double 1.8446744073709552E+19
+	.quad	0x3ff0000000000000              # double 1
 	.size	.LCPI20_0, 8
 	.type	.LCPI20_1,@object
 .LCPI20_1:
-	.quad	0x3ff0000000000000              # double 1
+	.quad	0x43f0000000000000              # double 1.8446744073709552E+19
 	.size	.LCPI20_1, 8
 	.type	.LCPI20_2,@object
 .LCPI20_2:
@@ -3683,14 +3683,14 @@ f77_cdiv:                               # @f77_cdiv
 	add r7, r2, r0
 	lui r1, %hi(.LCPI20_0)
 	addi r1, r1, %lo(.LCPI20_0)
+	ldw r5, r1+4
+	ldw r4, r1+0
+	lui r1, %hi(.LCPI20_1)
+	addi r1, r1, %lo(.LCPI20_1)
 	ldw r9, r1+4
 	ldw r8, r1+0
 	flt.d r1, r8, r6
 	xori r3, r1, 1
-	lui r1, %hi(.LCPI20_1)
-	addi r1, r1, %lo(.LCPI20_1)
-	ldw r5, r1+4
-	ldw r4, r1+0
 	lui r1, %hi(.LCPI20_2)
 	addi r1, r1, %lo(.LCPI20_2)
 	bne r3, r0, .LBB20_2
@@ -4133,14 +4133,14 @@ f77_csqrt:                              # @f77_csqrt
 	xori r4, r4, 1
 	beq r4, r0, .LBB25_4
 .LBB25_1:
+	ldw r13, r3+%lo(.LCPI25_1)
 	lui r1, %hi(.LCPI25_2)
 	addi r1, r1, %lo(.LCPI25_2)
 	ldw r5, r1+4
 	ldw r4, r1+0
-	feq.d r4, r16, r4
-	ldw r13, r3+%lo(.LCPI25_1)
+	feq.d r3, r16, r4
 	add r1, r13, r0
-	bne r4, r0, .LBB25_3
+	bne r3, r0, .LBB25_3
 .LBB25_2:
 	add r3, r14, r0
 	add r4, r15, r0
@@ -5381,12 +5381,12 @@ f77i_csqrt:                             # @f77i_csqrt
 	xori r4, r4, 1
 	beq r4, r0, .LBB80_4
 .LBB80_1:
-	lui r3, %hi(.LCPI80_2)
-	addi r3, r3, %lo(.LCPI80_2)
-	ldw r5, r3+4
-	ldw r4, r3+0
-	feq.d r3, r14, r4
 	ldw r16, r1+%lo(.LCPI80_1)
+	lui r1, %hi(.LCPI80_2)
+	addi r1, r1, %lo(.LCPI80_2)
+	ldw r5, r1+4
+	ldw r4, r1+0
+	feq.d r3, r14, r4
 	add r1, r16, r0
 	bne r3, r0, .LBB80_3
 .LBB80_2:
@@ -13066,12 +13066,12 @@ f77_dpow_i:                             # @f77_dpow_i
 	addi r3, r3, %lo(.LCPI118_1)
 	ldw r9, r3+4
 	ldw r8, r3+0
-	lui r3, %hi(.LCPI118_2)
-	addi r3, r3, %lo(.LCPI118_2)
-	ldw r11, r3+4
-	ldw r10, r3+0
 	lui r3, %hi(.LCPI118_3)
 	addi r3, r3, %lo(.LCPI118_3)
+	ldw r11, r3+4
+	ldw r10, r3+0
+	lui r3, %hi(.LCPI118_2)
+	addi r3, r3, %lo(.LCPI118_2)
 	ldw r15, r3+4
 	ldw r14, r3+0
 	add r16, r6, r0
@@ -13104,16 +13104,16 @@ f77_dpow_i:                             # @f77_dpow_i
 	xor r24, r18, r16
 	and lr, r24, lr
 	xor r22, r16, lr
-	fdiv.d r24, r14, r20
+	fdiv.d r24, r10, r20
 	fle.d lr, r22, r24
 	bne lr, r0, .LBB118_9
 .LBB118_7:
 	fle.d lr, r20, r4
 	bne lr, r0, .LBB118_9
 .LBB118_8:
-	fle.d lr, r20, r10
+	fle.d lr, r20, r14
 	xori lr, lr, 1
-	fle.d r20, r22, r10
+	fle.d r20, r22, r14
 	xori r20, r20, 1
 	or  lr, r20, lr
 	bne lr, r0, .LBB118_13
@@ -13131,10 +13131,10 @@ f77_dpow_i:                             # @f77_dpow_i
 	xor r18, r18, r16
 	and lr, r18, lr
 	xor r20, r16, lr
-	fle.d lr, r20, r10
+	fle.d lr, r20, r14
 	bne lr, r0, .LBB118_4
 .LBB118_12:
-	fdiv.d r18, r14, r20
+	fdiv.d r18, r10, r20
 	fle.d lr, r20, r18
 	xori lr, lr, 1
 	beq lr, r0, .LBB118_4
@@ -13267,12 +13267,12 @@ f77_rpow_i:                             # @f77_rpow_i
 	ldw r5, r1+%lo(.LCPI119_0)
 	lui r6, %hi(.LCPI119_1)
 	ldw r6, r6+%lo(.LCPI119_1)
-	lui r7, %hi(.LCPI119_2)
-	addi r7, r7, %lo(.LCPI119_2)
-	ldw r9, r7+4
-	ldw r8, r7+0
 	lui r7, %hi(.LCPI119_3)
 	addi r7, r7, %lo(.LCPI119_3)
+	ldw r9, r7+4
+	ldw r8, r7+0
+	lui r7, %hi(.LCPI119_2)
+	addi r7, r7, %lo(.LCPI119_2)
 	ldw r11, r7+4
 	ldw r10, r7+0
 	add r7, r3, r0
@@ -13304,7 +13304,7 @@ f77_rpow_i:                             # @f77_rpow_i
 	xor r15, r20, r12
 	and r15, r15, r22
 	xor r18, r12, r15
-	fdiv.d r20, r10, r16
+	fdiv.d r20, r8, r16
 	fle.d r15, r18, r20
 	bne r15, r0, .LBB119_9
 .LBB119_7:
@@ -13315,9 +13315,9 @@ f77_rpow_i:                             # @f77_rpow_i
 	fle.d r15, r16, r20
 	bne r15, r0, .LBB119_9
 .LBB119_8:
-	fle.d r15, r16, r8
+	fle.d r15, r16, r10
 	xori r15, r15, 1
-	fle.d r16, r18, r8
+	fle.d r16, r18, r10
 	xori r16, r16, 1
 	or  r15, r16, r15
 	bne r15, r0, .LBB119_13
@@ -13335,10 +13335,10 @@ f77_rpow_i:                             # @f77_rpow_i
 	xor r16, r16, r12
 	and r16, r16, r18
 	xor r14, r12, r16
-	fle.d r12, r14, r8
+	fle.d r12, r14, r10
 	bne r12, r0, .LBB119_4
 .LBB119_12:
-	fdiv.d r12, r10, r14
+	fdiv.d r12, r8, r14
 	fle.d r12, r14, r12
 	xori r12, r12, 1
 	beq r12, r0, .LBB119_4
@@ -17355,5 +17355,5 @@ nml_text_add:                           # @nml_text_add
 	.word	.L.str.82
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 61880814a023c326b37eb5d151b836375a50c273)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 6e2f4f6acee3dfa1eb94cca02246db544722acd0)"
 	.section	".note.GNU-stack","",@progbits
