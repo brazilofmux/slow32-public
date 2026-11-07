@@ -1,4 +1,4 @@
-/* COPIED from selfhost/stage08/hir_regalloc.h at 438ef006.  See note in hir.h. */
+/* COPIED from selfhost/stage08/hir_regalloc.h at 17ee8642.  See note in hir.h. */
 /* hir_regalloc.h -- IRC graph-coloring register allocation for s12cc (SLOW-32)
  *
  * Iterated Register Coalescing (George-Appel 1996) for the SLOW-32 selfhost
@@ -669,6 +669,10 @@ static int ra_codegen_fold_base(int inst, int *base_out) {
         chlim = 0;
         while (chain >= 0 && chlim < 64) {
             ck = h_kind[chain];
+            /* As hcg_addr_base_off: what BURG folded away (a NOP) is no
+             * base; the ADDI or COPY that took it in is. */
+            if ((ck == HI_COPY || ck == HI_ADDI) && h_src1[chain] >= 0 &&
+                h_kind[h_src1[chain]] == HI_NOP) break;
             if (ck == HI_COPY) {
                 if (ra_is_reload[chain]) break;   /* the reload's register is the base */
                 chain = h_src1[chain];
@@ -925,6 +929,14 @@ static void ra_slot_range(int v, int *ps, int *pe) {
     s = ra_pos[v];
     e = ra_iend[v];
     if (e < s) e = s;
+    /* A spilled parameter is stored by the entry sequence
+     * (hcg_emit_param_entry), before anything else runs, not at its own
+     * position: its slot is taken from function entry.  f77 places the
+     * hidden length of a CHARACTER*(*) argument late in the function,
+     * and a value computed before that position shared its slot and
+     * overwrote the length the entry had stored -- wrong code
+     * (fortran/ ffuzz seed 102244). */
+    if (h_kind[v] == HI_PARAM) s = 0;
     if (h_kind[v] == HI_PHI && h_pbase[v] >= 0) {
         j = 0;
         while (j < h_pcnt[v]) {
@@ -2670,6 +2682,22 @@ static int ra_pair_share_fate = 1;
 static int *ra_pair_of;
 static int *ra_pair_lo;
 
+/* Link lo and hi as one fp64 pair.  A value is half of ONE pair: the
+ * first pairing stands.  A value can be offered two -- the CALL of an
+ * fp64 result is paired with its CALLHI, and the same CALL may later be
+ * the lo argument of a pseudo-call whose hi is another value (f77's
+ * ABS(D) keeps D's lo and clears the sign of its hi).  Overwriting
+ * ra_pair_of[lo] left the table asymmetric -- lo's partner the new hi,
+ * the old hi's partner still lo -- and pair claiming and share-fate
+ * spilling, which act on the partner, then stored the wrong value to a
+ * pair's slot: wrong code (fortran/ ffuzz seed 3). */
+static void ra_pair_link(int lo, int hi) {
+    if (lo == hi) return;
+    if (ra_pair_of[lo] >= 0 || ra_pair_of[hi] >= 0) return;
+    ra_pair_of[lo] = hi; ra_pair_lo[lo] = 1;
+    ra_pair_of[hi] = lo; ra_pair_lo[hi] = 0;
+}
+
 static void ra_build_pairs(void) {
     int i;
     int base;
@@ -2687,24 +2715,17 @@ static void ra_build_pairs(void) {
                 int b;
                 a = h_carg[base + 0];
                 b = h_carg[base + 1];
-                if (a >= 0 && b >= 0) {
-                    ra_pair_of[a] = b; ra_pair_lo[a] = 1;
-                    ra_pair_of[b] = a; ra_pair_lo[b] = 0;
-                }
+                if (a >= 0 && b >= 0) ra_pair_link(a, b);
                 if (n >= 4) {
                     a = h_carg[base + 2];
                     b = h_carg[base + 3];
-                    if (a >= 0 && b >= 0) {
-                        ra_pair_of[a] = b; ra_pair_lo[a] = 1;
-                        ra_pair_of[b] = a; ra_pair_lo[b] = 0;
-                    }
+                    if (a >= 0 && b >= 0) ra_pair_link(a, b);
                 }
             }
             /* The result pair: the CALL is the lo word, its CALLHI the hi. */
             if (i + 1 < h_ninst && h_kind[i + 1] == HI_CALLHI &&
                 h_src1[i + 1] == i) {
-                ra_pair_of[i] = i + 1; ra_pair_lo[i] = 1;
-                ra_pair_of[i + 1] = i; ra_pair_lo[i + 1] = 0;
+                ra_pair_link(i, i + 1);
             }
         }
         i = i + 1;
