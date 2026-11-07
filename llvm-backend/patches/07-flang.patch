@@ -211,6 +211,22 @@ index 950d0839863f..dac5766e58af 100644
    // I/O is initialized on demand so that it works for non-Fortran main().
  }
  
+diff --git a/flang-rt/lib/runtime/transformational.cpp b/flang-rt/lib/runtime/transformational.cpp
+index 4e6f24ed79e8..deec1f33914c 100644
+--- a/flang-rt/lib/runtime/transformational.cpp
++++ b/flang-rt/lib/runtime/transformational.cpp
+@@ -287,8 +287,10 @@ static inline RT_API_ATTRS void DoBesselYn(Descriptor &result, int32_t n1,
+   CppTypeFor<CAT, KIND> bn_2 = bn1;
+   CppTypeFor<CAT, KIND> bn_1 = bn1_1;
+   CppTypeFor<CAT, KIND> twoOverX = 2.0 / x;
++  const auto minusInf = -common::numeric_limits<CppTypeFor<CAT, KIND>>::infinity();
+   for (int n{n1 + 2}; n <= n2; ++n) {
+-    auto bn = twoOverX * (n - 1) * bn_1 - bn_2;
++    // Past overflow it stays -Inf; the recurrence itself would give -Inf - -Inf, a NaN.
++    auto bn = bn_1 == minusInf ? bn_1 : twoOverX * (n - 1) * bn_1 - bn_2;
+ 
+     at[0] = n - n1 + 1;
+     *result.Element<CppTypeFor<CAT, KIND>>(at) = bn;
 diff --git a/flang/include/flang/Evaluate/target.h b/flang/include/flang/Evaluate/target.h
 index 7b38db2db195..a1164c22e658 100644
 --- a/flang/include/flang/Evaluate/target.h
