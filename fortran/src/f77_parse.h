@@ -1500,9 +1500,12 @@ static int f77_load_at(int addr, int ty) {
         return f77_nar_ld;
     }
     ex_ty = ty;
-    if (ty == TY_DCPLX) {          /* a COMPLEX*16 value is its address */
+    if (ty == TY_DCPLX) {
+        /* A COMPLEX*16 value is its address -- as an alias, which the
+         * guard marks: the variable's own address instruction is also
+         * what a by-reference actual passes, legitimately. */
         ex_hi = -1;
-        return f77_dcx_mark(addr);
+        return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 0, NULL));
     }
     if (f77_ispair(ty)) {
         int a4;
@@ -1967,6 +1970,34 @@ static int f77_char_ref(int s) {
 /* Call a CHARACTER-valued function: hidden result buffer and length
  * first, then the actuals, then their hidden lengths.  `rlen` is the
  * result length the caller knows. */
+/* A call to a COMPLEX*16 FUNCTION: the result is four words, past the
+ * two return registers, so -- as for a CHARACTER function -- the caller
+ * passes a 16-byte temporary as hidden argument 0, the dummies follow, and
+ * the callee writes its result there (f77_bind_unit binds the function's
+ * name to that address).  fptr >= 0: a dummy procedure, called through it. */
+static int f77_dcx_fcall(char *name, int fptr, int *addrs, int *lens, int nargs) {
+    int out;
+    int cb;
+    int nc;
+    int ai;
+    int r;
+    out = f77_dcx_temp();
+    cb = h_ncarg;
+    f77_carg(f77_dcx_arg(out), 0);
+    nc = 1;
+    for (ai = 0; ai < nargs; ai++) { f77_carg(addrs[ai], 0); nc = nc + 1; }
+    for (ai = 0; ai < nargs; ai++) {
+        if (lens[ai] < 0) continue;
+        f77_carg(lens[ai], 0);
+        nc = nc + 1;
+    }
+    if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
+    else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
+    h_cbase[r] = cb;
+    ex_ty = TY_DCPLX; ex_hi = -1; ex_log = 0;
+    return f77_dcx_mark(out);
+}
+
 static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs) {
     int tmp;
     int cb;
@@ -2545,6 +2576,7 @@ static int f77_primary(void) {
                 if (rl < 0) rl = f77_slen[f77_sym(nm)];
                 return f77_char_fcall(f77_uname[u], rl, addrs, lens, nargs);
             }
+            if (rty == TY_DCPLX) return f77_dcx_fcall(f77_uname[u], -1, addrs, lens, nargs);
             if (f77_can_inline(u)) {
                 /* Splice the body, then read its result variable. */
                 int rs;
@@ -2639,6 +2671,7 @@ static int f77_primary(void) {
              * implicit rule): INTEGER IRAND / CHARACTER*8 CDATE. */
             rty = f77_sty[s];
             if (rty == TY_CHAR) return f77_char_fcall(strdup(nm), f77_slen[s], addrs, lens, nargs);
+            if (rty == TY_DCPLX) return f77_dcx_fcall(strdup(nm), fptr, addrs, lens, nargs);
             cb = h_ncarg;
             nc = 0;
             ai = 0;
@@ -5559,6 +5592,13 @@ static void f77_emit_return(void) {
         f77_goto_blk(f77_inline_ret_blk);
         return;
     }
+    if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0 &&
+        f77_sty[f77_result_sym] == TY_DCPLX) {
+        /* the result is in the caller's temporary already (hidden arg 0) */
+        hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+        f77_cur_blk_live = 0;
+        return;
+    }
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0) {
         v = f77_load_sym(f77_result_sym);
         if (ex_ty == TY_DOUBLE || ex_ty == TY_CPLX) {
@@ -5820,6 +5860,7 @@ static int f77_can_inline(int u) {
     if (u < 0) return 0;
     if (f77_ukind[u] == F77_UNIT_PROGRAM) return 0;
     if (f77_urty[u] == TY_CHAR) return 0;
+    if (f77_urty[u] == TY_DCPLX) return 0;     /* its result is the caller's temporary */
     if (f77_inline_depth >= F77_MAX_INLINE_DEPTH) return 0;
     if (f77_ustmts[u] > f77_inline_max) return 0;
     if (f77_unosplice[u]) return 0;
@@ -6424,6 +6465,7 @@ static void f77_bind_unit(int u) {
     /* A CHARACTER FUNCTION takes its result buffer and length as two
      * hidden leading arguments; the dummies follow. */
     if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) nparam = 2;
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) nparam = 1;
 
     if (lx_t == T_LP) {
         f77_tok();
@@ -6463,6 +6505,12 @@ static void f77_bind_unit(int u) {
         f77_styped[f77_result_sym] = 1;
         f77_slen[f77_result_sym] = f77_urlen[u];
         f77_slenv[f77_result_sym] = hi_emit(HI_PARAM, TY_INT, -1, -1, 1, NULL);
+    } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) {
+        /* The result is the caller's 16-byte temporary, hidden param 0
+         * (f77_dcx_fcall): a by-reference COMPLEX*16 dummy in all but name. */
+        f77_result_sym = f77_sym_param(f77_uname[u], 0);
+        f77_sty[f77_result_sym] = TY_DCPLX;
+        f77_styped[f77_result_sym] = 1;
     } else if (f77_ukind[u] == F77_UNIT_FUNC) {
         f77_result_sym = f77_sym(f77_uname[u]);
         f77_sty[f77_result_sym] = f77_urty[u];
@@ -6502,6 +6550,12 @@ static void f77_bind_unit(int u) {
         for (e = 0; e < f77_nunit; e++) {
             if (e == u) continue;
             if (e != fam && f77_uentry_parent[e] != fam) continue;
+            /* A COMPLEX*16 result lives in the caller's temporary, any
+             * other in this frame: one family cannot have both. */
+            if ((f77_urty[e] == TY_DCPLX) != (f77_urty[u] == TY_DCPLX)) {
+                f77_error("an ENTRY of a different type than its COMPLEX*16 FUNCTION (or the reverse) is not supported");
+                return;
+            }
             if (f77_stfb_n < F77_MAX_STFB) {
                 strcpy(f77_stfb_name[f77_stfb_n], f77_uname[e]);
                 f77_stfb_sym[f77_stfb_n] = f77_result_sym;

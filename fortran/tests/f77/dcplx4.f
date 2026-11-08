@@ -1,0 +1,52 @@
+C     COMPLEX*16 PROCEDURES: A FUNCTION OF EACH SPELLING (ITS RESULT IS
+C     THE CALLER'S TEMPORARY, HIDDEN ARGUMENT 0, AS FOR CHARACTER), AN
+C     ENTRY, A STATEMENT FUNCTION, A DUMMY PROCEDURE, AN EXPRESSION AS AN
+C     ACTUAL ARGUMENT.
+      PROGRAM DCPLX4
+      COMPLEX*16 A, B, C, ZDOT, ZF, SF, ZE1, APPLY
+      DOUBLE COMPLEX X(3), Y(3)
+      EXTERNAL ZDOT, ZF
+      INTEGER I
+      SF(A) = A * (2.0D0, 0.0D0) + (1.0D0, 1.0D0)
+      DO 10 I = 1, 3
+        X(I) = DCMPLX(DBLE(I), 0.5D0)
+        Y(I) = DCMPLX(1.0D0, -DBLE(I))
+   10 CONTINUE
+      C = ZDOT(3, X, Y)
+      CALL SHOW(C)
+      A = (1.0D0, 2.0D0)
+      B = ZF(A + (0.5D0, 0.5D0))
+      CALL SHOW(B)
+      CALL SHOW(A * 3)
+      C = SF(A)
+      CALL SHOW(C)
+      C = ZE1(A)
+      CALL SHOW(C)
+      C = APPLY(ZF, A)
+      CALL SHOW(C)
+      END
+      COMPLEX*16 FUNCTION ZDOT(N, X, Y)
+      INTEGER N, I
+      COMPLEX*16 X(N), Y(N)
+      ZDOT = (0.0D0, 0.0D0)
+      DO 10 I = 1, N
+        ZDOT = ZDOT + DCONJG(X(I)) * Y(I)
+   10 CONTINUE
+      END
+      DOUBLE COMPLEX FUNCTION ZF(Z)
+      COMPLEX*16 Z, ZE1
+      ZF = Z * Z
+      RETURN
+      ENTRY ZE1(Z)
+      ZE1 = Z + (10.0D0, 0.0D0)
+      END
+      COMPLEX*16 FUNCTION APPLY(F, Z)
+      COMPLEX*16 F, Z
+      EXTERNAL F
+      APPLY = F(Z) - Z
+      END
+      SUBROUTINE SHOW(C)
+      COMPLEX*16 C
+      WRITE (*, 100) DREAL(C), DIMAG(C)
+  100 FORMAT (2F24.15)
+      END
