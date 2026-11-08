@@ -211,6 +211,9 @@ if [ -x "$F77" ]; then
     printf '      REAL, ALLOCATABLE :: A(:)\n      REAL B\n      EQUIVALENCE (A, B)\n      END\n' > "$W/alloceq.f"
     printf '      SUBROUTINE S(A)\n      REAL, ALLOCATABLE :: A(:)\n      END\n' > "$W/allocarg.f"
     printf '      REAL, ALLOCATABLE :: A(10)\n      END\n' > "$W/allocshape.f"
+    printf '      INTEGER K(3)\n      K(1:3) = (/ 1, 2 /)\n      END\n' > "$W/aconshape.f"
+    printf '      INTEGER K(2)\n      K = 2 * (/ 1, 2 /)\n      END\n' > "$W/aconexpr.f"
+    printf '      INTEGER K(2), J\n      J = TRANSFER(1.0, 0)\n      END\n' > "$W/xferexpr.f"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -259,6 +262,9 @@ if [ -x "$F77" ]; then
              "alloceq:line 4: an ALLOCATABLE array cannot be in an EQUIVALENCE" \
              "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \
              "allocshape:line 1: an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE" \
+             "aconshape:line 2: the array constructor has 2 values for 3 elements" \
+             "aconexpr:line 2: an array constructor is supported only as the right side of an array assignment" \
+             "xferexpr:line 2: TRANSFER is supported only as an actual argument" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

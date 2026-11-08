@@ -872,6 +872,9 @@ static int f77_expr(void);
 static int f77_power(void);
 static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
+static int f77_tfree_mark(void);
+static int f77_implied_do(void (*items)(int, int));
+static void f77_tfree_to(int mark);
 static int f77_urty_of(int u);
 static int f77_load_at(int addr, int ty);
 static int f77_load_sym(int s);
@@ -1681,6 +1684,7 @@ static int f77_select(int cond, int a, int b) {
 #define IN_MAXVAL  60
 #define IN_MINVAL  61
 #define IN_ALLOCATED 62
+#define IN_TRANSFER 63    /* an actual argument only (f77_transfer_actual) */
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1842,6 +1846,7 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "MAXVAL") == 0) return IN_MAXVAL;
     if (strcmp(nm, "MINVAL") == 0) return IN_MINVAL;
     if (strcmp(nm, "ALLOCATED") == 0) return IN_ALLOCATED;
+    if (strcmp(nm, "TRANSFER") == 0) return IN_TRANSFER;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
@@ -2144,6 +2149,13 @@ static int f77_primary(void) {
         f77_tok();
         return v;
     }
+    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
+        /* (/ ... /): f77_acon_assign's, and TRANSFER's MOLD */
+        f77_error("an array constructor is supported only as the right side of an array assignment");
+        f77_tok();
+        ex_ty = TY_INT;
+        return f77_iconst(0);
+    }
     if (lx_t == T_LP) {
         f77_tok();
         v = f77_expr();
@@ -2267,6 +2279,11 @@ static int f77_primary(void) {
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
             if (in >= IN_MAXLOC && in <= IN_MINVAL) return f77_reduce(in);
+            if (in == IN_TRANSFER) {
+                f77_error("TRANSFER is supported only as an actual argument");
+                ex_ty = TY_INT;
+                return f77_iconst(0);
+            }
             if (in == IN_ALLOCATED) {
                 int as;
                 if (lx_t != T_NAME || (as = f77_sym_find(lex_name)) < 0 || !f77_salloc[as]) {
@@ -2700,6 +2717,8 @@ static int f77_primary(void) {
             int addrs[64];
             int lens[64];
             int ai;
+            int mk;
+            mk = f77_tfree_mark();
             f77_tok();
             nargs = 0;
             if (lx_t == T_LP) {
@@ -2752,13 +2771,20 @@ static int f77_primary(void) {
                 int rl;
                 rl = f77_urlen[u];
                 if (rl < 0) rl = f77_slen[f77_sym(nm)];
-                return f77_char_fcall(f77_uname[u], rl, addrs, lens, nargs);
+                r = f77_char_fcall(f77_uname[u], rl, addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
             }
-            if (rty == TY_DCPLX) return f77_dcx_fcall(f77_uname[u], -1, addrs, lens, nargs);
+            if (rty == TY_DCPLX) {
+                r = f77_dcx_fcall(f77_uname[u], -1, addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
+            }
             if (f77_can_inline(u)) {
                 /* Splice the body, then read its result variable. */
                 int rs;
                 rs = f77_inline_unit_body(u, addrs, nargs);
+                f77_tfree_to(mk);
                 if (rs >= 0) return f77_load_sym(rs);
                 ex_ty = TY_INT;
                 return f77_iconst(0);
@@ -2785,6 +2811,7 @@ static int f77_primary(void) {
                 ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             else if (rty == TY_CPLX)
                 ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
+            f77_tfree_to(mk);
             return r;
         }
         s = f77_sym(nm);
@@ -2832,6 +2859,8 @@ static int f77_primary(void) {
             int ai;
             int rty;
             int fptr;
+            int mk;
+            mk = f77_tfree_mark();
             fptr = (f77_sarg[s] && f77_srank[s] == 0) ? f77_sval[s] : -1;
             f77_need_type(s, nm);
             nargs = 0;
@@ -2850,8 +2879,12 @@ static int f77_primary(void) {
             /* The type is the caller's declaration of the name (or the
              * implicit rule): INTEGER IRAND / CHARACTER*8 CDATE. */
             rty = f77_sty[s];
-            if (rty == TY_CHAR) return f77_char_fcall(strdup(nm), f77_slen[s], addrs, lens, nargs);
-            if (rty == TY_DCPLX) return f77_dcx_fcall(strdup(nm), fptr, addrs, lens, nargs);
+            if (rty == TY_CHAR || rty == TY_DCPLX) {
+                r = rty == TY_CHAR ? f77_char_fcall(strdup(nm), f77_slen[s], addrs, lens, nargs)
+                                   : f77_dcx_fcall(strdup(nm), fptr, addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
+            }
             cb = h_ncarg;
             nc = 0;
             ai = 0;
@@ -2881,6 +2914,7 @@ static int f77_primary(void) {
             ex_hi = -1;
             if (rty == TY_DOUBLE) ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
+            f77_tfree_to(mk);
             return r;
         }
         if (f77_srank[s] > 0 && f77_aex_k > 0 && f77_sty[s] != TY_CHAR)
@@ -3002,7 +3036,8 @@ static int f77_term(void) {
     int a; int b; int aty; int bty; int rty; int ahi; int bhi;
     a = f77_power();
     aty = ex_ty; ahi = ex_hi;
-    while (lx_t == T_STAR || lx_t == T_SLASH) {
+    /* a '/' before ')' closes an array constructor (/ ... /), no division */
+    while (lx_t == T_STAR || (lx_t == T_SLASH && !(lx_rp < lx_rpe && *lx_rp == ')'))) {
         int op;
         op = lx_t;
         f77_tok();
@@ -3682,6 +3717,166 @@ static int f77_aex_elem(int s, int whole) {
     return v;
 }
 
+/* An array constructor (/ v, v, ... /) as the whole right side of an
+ * array assignment (Fortran 90), the target of rank 1 (one triplet).
+ * Each value is stored as it is parsed, at a running position, to the
+ * target's next element; a value may be an implied-DO (v, ..., I = m1,
+ * m2 [, m3]), nested as deep as I/O's.  The values agree in type (F90
+ * 4.5).  When the target array is named among the values -- X = (/ X(2),
+ * X(1) /) -- they go to a temporary of the target's extent first, as
+ * F90's evaluate-then-assign has it.  An array as a value (flattened by
+ * F90) is refused where it is parsed, as an expression. */
+static int f77_acon_s;
+static int f77_acon_rank;
+static int f77_acon_idx[F77_MAX_RANK];
+static int f77_acon_tdim;
+static int f77_acon_lo;
+static int f77_acon_st;
+static int f77_acon_pos;
+static int f77_acon_tmp;
+static int f77_acon_ty0;
+static int f77_acon_n;        /* values parsed; -1 once an implied-DO makes it dynamic */
+
+static void f77_acon_item(void);
+
+/* An INTEGER value's constant, when HIR built it from constants alone
+ * (bounds are ADD/ADDI chains over ICONSTs): 1 and *out, else 0. */
+static int f77_hconst(int v, int *out) {
+    int a; int b;
+    if (v < 0) return 0;
+    if (h_kind[v] == HI_ICONST) { *out = h_val[v]; return 1; }
+    if (h_kind[v] == HI_ADDI) {
+        if (!f77_hconst(h_src1[v], &a)) return 0;
+        *out = a + h_val[v];
+        return 1;
+    }
+    if (h_kind[v] == HI_ADD || h_kind[v] == HI_SUB || h_kind[v] == HI_MUL) {
+        if (!f77_hconst(h_src1[v], &a) || !f77_hconst(h_src2[v], &b)) return 0;
+        *out = h_kind[v] == HI_ADD ? a + b : h_kind[v] == HI_SUB ? a - b : a * b;
+        return 1;
+    }
+    return 0;
+}
+
+static void f77_acon_items(int items_off, int ctl_off) {
+    f77_scan_from(items_off);
+    for (;;) {
+        f77_acon_item();
+        if (lx_t != T_COMMA) break;
+        if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+        f77_tok();
+        if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+    }
+}
+
+static void f77_acon_item(void) {
+    int v; int vty; int vhi;
+    int p;
+    int s;
+    int addr;
+    if (lx_t == T_LP && f77_implied_do(f77_acon_items)) { f77_acon_n = -1; return; }
+    if (f77_acon_n >= 0) f77_acon_n = f77_acon_n + 1;
+    s = f77_acon_s;
+    v = f77_expr();
+    vty = ex_ty; vhi = ex_hi;
+    if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
+    if (f77_acon_ty0 < 0) f77_acon_ty0 = vty;
+    else if (vty != f77_acon_ty0) { f77_error("the values of an array constructor differ in type"); return; }
+    p = hi_emit(HI_LOAD, TY_INT, f77_acon_pos, -1, 0, NULL);
+    if (f77_acon_tmp >= 0) {
+        addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_acon_tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(f77_esize(s)), 0, NULL), 0, NULL);
+    } else {
+        int cur[F77_MAX_RANK];
+        int k;
+        for (k = 0; k < f77_acon_rank; k++) cur[k] = f77_acon_idx[k];
+        cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, f77_acon_lo, hi_emit(HI_MUL, TY_INT, p, f77_acon_st, 0, NULL), 0, NULL);
+        addr = f77_elem_addr(s, cur, f77_acon_rank);
+    }
+    f77_store_at(addr, f77_mty(s), v, vty, vhi);
+    hi_emit(HI_STORE, TY_INT, f77_acon_pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
+}
+
+static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *st, int nt) {
+    int k;
+    int ext;
+    int esz;
+    int mty;
+    if (nt != 1) { f77_error("an array constructor is rank 1; the target is not"); return; }
+    f77_acon_s = s;
+    f77_acon_rank = f77_srank[s];
+    for (k = 0; k < f77_acon_rank; k++) {
+        f77_acon_idx[k] = idx[k];
+        if (trip[k]) f77_acon_tdim = k;
+    }
+    k = f77_acon_tdim;
+    f77_acon_lo = lo[k];
+    f77_acon_st = st[k];
+    f77_acon_ty0 = -1;
+    f77_acon_n = 0;
+    esz = f77_esize(s);
+    mty = f77_mty(s);
+    ext = hi_emit(HI_SUB, TY_INT, hi[k], lo[k], 0, NULL);
+    ext = hi_emit(HI_ADD, TY_INT, ext, st[k], 0, NULL);
+    ext = hi_emit(HI_DIV, TY_INT, ext, st[k], 0, NULL);
+    ext = f77_select(hi_emit(HI_SGT, TY_INT, ext, f77_iconst(0), 0, NULL), ext, f77_iconst(0));
+    f77_acon_tmp = -1;
+    if (f77_text_names((int)(lx_rts - lx_stmt), f77_sname[s])) {
+        int args[3];
+        args[0] = f77_iconst(0);
+        args[1] = hi_emit(HI_MUL, TY_INT, ext, f77_iconst(esz), 0, NULL);
+        args[2] = f77_iconst(0);
+        f77_acon_tmp = f77_call_i("f77_allocate", 3, args);
+    }
+    f77_acon_pos = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, f77_acon_pos, f77_iconst(0), 0, NULL);
+    f77_tok();                                   /* ( */
+    f77_tok();                                   /* / */
+    for (;;) {
+        f77_acon_item();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_SLASH) { f77_error("expected /) after an array constructor"); return; }
+    f77_tok();
+    if (lx_t != T_RP) { f77_error("expected /) after an array constructor"); return; }
+    f77_tok();
+    /* both counts known: they must agree (gfortran's compile-time check) */
+    {
+        int e; int cl; int ch; int cs;
+        if (f77_acon_n >= 0 && f77_hconst(lo[k], &cl) && f77_hconst(hi[k], &ch) && f77_hconst(st[k], &cs) && cs != 0)
+            e = (ch - cl + cs) / cs;
+        else
+            e = f77_acon_n;
+        if (e < 0) e = 0;
+        if (f77_acon_n >= 0 && e != f77_acon_n) {
+            char m[128];
+            sprintf(m, "the array constructor has %d values for %d elements", f77_acon_n, e);
+            f77_error(m);
+            return;
+        }
+    }
+    if (f77_acon_tmp >= 0) {
+        /* the copy, and the temporary freed */
+        F77Loop cl;
+        int c;
+        int cur[F77_MAX_RANK];
+        int v;
+        int args[1];
+        int tmp;
+        tmp = f77_acon_tmp;
+        f77_loop_begin(&cl, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext, -1, -1, NULL), f77_iconst(1));
+        c = hi_emit(HI_LOAD, TY_INT, cl.idx, -1, 0, NULL);
+        v = f77_load_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, c, f77_iconst(esz), 0, NULL), 0, NULL), mty);
+        for (k = 0; k < f77_acon_rank; k++) cur[k] = idx[k];
+        cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, lo[f77_acon_tdim], hi_emit(HI_MUL, TY_INT, c, st[f77_acon_tdim], 0, NULL), 0, NULL);
+        f77_store_at(f77_elem_addr(s, cur, f77_acon_rank), mty, v,
+                     mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : f77_sty[s], ex_hi);
+        f77_loop_end(&cl);
+        args[0] = tmp;
+        f77_call_i("f77_dealloc_auto", 1, args);
+    }
+}
+
 /* An array assignment (Fortran 90): A(section) = e, or A = e for the whole
  * array (whole; lx_t past the name, else past the section's '(').
  * - e a scalar: it and the scalar subscripts are evaluated once, before
@@ -3722,6 +3917,10 @@ static void f77_array_assign(int s, int whole) {
     if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
     f77_tok();
     f77_sstored[s] = 1;
+    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/' && f77_match_paren((int)(lx_rts - lx_stmt)) >= lx_stmt_len) {
+        f77_acon_assign(s, idx, trip, lo, hi, st, nt);
+        return;
+    }
     if (!f77_text_has_array_expr((int)(lx_rts - lx_stmt))) {
         /* a scalar to every element */
         v = f77_expr();
@@ -7021,12 +7220,231 @@ static int f77_actual_is_call(char *nm) {
     return 1;
 }
 
+/* Heap temporaries an actual argument made (TRANSFER), freed after the
+ * call that received them: f77_tfree_mark() before the actuals,
+ * f77_tfree_to(mark) after the call. */
+static int f77_tfree_list[64];
+static int f77_ntfree;
+static int f77_tfree_mark(void) { return f77_ntfree; }
+static void f77_tfree_to(int mark) {
+    int args[1];
+    while (f77_ntfree > mark) {
+        f77_ntfree = f77_ntfree - 1;
+        args[0] = f77_tfree_list[f77_ntfree];
+        f77_call_i("f77_dealloc_auto", 1, args);
+    }
+}
+
+/* esz bytes from src to dst: words, or memcpy below a word. */
+static void f77_copy_bytes(int dst, int src, int esz) {
+    int o;
+    if (esz % 4 != 0) {
+        int args[3];
+        args[0] = dst; args[1] = src; args[2] = f77_iconst(esz);
+        f77_call_i("memcpy", 3, args);
+        return;
+    }
+    for (o = 0; o < esz; o = o + 4) {
+        int w;
+        w = hi_emit(HI_LOAD, TY_INT, o ? hi_emit(HI_ADDI, HL_ADDR_TY, src, -1, o, NULL) : src, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, o ? hi_emit(HI_ADDI, HL_ADDR_TY, dst, -1, o, NULL) : dst, w, 0, NULL);
+    }
+}
+
+/* TRANSFER(SOURCE, MOLD [, SIZE]) as an actual argument (Fortran 90),
+ * lx_t at the name: the bits of SOURCE as MOLD's type, a scalar when MOLD
+ * is one and SIZE is absent, else an array of SIZE elements (or as many
+ * as SOURCE fills).  The value is a heap temporary -- the callee's
+ * changes to it reach nothing, as gfortran has it: LAPACK's xyyRFSX pass
+ * TRANSFER(RWORK(1:2*N), (/ (ZERO,ZERO) /), N) beside RWORK itself -- and
+ * the call frees it.  SOURCE is a scalar, a whole array or a section;
+ * MOLD a scalar, an array or an array constructor, only its type read.
+ * Bytes past SOURCE's are left undefined, as the standard leaves them. */
+static int f77_transfer_actual(void) {
+    int srcb;          /* SOURCE's bytes */
+    int resb;          /* the result's */
+    int msz;
+    int marr;
+    int tmp;
+    int args[3];
+    int n;
+    f77_tok();                                   /* TRANSFER */
+    f77_tok();                                   /* ( */
+    /* SOURCE: copied below, once the temporary exists; parsed first, so
+     * its value or its section's bounds are evaluated here. */
+    {
+        int s;
+        int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+        int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+        int ext[F77_MAX_RANK];
+        int rank;
+        int nt;
+        int esz;
+        int k;
+        int sval;        /* a scalar SOURCE's address, or -1 */
+        int after;
+        s = -1;
+        sval = -1;
+        rank = 0;
+        esz = 0;
+        nt = 0;
+        after = (int)(lx_rte - lx_stmt);
+        if (lx_t == T_NAME && (s = f77_sym_find(lex_name)) >= 0 && f77_srank[s] > 0 && !f77_sparam[s] &&
+            (after >= lx_stmt_len || lx_stmt[after] != '(' || f77_sty[s] != TY_CHAR)) {
+            f77_tok();
+            rank = f77_srank[s];
+            if (f77_sty[s] == TY_CHAR) { f77_error("TRANSFER of CHARACTER is not supported yet"); return f77_iconst(0); }
+            for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
+            if (lx_t == T_LP && f77_paren_has_colon()) {
+                f77_tok();
+                nt = f77_section_subs(s, idx, trip, lo, hi, st);
+                if (nt < 0) return f77_iconst(0);
+            } else if (lx_t == T_LP) {
+                f77_tok();
+                sval = f77_subscript_addr(s);     /* one element */
+                esz = f77_esize(s);
+                rank = 0;
+            } else {
+                for (k = 0; k < rank; k++) {
+                    trip[k] = 1;
+                    f77_dim_bounds(s, k, &lo[k], &hi[k]);
+                    if (hi[k] < 0) { f77_error("TRANSFER of an assumed-size array"); return f77_iconst(0); }
+                    st[k] = f77_iconst(1);
+                }
+                nt = rank;
+            }
+            if (sval < 0) {
+                esz = f77_esize(s);
+                srcb = f77_iconst(esz);
+                for (k = 0; k < rank; k++) {
+                    int e;
+                    if (!trip[k]) { ext[k] = f77_iconst(1); continue; }
+                    e = hi_emit(HI_SUB, TY_INT, hi[k], lo[k], 0, NULL);
+                    e = hi_emit(HI_ADD, TY_INT, e, st[k], 0, NULL);
+                    e = hi_emit(HI_DIV, TY_INT, e, st[k], 0, NULL);
+                    ext[k] = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
+                    srcb = hi_emit(HI_MUL, TY_INT, srcb, ext[k], 0, NULL);
+                }
+            } else {
+                srcb = f77_iconst(esz);
+            }
+        } else {
+            int v; int vty; int vhi;
+            v = f77_expr();
+            vty = ex_ty; vhi = ex_hi;
+            if (vty == TY_CHAR) { f77_error("TRANSFER of CHARACTER is not supported yet"); return f77_iconst(0); }
+            esz = f77_tysize(vty);
+            if (vty == TY_DCPLX) sval = f77_dcx_arg(v);
+            else {
+                f77_frame = f77_frame + esz;
+                sval = hi_emit(HI_ALLOCA, f77_aty(vty), -1, -1, 0 - f77_frame, NULL);
+                f77_alloca_add(sval, 0 - f77_frame);
+                f77_store_at(sval, vty, v, vty, vhi);
+            }
+            srcb = f77_iconst(esz);
+            s = -1;
+        }
+        if (lx_t != T_COMMA) { f77_error("TRANSFER needs a MOLD"); return f77_iconst(0); }
+        f77_tok();
+        /* MOLD: its type, and whether it is an array */
+        marr = 0;
+        after = (int)(lx_rte - lx_stmt);
+        if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
+            int ty0;
+            f77_tok();                           /* ( */
+            f77_tok();                           /* / */
+            ty0 = -1;
+            for (;;) {
+                f77_expr();
+                if (ty0 < 0) ty0 = ex_ty;
+                else if (ex_ty != ty0) { f77_error("the values of an array constructor differ in type"); return f77_iconst(0); }
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+            if (lx_t != T_SLASH) { f77_error("expected /) after an array constructor"); return f77_iconst(0); }
+            f77_tok();
+            if (lx_t != T_RP) { f77_error("expected /) after an array constructor"); return f77_iconst(0); }
+            f77_tok();
+            if (ty0 == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
+            msz = f77_tysize(ty0);
+            marr = 1;
+        } else {
+            int ms;
+            ms = lx_t == T_NAME ? f77_sym_find(lex_name) : -1;
+            if (ms >= 0 && f77_srank[ms] > 0 && (after >= lx_stmt_len || lx_stmt[after] != '(')) {
+                f77_tok();
+                if (f77_sty[ms] == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
+                msz = f77_esize(ms);
+                marr = 1;
+            } else {
+                f77_expr();
+                if (ex_ty == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
+                msz = f77_tysize(ex_ty);
+            }
+        }
+        if (lx_t == T_COMMA) {
+            int v;
+            f77_tok();
+            if (lx_t == T_NAME && strcmp(lex_name, "SIZE") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+            v = f77_expr();
+            v = f77_cvt(v, &ex_hi, ex_ty, TY_INT);
+            resb = hi_emit(HI_MUL, TY_INT, v, f77_iconst(msz), 0, NULL);
+        } else if (marr) {
+            /* as many elements as SOURCE fills, the last one partly */
+            resb = hi_emit(HI_ADDI, TY_INT, srcb, -1, msz - 1, NULL);
+            resb = hi_emit(HI_DIV, TY_INT, resb, f77_iconst(msz), 0, NULL);
+            resb = hi_emit(HI_MUL, TY_INT, resb, f77_iconst(msz), 0, NULL);
+        } else {
+            resb = f77_iconst(msz);
+        }
+        if (lx_t != T_RP) { f77_error("expected ) after TRANSFER's arguments"); return f77_iconst(0); }
+        f77_tok();
+        /* the temporary holds the larger of the two, so the copy fits */
+        n = f77_select(hi_emit(HI_SGT, TY_INT, srcb, resb, 0, NULL), srcb, resb);
+        args[0] = f77_iconst(0); args[1] = n; args[2] = f77_iconst(0);
+        tmp = f77_call_i("f77_allocate", 3, args);
+        if (sval >= 0) {
+            f77_copy_bytes(tmp, sval, esz);
+        } else {
+            /* SOURCE's elements in array element order, the first
+             * subscript fastest */
+            F77Loop lp[F77_MAX_RANK];
+            int pos;
+            int cur[F77_MAX_RANK];
+            int p;
+            pos = f77_int_temp();
+            hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
+            for (k = rank - 1; k >= 0; k--)
+                if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
+            for (k = 0; k < rank; k++)
+                cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+            p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+            f77_copy_bytes(hi_emit(HI_ADD, HL_ADDR_TY, tmp, p, 0, NULL), f77_elem_addr(s, cur, rank), esz);
+            hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, esz, NULL), 0, NULL);
+            for (k = 0; k < rank; k++)
+                if (trip[k]) f77_loop_end(&lp[k]);
+        }
+    }
+    if (f77_ntfree >= 64) { f77_error("too many TRANSFER arguments in one statement"); return tmp; }
+    f77_tfree_list[f77_ntfree] = tmp;
+    f77_ntfree = f77_ntfree + 1;
+    f77_act_len = -1;
+    return tmp;
+}
+
 static int f77_actual_addr(void) {
     int s;
     int v;
     int vty;
     int vhi;
     int tmp;
+
+    if (lx_t == T_NAME && strcmp(lex_name, "TRANSFER") == 0 && lx_rp < lx_rpe && *lx_rp == '(' &&
+        f77_find_unit(lex_name) < 0) {
+        int ts;
+        ts = f77_sym_find(lex_name);
+        if (ts < 0 || !(f77_sarg[ts] || f77_sexternal[ts] || f77_srank[ts] > 0)) return f77_transfer_actual();
+    }
 
     if (lx_t == T_NAME && f77_actual_is_simple()) {
         /* A bare name that is a procedure -- EXTERNAL, a unit of this
@@ -7435,7 +7853,9 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
 }
 
 /* CALL name(a1, a2, ...) */
-static void f77_stmt_call(int skip) {
+static int f77_call_mk;
+
+static void f77_stmt_call1(int skip) {
     char nm[F77_MAX_NAME];
     int addrs[64];
     int lens[64];
@@ -7535,6 +7955,7 @@ static void f77_stmt_call(int skip) {
     if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, strdup(nm));
     h_cbase[r] = cb;
+    f77_tfree_to(f77_call_mk);                /* before the alternate returns branch */
     if (nalt > 0) {
         /* RETURN k in the callee comes back as k: branch to the k-th
          * label, fall through on 0 or out of range. */
@@ -7550,6 +7971,16 @@ static void f77_stmt_call(int skip) {
     }
 }
 
+
+/* CALL: the TRANSFER temporaries its actuals made are freed after it. */
+static void f77_stmt_call(int skip) {
+    int saved;
+    saved = f77_call_mk;
+    f77_call_mk = f77_tfree_mark();
+    f77_stmt_call1(skip);
+    f77_tfree_to(f77_call_mk);
+    f77_call_mk = saved;
+}
 
 /* --- scalar dummy copy-in / copy-out ---------------------------------
  *
@@ -8220,6 +8651,114 @@ static void f77_wr_whole_array(int s) {
     }
 }
 
+static void f77_wr_one(void);
+
+/* An implied-DO `(items, VAR = e1, e2 [, e3])`, lx_t at its '(': 1 when
+ * it is one, its loop emitted around items(items_off, ctl_off) -- which
+ * parses the items from items_off, stopping before the comma at
+ * ctl_off - 1 -- and the scanner left past its ')'; 0, nothing consumed,
+ * when it is not.  The loop control sits AFTER the items it governs, so
+ * the control spec is parsed first from its own offset, the loop opened,
+ * and the scanner then rewound to the items -- which are emitted
+ * straight into the body block.  Rewinding is safe here precisely
+ * because nothing has been emitted for the items yet.  I/O lists and
+ * array constructors share it. */
+static int f77_implied_do(void (*items)(int, int)) {
+    {
+        int open_off;
+        int close_off;
+        int eq_off;
+        int items_off;
+        int ctl_off;
+        open_off = (int)(lx_rts - lx_stmt);
+        if (lx_t == T_LP &&
+            f77_implied_do_spans(open_off, &close_off, &eq_off, &items_off, &ctl_off)) {
+            int sv;
+            int m1, m2, m3, t1, t2, t3;
+            int trip;
+            int b_test, b_body, b_exit, c;
+
+            f77_scan_from(ctl_off);
+            if (lx_t != T_NAME) { f77_error("implied-DO needs a control variable"); return 1; }
+            sv = f77_sym(lex_name);
+            f77_tok();
+            if (lx_t != T_ASSIGN) { f77_error("expected = in implied-DO"); return 1; }
+            f77_tok();
+            m1 = f77_expr(); m1 = f77_cvt(m1, &ex_hi, ex_ty, TY_INT);
+            if (lx_t != T_COMMA) { f77_error("expected , in implied-DO"); return 1; }
+            f77_tok();
+            m2 = f77_expr(); m2 = f77_cvt(m2, &ex_hi, ex_ty, TY_INT);
+            if (lx_t == T_COMMA) {
+                f77_tok();
+                m3 = f77_expr(); m3 = f77_cvt(m3, &ex_hi, ex_ty, TY_INT);
+            } else {
+                m3 = f77_iconst(1);
+            }
+
+            f77_sstored[sv] = 1;
+            if (f77_snar[sv]) f77_store_at(f77_sval[sv], f77_mty(sv), m1, TY_INT, -1);
+            else hi_emit(HI_STORE, TY_INT, f77_sval[sv], m1, 0, NULL);
+            t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
+            t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);
+            t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
+            f77_frame = f77_frame + 4;
+            trip = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+            f77_alloca_add(trip, 0 - f77_frame);
+            hi_emit(HI_STORE, TY_INT, trip, t3, 0, NULL);
+
+            b_test = hir_new_block();
+            b_body = hir_new_block();
+            b_exit = hir_new_block();
+            f77_goto_blk(b_test);
+            f77_begin_blk(b_test);
+            c = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
+            c = hi_emit(HI_SGT, TY_INT, c, f77_iconst(0), 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, c, b_body, b_exit, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_body);
+
+            /* Rewind to the items and emit them inside the body. */
+            items(items_off, ctl_off);
+
+            {
+                int iv;
+                if (f77_snar[sv]) {
+                    iv = f77_load_at(f77_sval[sv], f77_mty(sv));
+                    iv = hi_emit(HI_ADD, TY_INT, iv, m3, 0, NULL);
+                    f77_store_at(f77_sval[sv], f77_mty(sv), iv, TY_INT, -1);
+                } else {
+                    iv = hi_emit(HI_LOAD, TY_INT, f77_sval[sv], -1, 0, NULL);
+                    iv = hi_emit(HI_ADD, TY_INT, iv, m3, 0, NULL);
+                    hi_emit(HI_STORE, TY_INT, f77_sval[sv], iv, 0, NULL);
+                }
+                iv = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
+                iv = hi_emit(HI_ADDI, TY_INT, iv, -1, -1, NULL);
+                hi_emit(HI_STORE, TY_INT, trip, iv, 0, NULL);
+                hi_emit(HI_BR, TY_VOID, -1, -1, b_test, NULL);
+            }
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_exit);
+
+            /* Continue after the implied-DO's closing paren. */
+            f77_scan_from(close_off);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* An I/O list's implied-DO items. */
+static void f77_io_ido_items(int items_off, int ctl_off) {
+    f77_scan_from(items_off);
+    for (;;) {
+        f77_wr_one();
+        if (lx_t != T_COMMA) break;
+        if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+        f77_tok();
+        if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+    }
+}
+
 /* One element of an output list: an expression, a character constant,
  * or an implied-DO `(items, VAR = e1, e2 [, e3])`, which becomes a real
  * loop around the item calls. */
@@ -8266,99 +8805,8 @@ static void f77_wr_one(void) {
         }
     }
 
-    /* Implied-DO: `(items, VAR = e1, e2 [, e3])`.  The loop control sits
-     * AFTER the items it governs, so the control spec is parsed first
-     * from its own offset, the loop opened, and the scanner then rewound
-     * to the items -- which are emitted straight into the body block.
-     * Rewinding is safe here precisely because nothing has been emitted
-     * for the items yet. */
-    {
-        int open_off;
-        int close_off;
-        int eq_off;
-        int items_off;
-        int ctl_off;
-        open_off = (int)(lx_rts - lx_stmt);
-        if (lx_t == T_LP &&
-            f77_implied_do_spans(open_off, &close_off, &eq_off, &items_off, &ctl_off)) {
-            int sv;
-            int m1, m2, m3, t1, t2, t3;
-            int trip;
-            int b_test, b_body, b_exit, c;
-
-            f77_scan_from(ctl_off);
-            if (lx_t != T_NAME) { f77_error("implied-DO needs a control variable"); return; }
-            sv = f77_sym(lex_name);
-            f77_tok();
-            if (lx_t != T_ASSIGN) { f77_error("expected = in implied-DO"); return; }
-            f77_tok();
-            m1 = f77_expr(); m1 = f77_cvt(m1, &ex_hi, ex_ty, TY_INT);
-            if (lx_t != T_COMMA) { f77_error("expected , in implied-DO"); return; }
-            f77_tok();
-            m2 = f77_expr(); m2 = f77_cvt(m2, &ex_hi, ex_ty, TY_INT);
-            if (lx_t == T_COMMA) {
-                f77_tok();
-                m3 = f77_expr(); m3 = f77_cvt(m3, &ex_hi, ex_ty, TY_INT);
-            } else {
-                m3 = f77_iconst(1);
-            }
-
-            f77_sstored[sv] = 1;
-            if (f77_snar[sv]) f77_store_at(f77_sval[sv], f77_mty(sv), m1, TY_INT, -1);
-            else hi_emit(HI_STORE, TY_INT, f77_sval[sv], m1, 0, NULL);
-            t1 = hi_emit(HI_SUB, TY_INT, m2, m1, 0, NULL);
-            t2 = hi_emit(HI_ADD, TY_INT, t1, m3, 0, NULL);
-            t3 = hi_emit(HI_DIV, TY_INT, t2, m3, 0, NULL);
-            f77_frame = f77_frame + 4;
-            trip = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
-            f77_alloca_add(trip, 0 - f77_frame);
-            hi_emit(HI_STORE, TY_INT, trip, t3, 0, NULL);
-
-            b_test = hir_new_block();
-            b_body = hir_new_block();
-            b_exit = hir_new_block();
-            f77_goto_blk(b_test);
-            f77_begin_blk(b_test);
-            c = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
-            c = hi_emit(HI_SGT, TY_INT, c, f77_iconst(0), 0, NULL);
-            hi_emit(HI_BRC, TY_VOID, c, b_body, b_exit, NULL);
-            f77_cur_blk_live = 0;
-            f77_begin_blk(b_body);
-
-            /* Rewind to the items and emit them inside the body. */
-            f77_scan_from(items_off);
-            for (;;) {
-                f77_wr_one();
-                if (lx_t != T_COMMA) break;
-                if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
-                f77_tok();
-                if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
-            }
-
-            {
-                int iv;
-                if (f77_snar[sv]) {
-                    iv = f77_load_at(f77_sval[sv], f77_mty(sv));
-                    iv = hi_emit(HI_ADD, TY_INT, iv, m3, 0, NULL);
-                    f77_store_at(f77_sval[sv], f77_mty(sv), iv, TY_INT, -1);
-                } else {
-                    iv = hi_emit(HI_LOAD, TY_INT, f77_sval[sv], -1, 0, NULL);
-                    iv = hi_emit(HI_ADD, TY_INT, iv, m3, 0, NULL);
-                    hi_emit(HI_STORE, TY_INT, f77_sval[sv], iv, 0, NULL);
-                }
-                iv = hi_emit(HI_LOAD, TY_INT, trip, -1, 0, NULL);
-                iv = hi_emit(HI_ADDI, TY_INT, iv, -1, -1, NULL);
-                hi_emit(HI_STORE, TY_INT, trip, iv, 0, NULL);
-                hi_emit(HI_BR, TY_VOID, -1, -1, b_test, NULL);
-            }
-            f77_cur_blk_live = 0;
-            f77_begin_blk(b_exit);
-
-            /* Continue after the implied-DO's closing paren. */
-            f77_scan_from(close_off);
-            return;
-        }
-    }
+    /* Implied-DO: `(items, VAR = e1, e2 [, e3])` */
+    if (lx_t == T_LP && f77_implied_do(f77_io_ido_items)) return;
 
     if (f77_io_rd) {
         int a;
