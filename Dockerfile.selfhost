@@ -1,0 +1,51 @@
+# slow32:selfhost -- the self-hosted toolchain built from the tree, as an
+# artifact image (docs/plans/containers.md).  Not published to Docker Hub:
+# slow32:kit and slow32:toolchain copy from it.
+#
+#   /kit/        what ~/s32x holds at its top and in selfhost/: stage08's
+#                cc.s32x, s32-as/ld/ar.s32x, slow32dis/dump.s32x, and
+#                selfhost/{include,crt0.s32o,libc.s32a,README.md}
+#                (selfhost/stage08/RUNTIME_KIT.md "Regenerating")
+#   /cross/x64/  cc-x64, ld-x64, crt0.o, libc_x64.a  (C -> native ELF; host
+#   /cross/a64/  cc-a64, ld-a64, crt0.o, libc_a64.a   tools, this arch)
+#
+# stage08 builds from the checked-in stage07 on the emulator and reproduces
+# byte for byte, so /kit/cc.s32x is the Mac kit's cc.s32x for the same tree.
+# The emulator is base's slow32-dbt, the engine every round gates.
+ARG BASE_IMAGE=slow32:base
+
+FROM ${BASE_IMAGE} AS build
+RUN apk add --no-cache build-base bash
+WORKDIR /build
+# selfhost/, common/ and runtime/ stay siblings: the cross libc includes
+# ../../../common/mmio_ring_layout.h (and, through the emulator's own
+# mmio_ring.h, common/ again), and stage08's libc builds sources it shares
+# with runtime/ (dtoa.c, printf, musl's libm) from ../../runtime.
+COPY selfhost /build/selfhost
+COPY common  /build/common
+COPY runtime /build/runtime
+COPY tools/emulator/mmio_ring.h /build/tools/emulator/
+
+# stage08: clean first, so a cc.s32x or stamp that came in with the context
+# cannot short-circuit the build.  Then the kit layout.
+RUN cd /build/selfhost/stage08 && make clean >/dev/null && \
+    SELFHOST_EMU=/usr/local/bin/slow32-dbt make && \
+    mkdir -p /out/kit/selfhost && \
+    cp cc.s32x s32-as.s32x s32-ld.s32x s32-ar.s32x slow32dis.s32x slow32dump.s32x /out/kit/ && \
+    cp -r include /out/kit/selfhost/include && \
+    cp lib/crt0.s32o /out/kit/selfhost/ && \
+    cp RUNTIME_KIT.md /out/kit/selfhost/README.md && \
+    s32-ar rc /out/kit/selfhost/libc.s32a $(ls lib/*.s32o | grep -v '/crt0\.s32o$') >/dev/null
+
+# The cross compilers, built by host gcc from the shared stage08 front end.
+# rm -rf out: no dev-host artifacts; mkdir: cc-a64's target lacks the
+# order-only mkdir guard the x64 one has.
+RUN cd /build/selfhost/stage08-cross-x64 && rm -rf out && mkdir -p out && \
+    make out/cc-x64 out/ld-x64 out/ar-x64 libc && \
+    mkdir -p /out/cross/x64 && cp out/cc-x64 out/ld-x64 out/crt0.o out/libc_x64.a /out/cross/x64/
+RUN cd /build/selfhost/stage08-cross-a64 && rm -rf out && mkdir -p out && \
+    make out/cc-a64 out/ld-a64 out/ar-a64 out/crt0.o libc && \
+    mkdir -p /out/cross/a64 && cp out/cc-a64 out/ld-a64 out/crt0.o out/libc_a64.a /out/cross/a64/
+
+FROM scratch
+COPY --from=build /out/ /
