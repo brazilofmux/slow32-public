@@ -59,6 +59,27 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
 
    Then LAPACK built by f77, its suites run, and held as `run-lapack.sh`
    holds flang: no more over the threshold than gfortran.
+
+   **Status 2026-11-08 (591e8847):** every fixed-form file compiles, all
+   3,492 of SRC, BLAS, TESTING and INSTALL.  The suites can't run yet,
+   though: 44 files are not fixed form.  31 are free form (`.f90`, `.F90`):
+   - the modules LA_CONSTANTS and LA_XISNAN;
+   - the newer xLARTG, xLASSQ, xNRM2 and xROTG;
+   - the DMD routines and their tests.
+
+   The other 13 are `.F` files that need the preprocessor's conditionals
+   (`#if defined(_OPENMP)`, `#ifdef`, `#elif`, `#else`, `#endif`; no
+   macros), the suite drivers xCHKEE and xCHKAA among them.  Between them
+   they need:
+   - milestone 2;
+   - the conditionals;
+   - a slice of milestone 4: modules with PARAMETERs and procedures, USE
+     with ONLY and renames (`wp=>dp`), KIND (`REAL(wp)`, `0.0_wp`), a
+     generic interface, and internal procedures.
+
+   That is the order now: milestone 2 and the conditionals, then that
+   slice of 4, then the suites.  Linking flang's objects instead is the
+   shortcut ruled out.
 2. **Free-form source** (`.f90`), long names, `&` continuation, `;`.
 3. **Arrays**: whole-array and section expressions and assignment, strides,
    array constructors, assumed-shape dummies, automatic arrays, WHERE, and
