@@ -7728,7 +7728,13 @@ static void f77_stmt_read(int skip) {
 static int f77_io_unit_after_name(char *nm) {
     int s;
     s = f77_sym(nm);
-    if (f77_sparam[s]) return f77_iconst(f77_spival[s]);
+    if (f77_sparam[s]) {
+        /* the type with it: every caller converts by ex_ty, which still
+         * held the last expression's -- after READ (5, FMT='(A72)') the
+         * format's CHARACTER, and CLOSE (NIN) was refused */
+        ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+        return f77_iconst(f77_spival[s]);
+    }
     return f77_load_sym(s);
 }
 
