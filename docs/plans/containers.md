@@ -99,8 +99,20 @@ image (`docker cp`), not the input to it.  The kit gate is unchanged
     timestamps.  flang, C++ and C programs run.
   - The libc++ source subset was proved on the Mac: a build from it equals a
     full-tree build, up to the source path.
-  - Not yet built: Dockerfile.llvm and Dockerfile.flang themselves (hours).
-    That is the builder's trial job.
+  - The builder's trial (2026-11-08, tags containers-step3 to -step3c):
+    - llvm built in 37m43s (amd64) and 41m10s (arm64).
+    - flang, after the two-pass fix (59ce78ae), built in 148m (amd64) and
+      219m (arm64) at -j3 on 30 GB.
+    - Both are pushed to ECR as llvm-281fabb0e2350d09 and
+      flang-4439bc626f94c380.
+    - With both reused from ECR, the per-arch total is 12m23 (amd64) and
+      18m16 (arm64): emulator 2-3 min, selfhost 3-7 min, toolchain 6-8 min.
+      The old toolchain alone took 2h49m and 4h19m.
+    - cc.s32x is a5df327b on both arches, and 1,963 files match.  The
+      toolchain's clang and flang are byte-identical to the keyed images.
+  - The round job (builder 8a3785a) runs selfhost, then llvm and flang only
+    if their keys are missing, then the toolchain, then the kit in-round,
+    then the language images.
 
 ## Order
 
