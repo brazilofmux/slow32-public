@@ -101,7 +101,45 @@ static int  f77_ent_line[F77_MAX_ENTRY];
 static int  f77_ent_parent[F77_MAX_ENTRY];
 static char f77_ent_name[F77_MAX_ENTRY][F77_MAX_NAME];
 static int  f77_ent_ty[F77_MAX_ENTRY];
+
 static int  f77_nent;
+
+/* Names a type statement of the current unit declared, so that an ENTRY
+ * statement after them takes its type: `DOUBLE PRECISION X, E2` then
+ * `ENTRY E2(X)` made E2 REAL by its initial letter, and every reference to
+ * it was refused ("E2 is DOUBLE PRECISION here but REAL where it is
+ * defined").  An ENTRY declared after its ENTRY statement was always
+ * right.  Grows; reset when the unit changes. */
+static char (*f77_dn_name)[F77_MAX_NAME];
+static int *f77_dn_ty;
+static int f77_dn_n;
+static int f77_dn_cap;
+static int f77_dn_unit = -1;
+
+static void f77_dn_note(int unit, char *nm, int ty) {
+    int q;
+    if (unit != f77_dn_unit) { f77_dn_unit = unit; f77_dn_n = 0; }
+    for (q = 0; q < f77_nent; q++)
+        if (f77_ent_parent[q] == unit && strcmp(f77_ent_name[q], nm) == 0) f77_ent_ty[q] = ty;
+    if (f77_dn_n >= f77_dn_cap) {
+        f77_dn_cap = f77_dn_cap ? f77_dn_cap * 2 : 128;
+        f77_dn_name = realloc(f77_dn_name, (size_t)f77_dn_cap * sizeof(*f77_dn_name));
+        f77_dn_ty = realloc(f77_dn_ty, (size_t)f77_dn_cap * sizeof(int));
+        if (!f77_dn_name || !f77_dn_ty) { fdputs("f77: out of memory\n", 2); exit(1); }
+    }
+    strcpy(f77_dn_name[f77_dn_n], nm);
+    f77_dn_ty[f77_dn_n] = ty;
+    f77_dn_n = f77_dn_n + 1;
+}
+
+/* The type a type statement of `unit` gave `nm`, or -1. */
+static int f77_dn_find(int unit, char *nm) {
+    int q;
+    if (unit != f77_dn_unit) return -1;
+    for (q = f77_dn_n - 1; q >= 0; q--)
+        if (strcmp(f77_dn_name[q], nm) == 0) return f77_dn_ty[q];
+    return -1;
+}
 
 /* Record the dummy names of the header the scanner is on (past `skip`)
  * against unit `unit`, for the ENTRY phantoms. */
@@ -220,7 +258,8 @@ static void f77_scan_units(void) {
                 f77_ent_pos[f77_nent] = pos;
                 f77_ent_line[f77_nent] = line;
                 f77_ent_parent[f77_nent] = f77_nunit - 1;
-                f77_ent_ty[f77_nent] = f77_implicit_ty(lex_name);
+                f77_ent_ty[f77_nent] = f77_dn_find(f77_nunit - 1, lex_name);
+                if (f77_ent_ty[f77_nent] < 0) f77_ent_ty[f77_nent] = f77_implicit_ty(lex_name);
                 f77_collect_dummies(5, -2 - f77_nent);   /* unit index assigned after the scan */
                 f77_nent = f77_nent + 1;
             }
@@ -321,6 +360,8 @@ static void f77_scan_units(void) {
                 }
                 while (lx_t == T_NAME) {
                     int is_fn;
+                    char dnm[F77_MAX_NAME];
+                    strcpy(dnm, lex_name);
                     is_fn = strcmp(lex_name, f77_uname[f77_nunit - 1]) == 0;
                     f77_tok();
                     if (lx_t == T_STAR && ty == TY_CHAR) {
@@ -328,9 +369,13 @@ static void f77_scan_units(void) {
                         f77_tok();
                         l = f77_char_len();
                         if (is_fn) { f77_urty[f77_nunit - 1] = TY_CHAR; f77_urlen[f77_nunit - 1] = l; }
+                        else f77_dn_note(f77_nunit - 1, dnm, TY_CHAR);
                     } else if (lx_t == T_STAR) {
                         int n;
-                        if (f77_star_len(&n) && is_fn) {
+                        int got;
+                        got = f77_star_len(&n);
+                        if (got && !is_fn) f77_dn_note(f77_nunit - 1, dnm, f77_lenty(ty, n, 0));
+                        else if (got && is_fn) {
                             f77_urty[f77_nunit - 1] = f77_lenty(ty, n, 0);
                             f77_urlog[f77_nunit - 1] = lg;
                             f77_urnar[f77_nunit - 1] = f77_lennar(ty, n, lg);
@@ -341,10 +386,7 @@ static void f77_scan_units(void) {
                         f77_urnar[f77_nunit - 1] = tnar;
                         if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
                     } else {
-                        int q;
-                        for (q = 0; q < f77_nent; q++)
-                            if (f77_ent_parent[q] == f77_nunit - 1 &&
-                                strcmp(f77_ent_name[q], lex_name) == 0) f77_ent_ty[q] = ty;
+                        f77_dn_note(f77_nunit - 1, dnm, ty);
                     }
                     if (lx_t == T_LP) {
                         int depth;
