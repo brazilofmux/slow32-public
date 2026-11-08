@@ -206,6 +206,17 @@ static void f77_assign_params(int n);
  * word -- so every pair site (split frame slots, load/store, return in
  * r1/r2, CALLHI) carries it with a type test added. */
 #define TY_CPLX 9
+/* COMPLEX*16 (DOUBLE COMPLEX): two DOUBLE PRECISION parts, real then
+ * imaginary, 16 bytes.  A double is already two words here, so a
+ * COMPLEX*16 value does not ride the value/ex_hi pair as COMPLEX does: in
+ * an expression it is the ADDRESS of its 16 bytes (an HL_ADDR_TY value).
+ * A variable or element reference yields its own address; every
+ * operation reads its operands' parts and writes a fresh frame temporary
+ * (f77_dcx_make), so nothing writes the bytes a pending value points at,
+ * and an assignment copies.  docs/plans/fortran77.md "COMPLEX*16".  Never
+ * the type of an HIR instruction: f77_dcx_guard stops a unit in which one
+ * is, a value having reached code that does not handle the type. */
+#define TY_DCPLX 10
 /* A hexadecimal or octal constant of DATA (MIL-STD-1753 Z'1F', O'17'),
  * only ever the type of a DATA value: its bits are in f77_cx_u. */
 #define TY_HEXC 11
@@ -224,20 +235,23 @@ static int f77_esize(int s) {
     if (f77_snar[s]) return f77_snar[s];
     if (f77_sty[s] == TY_CHAR) return f77_slen[s] > 0 ? f77_slen[s] : 1;
     if (f77_sty[s] == TY_CPLX) return 8;
+    if (f77_sty[s] == TY_DCPLX) return 16;
     return ty_size(f77_sty[s]);
 }
-static int f77_tysize(int ty) { return ty == TY_CPLX ? 8 : ty_size(ty); }
+static int f77_tysize(int ty) { return ty == TY_CPLX ? 8 : ty == TY_DCPLX ? 16 : ty_size(ty); }
+/* The HIR type of a variable's storage slot: a COMPLEX is two REAL words,
+ * a COMPLEX*16 four words reached by address (never promoted). */
+static int f77_aty(int ty) { return ty == TY_CPLX ? TY_FLOAT : ty == TY_DCPLX ? TY_INT : ty; }
 
 /* A length after a type, *n (an extension, as fort370 reads it): REAL*8
- * is DOUBLE PRECISION and REAL*4 takes it back; any other is the type
- * itself (INTEGER*2 and LOGICAL*1 get a fullword still).  COMPLEX*16 is
- * refused -- fort370 has it where a double is one HIR value, the S/370
- * -- rather than compiled as single precision, which it was without a
- * word.  The unit scan in f77.c asks quietly (`say` 0); the statement
- * itself reports. */
+ * is DOUBLE PRECISION and REAL*4 takes it back, COMPLEX*16 is DOUBLE
+ * COMPLEX and COMPLEX*8 takes it back; any other is the type itself
+ * (INTEGER*2 and LOGICAL*1 get a fullword still).  `say` is unused since
+ * COMPLEX*16 stopped being refused. */
 static int f77_lenty(int ty, int n, int say) {
+    (void)say;
     if ((ty == TY_FLOAT || ty == TY_DOUBLE) && (n == 4 || n == 8)) return n == 8 ? TY_DOUBLE : TY_FLOAT;
-    if (ty == TY_CPLX && n == 16 && say) f77_error("COMPLEX*16 needs a target with native DOUBLE PRECISION");
+    if ((ty == TY_CPLX || ty == TY_DCPLX) && (n == 8 || n == 16)) return n == 16 ? TY_DCPLX : TY_CPLX;
     return ty;
 }
 static int f77_ispair(int ty) { return ty == TY_DOUBLE || ty == TY_CPLX; }
@@ -470,6 +484,7 @@ static char *f77_tyname(int ty, int lg) {
     if (ty == TY_FLOAT) return "REAL";
     if (ty == TY_DOUBLE) return "DOUBLE PRECISION";
     if (ty == TY_CPLX) return "COMPLEX";
+    if (ty == TY_DCPLX) return "COMPLEX*16";
     if (ty == TY_CHAR) return "CHARACTER";
     return "untyped";
 }
@@ -540,7 +555,7 @@ static int f77_sym(char *nm) {
         f77_frame = f77_frame + ((f77_slen[f77_nsym] + 3) & ~3);
     else
         f77_frame = f77_frame + f77_tysize(f77_sty[f77_nsym]);
-    f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_sty[f77_nsym] == TY_CPLX ? TY_FLOAT : f77_sty[f77_nsym], -1, -1,
+    f77_sval[f77_nsym] = hi_emit(HI_ALLOCA, f77_aty(f77_sty[f77_nsym]), -1, -1,
                                  0 - f77_frame, NULL);
     f77_alloca_add(f77_sval[f77_nsym], 0 - f77_frame);
     f77_nsym = f77_nsym + 1;
@@ -575,7 +590,7 @@ static int f77_sym_temp(int ty) {
     f77_snar[s] = 0;
     { int d; d = 0; while (d < F77_MAX_RANK) { f77_sextsym[s][d] = -1; f77_slov[s][d] = -1; d = d + 1; } }
     f77_frame = f77_frame + f77_tysize(ty);
-    f77_sval[s] = hi_emit(HI_ALLOCA, ty == TY_CPLX ? TY_FLOAT : ty, -1, -1, 0 - f77_frame, NULL);
+    f77_sval[s] = hi_emit(HI_ALLOCA, f77_aty(ty), -1, -1, 0 - f77_frame, NULL);
     f77_alloca_add(f77_sval[s], 0 - f77_frame);
     f77_nsym = f77_nsym + 1;
     f77_realloc_sym(s);
@@ -701,7 +716,7 @@ static void f77_realloc_sym(int s) {
     if (f77_srank[s] > 0 && f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) bytes = 4;
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
-    h_ty[f77_sval[s]] = f77_sty[s] == TY_CPLX ? TY_FLOAT : f77_sty[s];
+    h_ty[f77_sval[s]] = f77_aty(f77_sty[s]);
     hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
 
     /* Scalar double or complex: give the hi word its own promotable slot. */
@@ -974,6 +989,117 @@ static int f77_dconst(double d, int *hi) {
     return hi_emit(HI_ICONST, TY_INT, -1, -1, w[0], NULL);
 }
 
+/* --- COMPLEX*16 values (TY_DCPLX: the address of 16 bytes) --------- */
+
+static int f77_dcx_mark(int v);
+static int f77_ndcxv;
+
+/* A fresh 16-byte frame temporary. */
+static int f77_dcx_temp(void) {
+    int t;
+    f77_frame = f77_frame + 16;
+    t = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+    f77_alloca_add(t, 0 - f77_frame);
+    return t;
+}
+
+/* The address `off` bytes into a COMPLEX*16. */
+static int f77_dcx_at(int addr, int off) {
+    if (off == 0) return addr;
+    return hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, off, NULL);
+}
+
+/* One part as a DOUBLE PRECISION value: part 0 the real, 1 the imaginary.
+ * Returns the lo word, the hi word in *hi. */
+static int f77_dcx_part(int addr, int part, int *hi) {
+    int lo;
+    lo = hi_emit(HI_LOAD, TY_INT, f77_dcx_at(addr, part * 8), -1, 0, NULL);
+    *hi = hi_emit(HI_LOAD, TY_INT, f77_dcx_at(addr, part * 8 + 4), -1, 0, NULL);
+    return lo;
+}
+
+/* A COMPLEX*16 value from two doubles: a fresh temporary's address. */
+static int f77_dcx_make(int re, int rehi, int im, int imhi) {
+    int t;
+    t = f77_dcx_temp();
+    hi_emit(HI_STORE, TY_INT, t, re, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, f77_dcx_at(t, 4), rehi, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, f77_dcx_at(t, 8), im, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, f77_dcx_at(t, 12), imhi, 0, NULL);
+    return f77_dcx_mark(t);
+}
+
+/* Copy a COMPLEX*16 value's 16 bytes to `dst`.  All four words are read
+ * before any is written, so dst may overlap src. */
+static void f77_dcx_copy(int dst, int src) {
+    int w[4];
+    int k;
+    if (dst == src) return;
+    for (k = 0; k < 4; k++) w[k] = hi_emit(HI_LOAD, TY_INT, f77_dcx_at(src, 4 * k), -1, 0, NULL);
+    for (k = 0; k < 4; k++) hi_emit(HI_STORE, TY_INT, f77_dcx_at(dst, 4 * k), w[k], 0, NULL);
+}
+
+/* The guard.  A COMPLEX*16 value is an address; one that reached code
+ * written for the other types would be computed with as a word -- the
+ * arithmetic dispatch falls through to INTEGER instructions -- and give
+ * wrong code without a word.  So every instruction that IS such a value is
+ * recorded (f77_dcx_mark: f77_load_at and f77_dcx_make make them all), and
+ * when the unit's HIR is complete (f77.c's hl_func, before any pass) each
+ * use of one must be as an address: the base of an ADDI, the address of a
+ * LOAD or a STORE, or a call argument.  Any other use -- an operand of
+ * arithmetic or a comparison, the value a STORE writes -- stops the unit. */
+static int *f77_dcxv;
+static int f77_dcxv_cap;
+
+static int f77_dcx_mark(int v) {
+    if (f77_ndcxv >= f77_dcxv_cap) {
+        f77_dcxv_cap = f77_dcxv_cap ? f77_dcxv_cap * 2 : 256;
+        f77_dcxv = (int *)realloc(f77_dcxv, (size_t)f77_dcxv_cap * sizeof(int));
+        if (!f77_dcxv) { fdputs("f77: out of memory\n", 2); exit(1); }
+    }
+    f77_dcxv[f77_ndcxv++] = v;
+    return v;
+}
+
+static void f77_dcx_guard(void) {
+    char *is;
+    int i;
+    int k;
+    if (f77_ndcxv == 0) return;
+    is = (char *)calloc((size_t)h_ninst + 1, 1);
+    if (!is) { fdputs("f77: out of memory\n", 2); exit(1); }
+    for (k = 0; k < f77_ndcxv; k++)
+        if (f77_dcxv[k] >= 0 && f77_dcxv[k] < h_ninst) is[f77_dcxv[k]] = 1;
+    f77_ndcxv = 0;
+    for (i = 0; i < h_ninst; i++) {
+        int bad;
+        bad = 0;
+        /* A branch keeps block numbers there: BR in src1, BRC (src1 its
+         * condition) and JMPTAB in src2. */
+        if (h_kind[i] != HI_BR && h_kind[i] != HI_BRC && h_kind[i] != HI_JMPTAB &&
+            h_src2[i] >= 0 && h_src2[i] < h_ninst && is[h_src2[i]]) bad = 1;
+        if (h_kind[i] != HI_BR &&
+            h_src1[i] >= 0 && h_src1[i] < h_ninst && is[h_src1[i]] &&
+            h_kind[i] != HI_ADDI && h_kind[i] != HI_LOAD && h_kind[i] != HI_STORE) bad = 1;
+        if (bad) {
+            if (getenv("F77_DCX_DEBUG")) fprintf(stderr, "dcx guard: inst %d kind %d src1 %d src2 %d\n", i, h_kind[i], h_src1[i], h_src2[i]);
+            f77_error("COMPLEX*16 is not supported in this context yet");
+            free(is);
+            return;
+        }
+    }
+    /* A call argument: the runtime's COMPLEX*16 helpers take addresses,
+     * and pass them as f77_dcx_arg's alias, never the value itself. */
+    for (k = 0; k < h_ncarg; k++) {
+        if (h_carg[k] >= 0 && h_carg[k] < h_ninst && is[h_carg[k]]) {
+            if (getenv("F77_DCX_DEBUG")) fprintf(stderr, "dcx guard: call argument %d is inst %d\n", k, h_carg[k]);
+            f77_error("COMPLEX*16 is not supported in this context yet");
+            break;
+        }
+    }
+    free(is);
+}
+
 /* Convert `v` (with hi word *hi when it is a double) from one type to
  * another, updating *hi in place. */
 static int f77_rconst(double d);
@@ -982,6 +1108,41 @@ static int f77_cvt(int v, int *hi, int from, int to) {
     if (from == TY_CHAR || to == TY_CHAR) {
         f77_error("CHARACTER value where a numeric one is needed (or vice versa)");
         return v;
+    }
+    if (to == TY_DCPLX) {
+        /* (x, 0D0), or each part of a COMPLEX widened */
+        int re;
+        int rehi;
+        int im;
+        int imhi;
+        if (from == TY_CPLX) {
+            rehi = -1;
+            re = f77_cvt(v, &rehi, TY_FLOAT, TY_DOUBLE);
+            imhi = -1;
+            im = f77_cvt(*hi, &imhi, TY_FLOAT, TY_DOUBLE);
+        } else {
+            rehi = *hi;
+            re = f77_cvt(v, &rehi, from, TY_DOUBLE);
+            im = f77_dconst(0.0, &imhi);
+        }
+        *hi = -1;
+        return f77_dcx_make(re, rehi, im, imhi);
+    }
+    if (from == TY_DCPLX) {
+        /* the real part (F77 4.6), or each part narrowed to a COMPLEX */
+        int re;
+        int rehi;
+        re = f77_dcx_part(v, 0, &rehi);
+        if (to == TY_CPLX) {
+            int im;
+            int imhi;
+            im = f77_dcx_part(v, 1, &imhi);
+            re = f77_cvt(re, &rehi, TY_DOUBLE, TY_FLOAT);
+            *hi = f77_cvt(im, &imhi, TY_DOUBLE, TY_FLOAT);
+            return re;
+        }
+        *hi = rehi;
+        return f77_cvt(re, hi, TY_DOUBLE, to);
     }
     if (to == TY_CPLX) {
         /* (x, 0.0) */
@@ -1027,6 +1188,15 @@ static int f77_convert(int v, int from, int to) {
 /* F77 mixed mode: DOUBLE beats REAL beats INTEGER. */
 static int f77_balance(int *a, int *ahi, int aty, int *b, int *bhi, int bty) {
     if (aty == bty) return aty;
+    /* COMPLEX*16 beats everything, and COMPLEX with DOUBLE PRECISION is
+     * COMPLEX*16 (F77 forbids the mix; gfortran, IBM's FORTRAN and
+     * fort370 give it this type). */
+    if (aty == TY_DCPLX || bty == TY_DCPLX ||
+        (aty == TY_CPLX && bty == TY_DOUBLE) || (aty == TY_DOUBLE && bty == TY_CPLX)) {
+        *a = f77_cvt(*a, ahi, aty, TY_DCPLX);
+        *b = f77_cvt(*b, bhi, bty, TY_DCPLX);
+        return TY_DCPLX;
+    }
     if (aty == TY_CPLX || bty == TY_CPLX) {
         *a = f77_cvt(*a, ahi, aty, TY_CPLX);
         *b = f77_cvt(*b, bhi, bty, TY_CPLX);
@@ -1286,6 +1456,10 @@ static int f77_load_at(int addr, int ty) {
         return f77_nar_ld;
     }
     ex_ty = ty;
+    if (ty == TY_DCPLX) {          /* a COMPLEX*16 value is its address */
+        ex_hi = -1;
+        return f77_dcx_mark(addr);
+    }
     if (f77_ispair(ty)) {
         int a4;
         int wty;
@@ -1307,6 +1481,10 @@ static void f77_store_at(int addr, int ty, int v, int vty, int vhi) {
         return;
     }
     v = f77_cvt(v, &vhi, vty, ty);
+    if (ty == TY_DCPLX) {
+        f77_dcx_copy(addr, v);
+        return;
+    }
     if (f77_ispair(ty)) {
         int a4;
         int wty;
@@ -1378,6 +1556,7 @@ static int f77_select(int cond, int a, int b) {
 #define IN_AIMAG  40   /* COMPLEX intrinsics */
 #define IN_CMPLX  41
 #define IN_CONJG  42
+#define IN_DCMPLX 54   /* COMPLEX*16 constructor (DCMPLX) */
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1545,6 +1724,11 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "AIMAG") == 0) return IN_AIMAG;
     if (strcmp(nm, "CMPLX") == 0) return IN_CMPLX;
     if (strcmp(nm, "CONJG") == 0) return IN_CONJG;
+    /* COMPLEX*16, by IBM's and gfortran's names: DREAL is DBLE of one */
+    if (strcmp(nm, "DCMPLX") == 0) return IN_DCMPLX;
+    if (strcmp(nm, "DIMAG") == 0) return IN_AIMAG;
+    if (strcmp(nm, "DCONJG") == 0) return IN_CONJG;
+    if (strcmp(nm, "DREAL") == 0) return IN_DBLE;
     if (strcmp(nm, "CABS") == 0) return IN_ABS;
     if (strcmp(nm, "CSQRT") == 0) return IN_SQRT;
     if (strcmp(nm, "CEXP") == 0) return IN_EXP;
@@ -1898,9 +2082,55 @@ static int f77_primary(void) {
                 return f77_bits(in, v);
             }
 
+            if (in == IN_DCMPLX ||
+                (aty == TY_DCPLX && (in == IN_AIMAG || in == IN_CONJG || in == IN_REAL || in == IN_DBLE))) {
+                /* COMPLEX*16: DCMPLX(x [,y]); and of a COMPLEX*16, as
+                 * gfortran has them, REAL, DBLE and DREAL the real part
+                 * and AIMAG and DIMAG the imaginary, each DOUBLE
+                 * PRECISION, CONJG and DCONJG a COMPLEX*16 */
+                int re;
+                int rehi;
+                int im;
+                int imhi;
+                if (in == IN_DCMPLX) {
+                    if (lx_t == T_COMMA) {
+                        rehi = ahi;
+                        re = f77_cvt(a, &rehi, aty, TY_DOUBLE);
+                        f77_tok();
+                        im = f77_expr();
+                        imhi = ex_hi;
+                        if (ex_ty == TY_CPLX || ex_ty == TY_DCPLX) f77_error("DCMPLX(x, y) needs x and y not COMPLEX");
+                        im = f77_cvt(im, &imhi, ex_ty, TY_DOUBLE);
+                        if (aty == TY_CPLX || aty == TY_DCPLX) f77_error("DCMPLX(x, y) needs x and y not COMPLEX");
+                        if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                        ex_ty = TY_DCPLX; ex_hi = -1; ex_log = 0;
+                        return f77_dcx_make(re, rehi, im, imhi);
+                    }
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    a = f77_cvt(a, &ahi, aty, TY_DCPLX);
+                    ex_ty = TY_DCPLX; ex_hi = -1; ex_log = 0;
+                    return a;
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_log = 0;
+                if (in == IN_REAL || in == IN_DBLE || in == IN_AIMAG) {
+                    re = f77_dcx_part(a, in == IN_AIMAG ? 1 : 0, &rehi);
+                    ex_ty = TY_DOUBLE; ex_hi = rehi;
+                    return re;
+                }
+                /* CONJG: the imaginary part's sign bit flipped */
+                re = f77_dcx_part(a, 0, &rehi);
+                im = f77_dcx_part(a, 1, &imhi);
+                imhi = hi_emit(HI_XOR, TY_INT, imhi, f77_iconst((int)0x80000000u), 0, NULL);
+                ex_ty = TY_DCPLX; ex_hi = -1;
+                return f77_dcx_make(re, rehi, im, imhi);
+            }
             if (in == IN_AIMAG || in == IN_CONJG || in == IN_CMPLX) {
                 if (in == IN_CMPLX) {
                     int im;
+                    int a0;
+                    int a0hi;
+                    a0 = a; a0hi = ahi;
                     a = f77_cvt(a, &ahi, aty, TY_FLOAT);
                     if (lx_t == T_COMMA) {
                         f77_tok();
@@ -1908,6 +2138,9 @@ static int f77_primary(void) {
                         im = f77_cvt(im, &ex_hi, ex_ty, TY_FLOAT);
                     } else if (aty == TY_CPLX) {
                         im = ahi;
+                    } else if (aty == TY_DCPLX) {   /* CMPLX of a COMPLEX*16: each part narrowed */
+                        im = f77_cvt(a0, &a0hi, TY_DCPLX, TY_CPLX);
+                        im = a0hi;
                     } else {
                         im = f77_rconst(0.0);
                     }
@@ -3805,6 +4038,7 @@ static void f77_stmt_implicit(int skip) {
         if (strcmp(lex_name, "INTEGER") == 0) ty = TY_INT;
         else if (strcmp(lex_name, "REAL") == 0) ty = TY_FLOAT;
         else if (strcmp(lex_name, "DOUBLEPRECISION") == 0) ty = TY_DOUBLE;
+        else if (strcmp(lex_name, "DOUBLECOMPLEX") == 0) ty = TY_DCPLX;
         else if (strcmp(lex_name, "LOGICAL") == 0) { ty = TY_INT; lg = 1; }
         else if (strcmp(lex_name, "CHARACTER") == 0) ty = TY_CHAR;
         else if (strcmp(lex_name, "COMPLEX") == 0) ty = TY_CPLX;
@@ -5014,6 +5248,7 @@ static int f77_function_kw_end(int *ty_out) {
     f77_hdr_len = 0;
     n = f77_type_before_function("DOUBLEPRECISION");
     if (n > 0) { off = n; ty = TY_DOUBLE; }
+    else if ((n = f77_type_before_function("DOUBLECOMPLEX")) > 0) { off = n; ty = TY_DCPLX; }
     else if ((n = f77_type_before_function("CHARACTER")) > 0) {
         off = n;
         ty = TY_CHAR;
@@ -7608,6 +7843,7 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("INTEGER")) return 1;
     if (f77_starts("REAL")) return 1;
     if (f77_starts("DOUBLEPRECISION")) return 1;
+    if (f77_starts("DOUBLECOMPLEX")) return 1;
     if (f77_starts("LOGICAL")) return 1;
     if (f77_starts("CHARACTER")) return 1;
     if (f77_starts("COMPLEX")) return 1;
@@ -7923,6 +8159,7 @@ static void f77_statement(void) {
     if (f77_starts("INTEGER"))  { f77_stmt_decl(TY_INT,   7); goto done; }
     if (f77_starts("LOGICAL"))  { f77_decl_log = 1; f77_stmt_decl(TY_INT, 7); f77_decl_log = 0; goto done; }
     if (f77_starts("DOUBLEPRECISION")) { f77_stmt_decl(TY_DOUBLE, 15); goto done; }
+    if (f77_starts("DOUBLECOMPLEX")) { f77_stmt_decl(TY_DCPLX, 13); goto done; }
     if (f77_starts("DIMENSION")) { f77_stmt_decl(-1, 9); goto done; }
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
     if ((n = f77_starts("COMMON")) != 0) { f77_stmt_common(n); goto done; }

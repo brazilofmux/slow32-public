@@ -178,9 +178,9 @@ fi
 # The message names the statement's own line even when the statement
 # called a subprogram whose text was read in its place (callline).
 # Found by fort370 (reported on H390-MVS), whose unit scan is this one's.
-# COMPLEX*16 is refused rather than compiled as single precision, which
-# it was without a word -- in a declaration and in a FUNCTION header,
-# said once (lenfn).  Other lengths are read as fort370 reads them.
+# A COMPLEX*16 FUNCTION referenced where its name is implicitly REAL is
+# the mismatch it is (lenfn); COMPLEX*16 itself was refused until
+# 2026-11-08.  Other lengths are read as fort370 reads them.
 # END DO (MIL-STD-1753, from fort370): a DO left waiting for its END
 # DO, an IF block without END IF, and an END DO with no DO open.  A
 # labelled DO that its label never closes -- no such statement (nodo),
@@ -205,7 +205,6 @@ if [ -x "$F77" ]; then
     printf '      GO TO 99\n      END\n' > "$W/nolabel.f"
     printf '      DIMENSION A(3) B(2)\n      END\n' > "$W/nocomma.f"
     printf '      X = 1.0\n      CALL FOO(X) Z\n      END\n      SUBROUTINE FOO(Y)\n      Y = 2.0\n      END\n' > "$W/callline.f"
-    printf '      COMPLEX*16 Z\n      Z = (1.0, 2.0)\n      END\n' > "$W/lencx.f"
     printf '      X = G(1.0)\n      END\n      COMPLEX*16 FUNCTION G(Y)\n      G = Y\n      END\n' > "$W/lenfn.f"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
@@ -249,8 +248,7 @@ if [ -x "$F77" ]; then
              "nolabel:line 2: statement label 99 is referred to but never defined" \
              "nocomma:line 1: unexpected text after the statement" \
              "callline:line 2: unexpected text after the statement" \
-             "lencx:line 1: COMPLEX*16 needs a target with native DOUBLE PRECISION" \
-             "lenfn:line 3: COMPLEX*16 needs a target with native DOUBLE PRECISION" \
+             "lenfn:line 1: G is REAL here but COMPLEX*16 where it is defined (line 3)" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

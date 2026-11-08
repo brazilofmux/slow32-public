@@ -623,6 +623,59 @@ in the pair allocator f77 shares with stage08; after the fix, 1,000 of 1,000
 agree.  It writes fixed form within F77, explicit FORMATs only and no integer
 overflow, so the differences above cannot arise.
 
+### Reference LAPACK as the corpus (2026-11-08)
+
+Compiling reference LAPACK 3.12.1 and BLAS file by file found two f77 defects:
+a function reference as an actual argument (`DLAPY2(DNRM2(..), DNRM2(..))`), and
+EXTERNAL or INTRINSIC under IMPLICIT NONE (5e58e818).  With those fixed, 1,513 of
+2,185 files compile.  The rest:
+- 538 are COMPLEX*16.
+- 134 are Fortran 90: CHARACTER(n), INTENT, `/=`, EXIT, RECURSIVE, array
+  sections, `!` comments inside the code.
+
+The user's ruling: MIL-STD-1753, then COMPLEX*16, in f77 itself; no flang-built
+routines linked beside f77's to get the suites running early.  MIL-STD-1753
+turned out complete already (DO WHILE, END DO, INCLUDE, IMPLICIT NONE, the bit
+intrinsics; each in tests/f77).
+
+## COMPLEX*16 (DOUBLE COMPLEX)
+
+f77 refused it until now: a COMPLEX value is two REAL words carried as the
+value and `ex_hi`, the channel DOUBLE PRECISION uses for its hi word.  On
+SLOW-32 a double is itself two words, so a double complex is four, and fort370's
+way (two values, a double being one HIR value on the S/370) does not carry over.
+
+**Representation: in memory.**  A COMPLEX*16 value in an expression is the
+address of 16 bytes, real part then imaginary, each a DOUBLE PRECISION:
+`ex_ty == TY_DCPLX`, the value is an `HL_ADDR_TY` address, and `ex_hi` is unused.
+- A variable or element reference yields its own address.
+- Every operation reads its operands' parts as doubles, computes with the
+  double-precision code that exists, and writes a fresh frame temporary.
+  So nothing writes the bytes a pending value points at.  An assignment
+  copies.  Fortran's rule that a function may not change another entity
+  of the statement keeps a pending address from being changed under it.
+- The other way, threading two more values through every pair site, would
+  touch most of the parser for the same result.  This costs memory traffic
+  in complex-heavy loops.  When the LAPACK suites run, they show whether
+  that matters.
+
+Storage is 16 bytes everywhere (frame, COMMON, EQUIVALENCE, DATA), never split
+into frame slots.  fort370 (TY_DCPLX, 54 sites) is the map of what must handle
+it.  The phases, each held to gfortran before the next:
+1. Declarations and storage: COMPLEX*16, DOUBLE COMPLEX, IMPLICIT, FUNCTION
+   prefixes, arrays, COMMON, EQUIVALENCE, DATA, PARAMETER.  Constants,
+   assignment, conversion to and from the other numeric types; DCMPLX, DREAL,
+   DIMAG, DCONJG.
+2. Arithmetic: + - * / and ** with mixed-type promotion (COMPLEX with DOUBLE
+   PRECISION gives COMPLEX*16, as fort370 and gfortran have it), comparison
+   for equality, ABS.
+3. Procedures: COMPLEX*16 arguments and dummies, functions returning it
+   (ZDOTC, ZLADIV), statement functions, inlining.
+4. Intrinsics in libf77 (SQRT, EXP, LOG, SIN, COS) and I/O: formatted,
+   list-directed, internal, unformatted.
+5. ffuzz gains COMPLEX*16 atoms, the 538 LAPACK files join the survey, then
+   f77's LAPACK and its test suites.
+
 ## What not to do
 
 - No native x64/a64 backends (ruling 2). slow32-dbt is the path.

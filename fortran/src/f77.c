@@ -307,6 +307,7 @@ static void f77_scan_units(void) {
             if (f77_starts("INTEGER")) { ty = TY_INT; skip = 7; }
             else if (f77_starts("LOGICAL")) { ty = TY_INT; skip = 7; lg = 1; }
             else if (f77_starts("DOUBLEPRECISION")) { ty = TY_DOUBLE; skip = 15; }
+            else if (f77_starts("DOUBLECOMPLEX")) { ty = TY_DCPLX; skip = 13; }
             else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
             else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
             else if (f77_starts("COMPLEX")) { ty = TY_CPLX; skip = 7; }
@@ -419,6 +420,7 @@ static void hl_func(Node *fn) {
     }
 
     hir_reset();
+    f77_ndcxv = 0;                 /* the COMPLEX*16 guard's marks are the unit's */
     hl_nalloca = 0;
     hl_temp_stack = 0;
     f77_nsym = 0;
@@ -500,6 +502,7 @@ static void hl_func(Node *fn) {
     /* The HIR is complete: retract the read-only-load assertion for
      * every dummy this unit turned out to store (see f77_ldro_note). */
     f77_ldro_finalize();
+    f77_dcx_guard();
 
     fn->locals_size = f77_frame;
 }
