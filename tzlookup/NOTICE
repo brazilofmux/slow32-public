@@ -1,0 +1,23 @@
+Third-Party Data Notices
+========================
+
+The code in this repository is MIT (see LICENSE). The lookup tables in
+gen/tz_data.h are derived, by build/ (see build/sources.py for the pinned
+versions), from these public sources, each under its own terms:
+
+- timezone-boundary-builder, release 2026b
+  https://github.com/evansiroky/timezone-boundary-builder
+  Zone polygons: Open Database License (ODbL) 1.0, derived from
+  OpenStreetMap data (c) OpenStreetMap contributors. The builder itself
+  is MIT.
+
+- GeoNames postal codes (US, PR, VI, GU, AS, MP)
+  https://download.geonames.org/export/zip/
+  Creative Commons Attribution 4.0 (CC BY 4.0).
+
+- Area-Code-Geolocation-Database (us-area-code-cities.csv)
+  https://github.com/ravisorg/Area-Code-Geolocation-Database
+  No licence file is published with that repository; the data is
+  public-record NANP area-code assignments and city coordinates.
+
+If you redistribute the generated tables, keep this notice with them.
