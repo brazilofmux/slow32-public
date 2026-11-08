@@ -63,6 +63,8 @@
 !forth/build.sh
 !forth/kernel.s
 !forth/prelude.fth
+# ...and the kernel binary: the self-hosted chain's seed (Dockerfile.selfhost)
+!forth/kernel.s32x
 !forth/tube.fth
 !forthc/compile.sh
 !forthc/forthc.fth
@@ -175,6 +177,16 @@ sbc/bc/*.s
 selfhost/stage08-cross-x64/out/
 selfhost/stage08-cross-a64/out/
 selfhost/stage08/out/
+# Every stage's build products: a clean checkout has none (*.s32x and the rest
+# are ignored), so the image bootstraps them from the seeds; a dev tree's local
+# copies must not ride into the context and short-circuit that.
+selfhost/stage00/s32-emu
+selfhost/**/*.s32x
+selfhost/**/*.s32o
+selfhost/**/*.s32a
+selfhost/**/.cc-built.stamp
+selfhost/**/.tools-built.stamp
+selfhost/stage01/test1.s
 # Kit app outputs (rebuilt in the kit-builder stage); tzlookup's raw data
 # download is 211 MB and the build reads only gen/
 islisp/out/

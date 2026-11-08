@@ -9,9 +9,14 @@
 #   /cross/x64/  cc-x64, ld-x64, crt0.o, libc_x64.a  (C -> native ELF; host
 #   /cross/a64/  cc-a64, ld-a64, crt0.o, libc_a64.a   tools, this arch)
 #
-# stage08 builds from the checked-in stage07 on the emulator and reproduces
-# byte for byte, so /kit/cc.s32x is the Mac kit's cc.s32x for the same tree.
-# The emulator is base's slow32-dbt, the engine every round gates.
+# The self-hosted chain is built from its seeds, as a clean checkout has it:
+# no stage's binaries are in git (*.s32x is ignored), only forth/kernel.s32x
+# and forth/prelude.fth, which stage01's Forth tools run on.  `make -C
+# selfhost/stageNN` for 00..08 (selfhost/stage08/RUNTIME_KIT.md; run-stages.sh
+# CHECKS built stages, it does not build them).  stage00's emulator is base's
+# slow32-dbt -- stage00 links to tools/dbt/slow32-dbt when it exists, and
+# without it the stages take hours.  The result reproduces byte for byte:
+# /kit/cc.s32x is the Mac kit's cc.s32x for the same tree.
 ARG BASE_IMAGE=slow32:base
 
 FROM ${BASE_IMAGE} AS build
@@ -25,10 +30,18 @@ COPY selfhost /build/selfhost
 COPY common  /build/common
 COPY runtime /build/runtime
 COPY tools/emulator/mmio_ring.h /build/tools/emulator/
+COPY forth/kernel.s32x forth/prelude.fth /build/forth/
 
-# stage08: clean first, so a cc.s32x or stamp that came in with the context
-# cannot short-circuit the build.  Then the kit layout.
-RUN cd /build/selfhost/stage08 && make clean >/dev/null && \
+# stages 00..07, the bootstrap: stage01 is Forth on the kernel (minutes),
+# 02..07 are each built by the one before.
+RUN mkdir -p /build/tools/dbt && ln -s /usr/local/bin/slow32-dbt /build/tools/dbt/slow32-dbt && \
+    for n in 00 01 02 03 04 05 06 07; do \
+        echo "selfhost: stage$n"; make -C /build/selfhost/stage$n >/tmp/stage$n.log 2>&1 || \
+            { tail -20 /tmp/stage$n.log; exit 1; }; \
+    done
+
+# stage08, then the kit layout.
+RUN cd /build/selfhost/stage08 && \
     SELFHOST_EMU=/usr/local/bin/slow32-dbt make && \
     mkdir -p /out/kit/selfhost && \
     cp cc.s32x s32-as.s32x s32-ld.s32x s32-ar.s32x slow32dis.s32x slow32dump.s32x /out/kit/ && \
