@@ -1,0 +1,54 @@
+# slow32:llvm-<key> -- LLVM and clang with the SLOW-32 backend, as an artifact
+# image keyed on its inputs (docs/plans/containers.md).  ECR only.
+#
+#   /opt/llvm      clang, llc and the LLVM tools (ninja install)
+#   /opt/llvm-src  the source libc++ and libc++abi build from: cmake,
+#                  runtimes, libcxx, libcxxabi, libunwind, libc, third-party,
+#                  llvm/cmake, llvm/utils, at the pin, without 06-libcxx.patch
+#                  (slow32:toolchain applies it)
+#
+# FROM alpine, not base: nothing here is SLOW-32 runtime, so a base or engine
+# change does not rebuild it.  The key (docker/image-key.sh llvm) hashes this
+# file, llvm-backend/SLOW32, llvm-backend/clang and patches 01-05.  The build
+# args are part of the key only as this file declares them, so the builder
+# never overrides them.
+FROM alpine:3.21 AS build
+RUN apk add --no-cache build-base cmake ninja python3 linux-headers patch
+
+WORKDIR /build
+ARG LLVM_COMMIT=ac5d3955cd1931f71109caa8c026319ca69ca252
+RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
+    unzip -q llvm-project.zip && \
+    mv llvm-project-${LLVM_COMMIT} llvm-project && \
+    rm llvm-project.zip
+
+COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32
+COPY llvm-backend/clang/SLOW32.cpp llvm-backend/clang/SLOW32.h /build/llvm-project/clang/lib/Basic/Targets/
+COPY llvm-backend/patches/01-llvm-triple.patch llvm-backend/patches/02-llvm-cmake.patch \
+     llvm-backend/patches/03-clang-targets.patch llvm-backend/patches/04-clang-cmake.patch \
+     llvm-backend/patches/05-clang-driver.patch /build/patches/
+WORKDIR /build/llvm-project
+RUN for p in 01-llvm-triple 02-llvm-cmake 03-clang-targets 04-clang-cmake 05-clang-driver; do \
+        patch -p1 < /build/patches/$p.patch || exit 1; done
+
+WORKDIR /build/llvm-project/build
+RUN cmake -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_PROJECTS="clang" \
+    -DLLVM_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_DEFAULT_TARGET_TRIPLE="slow32-unknown-none" \
+    -DLLVM_BUILD_TOOLS=ON \
+    -DCMAKE_INSTALL_PREFIX=/opt/llvm \
+    ../llvm
+RUN ninja && ninja install
+
+# The libc++ source, without tests and benchmarks (the full tree is GBs)
+RUN cd /build/llvm-project && mkdir -p /opt/llvm-src/llvm && \
+    cp -r cmake runtimes libcxx libcxxabi libunwind libc third-party /opt/llvm-src/ && \
+    cp -r llvm/cmake llvm/utils /opt/llvm-src/llvm/ && \
+    for d in libcxx libcxxabi libunwind libc; do rm -rf /opt/llvm-src/$d/test /opt/llvm-src/$d/benchmarks; done
+
+FROM scratch
+COPY --from=build /opt/llvm /opt/llvm
+COPY --from=build /opt/llvm-src /opt/llvm-src

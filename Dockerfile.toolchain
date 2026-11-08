@@ -1,132 +1,67 @@
 # SLOW-32 Toolchain Docker Image
-# This image contains the complete toolchain for building SLOW-32 executables
-# Includes: clang, llc, flang, cc-x64/cc-a64 -- layered on slow32:base,
-# which already carries the assembler, linker, librarian, utilities, the
-# runtime and the four emulators (see Dockerfile.base for the chain).
+# clang, llc, flang, libc++/libc++abi, flang-rt, cc-x64/cc-a64 -- layered on
+# slow32:base, which already carries the assembler, linker, librarian,
+# utilities, the runtime and the four emulators (see Dockerfile.base).
+#
+# Assembled from artifact images (docs/plans/containers.md), none of which
+# this build compiles:
+#   LLVM_IMAGE      slow32:llvm-<key>   /opt/llvm, and the libc++ source
+#   FLANG_IMAGE     slow32:flang-<key>  flang, and the flang-rt source
+#   SELFHOST_IMAGE  slow32:selfhost     cc-x64/cc-a64
+# The keys are docker/image-key.sh's; the builder builds an artifact image
+# only when its key is new.  What this build compiles is what depends on
+# base: libc++, flang-rt and the runtime, against base's tools and headers.
 ARG BASE_IMAGE=slow32:base
+ARG LLVM_IMAGE=slow32:llvm
+ARG FLANG_IMAGE=slow32:flang
+ARG SELFHOST_IMAGE=slow32:selfhost
 
-# Stage 1: Build LLVM/Clang with SLOW-32 backend
-FROM alpine:3.21 AS llvm-builder
-
-# Install build dependencies
-RUN apk add --no-cache \
-    build-base \
-    cmake \
-    ninja \
-    python3 \
-    py3-pip \
-    linux-headers \
-    patch
-
-# Download LLVM project (main branch for LLVM 22 development)
-WORKDIR /build
-# Pin to a known-good LLVM commit to avoid transient upstream breakage.
-# Update this SHA when you want to pull in newer upstream changes.
-ARG LLVM_COMMIT=ac5d3955cd1931f71109caa8c026319ca69ca252
-RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
-    unzip -q llvm-project.zip && \
-    mv llvm-project-${LLVM_COMMIT} llvm-project && \
-    rm llvm-project.zip
-
-# Copy SLOW-32 backend files and patches
-COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32
-COPY llvm-backend/clang/SLOW32.cpp /build/llvm-project/clang/lib/Basic/Targets/
-COPY llvm-backend/clang/SLOW32.h /build/llvm-project/clang/lib/Basic/Targets/
-COPY llvm-backend/patches /build/patches
-
-# Apply patches to integrate SLOW-32 into LLVM
-WORKDIR /build/llvm-project
-RUN patch -p1 < /build/patches/01-llvm-triple.patch && \
-    patch -p1 < /build/patches/02-llvm-cmake.patch && \
-    patch -p1 < /build/patches/03-clang-targets.patch && \
-    patch -p1 < /build/patches/04-clang-cmake.patch && \
-    patch -p1 < /build/patches/05-clang-driver.patch
-
-# Configure and build LLVM with SLOW-32 target
-# Note: llc is built as part of LLVM core tools (not a separate project)
-WORKDIR /build/llvm-project/build
-RUN cmake -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DLLVM_ENABLE_PROJECTS="clang" \
-    -DLLVM_TARGETS_TO_BUILD="SLOW32" \
-    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="SLOW32" \
-    -DLLVM_DEFAULT_TARGET_TRIPLE="slow32-unknown-none" \
-    -DLLVM_BUILD_TOOLS=ON \
-    -DCMAKE_INSTALL_PREFIX=/opt/llvm \
-    ../llvm
-
-RUN ninja && ninja install
+FROM ${LLVM_IMAGE} AS llvm
+FROM ${FLANG_IMAGE} AS flang
+FROM ${SELFHOST_IMAGE} AS selfhost
+FROM ${BASE_IMAGE} AS slow32-tools
 
 # === libc++ and libc++abi for SLOW-32 (scripts/build-libcxx.sh) ===
-# From the same llvm-project source and the clang just built, with the
-# SLOW-32 libc++ support (06-libcxx.patch, applied here so the LLVM layers
-# above keep their cache).  CMake's compiler checks and the archives need
-# slow32asm, s32-ar and s32-ld, which come from the base image; the C
-# headers it compiles against are the tree's runtime/include.
-FROM ${BASE_IMAGE} AS slow32-tools
-FROM llvm-builder AS libcxx-builder
-RUN apk add --no-cache bash
+# From the llvm image's source and clang, with the SLOW-32 libc++ support
+# (06-libcxx.patch).  CMake's compiler checks and the archives need slow32asm,
+# s32-ar and s32-ld from base; the C headers are the tree's runtime/include.
+FROM alpine:3.21 AS libcxx-builder
+RUN apk add --no-cache build-base cmake ninja python3 bash patch libstdc++
+COPY --from=llvm /opt/llvm /opt/llvm
+COPY --from=llvm /opt/llvm-src /build/llvm-project
+COPY llvm-backend/patches/06-libcxx.patch /build/patches/
+RUN cd /build/llvm-project && patch -p1 < /build/patches/06-libcxx.patch
 COPY --from=slow32-tools /opt/slow32/bin /opt/slow32/bin
-WORKDIR /build/llvm-project
-RUN patch -p1 < /build/patches/06-libcxx.patch
 COPY scripts/build-libcxx.sh scripts/slow32-toolchain.cmake /slow32-build/scripts/
 COPY runtime/include /slow32-build/runtime/include
 RUN PATH="/opt/slow32/bin:$PATH" LLVM_PROJECT=/build/llvm-project LLVM_BIN=/opt/llvm/bin \
     BUILD=/build/libcxx bash /slow32-build/scripts/build-libcxx.sh
 
-# === flang and flang-rt (docs/plans/flang.md) ===
-# In the LLVM build above, so LLVM and clang's libraries are not built twice:
-# 07-flang.patch touches only flang/ and flang-rt/, and the reconfigure adds
-# mlir and flang.  g++ on flang wants memory, not processors: FLANG_JOB_GB per
-# compile (a 24 GB VM runs out at -j4), however many cores there are.  Then
-# flang-rt and the intrinsic modules for SLOW-32 by flang/build.sh, with the
-# clang and libc++ headers above and slow32asm/s32-ar from the base image.
-FROM llvm-builder AS flang-builder
-ARG FLANG_JOB_GB=8
-RUN apk add --no-cache zsh
-WORKDIR /build/llvm-project
-RUN patch -p1 < /build/patches/07-flang.patch
-WORKDIR /build/llvm-project/build
-RUN cmake -DLLVM_ENABLE_PROJECTS="clang;mlir;flang" -DFLANG_INCLUDE_TESTS=OFF \
-          -DMLIR_INCLUDE_TESTS=OFF -DMLIR_ENABLE_EXECUTION_ENGINE=OFF . >/dev/null
-RUN set -e; gb=$(awk '/MemTotal/ {print int($2 / 1048576)}' /proc/meminfo); \
-    jobs=$(( gb / FLANG_JOB_GB )); [ "$jobs" -ge 1 ] || jobs=1; \
-    [ "$jobs" -le "$(nproc)" ] || jobs=$(nproc); \
-    echo "flang: ninja -j$jobs (${gb} GB)"; ninja -j"$jobs" flang; \
-    mkdir -p /build/flang-dist; cp -L bin/flang /build/flang-dist/flang; strip /build/flang-dist/flang
+# === flang-rt and the intrinsic modules (flang/build.sh) ===
+# With the flang image's flang and source, the llvm image's clang++, the
+# libc++ headers above, and slow32asm/s32-ar from base.  Then the check the
+# flang key leans on: flang and clang must emit the same data layout.
+FROM alpine:3.21 AS flangrt-builder
+RUN apk add --no-cache build-base zsh libstdc++
+COPY --from=llvm /opt/llvm /opt/llvm
+COPY --from=flang /opt/llvm/bin/flang /opt/flang/bin/flang
+COPY --from=flang /opt/flang-src /build/llvm-project
 COPY --from=slow32-tools /opt/slow32/bin /opt/slow32/bin
 COPY --from=libcxx-builder /build/libcxx/install/include/c++/v1 /build/libcxx-include
 COPY flang/build.sh /slow32-build/flang/build.sh
 COPY flang/shim /slow32-build/flang/shim
 COPY runtime/include /slow32-build/runtime/include
-RUN LLVM_PROJECT=/build/llvm-project FLANG_BIN=/build/llvm-project/build/bin \
+RUN LLVM_PROJECT=/build/llvm-project FLANG_BIN=/opt/flang/bin \
     S32_CXX=/opt/llvm/bin/clang++ LIBCXX_INCLUDE=/build/libcxx-include \
     S32_AS=/opt/slow32/bin/slow32asm S32_AR=/opt/slow32/bin/s32-ar \
     S32_RT_INCLUDE=/slow32-build/runtime/include \
     zsh /slow32-build/flang/build.sh /build/flang-out
-
-# Stage 2.6: Build the self-hosted SLOW-32 cross-compilers
-# cc-x64 (C -> x86-64 ELF) and cc-a64 (C -> arm64 ELF). These are HOST-native
-# tools — they need no emulator — built by host gcc from the shared stage08
-# frontend. (The slow-32-hosted self-host compiler, cc.s32x, is itself a .s32x
-# and so lives with the emulator, not here.) The selfhost tree builds in <1min.
-FROM alpine:3.21 AS selfhost-builder
-RUN apk add --no-cache build-base bash
-WORKDIR /build
-# selfhost/ and common/ must stay siblings: the cross libc includes
-# ../../../common/mmio_ring_layout.h.  Its MMIO stubs also include the
-# emulator's own ../../../tools/emulator/mmio_ring.h (DBT-18: the copy they
-# carried had gone stale), which in turn includes common/ as above.
-COPY selfhost /build/selfhost
-COPY common  /build/common
-COPY tools/emulator/mmio_ring.h /build/tools/emulator/
-# rm -rf out: drop any dev-host out/ artifacts (Mach-O on the Mac) so make
-# rebuilds fresh for this image's arch+libc. mkdir out: the a64 cc-a64 target
-# lacks the order-only `| $(OUT)` mkdir guard the x64 one has.
-RUN cd /build/selfhost/stage08-cross-x64 && rm -rf out && mkdir -p out && \
-    make out/cc-x64 out/ld-x64 out/ar-x64 libc
-RUN cd /build/selfhost/stage08-cross-a64 && rm -rf out && mkdir -p out && \
-    make out/cc-a64 out/ld-a64 out/ar-a64 out/crt0.o libc
+RUN printf 'program p\nend program p\n' > /tmp/p.f90 && printf 'int x;\n' > /tmp/x.c && \
+    /opt/flang/bin/flang -fc1 -triple slow32-unknown-none -emit-llvm /tmp/p.f90 -o /tmp/p.ll && \
+    /opt/llvm/bin/clang -target slow32-unknown-none -S -emit-llvm /tmp/x.c -o /tmp/x.ll && \
+    f=$(grep '^target datalayout' /tmp/p.ll) && c=$(grep '^target datalayout' /tmp/x.ll) && \
+    if [ "$f" != "$c" ]; then echo "flang and clang disagree on the data layout:"; \
+        echo "  flang: $f"; echo "  clang: $c"; exit 1; fi
 
 # Stage 3: layer LLVM and the cross-compilers onto slow32:base
 # (base = emulators + slow32asm/s32-ld/s32-ar/slow32dump/slow32dis + runtime)
@@ -142,7 +77,7 @@ RUN apk add --no-cache \
     bash
 
 # Copy LLVM installation from builder
-COPY --from=llvm-builder /opt/llvm /opt/llvm
+COPY --from=llvm /opt/llvm /opt/llvm
 
 # Rebuild the runtime from source with THIS image's LLVM and replace the
 # tracked archives base installed.  The tracked .s32o/.s32a come along in the
@@ -165,18 +100,8 @@ RUN make -C runtime clean && \
 # NOT a .s32x — run it on a matching-arch host (or under qemu / the emulator
 # image for the non-host arch).
 RUN mkdir -p /opt/slow32/x64 /opt/slow32/a64
-COPY --from=selfhost-builder \
-     /build/selfhost/stage08-cross-x64/out/cc-x64 \
-     /build/selfhost/stage08-cross-x64/out/ld-x64 \
-     /build/selfhost/stage08-cross-x64/out/crt0.o \
-     /build/selfhost/stage08-cross-x64/out/libc_x64.a \
-     /opt/slow32/x64/
-COPY --from=selfhost-builder \
-     /build/selfhost/stage08-cross-a64/out/cc-a64 \
-     /build/selfhost/stage08-cross-a64/out/ld-a64 \
-     /build/selfhost/stage08-cross-a64/out/crt0.o \
-     /build/selfhost/stage08-cross-a64/out/libc_a64.a \
-     /opt/slow32/a64/
+COPY --from=selfhost /cross/x64/ /opt/slow32/x64/
+COPY --from=selfhost /cross/a64/ /opt/slow32/a64/
 COPY docker/bin/cc-x64 docker/bin/cc-a64 /opt/slow32/bin/
 RUN chmod +x /opt/slow32/bin/cc-x64 /opt/slow32/bin/cc-a64
 
@@ -230,10 +155,10 @@ RUN chmod +x /opt/slow32/bin/s32c++
 # flang (Fortran 77 through 2018) beside clang, flang-rt and the intrinsic
 # modules for SLOW-32, and s32flang, the driver that links them (on the libc++
 # installed above)
-COPY --from=flang-builder /build/flang-dist/flang /opt/llvm/bin/flang
-COPY --from=flang-builder /build/flang-out/libflangrt.s32a /opt/slow32/flang/
-COPY --from=flang-builder /build/flang-out/mod /opt/slow32/flang/mod
-COPY --from=flang-builder /build/llvm-project/flang/include/flang/ISO_Fortran_binding.h /opt/slow32/flang/include/
+COPY --from=flang /opt/llvm/bin/flang /opt/llvm/bin/flang
+COPY --from=flangrt-builder /build/flang-out/libflangrt.s32a /opt/slow32/flang/
+COPY --from=flangrt-builder /build/flang-out/mod /opt/slow32/flang/mod
+COPY --from=flang /opt/flang-src/flang/include/flang/ISO_Fortran_binding.h /opt/slow32/flang/include/
 COPY docker/bin/s32flang /opt/slow32/bin/
 RUN chmod +x /opt/slow32/bin/s32flang
 

@@ -78,6 +78,26 @@ two-push dance ends.  ~/s32x on the Mac becomes something extracted from the
 image (`docker cp`), not the input to it.  The kit gate is unchanged
 (`run-kit-*.sh` inside the image).
 
+## Status (2026-11-08)
+
+- Step 1, selfhost: done (ef6f5027).  Byte-identical to the Mac's stage08.
+- Step 2, kit from the tree: done (b49620f1, fa3bce0f).  The image's kit
+  and a Mac build hold the same 90 files.
+- Step 3, written and checked as far as the Mac can:
+  - `docker/image-key.sh` was mutation-tested.  Each input moves exactly the
+    keys it should: the backend moves llvm only, 07 moves flang only, 01 and
+    clang/ move both, 06 and runtime/ move neither, and dirty inputs are
+    refused.
+  - Dockerfile.toolchain was built from stand-in llvm and flang images (the
+    previous toolchain's /opt/llvm and flang, with the source subsets at the
+    pin).  It takes 195 s.  Against the previous toolchain, 1,963 files
+    match, except slow32asm (base's fix) and the cross libc archives'
+    timestamps.  flang, C++ and C programs run.
+  - The libc++ source subset was proved on the Mac: a build from it equals a
+    full-tree build, up to the source path.
+  - Not yet built: Dockerfile.llvm and Dockerfile.flang themselves (hours).
+    That is the builder's trial job.
+
 ## Order
 
 Each step is checked locally (short builds on the Mac, long ones on Kagura)

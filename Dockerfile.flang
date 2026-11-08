@@ -1,0 +1,64 @@
+# slow32:flang-<key> -- flang, as an artifact image keyed on its inputs
+# (docs/plans/containers.md).  ECR only.  The long build: LLVM, clang, MLIR and
+# flang, 2-4 hours on 32 GB.
+#
+#   /opt/llvm/bin/flang  flang alone (static LLVM libraries, stripped)
+#   /opt/flang-src       what flang/build.sh builds flang-rt and the intrinsic
+#                        modules from: flang-rt/{include,lib}, flang/include,
+#                        flang/lib/Decimal, with 07-flang.patch applied
+#
+# flang does not use the backend: s32flang runs `flang -fc1 ... -emit-llvm`
+# and hands the IR to slow32:llvm's llc.  So the key (docker/image-key.sh
+# flang) hashes this file, llvm-backend/clang and patches 01-04 and 07 -- the
+# pin, the target's data layout (01 defines it), its C types (clang) and
+# flang's own changes -- and NOT llvm-backend/SLOW32 or 05: backend and driver
+# work never rebuilds it.  The SLOW32 backend is compiled in only because
+# -triple slow32 needs the target registered.  slow32:toolchain checks that
+# flang and clang emit the same data layout, the one input the key reaches
+# only through 01.
+FROM alpine:3.21 AS build
+RUN apk add --no-cache build-base cmake ninja python3 linux-headers patch
+
+WORKDIR /build
+ARG LLVM_COMMIT=ac5d3955cd1931f71109caa8c026319ca69ca252
+RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
+    unzip -q llvm-project.zip && \
+    mv llvm-project-${LLVM_COMMIT} llvm-project && \
+    rm llvm-project.zip
+
+COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32
+COPY llvm-backend/clang/SLOW32.cpp llvm-backend/clang/SLOW32.h /build/llvm-project/clang/lib/Basic/Targets/
+COPY llvm-backend/patches/01-llvm-triple.patch llvm-backend/patches/02-llvm-cmake.patch \
+     llvm-backend/patches/03-clang-targets.patch llvm-backend/patches/04-clang-cmake.patch \
+     llvm-backend/patches/07-flang.patch /build/patches/
+WORKDIR /build/llvm-project
+RUN for p in 01-llvm-triple 02-llvm-cmake 03-clang-targets 04-clang-cmake 07-flang; do \
+        patch -p1 < /build/patches/$p.patch || exit 1; done
+
+# g++ on flang wants memory, not processors: FLANG_JOB_GB per compile (a 24 GB
+# VM runs out at -j4), however many cores there are.  FLANG_JOB_GB changes
+# only the time, not the output, and is the one arg the builder may set.
+WORKDIR /build/llvm-project/build
+RUN cmake -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_PROJECTS="clang;mlir;flang" \
+    -DLLVM_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_DEFAULT_TARGET_TRIPLE="slow32-unknown-none" \
+    -DFLANG_INCLUDE_TESTS=OFF -DMLIR_INCLUDE_TESTS=OFF -DMLIR_ENABLE_EXECUTION_ENGINE=OFF \
+    ../llvm
+ARG FLANG_JOB_GB=8
+RUN set -e; gb=$(awk '/MemTotal/ {print int($2 / 1048576)}' /proc/meminfo); \
+    jobs=$(( gb / FLANG_JOB_GB )); [ "$jobs" -ge 1 ] || jobs=1; \
+    [ "$jobs" -le "$(nproc)" ] || jobs=$(nproc); \
+    echo "flang: ninja -j$jobs (${gb} GB)"; ninja -j"$jobs" flang; \
+    mkdir -p /opt/llvm/bin; cp -L bin/flang /opt/llvm/bin/flang; strip /opt/llvm/bin/flang
+
+RUN cd /build/llvm-project && mkdir -p /opt/flang-src/flang/lib && \
+    cp -r flang-rt /opt/flang-src/ && rm -rf /opt/flang-src/flang-rt/unittests /opt/flang-src/flang-rt/test && \
+    cp -r flang/include /opt/flang-src/flang/ && \
+    cp -r flang/lib/Decimal /opt/flang-src/flang/lib/
+
+FROM scratch
+COPY --from=build /opt/llvm/bin/flang /opt/llvm/bin/flang
+COPY --from=build /opt/flang-src /opt/flang-src

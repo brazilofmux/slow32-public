@@ -174,7 +174,13 @@ substituted 1:1.
 - `slow32:selfhost` (artifact image, FROM scratch; not on Docker Hub):
   stage08's cc.s32x, tools and libc laid out as the kit holds them
   (`/kit`), and cc-x64/cc-a64 (`/cross`), built from the tree in under a
-  minute.  slow32:kit copies from it (slow32:toolchain will, docs/plans/containers.md).
+  minute.  slow32:kit and slow32:toolchain copy from it.
+- `slow32:llvm-<key>`, `slow32:flang-<key>` (artifact images, FROM scratch;
+  not on Docker Hub): /opt/llvm with the libc++ source, and flang with the
+  flang-rt source.  The key is `docker/image-key.sh llvm|flang`, a hash of
+  every input; the builder builds one only when ECR lacks its key.  flang
+  writes IR for llc, so backend work never rebuilds it (the 2-4 hour build).
+  slow32:toolchain is assembled from them in minutes.
 - `slow32:kit` (FROM base): + `/opt/slow32/kit`, the self-hosted kit
   (cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
   and `s32kcc`, C to `.s32x` through that toolchain on the emulator, and
@@ -190,7 +196,9 @@ substituted 1:1.
 podman build -t slow32:emulator  -f Dockerfile.emulator  .
 podman build -t slow32:base      -f Dockerfile.base      .
 podman build -t slow32:selfhost  -f Dockerfile.selfhost  .
-podman build -t slow32:toolchain -f Dockerfile.toolchain .
+podman build -t slow32:llvm      -f Dockerfile.llvm      .   # hours; the builder keys it (docker/image-key.sh)
+podman build -t slow32:flang     -f Dockerfile.flang     .   # 2-4 hours; keyed likewise
+podman build -t slow32:toolchain -f Dockerfile.toolchain .   # minutes, from llvm, flang, selfhost
 podman build -t slow32:pascal    -f Dockerfile.pascal    .
 podman build -t slow32:cobol     -f Dockerfile.cobol     .
 podman build -t slow32:fortran   -f Dockerfile.fortran   .
