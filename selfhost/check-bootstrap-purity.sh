@@ -68,15 +68,18 @@ scan_no_match \
 
 # 2) No direct host compiler invocations in stage01..08 scripts.
 # (stage00 Makefile is the accepted seed toolchain root.
-#  compare-llvm-selfhost.sh and run-fp-differential.sh are optional
-#  comparison harnesses that are not invoked by run-stages.sh and are
-#  allowed to call clang directly.)
+#  compare-llvm-selfhost.sh, run-fp-differential.sh and run-interop-llvm.sh
+#  are optional comparison harnesses that are not invoked by run-stages.sh
+#  and are allowed to call clang directly -- the header above excludes
+#  run-interop-llvm.sh, and rule 1 did, but this rule had not: a C comment in
+#  its heredoc saying "its clang runtime" failed every stage walk.)
 scan_no_match \
     "direct host compiler command in stage01..08 scripts" \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     --glob '!compare-llvm-selfhost.sh' \
     --glob '!run-fp-differential.sh' \
+    --glob '!run-interop-llvm.sh' \
     "$SELFHOST_DIR/stage01" \
     "$SELFHOST_DIR/stage02" \
     "$SELFHOST_DIR/stage03" \
