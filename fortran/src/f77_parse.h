@@ -205,6 +205,14 @@ static int f77_unit_nparams;
 static int f77_rd_len;
 static int f77_inline_depth;
 static int f77_reduce(int in);
+/* The array-expression context (Fortran 90): while the right side of an
+ * array assignment is parsed, inside the loops over its shape, f77_aex_k
+ * is the shape's rank and f77_aex_cnt[j] the j-th loop's iteration count
+ * (from 0); an array operand there -- a section or a whole array -- is
+ * the element those counts reach (f77_aex_elem).  0 elsewhere. */
+static int f77_aex_k;
+static int f77_aex_cnt[8];
+static int f77_aex_elem(int s, int whole);
 static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
 static void f77_assign_params(int n);
 
@@ -2799,6 +2807,8 @@ static int f77_primary(void) {
             if (ex_ty == TY_FLOAT) return f77_rconst(f77_spdval[s]);
             return f77_iconst(f77_spival[s]);
         }
+        if (f77_aex_k > 0 && lx_t == T_LP && f77_srank[s] > 0 && f77_sty[s] != TY_CHAR && f77_paren_has_colon())
+            return f77_aex_elem(s, 0);           /* a section's element */
         if (lx_t == T_LP && f77_srank[s] > 0) {
             int addr;
             f77_tok();
@@ -2873,6 +2883,8 @@ static int f77_primary(void) {
             else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
             return r;
         }
+        if (f77_srank[s] > 0 && f77_aex_k > 0 && f77_sty[s] != TY_CHAR)
+            return f77_aex_elem(s, 1);           /* a whole array's element */
         if (f77_srank[s] > 0) {
             /* A whole array as an operand: F77 has none, and F90's array
              * expressions are milestone 3.  It had compiled, X = L giving
@@ -3603,43 +3615,228 @@ static int f77_text_has_array_expr(int from) {
     return 0;
 }
 
-/* A(section) = scalar.  The right side, a scalar, and the scalar
- * subscripts are evaluated once, before the loops; the elements are
- * reached in column order, the first triplet innermost. */
-static void f77_section_assign(int s) {
+/* Does the statement text from `from` name `nm` as a whole word? */
+static int f77_text_names(int from, char *nm) {
+    int i;
+    int n;
+    n = (int)strlen(nm);
+    i = from;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '\'') {
+            i = i + 1;
+            while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1;
+            i = i + 1;
+            continue;
+        }
+        if (lx_isalpha(lx_stmt[i])) {
+            int b;
+            b = i;
+            while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) i = i + 1;
+            if (i - b == n && strncmp(lx_stmt + b, nm, n) == 0 && (b == 0 || lx_stmt[b - 1] != '.')) return 1;
+            continue;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+/* An array operand of an array expression, at the loops' current counts
+ * (f77_aex_cnt): a section (lx_t at its '('), its t-th triplet at lo +
+ * count[t]*stride, or a whole array (whole), dimension d at its lower bound
+ * + count[d].  Its rank must be the expression's. */
+static int f77_aex_elem(int s, int whole) {
     int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
     int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+    int cur[F77_MAX_RANK];
+    int k;
+    int t;
+    int nt;
+    int v;
+    if (whole) {
+        if (f77_srank[s] != f77_aex_k) { f77_error("the shapes in an array expression do not conform"); return f77_iconst(0); }
+        for (k = 0; k < f77_srank[s]; k++) {
+            int dlo;
+            int dhi;
+            f77_dim_bounds(s, k, &dlo, &dhi);
+            cur[k] = hi_emit(HI_ADD, TY_INT, dlo, f77_aex_cnt[k], 0, NULL);
+        }
+    } else {
+        f77_tok();                                   /* ( */
+        nt = f77_section_subs(s, idx, trip, lo, hi, st);
+        if (nt < 0) return f77_iconst(0);
+        if (nt != f77_aex_k) { f77_error("the shapes in an array expression do not conform"); return f77_iconst(0); }
+        t = 0;
+        for (k = 0; k < f77_srank[s]; k++) {
+            if (trip[k]) {
+                int c;
+                c = hi_emit(HI_MUL, TY_INT, f77_aex_cnt[t], st[k], 0, NULL);
+                cur[k] = hi_emit(HI_ADD, TY_INT, lo[k], c, 0, NULL);
+                t = t + 1;
+            } else {
+                cur[k] = idx[k];
+            }
+        }
+    }
+    v = f77_load_at(f77_elem_addr(s, cur, f77_srank[s]), f77_mty(s));
+    ex_log = f77_slog[s];
+    return v;
+}
+
+/* An array assignment (Fortran 90): A(section) = e, or A = e for the whole
+ * array (whole; lx_t past the name, else past the section's '(').
+ * - e a scalar: it and the scalar subscripts are evaluated once, before
+ *   the loops, and stored to every element.
+ * - e an array expression: loops over the left side's shape, the first
+ *   triplet innermost, and e parsed once inside them, its array operands
+ *   the elements the loops' counts reach (f77_aex_elem).  F90 evaluates e
+ *   whole before any element is stored, so when the left side's array is
+ *   named in e -- A(I:J,K) = A(I,K)*C(1:N), whose first store changes
+ *   A(I,K) -- the values go to a temporary first and are copied after. */
+static void f77_array_assign(int s, int whole) {
+    int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+    int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+    int ext[F77_MAX_RANK]; int tdim[F77_MAX_RANK];
     F77Loop lp[F77_MAX_RANK];
     int v; int vty; int vhi;
     int k;
     int nt;
     int rank;
+    int ty;
+    int mty;
     rank = f77_srank[s];
+    ty = f77_sty[s];
+    mty = f77_mty(s);
     for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
-    nt = f77_section_subs(s, idx, trip, lo, hi, st);
-    if (nt < 0) return;
+    if (whole) {
+        for (k = 0; k < rank; k++) {
+            trip[k] = 1;
+            f77_dim_bounds(s, k, &lo[k], &hi[k]);
+            if (hi[k] < 0) { f77_error("an assumed-size array cannot be assigned whole"); return; }
+            st[k] = f77_iconst(1);
+        }
+        nt = rank;
+    } else {
+        nt = f77_section_subs(s, idx, trip, lo, hi, st);
+        if (nt < 0) return;
+    }
     if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
     f77_tok();
-    if (f77_text_has_array_expr((int)(lx_rts - lx_stmt))) {
-        f77_error("an array expression on the right of a section assignment is not supported yet");
+    f77_sstored[s] = 1;
+    if (!f77_text_has_array_expr((int)(lx_rts - lx_stmt))) {
+        /* a scalar to every element */
+        v = f77_expr();
+        vty = ex_ty; vhi = ex_hi;
+        if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
+        v = f77_cvt(v, &vhi, vty, ty);
+        for (k = rank - 1; k >= 0; k--)
+            if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
+        {
+            int cur[F77_MAX_RANK];
+            for (k = 0; k < rank; k++)
+                cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+            f77_store_at(f77_elem_addr(s, cur, rank), mty, v, ty, vhi);
+        }
+        for (k = 0; k < rank; k++)
+            if (trip[k]) f77_loop_end(&lp[k]);
         return;
     }
-    v = f77_expr();
-    vty = ex_ty; vhi = ex_hi;
-    if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric section"); return; }
-    v = f77_cvt(v, &vhi, vty, f77_sty[s]);
-    vty = f77_sty[s];
-    f77_sstored[s] = 1;
-    for (k = rank - 1; k >= 0; k--)
-        if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
+    /* an array expression */
     {
-        int cur[F77_MAX_RANK];
-        for (k = 0; k < rank; k++)
-            cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
-        f77_store_at(f77_elem_addr(s, cur, rank), f77_mty(s), v, vty, vhi);
+        int j;
+        int overlap;
+        int tmp;
+        int esz;
+        int saved_k;
+        int saved_cnt[F77_MAX_RANK];
+        F77Loop cl[F77_MAX_RANK];
+        int cnt[F77_MAX_RANK];
+        if (nt > 8) { f77_error("too many dimensions in an array expression"); return; }
+        j = 0;
+        for (k = 0; k < rank; k++) {
+            if (!trip[k]) continue;
+            /* the extent, MAX((hi - lo + st)/st, 0) */
+            {
+                int e;
+                e = hi_emit(HI_SUB, TY_INT, hi[k], lo[k], 0, NULL);
+                e = hi_emit(HI_ADD, TY_INT, e, st[k], 0, NULL);
+                e = hi_emit(HI_DIV, TY_INT, e, st[k], 0, NULL);
+                ext[j] = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
+            }
+            tdim[j] = k;
+            j = j + 1;
+        }
+        esz = f77_esize(s);
+        overlap = f77_text_names((int)(lx_rts - lx_stmt), f77_sname[s]);
+        tmp = -1;
+        if (overlap) {
+            int args[3];
+            int n;
+            n = ext[0];
+            for (j = 1; j < nt; j++) n = hi_emit(HI_MUL, TY_INT, n, ext[j], 0, NULL);
+            args[0] = f77_iconst(0);
+            args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(esz), 0, NULL);
+            args[2] = f77_iconst(0);
+            tmp = f77_call_i("f77_allocate", 3, args);
+        }
+        for (j = nt - 1; j >= 0; j--)
+            f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
+        for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
+        saved_k = f77_aex_k;
+        for (j = 0; j < 8 && j < F77_MAX_RANK; j++) saved_cnt[j] = f77_aex_cnt[j];
+        f77_aex_k = nt;
+        for (j = 0; j < nt; j++) f77_aex_cnt[j] = cnt[j];
+        v = f77_expr();
+        vty = ex_ty; vhi = ex_hi;
+        f77_aex_k = saved_k;
+        for (j = 0; j < 8 && j < F77_MAX_RANK; j++) f77_aex_cnt[j] = saved_cnt[j];
+        if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
+        if (overlap) {
+            /* the temporary, in the loops' order: count[0] fastest */
+            int off;
+            off = cnt[nt - 1];
+            for (j = nt - 2; j >= 0; j--) {
+                off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
+                off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
+            }
+            off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(esz), 0, NULL);
+            f77_store_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, off, 0, NULL), mty, v, vty, vhi);
+        } else {
+            int cur[F77_MAX_RANK];
+            for (k = 0; k < rank; k++) cur[k] = idx[k];
+            for (j = 0; j < nt; j++)
+                cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]],
+                                       hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
+            f77_store_at(f77_elem_addr(s, cur, rank), mty, v, vty, vhi);
+        }
+        for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
+        if (overlap) {
+            /* then the copy, in the same order, and the temporary freed */
+            int args[1];
+            for (j = nt - 1; j >= 0; j--)
+                f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
+            {
+                int cur[F77_MAX_RANK];
+                int off;
+                for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
+                off = cnt[nt - 1];
+                for (j = nt - 2; j >= 0; j--) {
+                    off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
+                    off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
+                }
+                off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(esz), 0, NULL);
+                v = f77_load_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, off, 0, NULL), mty);
+                vhi = ex_hi;
+                for (k = 0; k < rank; k++) cur[k] = idx[k];
+                for (j = 0; j < nt; j++)
+                    cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]],
+                                           hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
+                f77_store_at(f77_elem_addr(s, cur, rank), mty, v, mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : ty, vhi);
+            }
+            for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
+            args[0] = tmp;
+            f77_call_i("f77_dealloc_auto", 1, args);
+        }
     }
-    for (k = 0; k < rank; k++)
-        if (trip[k]) f77_loop_end(&lp[k]);
 }
 
 /* MAXLOC MINLOC MAXVAL MINVAL of a rank-1 array or section, [DIM=]1
@@ -3833,7 +4030,11 @@ static void f77_stmt_assign(void) {
     addr = f77_sval[s];
     if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
         f77_tok();
-        f77_section_assign(s);
+        f77_array_assign(s, 0);
+        return;
+    }
+    if (lx_t != T_LP && f77_srank[s] > 0) {     /* A = e, the whole array (F90) */
+        f77_array_assign(s, 1);
         return;
     }
     if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -7876,14 +8077,11 @@ static int f77_implied_do_spans(int open, int *close_off, int *eq_off,
     return 1;
 }
 
-/* One element of a whole array in an I/O list, `off` its element number. */
-static void f77_whole_item(int s, int off) {
-    int byte;
-    int addr;
+/* One element of array s in an I/O list, at addr: read or written by its
+ * type and the statement's kind. */
+static void f77_io_elem(int s, int addr) {
     int v;
     int vhi;
-    byte = f77_elem_bytes(s, off);
-    addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_salloc[s] ? f77_desc_base(s) : f77_sval[s], byte, 0, NULL);
     if (f77_io_unf) {
         int args[2];
         args[0] = addr;
@@ -7901,6 +8099,31 @@ static void f77_whole_item(int s, int off) {
         vhi = ex_hi;
         f77_wr_item(v, f77_sty[s], vhi);
     }
+}
+
+/* One element of a whole array in an I/O list, `off` its element number. */
+static void f77_whole_item(int s, int off) {
+    int byte;
+    byte = f77_elem_bytes(s, off);
+    f77_io_elem(s, hi_emit(HI_ADD, HL_ADDR_TY, f77_salloc[s] ? f77_desc_base(s) : f77_sval[s], byte, 0, NULL));
+}
+
+/* A section in an I/O list (Fortran 90), lx_t past its '(': its elements in
+ * array element order, the first triplet fastest. */
+static void f77_io_section(int s) {
+    int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+    int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+    F77Loop lp[F77_MAX_RANK];
+    int cur[F77_MAX_RANK];
+    int k;
+    if (f77_section_subs(s, idx, trip, lo, hi, st) < 0) return;
+    for (k = f77_srank[s] - 1; k >= 0; k--)
+        if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
+    for (k = 0; k < f77_srank[s]; k++)
+        cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+    f77_io_elem(s, f77_elem_addr(s, cur, f77_srank[s]));
+    for (k = 0; k < f77_srank[s]; k++)
+        if (trip[k]) f77_loop_end(&lp[k]);
 }
 
 /* Column-major expansion of an unsubscripted array in an I/O list. */
@@ -8023,6 +8246,23 @@ static void f77_wr_one(void) {
             f77_tok();
             f77_wr_whole_array(s);
             return;
+        }
+        if (f77_srank[s] > 0 && f77_sty[s] != TY_CHAR) {
+            int off;
+            off = (int)(lx_rts - lx_stmt);
+            f77_tok();
+            if (lx_t == T_LP && f77_paren_has_colon()) {
+                /* a section: unless more follows it (A(1:3)+1 is an
+                 * array expression, milestone 3) */
+                int end;
+                end = f77_match_paren((int)(lx_rts - lx_stmt));
+                if (end >= lx_stmt_len || lx_stmt[end] == ',' || lx_stmt[end] == ')') {
+                    f77_tok();
+                    f77_io_section(s);
+                    return;
+                }
+            }
+            f77_scan_from(off);
         }
     }
 
