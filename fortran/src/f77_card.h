@@ -173,9 +173,9 @@ static int lx_inc_is(const char *ln, int n, char *nm) {
         if (i >= n || lx_upper(ln[i]) != *kw) return 0;
     while (i < n && ln[i] == ' ') i = i + 1;
     k = 0;
-    if (i < n && (ln[i] == '\'' || ln[i] == '(')) {
+    if (i < n && (ln[i] == '\'' || ln[i] == '"' || ln[i] == '(')) {
         int close;
-        close = ln[i] == '(' ? ')' : '\'';
+        close = ln[i] == '(' ? ')' : ln[i];
         i = i + 1;
         while (i < n && ln[i] != close && k < 63) nm[k++] = ln[i++];
         if (i >= n) return 0;
@@ -290,10 +290,20 @@ static int lx_expand(const char *t, int n, int file, char *out, int cap, int *ol
  * treat as a comment (the historic default when debug lines are off). */
 static int lx_is_comment(int p) {
     int c;
+    int col;
     if (p >= lx_len) return 0;
     c = lx_upper(lx_src[p]);
     if (c == 'C' || c == '*' || c == '!' || c == 'D') return 1;
-    return 0;
+    /* Fortran 90 fixed form: a line whose first non-blank character is
+     * '!' is a comment line, whatever the column -- except 6, where any
+     * character marks a continuation.  An indented "! ..." line had
+     * been an empty statement. */
+    col = 1;
+    while (p < lx_len && (lx_src[p] == ' ' || lx_src[p] == '\t')) {
+        col = lx_src[p] == '\t' ? 7 : col + 1;
+        p = p + 1;
+    }
+    return p < lx_len && lx_src[p] == '!' && col != 6;
 }
 
 /* Advance past the newline that ends the line beginning at p. */
@@ -457,6 +467,29 @@ static int f77_next_stmt(void) {
         while (p < lx_len && lx_src[p] != '\n' && col <= 72) {
             c = lx_src[p];
             if (c == '\r') { p = p + 1; continue; }
+            if (inq == '"') {
+                /* A "..." constant (Fortran 90) goes out in the one form
+                 * the tokenizer knows, '...': "" inside it is one ", and
+                 * an apostrophe inside it is doubled. */
+                if (c == '"') {
+                    if (p + 1 < lx_len && lx_src[p + 1] == '"') {
+                        lx_put('"');
+                        p = p + 1;
+                        col = col + 1;
+                    } else {
+                        lx_put('\'');
+                        inq = 0;
+                    }
+                } else if (c == '\'') {
+                    lx_put('\'');
+                    lx_put('\'');
+                } else {
+                    lx_put(c);
+                }
+                p = p + 1;
+                col = col + 1;
+                continue;
+            }
             if (inq) {
                 lx_put(c);
                 if (c == '\'') {
@@ -482,7 +515,8 @@ static int f77_next_stmt(void) {
                 continue;
             }
             if (c == '!') break;                  /* trailing comment */
-            if (c == '\'') { inq = 1; lx_put(c); p = p + 1; col = col + 1; continue; }
+            if (c == '\'') { inq = '\''; lx_put(c); p = p + 1; col = col + 1; continue; }
+            if (c == '"') { inq = '"'; lx_put('\''); p = p + 1; col = col + 1; continue; }
             if (lx_upper(c) == 'H') {
                 hcount = lx_pending_hollerith_count();
                 if (hcount > 0) {

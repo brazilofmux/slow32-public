@@ -215,6 +215,13 @@ static int f77_number(char *ts, char *te, char *pe) {
         ')'  => { lx_t = T_RP;     fbreak; };
         ','  => { lx_t = T_COMMA;  fbreak; };
         '='  => { lx_t = T_ASSIGN; fbreak; };
+        # Fortran 90's relational operators, the dotted ones' twins
+        '==' => { lx_t = T_EQ;     fbreak; };
+        '/=' => { lx_t = T_NE;     fbreak; };
+        '<'  => { lx_t = T_LT;     fbreak; };
+        '<=' => { lx_t = T_LE;     fbreak; };
+        '>'  => { lx_t = T_GT;     fbreak; };
+        '>=' => { lx_t = T_GE;     fbreak; };
         '+'  => { lx_t = T_PLUS;   fbreak; };
         '-'  => { lx_t = T_MINUS;  fbreak; };
         '*'  => { lx_t = T_STAR;   fbreak; };

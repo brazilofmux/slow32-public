@@ -3136,6 +3136,17 @@ static int f77_is_unit_end(void) {
 /* Offset of the first `c` at paren depth zero, or -1.  Character
  * constants are skipped so a quoted '=' or ',' cannot fool the
  * classifier. */
+/* Is the '=' at i an assignment's (or a keyword's, or DO's) -- not part of
+ * Fortran 90's == /= <= >=?  The text scanners that find a statement's
+ * shape by its '=' ask this. */
+static int f77_eq_is_assign(int i) {
+    char b;
+    if (i < 0 || i >= lx_stmt_len || lx_stmt[i] != '=') return 0;
+    if (i + 1 < lx_stmt_len && lx_stmt[i + 1] == '=') return 0;
+    b = i > 0 ? lx_stmt[i - 1] : 0;
+    return !(b == '=' || b == '/' || b == '<' || b == '>');
+}
+
 static int f77_toplevel(int c, int from) {
     int i;
     int depth;
@@ -3150,7 +3161,7 @@ static int f77_toplevel(int c, int from) {
         }
         if (lx_stmt[i] == '(') depth = depth + 1;
         else if (lx_stmt[i] == ')') depth = depth - 1;
-        else if (depth == 0 && lx_stmt[i] == c) return i;
+        else if (depth == 0 && lx_stmt[i] == c && (c != '=' || f77_eq_is_assign(i))) return i;
         i = i + 1;
     }
     return -1;
@@ -3189,7 +3200,7 @@ static int f77_classify(void) {
         if (after >= lx_stmt_len) return S_KEYWORD;      /* malformed */
         if (strncmp(lx_stmt + after, "THEN", 4) == 0 && after + 4 == lx_stmt_len)
             return S_IF_BLOCK;
-        if (lx_stmt[after] == '=') return S_ASSIGN;      /* array element IF(..) */
+        if (f77_eq_is_assign(after)) return S_ASSIGN;    /* array element IF(..) */
         return S_IF_LOGIC;
     }
 
@@ -6772,7 +6783,7 @@ static int f77_implied_do_spans(int open, int *close_off, int *eq_off,
             depth = depth - 1;
             if (depth == 0) break;
         } else if (depth == 1) {
-            if (lx_stmt[i] == '=' && eq < 0) eq = i;
+            if (f77_eq_is_assign(i) && eq < 0) eq = i;
             else if (lx_stmt[i] == ',' && eq < 0) comma = i;
         }
         i = i + 1;
@@ -8078,7 +8089,7 @@ static void f77_stmt_rewind(int skip) {
         f77_tok();
         for (;;) {
             if (lx_t == T_NAME && (int)(lx_rte - lx_stmt) < lx_stmt_len &&
-                lx_stmt[(int)(lx_rte - lx_stmt)] == '=') {
+                f77_eq_is_assign((int)(lx_rte - lx_stmt))) {
                 char kw[F77_MAX_NAME];
                 strcpy(kw, lex_name);
                 f77_tok();
