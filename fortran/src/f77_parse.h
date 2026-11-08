@@ -3212,6 +3212,13 @@ static int f77_classify(void) {
         }
     }
 
+    /* A top-level :: is a Fortran 90 declaration, whatever follows it --
+     * INTEGER :: K = 3 has an '=' but is no assignment. */
+    {
+        int c;
+        c = f77_toplevel(':', 0);
+        if (c >= 0 && c + 1 < lx_stmt_len && lx_stmt[c + 1] == ':') return S_KEYWORD;
+    }
     eq = f77_toplevel('=', 0);
     if (eq >= 0) return S_ASSIGN;
     return S_KEYWORD;
@@ -3992,14 +3999,34 @@ static int f77_char_len(void) {
     return f77_cx_i;
 }
 
-/* Type declarations, and DIMENSION (which sets shape without a type). */
+/* Type declarations, and DIMENSION (which sets shape without a type).
+ * Fortran 90's form too: type [, attribute]... :: entity [= value], ...
+ * with CHARACTER(LEN=n) or CHARACTER(n) for the length. */
 static int f77_decl_init(int s);
+static int f77_decl_init_eq(int s);
+static int f77_param_def(int s);
+static int f77_save_note(int s);
 static void f77_stmt_decl(int ty, int skip) {
     int s;
     int clen;
     int tnar;
+    int dcolon;
+    int has_dc;
+    int a_param;
+    int a_save;
+    int a_ext;
+    int a_intr;
+    int dim_off;
     clen = 1;
     tnar = 0;
+    dcolon = 0;
+    a_param = 0; a_save = 0; a_ext = 0; a_intr = 0;
+    dim_off = -1;
+    {
+        int c;
+        c = f77_toplevel(':', 0);
+        has_dc = c >= 0 && c + 1 < lx_stmt_len && lx_stmt[c + 1] == ':';
+    }
     f77_scan_from(skip);
     /* Type-level length: REAL*8 X, CHARACTER*10 S.  Per-name forms
      * (REAL X*8, CHARACTER S*10) are below. */
@@ -4012,7 +4039,66 @@ static void f77_stmt_decl(int ty, int skip) {
             ty = f77_lenty(ty, n, 1);
             tnar = f77_lennar(ty, n, f77_decl_log);
         }
-        if (lx_t == T_COMMA) f77_tok();       /* CHARACTER*10, A, B */
+        if (lx_t == T_COMMA && !has_dc) f77_tok();       /* CHARACTER*10, A, B */
+    } else if (lx_t == T_LP && ty == TY_CHAR) {
+        /* CHARACTER(LEN=n), CHARACTER(n), CHARACTER(LEN=*) */
+        if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
+        clen = f77_char_len();
+    } else if (lx_t == T_LP && ty >= 0) {
+        f77_error("a KIND in a type declaration is not supported yet");
+        return;
+    }
+    if (has_dc) {
+        /* [, attribute]... :: */
+        while (lx_t == T_COMMA) {
+            char at[F77_MAX_NAME];
+            f77_tok();
+            if (lx_t != T_NAME) { f77_error("expected an attribute"); return; }
+            strcpy(at, lex_name);
+            f77_tok();
+            if (strcmp(at, "PARAMETER") == 0) a_param = 1;
+            else if (strcmp(at, "SAVE") == 0) a_save = 1;
+            else if (strcmp(at, "EXTERNAL") == 0) a_ext = 1;
+            else if (strcmp(at, "INTRINSIC") == 0) a_intr = 1;
+            else if (strcmp(at, "DIMENSION") == 0) {
+                int end;
+                if (lx_t != T_LP) { f77_error("DIMENSION needs (bounds)"); return; }
+                dim_off = (int)(lx_rts - lx_stmt);
+                end = f77_match_paren(dim_off);
+                if (end < 0) { f77_error("expected ) after DIMENSION bounds"); return; }
+                f77_scan_from(end);
+            } else if (strcmp(at, "INTENT") == 0) {
+                /* recorded nowhere yet: checking it is the caller's
+                 * business, and F90 does not require a processor to */
+                if (lx_t != T_LP) { f77_error("INTENT needs (IN), (OUT) or (INOUT)"); return; }
+                f77_tok();
+                if (lx_t != T_NAME || (strcmp(lex_name, "IN") != 0 && strcmp(lex_name, "OUT") != 0 &&
+                                       strcmp(lex_name, "INOUT") != 0)) {
+                    f77_error("INTENT needs (IN), (OUT) or (INOUT)");
+                    return;
+                }
+                f77_tok();
+                if (lx_t != T_RP) { f77_error("expected ) after INTENT"); return; }
+                f77_tok();
+            } else if (strcmp(at, "ALLOCATABLE") == 0 || strcmp(at, "POINTER") == 0 ||
+                       strcmp(at, "TARGET") == 0 || strcmp(at, "OPTIONAL") == 0 ||
+                       strcmp(at, "PUBLIC") == 0 || strcmp(at, "PRIVATE") == 0) {
+                char m[96];
+                sprintf(m, "the %s attribute is not supported yet", at);
+                f77_error(m);
+                return;
+            } else {
+                char m[96];
+                sprintf(m, "%s is not an attribute", at);
+                f77_error(m);
+                return;
+            }
+        }
+        if (lx_t != T_COLON) { f77_error("expected :: in a declaration"); return; }
+        f77_tok();
+        if (lx_t != T_COLON) { f77_error("expected :: in a declaration"); return; }
+        f77_tok();
+        dcolon = 1;
     }
     for (;;) {
         if (lx_t != T_NAME) break;
@@ -4038,11 +4124,33 @@ static void f77_stmt_decl(int ty, int skip) {
             }
             if (lx_t == T_LP) f77_parse_dims(s);
         }
+        if (dcolon) {
+            if (f77_srank[s] == 0 && dim_off >= 0) {
+                /* the DIMENSION attribute: the shape of every entity
+                 * that does not give its own */
+                int pos;
+                pos = (int)(lx_rts - lx_stmt);
+                if (lx_t == T_EOF) pos = lx_stmt_len;
+                f77_scan_from(dim_off);
+                f77_parse_dims(s);
+                f77_scan_from(pos);
+            }
+            if (a_ext) f77_sexternal[s] = 1;
+            if (a_intr) f77_sintrinsic[s] = 1;
+            if (a_save && !f77_save_note(s)) return;
+        }
         f77_realloc_sym(s);
-        if (lx_t == T_SLASH && ty >= 0 && !f77_decl_init(s)) return;
+        if (lx_t == T_SLASH && ty >= 0 && !dcolon && !f77_decl_init(s)) return;
+        if (dcolon && a_param) {
+            if (lx_t != T_ASSIGN) { f77_error("a PARAMETER needs = value"); return; }
+            if (!f77_param_def(s)) return;
+        } else if (dcolon && lx_t == T_ASSIGN) {
+            if (!f77_decl_init_eq(s)) return;
+        }
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
+    if (dcolon && lx_t != T_EOF) f77_error("unexpected text after the declaration");
 }
 
 /* --- COMMON and SAVE --------------------------------------------------
@@ -4209,6 +4317,14 @@ static void f77_stmt_common(int skip) {
 /* SAVE           -- every local becomes static
  * SAVE a, /b/, c -- listed variables (a named block is already static,
  *                   so /b/ is recognised and skipped) */
+/* One name SAVEd, as by the SAVE statement or the SAVE attribute. */
+static int f77_save_note(int s) {
+    if (f77_sv_n >= F77_MAX_CMEM) { f77_error("too many SAVE names"); return 0; }
+    f77_sv_sym[f77_sv_n] = s;
+    f77_sv_n = f77_sv_n + 1;
+    return 1;
+}
+
 static void f77_stmt_save(int skip) {
     if (!f77_decls_open) {
         f77_error("SAVE after the first executable statement");
@@ -4336,29 +4452,16 @@ static void f77_stmt_implicit(int skip) {
 /* PARAMETER (name = cexpr, ...) -- named constants, no storage.  The
  * symbol's type (declared or implicit, fixed by this point per F77's
  * ordering rules) decides which domain the value is served from. */
-static void f77_stmt_parameter(int skip) {
-    int s;
-    if (!f77_decls_open) {
-        f77_error("PARAMETER after the first executable statement");
-        return;
-    }
-    f77_scan_from(skip);
-    if (lx_t != T_LP) { f77_error("PARAMETER needs a parenthesised list"); return; }
-    f77_tok();
-    for (;;) {
-        if (lx_t != T_NAME) { f77_error("PARAMETER needs a name"); return; }
-        s = f77_sym(lex_name);
-        if (f77_sarg[s] || f77_scom[s] || f77_srank[s] > 0) {
-            f77_error("this name cannot be a PARAMETER");
-            return;
-        }
-        f77_tok();
-        if (lx_t != T_ASSIGN) { f77_error("expected = in PARAMETER"); return; }
+/* A PARAMETER's value: lx_t at the '=' after its name.  The PARAMETER
+ * statement and the PARAMETER attribute (INTEGER, PARAMETER :: N = 3)
+ * both come here.  0 on error. */
+static int f77_param_def(int s) {
+        if (lx_t != T_ASSIGN) { f77_error("expected = in PARAMETER"); return 0; }
         f77_tok();
         f77_cexpr();
         f77_sparam[s] = 1;
         if (f77_sty[s] == TY_CHAR) {
-            if (f77_cx_ty != TY_CHAR) { f77_error("a CHARACTER PARAMETER needs a character constant"); return; }
+            if (f77_cx_ty != TY_CHAR) { f77_error("a CHARACTER PARAMETER needs a character constant"); return 0; }
             if (f77_slen[s] < 0) f77_slen[s] = f77_cx_i;       /* CHARACTER*(*) takes the constant's length */
             if (f77_slen[s] == f77_cx_i) {
                 f77_spstr[s] = f77_cx_sidx;
@@ -4372,7 +4475,7 @@ static void f77_stmt_parameter(int skip) {
             }
         } else if (f77_cx_ty == TY_CHAR) {
             f77_error("a character constant cannot initialise a numeric PARAMETER");
-            return;
+            return 0;
         } else if (f77_sty[s] == TY_CPLX) {
             f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_d;
             f77_spdval2[s] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
@@ -4392,6 +4495,27 @@ static void f77_stmt_parameter(int skip) {
                 f77_spdval[s] = (double)(float)f77_spdval[s];
             f77_spival[s] = (int)f77_spdval[s];
         }
+    return 1;
+}
+
+static void f77_stmt_parameter(int skip) {
+    int s;
+    if (!f77_decls_open) {
+        f77_error("PARAMETER after the first executable statement");
+        return;
+    }
+    f77_scan_from(skip);
+    if (lx_t != T_LP) { f77_error("PARAMETER needs a parenthesised list"); return; }
+    f77_tok();
+    for (;;) {
+        if (lx_t != T_NAME) { f77_error("PARAMETER needs a name"); return; }
+        s = f77_sym(lex_name);
+        if (f77_sarg[s] || f77_scom[s] || f77_srank[s] > 0) {
+            f77_error("this name cannot be a PARAMETER");
+            return;
+        }
+        f77_tok();
+        if (!f77_param_def(s)) return;
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
@@ -4681,6 +4805,40 @@ static int f77_data_values(void) {
  * (IBM's FORTRAN IV and VS FORTRAN; found by fort370), the same as DATA for the whole
  * entity; lx_t is at the opening /.  They had been skipped, and with
  * them everything after in the statement.  Returns 0 on error. */
+/* INTEGER :: K = 3 (Fortran 90): an initial value, as DATA gives one -- static
+ * storage, and for an array the value in every element (a scalar
+ * initializer broadcasts).  lx_t at the '='.  An array constructor is
+ * milestone 3's.  Returns 0 on error. */
+static int f77_decl_init_eq(int s) {
+    int k;
+    int n;
+    if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
+    if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }
+    f77_tok();
+    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
+        f77_error("an array constructor (/ ... /) is not supported yet");
+        return 0;
+    }
+    f77_cxb_n = 0;
+    f77_cexpr();
+    if (!f77_scom[s]) f77_ssaved[s] = 1;   /* an initial value implies SAVE (F90 5.1) */
+    n = f77_srank[s] > 0 ? f77_sym_nelem(s) : 1;
+    for (k = 0; k < n; k++) {
+        if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return 0; }
+        f77_di_sym[f77_di_n] = s;
+        f77_di_elem[f77_di_n] = k;
+        f77_di_ty[f77_di_n] = f77_cx_ty;
+        f77_di_i[f77_di_n] = f77_cx_i;
+        f77_di_d[f77_di_n] = f77_cx_d;
+        f77_di_sidx[f77_di_n] = f77_cx_sidx;
+        f77_di_d2[f77_di_n] = f77_cx_d2;
+        f77_di_u[f77_di_n] = f77_cx_u;
+        f77_di_sub[f77_di_n] = 0;
+        f77_di_n = f77_di_n + 1;
+    }
+    return 1;
+}
+
 static int f77_decl_init(int s) {
     if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
     if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }

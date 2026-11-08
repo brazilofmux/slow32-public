@@ -351,13 +351,21 @@ static void f77_scan_units(void) {
             else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
             else if (f77_starts("COMPLEX")) { ty = TY_CPLX; skip = 7; }
             if (ty >= 0) {
+                int dc;
                 f77_scan_from(skip);
                 if (lx_t == T_STAR) {
                     int n;
                     if (ty == TY_CHAR) { f77_tok(); clen = f77_char_len(); }
                     else if (f77_star_len(&n)) { ty = f77_lenty(ty, n, 0); tnar = f77_lennar(ty, n, lg); }
                     if (lx_t == T_COMMA) f77_tok();
+                } else if (lx_t == T_LP && ty == TY_CHAR) {
+                    /* CHARACTER(LEN=n), CHARACTER(n) (Fortran 90) */
+                    if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
+                    clen = f77_char_len();
                 }
+                /* Fortran 90: [, attribute]... :: -- the entities follow the :: */
+                dc = f77_toplevel(':', 0);
+                if (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') f77_scan_from(dc + 2);
                 while (lx_t == T_NAME) {
                     int is_fn;
                     char dnm[F77_MAX_NAME];
