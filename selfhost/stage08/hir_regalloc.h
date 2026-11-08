@@ -5147,6 +5147,19 @@ static void ra_rewire_after(int old, int nw, int call) {
 
 static int ra_split_pairing = 0;  /* guards the fp64 partner recursion below */
 
+/* Does block a dominate block b (ssa_idom)? */
+static int ra_blk_dominates(int a, int b) {
+    int depth;
+    depth = 0;
+    while (b >= 0 && depth < hir_blk_cap) {
+        if (b == a) return 1;
+        if (b == ssa_idom[b]) return 0;
+        b = ssa_idom[b];
+        depth = depth + 1;
+    }
+    return 0;
+}
+
 static int ra_split_one(int v, int call) {
     int cp;
     int w;
@@ -5156,6 +5169,16 @@ static int ra_split_one(int v, int call) {
     if (hi_is_remat(h_kind[v])) return -1;
     if (h_kind[v] == HI_NOP) return -1;
     if (h_blk[v] == h_blk[call] && v >= call) return -1;
+    /* v must exist at the call: defined in a block that dominates it.  A
+     * call's own argument always is; the fp64 partner split below was
+     * not checked.  f77's CONJG(GS)*X paired GS's imaginary lo word with
+     * the sign-flipped hi word computed later, and that lo word, an
+     * argument of an earlier call (ABSSQ(GS)), took the partner along:
+     * a copy of the flipped word planted before the flip, stored to the
+     * pair's slot where nothing had run, and the product read the
+     * original word from it.  Wrong code; LAPACK's ZLARTG under f77 (the
+     * ZEC, ZGG, ZGD suites). */
+    if (h_blk[v] != h_blk[call] && !ra_blk_dominates(h_blk[v], h_blk[call])) return -1;
     if (!ra_after_has(v)) return -1;
     cp = ra_new_split_copy(v, h_blk[call]);
     if (cp < 0) return -1;

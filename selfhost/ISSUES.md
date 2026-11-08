@@ -4044,3 +4044,28 @@ first, so nothing is computed before one; not shown reachable from C.  Found by
 ffuzz.py once it generated adjustable arrays: 1 of 3,000 programs.  Gate:
 `fortran/tests/f77/lenslot1.f`, which writes 3 characters on the f77 before the fix
 and all of them after.
+
+### 116. [RESOLVED 2026-11-08] A pair partner split at a call it does not reach: wrong code
+
+Splitting at calls (`ra_split_one`) gives a value live across a call a copy
+after it, and splits the value's fp64 partner with it so the pair stays a pair.
+The partner was split without asking whether it exists at the call.  A
+value's partner can be made later: f77's `CONJG(GS)*X` keeps GS's imaginary lo
+word and flips the sign of its hi word, and the multiply pairs the lo word with
+the flipped hi.  The lo word was also an argument of an earlier call (the
+`REAL(GS)**2` of `ABSSQ(GS)`, a real call), so it was split there, and its
+partner went along: a copy of the flipped word was planted in a block before the
+flip, its slot never written where it ran, and the product read the word the
+flip came from.  S came out (2E-315, 5E-315) for (0.229, 0.458).
+
+A value is split at a call now only when its block dominates the call's
+(`ra_blk_dominates`, beside the same-block test that was there); a partner that
+fails is left unpaired, which costs moves, not correctness.  Fixed in all four
+copies (here, `fortran/src`, `cobol/src/hir`, `sbc/bc/hir`).  Found by LAPACK
+built by f77 (`regression/run-lapack.sh --f77`): ZLARTG wrong, and with it the
+ZEC, ZGG and ZGD suites.  Located by linking flang-built routines into the f77
+test programs one at a time until the suite passed, then reducing ZLARTG.
+COBOL's generated code is unchanged (asm-snapshot over 1,154 programs); s32-bc's
+changes in 5 of 114 programs, whose output does not; stage08 184/184 with the
+fixed point, SQLite identical, cfuzz 4,000 ok.  Not shown reachable from C.
+Gate: `fortran/tests/f77/dcxpair1.f90`, wrong on the f77 before the fix.
