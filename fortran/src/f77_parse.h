@@ -1685,6 +1685,8 @@ static int f77_select(int cond, int a, int b) {
 #define IN_MINVAL  61
 #define IN_ALLOCATED 62
 #define IN_TRANSFER 63    /* an actual argument only (f77_transfer_actual) */
+#define IN_TRIM     64    /* Fortran 90 CHARACTER: TRIM, LEN_TRIM */
+#define IN_LEN_TRIM 65
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1847,6 +1849,8 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "MINVAL") == 0) return IN_MINVAL;
     if (strcmp(nm, "ALLOCATED") == 0) return IN_ALLOCATED;
     if (strcmp(nm, "TRANSFER") == 0) return IN_TRANSFER;
+    if (strcmp(nm, "TRIM") == 0) return IN_TRIM;
+    if (strcmp(nm, "LEN_TRIM") == 0) return IN_LEN_TRIM;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
@@ -2449,6 +2453,20 @@ static int f77_primary(void) {
                 return f77_iconst(0);
             }
 
+            if (in == IN_TRIM || in == IN_LEN_TRIM) {
+                /* the string less its trailing blanks: its own storage,
+                 * a shorter length -- a substring (1:LEN_TRIM) */
+                int args[2];
+                int l;
+                if (aty != TY_CHAR) { f77_error("this intrinsic needs a CHARACTER argument"); return f77_iconst(0); }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                args[0] = a; args[1] = ex_len;
+                l = f77_call_i("f77_len_trim", 2, args);
+                ex_hi = -1;
+                if (in == IN_LEN_TRIM) { ex_ty = TY_INT; return l; }
+                ex_ty = TY_CHAR; ex_clen = -1; ex_len = l;
+                return a;
+            }
             if (in >= IN_LEN && in <= IN_LLT) {
                 int alen;
                 int args[4];
@@ -8775,10 +8793,13 @@ static void f77_wr_one(void) {
         f77_error("a character constant cannot be a READ list item");
         return;
     }
-    if (lx_t == T_NAME) {
+    if (lx_t == T_NAME && f77_sym_find(lex_name) >= 0) {
+        /* an array is declared: a name not yet a symbol is a scalar or
+         * a function, which the expression below makes of it (making
+         * it here had IMPLICIT NONE refuse TRIM) */
         int s;
         int after;
-        s = f77_sym(lex_name);
+        s = f77_sym_find(lex_name);
         after = (int)(lx_rte - lx_stmt);
         if (f77_srank[s] > 0 &&
             (after >= lx_stmt_len || lx_stmt[after] != '(')) {

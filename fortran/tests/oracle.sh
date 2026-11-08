@@ -39,4 +39,11 @@ fi
 
 # -i wires the caller's stdin through to the program, which is how
 # READ-under-test gets its input; with no redirection it is harmless.
-exec "$ENGINE" run --rm -i -v "$DIR:/work" "$IMAGE" "/work/$BASE" "$@"
+# The image says -ffixed-form; a free-form name (.f90, .f95) is free
+# form, as gfortran has it by the name.  A capital F is preprocessed by
+# gfortran by the name either way.
+FF=()
+case "$BASE" in
+    *.f90|*.F90|*.f95|*.F95) FF=(-e "FFLAGS=-std=legacy -fno-range-check") ;;
+esac
+exec "$ENGINE" run --rm -i ${FF[@]+"${FF[@]}"} -v "$DIR:/work" "$IMAGE" "/work/$BASE" "$@"

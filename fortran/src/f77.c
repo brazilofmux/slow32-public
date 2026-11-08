@@ -585,6 +585,20 @@ int main(int argc, char **argv) {
     close(fd);
 
     lx_inname = argv[1];
+    /* The form and the preprocessing by the name, as gfortran and flang
+     * have them: .f90 and .f95 free form, a capital F preprocessed. */
+    {
+        char *dot;
+        dot = strrchr(argv[1], '.');
+        if (dot && (strcmp(dot, ".f90") == 0 || strcmp(dot, ".F90") == 0 ||
+                    strcmp(dot, ".f95") == 0 || strcmp(dot, ".F95") == 0)) lx_free = 1;
+        if (dot && (strcmp(dot, ".F") == 0 || strcmp(dot, ".F90") == 0 || strcmp(dot, ".F95") == 0 ||
+                    strcmp(dot, ".FOR") == 0)) lx_cpp = 1;
+    }
+    if (lx_cpp) {
+        lx_cpp_run(src, n);
+        if (f77_nerr > 0) return 1;
+    }
     xn = 0;
     if (!lx_expand(src, n, -1, xsrc, (int)sizeof(xsrc), &xn)) {
         fdputs("f77: the source with its INCLUDEs is too long\n", 2);

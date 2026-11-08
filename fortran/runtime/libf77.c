@@ -1556,6 +1556,13 @@ void *f77_deallocate(void *cur, int *stat) {
  * (Fortran 95's rule; F90 left them undefined). */
 void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
 
+/* LEN_TRIM (Fortran 90), and with it TRIM: the length less trailing
+ * blanks. */
+int f77_len_trim(const char *s, int n) {
+    while (n > 0 && s[n - 1] == ' ') n = n - 1;
+    return n;
+}
+
 /* EXPONENT (Fortran 90): e with x = m * 2**e, 0.5 <= |m| < 1; 0 for 0.  A
  * REAL argument arrives widened, which keeps its exponent. */
 int f77_exponent(double x) {

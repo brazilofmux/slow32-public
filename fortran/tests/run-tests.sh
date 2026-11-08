@@ -105,9 +105,9 @@ else
         printf "  %-24s SELF-CHECK ONLY (oracle image absent: exit 0 required, output not diffed)\n" "differential:"
         SKIPPED="$SKIPPED oracle-diff"
     fi
-    for f in "$HERE"/f77/*.f; do
+    for f in "$HERE"/f77/*.f "$HERE"/f77/*.F "$HERE"/f77/*.f90 "$HERE"/f77/*.F90; do
         [ -e "$f" ] || continue
-        b="$(basename "$f" .f)"
+        b="$(basename "$f")"; x="${b##*.}"; b="${b%.*}"
         # A sibling <name>.in is the program's stdin (for READ tests),
         # fed identically to the oracle and to the emulator.  /dev/null
         # otherwise, so a runaway READ cannot hang on the terminal.
@@ -121,8 +121,8 @@ else
             PINNED=1
             cp "$HERE/f77/$b.expected" "$W/$b.want"; wrc=0
         elif [ "$ORACLE" = 1 ]; then
-            cp "$f" "$OW/$b.f"
-            "$HERE/oracle.sh" "$OW/$b.f" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
+            cp "$f" "$OW/$b.$x"
+            "$HERE/oracle.sh" "$OW/$b.$x" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
         fi
         # our compiler -> .s -> .s32o -> .s32x -> emulator
         if ! "$F77" "$f" "$W/$b.s" >"$W/$b.cc.log" 2>&1; then
@@ -214,6 +214,10 @@ if [ -x "$F77" ]; then
     printf '      INTEGER K(3)\n      K(1:3) = (/ 1, 2 /)\n      END\n' > "$W/aconshape.f"
     printf '      INTEGER K(2)\n      K = 2 * (/ 1, 2 /)\n      END\n' > "$W/aconexpr.f"
     printf '      INTEGER K(2), J\n      J = TRANSFER(1.0, 0)\n      END\n' > "$W/xferexpr.f"
+    printf '#define N 3\n      X = N\n      END\n' > "$W/cppdef.F"
+    printf '#if 1\n      X = 1\n      END\n' > "$W/cppopen.F"
+    printf 'x = 1 & y = 2\nend\n' > "$W/freeamp.f90"
+    printf "x = 1\nprint *, 'open\nend\n" > "$W/freestr.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -265,6 +269,10 @@ if [ -x "$F77" ]; then
              "aconshape:line 2: the array constructor has 2 values for 3 elements" \
              "aconexpr:line 2: an array constructor is supported only as the right side of an array assignment" \
              "xferexpr:line 2: TRANSFER is supported only as an actual argument" \
+             "cppdef:line 1: only the preprocessor's conditionals are supported (#if, #ifdef, #ifndef, #elif, #else, #endif)" \
+             "cppopen:line 3: #if without #endif" \
+             "freeamp:line 1: & in the middle of a line" \
+             "freestr:line 2: a character constant runs off the line" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \
@@ -300,7 +308,8 @@ if [ -x "$F77" ]; then
              "incerr:f77: INCBAD line 2: unexpected text after the statement" \
              "incafter:f77: line 3: statement label 99 is referred to but never defined"; do
         b="${c%%:*}"; msg="${c#*:}"
-        if "$F77" "$W/$b.f" "$W/$b.s" >"$W/$b.err" 2>&1; then
+        f="$W/$b.f"; for e in F f90; do [ -f "$W/$b.$e" ] && f="$W/$b.$e"; done
+        if "$F77" "$f" "$W/$b.s" >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
         elif ! grep -qF "$msg" "$W/$b.err"; then
             report "refuse:$b" 1 "said: $(head -1 "$W/$b.err")"

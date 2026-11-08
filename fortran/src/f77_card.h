@@ -42,6 +42,8 @@
 
 /* --- source state --- */
 static char *lx_src;
+static int   lx_free;       /* free-form source (lx_next_stmt_free) */
+static int   lx_cpp;        /* preprocessed: the conditionals (lx_cpp_run) */
 static int   lx_len;
 static int   lx_pos;        /* byte offset of the next line to read */
 static int   lx_line;       /* 1-based line number of that line */
@@ -157,17 +159,19 @@ static int lx_inc_is(const char *ln, int n, char *nm) {
     int k;
     int col;
     const char *kw;
-    if (n == 0 || ln[0] == 'C' || ln[0] == 'c' || ln[0] == '*' || ln[0] == '!') return 0;
+    if (n == 0 || ln[0] == '!') return 0;
+    if (!lx_free && (ln[0] == 'C' || ln[0] == 'c' || ln[0] == '*')) return 0;
     col = 1;
     i = 0;
-    if (ln[0] == '\t') { i = 1; col = 7; }
+    if (lx_free) col = 7;                              /* free form: no columns */
+    else if (ln[0] == '\t') { i = 1; col = 7; }
     while (col <= 6 && i < n) {
         if (ln[i] == '\t') { i = i + 1; col = 7; break; }
         if (col == 6 ? (ln[i] != ' ' && ln[i] != '0') : ln[i] != ' ') return 0;
         i = i + 1;
         col = col + 1;
     }
-    if (n > 72 && ln[0] != '\t') n = 72;              /* columns 73-80 are sequence numbers */
+    if (!lx_free && n > 72 && ln[0] != '\t') n = 72;  /* columns 73-80 are sequence numbers */
     while (i < n && ln[i] == ' ') i = i + 1;
     for (kw = "INCLUDE"; *kw; kw++, i++)
         if (i >= n || lx_upper(ln[i]) != *kw) return 0;
@@ -259,7 +263,7 @@ static int lx_expand(const char *t, int n, int file, char *out, int cap, int *ol
         if (*olen + (q - p) + 2 >= cap) return 0;
         isinc = lx_inc_is(t + p, q - p, nm);
         memcpy(out + *olen, t + p, (size_t)(q - p));
-        if (isinc) out[*olen] = 'C';                   /* the INCLUDE line, now a comment */
+        if (isinc) out[*olen] = '!';                   /* the INCLUDE line, now a comment (either form) */
         *olen = *olen + (q - p);
         out[*olen] = '\n';
         *olen = *olen + 1;
@@ -471,6 +475,331 @@ static int lx_pending_hollerith_count(void) {
     return v;
 }
 
+/* --- free-form source (Fortran 90) ------------------------------------
+ *
+ * A .f90 or .f95 file (lx_free).  Blanks are significant in free form,
+ * but a valid free-form statement, squeezed, is text the fixed-form
+ * parser already reads: fixed form never relied on blanks.  So only the
+ * assembly differs, and the statement comes out as the fixed-form reader
+ * makes it -- blanks squeezed (lx_brk keeps where they were), upper case
+ * outside character constants, "..." as '...'.  The rules (F90 3.3.1):
+ * - a line runs to its end; `!` outside a character constant begins a
+ *   comment;
+ * - `&` as the last non-blank character before any comment continues the
+ *   statement on the next non-comment line, where a first non-blank `&`
+ *   is dropped; a character constant continued so resumes right after
+ *   that `&`, or at column 1 without one;
+ * - `;` ends a statement, and another may follow on the line;
+ * - a statement may begin with a label of 1 to 5 digits.
+ * No Hollerith: F90 free form has no H edit descriptor's blanks to keep,
+ * and an nH left in the text is refused where it is parsed. */
+/* An error the reader finds in the text: once, though the unit scan, the
+ * compilation and the inliner each read the statement -- the scan reads
+ * the whole file first, in order, so a line not past the last reported
+ * has been reported. */
+static int lx_card_err_line;
+static void lx_card_error(char *msg) {
+    if (lx_stmt_line <= lx_card_err_line) return;
+    lx_card_err_line = lx_stmt_line;
+    f77_error(msg);
+}
+
+/* Is the rest of the line from p only blanks, or a comment? */
+static int lx_free_rest_blank(int p) {
+    while (p < lx_len && (lx_src[p] == ' ' || lx_src[p] == '\t' || lx_src[p] == '\r')) p = p + 1;
+    return p >= lx_len || lx_src[p] == '\n' || lx_src[p] == '!';
+}
+
+static int lx_next_stmt_free(void) {
+    int p;
+    int c;
+    int inq;
+    int first;
+    int cont;
+
+    lx_stmt_len = 0;
+    lx_stmt_label = -1;
+    lx_after_blank = 0;
+    first = 1;
+    inq = 0;
+    for (;;) {
+        p = lx_pos;
+        if (first) {
+            /* blanks, empty statements (;) and comment lines before it */
+            while (p < lx_len && (lx_src[p] == ' ' || lx_src[p] == '\t' || lx_src[p] == '\r' || lx_src[p] == ';'))
+                p = p + 1;
+            if (p >= lx_len) { lx_pos = p; return 0; }
+            if (lx_src[p] == '\n' || lx_src[p] == '!') { lx_pos = lx_next_line(p); continue; }
+            lx_stmt_line = lx_line;
+            if (lx_isdigit(lx_src[p])) {
+                int q;
+                int v;
+                q = p;
+                v = 0;
+                while (q < lx_len && lx_isdigit(lx_src[q])) { v = v * 10 + (lx_src[q] - '0'); q = q + 1; }
+                if (q - p <= 5 && q < lx_len && (lx_src[q] == ' ' || lx_src[q] == '\t')) {
+                    lx_stmt_label = v;
+                    p = q;
+                }
+            }
+        } else {
+            /* a continuation line: comment lines between are allowed */
+            int q;
+            q = p;
+            while (q < lx_len && (lx_src[q] == ' ' || lx_src[q] == '\t' || lx_src[q] == '\r')) q = q + 1;
+            if (q >= lx_len) { lx_card_error("the file ends in a continued statement"); break; }
+            if (lx_src[q] == '\n' || lx_src[q] == '!') { lx_pos = lx_next_line(q); continue; }
+            if (lx_src[q] == '&') p = q + 1;
+            else if (!inq) { p = q; if (lx_stmt_len > 0) lx_after_blank = 1; }
+        }
+        cont = 0;
+        while (p < lx_len && lx_src[p] != '\n') {
+            c = lx_src[p];
+            if (c == '\r') { p = p + 1; continue; }
+            if (inq) {
+                if (c == '&' && lx_free_rest_blank(p + 1)) { cont = 1; break; }
+                if (c == inq) {
+                    if (p + 1 < lx_len && lx_src[p + 1] == inq) {
+                        /* a doubled quote: one of it */
+                        if (inq == '\'') { lx_put('\''); lx_put('\''); } else lx_put('"');
+                        p = p + 2;
+                        continue;
+                    }
+                    lx_put('\'');
+                    inq = 0;
+                    p = p + 1;
+                    continue;
+                }
+                if (c == '\'' && inq == '"') { lx_put('\''); lx_put('\''); p = p + 1; continue; }
+                lx_put(c);
+                p = p + 1;
+                continue;
+            }
+            if (c == ' ' || c == '\t') {
+                if (lx_stmt_len > 0) lx_after_blank = 1;
+                p = p + 1;
+                continue;
+            }
+            if (c == '!') break;
+            if (c == '&') {
+                if (!lx_free_rest_blank(p + 1)) { lx_card_error("& in the middle of a line"); break; }
+                cont = 1;
+                break;
+            }
+            if (c == ';') {
+                /* the next statement begins after it, on this line */
+                lx_strip_recursive();
+                lx_stmt[lx_stmt_len] = 0;
+                lx_pos = p + 1;
+                if (lx_stmt_len > 0 || lx_stmt_label >= 0) return 1;
+                first = 1;
+                lx_stmt_label = -1;
+                lx_after_blank = 0;
+                break;
+            }
+            if (c == '\'' || c == '"') { inq = c; lx_put('\''); p = p + 1; continue; }
+            lx_put(lx_upper(c));
+            p = p + 1;
+        }
+        if (first && lx_pos > p) continue;          /* an empty statement before a ';' */
+        lx_pos = lx_next_line(p);
+        if (!cont) {
+            if (inq) lx_card_error("a character constant runs off the line");
+            break;
+        }
+        first = 0;
+    }
+    lx_strip_recursive();
+    lx_stmt[lx_stmt_len] = 0;
+    return lx_stmt_len > 0 || lx_stmt_label >= 0;
+}
+
+/* --- the preprocessor's conditionals ------------------------------------
+ *
+ * A .F, .F90 or .F95 file is preprocessed, as gfortran and flang do by
+ * the name.  What is taken is the conditionals -- #if, #ifdef, #ifndef,
+ * #elif, #else, #endif, with defined(), integers, ! && || == != < <= > >=
+ * + - and parentheses -- over no macros at all: every name is undefined
+ * and 0, as it is to a compiler not asked for OpenMP or anything else.
+ * LAPACK's #if defined(_OPENMP) and #ifdef USE_ISNAN are the use.  A
+ * directive line, and every line a false condition skips, gets '!' in
+ * column 1 -- a comment in either form, and the lines keep their numbers.
+ * #define, #undef and #include are refused, not ignored: a macro left
+ * unexpanded would change the program without a word. */
+static const char *lx_ce_p;
+static const char *lx_ce_e;
+static int lx_ce_bad;
+
+static void lx_ce_ws(void) { while (lx_ce_p < lx_ce_e && (*lx_ce_p == ' ' || *lx_ce_p == '\t' || *lx_ce_p == '\r')) lx_ce_p++; }
+static int lx_ce_is(const char *s) {
+    int n;
+    lx_ce_ws();
+    n = (int)strlen(s);
+    if (lx_ce_e - lx_ce_p >= n && strncmp(lx_ce_p, s, (size_t)n) == 0) { lx_ce_p += n; return 1; }
+    return 0;
+}
+static int lx_ce_or(void);
+static int lx_ce_prim(void) {
+    int v;
+    lx_ce_ws();
+    if (lx_ce_is("(")) { v = lx_ce_or(); if (!lx_ce_is(")")) lx_ce_bad = 1; return v; }
+    if (lx_ce_is("!")) return !lx_ce_prim();
+    if (lx_ce_is("-")) return -lx_ce_prim();
+    if (lx_ce_is("+")) return lx_ce_prim();
+    if (lx_ce_p < lx_ce_e && lx_isdigit(*lx_ce_p)) {
+        v = 0;
+        while (lx_ce_p < lx_ce_e && lx_isdigit(*lx_ce_p)) { v = v * 10 + (*lx_ce_p - '0'); lx_ce_p++; }
+        while (lx_ce_p < lx_ce_e && (*lx_ce_p == 'L' || *lx_ce_p == 'l' || *lx_ce_p == 'U' || *lx_ce_p == 'u')) lx_ce_p++;
+        return v;
+    }
+    if (lx_ce_p < lx_ce_e && (lx_isalpha(*lx_ce_p) || *lx_ce_p == '_')) {
+        const char *b;
+        b = lx_ce_p;
+        while (lx_ce_p < lx_ce_e && (lx_isalpha(*lx_ce_p) || lx_isdigit(*lx_ce_p) || *lx_ce_p == '_')) lx_ce_p++;
+        if (lx_ce_p - b == 7 && strncmp(b, "defined", 7) == 0) {
+            int par;
+            par = lx_ce_is("(");
+            lx_ce_ws();
+            if (!(lx_ce_p < lx_ce_e && (lx_isalpha(*lx_ce_p) || *lx_ce_p == '_'))) { lx_ce_bad = 1; return 0; }
+            while (lx_ce_p < lx_ce_e && (lx_isalpha(*lx_ce_p) || lx_isdigit(*lx_ce_p) || *lx_ce_p == '_')) lx_ce_p++;
+            if (par && !lx_ce_is(")")) lx_ce_bad = 1;
+        }
+        return 0;                                  /* no macros: every name is 0 */
+    }
+    lx_ce_bad = 1;
+    return 0;
+}
+static int lx_ce_add(void) {
+    int v;
+    v = lx_ce_prim();
+    for (;;) {
+        if (lx_ce_is("+")) v = v + lx_ce_prim();
+        else if (lx_ce_is("-")) v = v - lx_ce_prim();
+        else return v;
+    }
+}
+static int lx_ce_rel(void) {
+    int v;
+    v = lx_ce_add();
+    for (;;) {
+        if (lx_ce_is("<=")) v = v <= lx_ce_add();
+        else if (lx_ce_is(">=")) v = v >= lx_ce_add();
+        else if (lx_ce_is("<")) v = v < lx_ce_add();
+        else if (lx_ce_is(">")) v = v > lx_ce_add();
+        else return v;
+    }
+}
+static int lx_ce_eq(void) {
+    int v;
+    v = lx_ce_rel();
+    for (;;) {
+        if (lx_ce_is("==")) v = v == lx_ce_rel();
+        else if (lx_ce_is("!=")) v = v != lx_ce_rel();
+        else return v;
+    }
+}
+static int lx_ce_and(void) {
+    int v;
+    v = lx_ce_eq();
+    while (lx_ce_is("&&")) { int w; w = lx_ce_eq(); v = v && w; }
+    return v;
+}
+static int lx_ce_or(void) {
+    int v;
+    v = lx_ce_and();
+    while (lx_ce_is("||")) { int w; w = lx_ce_and(); v = v || w; }
+    return v;
+}
+
+/* One directive's expression, t[0..n): its value; *bad on what it cannot read. */
+static int lx_ce_eval(const char *t, int n, int *bad) {
+    int v;
+    lx_ce_p = t;
+    lx_ce_e = t + n;
+    lx_ce_bad = 0;
+    v = lx_ce_or();
+    lx_ce_ws();
+    if (lx_ce_p < lx_ce_e) lx_ce_bad = 1;
+    *bad = lx_ce_bad;
+    return v;
+}
+
+static void lx_cpp_error(char *msg, int line) {
+    lx_stmt_line = line;
+    lx_stmt_len = 0;
+    lx_stmt[0] = 0;
+    f77_error(msg);
+}
+
+/* The conditionals, over t[0..n) in place. */
+static void lx_cpp_run(char *t, int n) {
+    int p;
+    int line;
+    int depth;
+    int live[64];       /* is this level's current branch taken (and its parents)? */
+    int done[64];       /* has a branch of this level been taken yet? */
+    p = 0;
+    line = 0;
+    depth = 0;
+    live[0] = 1;
+    while (p < n) {
+        int q;
+        int d;
+        q = p;
+        while (q < n && t[q] != '\n') q = q + 1;
+        line = line + 1;
+        d = p;
+        while (d < q && (t[d] == ' ' || t[d] == '\t')) d = d + 1;
+        if (d < q && t[d] == '#') {
+            int k;
+            int kn;
+            int bad;
+            k = d + 1;
+            while (k < q && (t[k] == ' ' || t[k] == '\t')) k = k + 1;
+            kn = k;
+            while (kn < q && lx_isalpha(t[kn])) kn = kn + 1;
+            bad = 0;
+            if (kn - k == 2 && strncmp(t + k, "if", 2) == 0) {
+                int v;
+                v = lx_ce_eval(t + kn, q - kn, &bad);
+                if (depth >= 63) { lx_cpp_error("#if nested too deep", line); return; }
+                depth = depth + 1;
+                live[depth] = live[depth - 1] && v;
+                done[depth] = live[depth];
+            } else if ((kn - k == 5 && strncmp(t + k, "ifdef", 5) == 0) || (kn - k == 6 && strncmp(t + k, "ifndef", 6) == 0)) {
+                int v;
+                v = kn - k == 6;                      /* no macros: #ifndef X is true */
+                if (depth >= 63) { lx_cpp_error("#if nested too deep", line); return; }
+                depth = depth + 1;
+                live[depth] = live[depth - 1] && v;
+                done[depth] = live[depth];
+            } else if (kn - k == 4 && strncmp(t + k, "elif", 4) == 0) {
+                int v;
+                if (depth == 0) { lx_cpp_error("#elif without #if", line); return; }
+                v = lx_ce_eval(t + kn, q - kn, &bad);
+                live[depth] = live[depth - 1] && !done[depth] && v;
+                if (live[depth]) done[depth] = 1;
+            } else if (kn - k == 4 && strncmp(t + k, "else", 4) == 0) {
+                if (depth == 0) { lx_cpp_error("#else without #if", line); return; }
+                live[depth] = live[depth - 1] && !done[depth];
+                done[depth] = 1;
+            } else if (kn - k == 5 && strncmp(t + k, "endif", 5) == 0) {
+                if (depth == 0) { lx_cpp_error("#endif without #if", line); return; }
+                depth = depth - 1;
+            } else if (live[depth]) {
+                lx_cpp_error("only the preprocessor's conditionals are supported (#if, #ifdef, #ifndef, #elif, #else, #endif)", line);
+            }
+            if (bad && live[depth > 0 ? depth - 1 : 0]) lx_cpp_error("a #if expression this preprocessor cannot read", line);
+            if (q > p) t[p] = '!';
+            else if (q == p) { /* an empty line stays empty */ }
+        } else if (!live[depth] && q > p) {
+            t[p] = '!';
+        }
+        p = q < n ? q + 1 : q;
+    }
+    if (depth != 0) lx_cpp_error("#if without #endif", line);
+}
+
 /* Assemble the next statement.  Returns 1 on success, 0 at end of file. */
 static int f77_next_stmt(void) {
     int p;
@@ -483,6 +812,7 @@ static int f77_next_stmt(void) {
     int hcount;
     int first;
 
+    if (lx_free) return lx_next_stmt_free();
     lx_stmt_len = 0;
     lx_stmt_label = -1;
     lx_after_blank = 0;

@@ -20,7 +20,7 @@ src=""; out=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -o) out="$2"; shift ;;
-        *.f|*.for|*.f77) src="$1" ;;
+        *.f|*.for|*.f77|*.F|*.f90|*.F90|*.f95|*.F95) src="$1" ;;
         *) echo "compile.sh: what is $1?" >&2; exit 2 ;;
     esac
     shift
