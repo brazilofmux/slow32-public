@@ -170,6 +170,12 @@ static int  f77_slenv[F77_MAX_SYM];    /* HIR value of the length when -1 */
 static int  f77_spstr[F77_MAX_SYM];    /* CHARACTER PARAMETER: string index */
 static int  f77_sexternal[F77_MAX_SYM]; /* named in EXTERNAL */
 static int  f77_sintrinsic[F77_MAX_SYM]; /* named in INTRINSIC */
+/* ALLOCATABLE (Fortran 90): the symbol's slot is a descriptor, 4 + 8*rank
+ * bytes -- the storage's address, then per dimension its lower bound and
+ * extent -- and every element address and bound is loaded from it.  It is
+ * reached only by an ADDI of the slot (f77_desc_at), which the guard holds
+ * it to. */
+static int  f77_salloc[F77_MAX_SYM];
 /* LOGICAL shares TY_INT with INTEGER in the backend; what tells them
  * apart for list-directed output (T/F vs a number) is this flag on the
  * symbol, carried through expressions in ex_log. */
@@ -537,6 +543,7 @@ static int f77_sym(char *nm) {
     f77_slenv[f77_nsym] = -1;
     f77_spstr[f77_nsym] = -1;
     f77_sexternal[f77_nsym] = 0;
+    f77_salloc[f77_nsym] = 0;
     f77_sintrinsic[f77_nsym] = 0;
     f77_slog[f77_nsym] = 0;
     f77_snar[f77_nsym] = 0;
@@ -587,6 +594,7 @@ static int f77_sym_temp(int ty) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -669,6 +677,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -698,6 +707,13 @@ static int f77_sym_nelem(int s) {
  * is simply re-issued at the end of the frame; the earlier bytes are
  * abandoned, which costs a few words in exchange for not needing a
  * second pass over the declarations. */
+/* A symbol's storage: its elements, or an ALLOCATABLE's descriptor. */
+static int f77_sym_nelem(int s);
+static int f77_storage_bytes(int s) {
+    if (f77_salloc[s]) return 4 + 8 * f77_srank[s];
+    return f77_esize(s) * f77_sym_nelem(s);
+}
+
 static void f77_realloc_sym(int s) {
     int bytes;
     f77_shi[s] = -1;
@@ -711,14 +727,14 @@ static void f77_realloc_sym(int s) {
         if (h_kind[f77_sval[s]] == HI_PARAM) h_ty[f77_sval[s]] = HL_ADDR_TY;
         return;
     }
-    bytes = f77_esize(s) * f77_sym_nelem(s);
+    bytes = f77_storage_bytes(s);
     bytes = (bytes + 3) & ~3;             /* keep the frame word-aligned */
     /* A main program's array is static (f77_layout_static): its slot
      * is only a placeholder until then. */
-    if (f77_srank[s] > 0 && f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) bytes = 4;
+    if (f77_srank[s] > 0 && !f77_salloc[s] && f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) bytes = 4;
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
-    h_ty[f77_sval[s]] = f77_aty(f77_sty[s]);
+    h_ty[f77_sval[s]] = f77_salloc[s] ? TY_INT : f77_aty(f77_sty[s]);
     hl_aoff[hl_nalloca - 1] = 0 - f77_frame;
 
     /* Scalar double or complex: give the hi word its own promotable slot. */
@@ -1064,10 +1080,12 @@ static int f77_dcx_mark(int v) {
     return v;
 }
 
+static void f77_desc_guard(void);
 static void f77_dcx_guard(void) {
     char *is;
     int i;
     int k;
+    f77_desc_guard();
     if (f77_ndcxv == 0) return;
     is = (char *)calloc((size_t)h_ninst + 1, 1);
     if (!is) { fdputs("f77: out of memory\n", 2); exit(1); }
@@ -1321,10 +1339,17 @@ static int f77_elem_bytes(int s, int off) {
     return hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
 }
 
+/* An ALLOCATABLE's descriptor, `off` bytes in: always an ADDI of the slot
+ * (offset 0 too), the only use of it the guard allows. */
+static int f77_desc_at(int s, int off) { return hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, off, NULL); }
+static int f77_desc_load(int s, int off) { return hi_emit(HI_LOAD, TY_INT, f77_desc_at(s, off), -1, 0, NULL); }
+static int f77_desc_base(int s) { return f77_desc_load(s, 0); }
+
 /* The address of A(idx[0], ..., idx[n-1]), the subscripts INTEGER values
  * already computed: the address arithmetic of f77_subscript_addr, which
  * parses the subscripts and comes here, and of array sections, whose
  * subscripts are the indices of loops the front end generates. */
+static int f77_elem_bytes(int s, int off);
 static int f77_elem_addr(int s, int *idxs, int n) {
     int off;
     int cstride;      /* constant part of the running stride */
@@ -1344,6 +1369,23 @@ static int f77_elem_addr(int s, int *idxs, int n) {
      * subtraction costs nothing at run time.  A lower bound over a
      * RUNTIME stride (adjustable dimensions) keeps the subtraction on
      * the index, as before. */
+    if (f77_salloc[s]) {
+        /* bounds and storage from the descriptor (ALLOCATABLE) */
+        int stride;
+        int d;
+        if (n != f77_srank[s]) f77_error("wrong number of subscripts");
+        off = -1;
+        stride = -1;
+        for (k = 0; k < n && k < f77_srank[s]; k++) {
+            d = hi_emit(HI_SUB, TY_INT, idxs[k], f77_desc_load(s, 4 + 8 * k), 0, NULL);
+            if (stride >= 0) d = hi_emit(HI_MUL, TY_INT, d, stride, 0, NULL);
+            off = off < 0 ? d : hi_emit(HI_ADD, TY_INT, off, d, 0, NULL);
+            e = f77_desc_load(s, 8 + 8 * k);
+            stride = stride < 0 ? e : hi_emit(HI_MUL, TY_INT, stride, e, 0, NULL);
+        }
+        if (off < 0) off = f77_iconst(0);
+        return hi_emit(HI_ADD, HL_ADDR_TY, f77_desc_base(s), f77_elem_bytes(s, off), 0, NULL);
+    }
     off = -1;
     coff = 0;
     cstride = 1;
@@ -1630,6 +1672,7 @@ static int f77_select(int cond, int a, int b) {
 #define IN_MINLOC  59
 #define IN_MAXVAL  60
 #define IN_MINVAL  61
+#define IN_ALLOCATED 62
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1790,6 +1833,7 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "MINLOC") == 0) return IN_MINLOC;
     if (strcmp(nm, "MAXVAL") == 0) return IN_MAXVAL;
     if (strcmp(nm, "MINVAL") == 0) return IN_MINVAL;
+    if (strcmp(nm, "ALLOCATED") == 0) return IN_ALLOCATED;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
@@ -2215,6 +2259,17 @@ static int f77_primary(void) {
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
             if (in >= IN_MAXLOC && in <= IN_MINVAL) return f77_reduce(in);
+            if (in == IN_ALLOCATED) {
+                int as;
+                if (lx_t != T_NAME || (as = f77_sym_find(lex_name)) < 0 || !f77_salloc[as]) {
+                    f77_error("ALLOCATED needs an ALLOCATABLE array");
+                    return f77_iconst(0);
+                }
+                f77_tok();
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+                return hi_emit(HI_SNE, TY_INT, f77_desc_base(as), f77_iconst(0), 0, NULL);
+            }
             a = f77_expr(); aty = ex_ty; ahi = ex_hi;
 
             if (in >= IN_IAND && in <= IN_IBCLR) {
@@ -3442,6 +3497,12 @@ static void f77_loop_end(F77Loop *l) {
  * the upper of an assumed-size (*) dimension. */
 static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
     int ext;
+    if (f77_salloc[s]) {
+        *lo = f77_desc_load(s, 4 + 8 * k);
+        *hi = hi_emit(HI_ADD, TY_INT, *lo, f77_desc_load(s, 8 + 8 * k), 0, NULL);
+        *hi = hi_emit(HI_ADDI, TY_INT, *hi, -1, -1, NULL);
+        return;
+    }
     *lo = f77_slov[s][k] >= 0 ? f77_slov[s][k] : f77_iconst(f77_slo[s][k]);
     if (k == f77_srank[s] - 1 && f77_sassz[s]) { *hi = -1; return; }
     ext = f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]);
@@ -4608,6 +4669,36 @@ static int f77_char_len(void) {
     return f77_cx_i;
 }
 
+/* A deferred shape, (:) or (:,:,...), lx_t at the '(': the rank of an
+ * ALLOCATABLE array, its bounds left to ALLOCATE.  1, or 0 on error. */
+static int f77_parse_deferred(int s) {
+    int rank;
+    int k;
+    rank = 0;
+    f77_tok();
+    for (;;) {
+        if (lx_t != T_COLON) { f77_error("an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE"); return 0; }
+        f77_tok();
+        if (rank >= F77_MAX_RANK) { f77_error("too many dimensions"); return 0; }
+        rank = rank + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after a deferred shape"); return 0; }
+    f77_tok();
+    f77_srank[s] = rank;
+    for (k = 0; k < rank; k++) {
+        f77_slo[s][k] = 1;
+        f77_sext[s][k] = 1;
+        f77_slov[s][k] = -1;
+        f77_sextv[s][k] = -1;
+        f77_sextsym[s][k] = -1;
+    }
+    f77_sassz[s] = 0;
+    f77_salloc[s] = 1;
+    return 1;
+}
+
 /* Type declarations, and DIMENSION (which sets shape without a type).
  * Fortran 90's form too: type [, attribute]... :: entity [= value], ...
  * with CHARACTER(LEN=n) or CHARACTER(n) for the length. */
@@ -4625,8 +4716,10 @@ static void f77_stmt_decl(int ty, int skip) {
     int a_save;
     int a_ext;
     int a_intr;
+    int a_alloc;
     int dim_off;
     clen = 1;
+    a_alloc = 0;
     tnar = 0;
     dcolon = 0;
     a_param = 0; a_save = 0; a_ext = 0; a_intr = 0;
@@ -4689,7 +4782,9 @@ static void f77_stmt_decl(int ty, int skip) {
                 f77_tok();
                 if (lx_t != T_RP) { f77_error("expected ) after INTENT"); return; }
                 f77_tok();
-            } else if (strcmp(at, "ALLOCATABLE") == 0 || strcmp(at, "POINTER") == 0 ||
+            } else if (strcmp(at, "ALLOCATABLE") == 0) {
+                a_alloc = 1;
+            } else if (strcmp(at, "POINTER") == 0 ||
                        strcmp(at, "TARGET") == 0 || strcmp(at, "OPTIONAL") == 0 ||
                        strcmp(at, "PUBLIC") == 0 || strcmp(at, "PRIVATE") == 0) {
                 char m[96];
@@ -4721,7 +4816,8 @@ static void f77_stmt_decl(int ty, int skip) {
         }
         f77_tok();
         /* name*len(dims) and name(dims)*len are both F77. */
-        if (lx_t == T_LP) f77_parse_dims(s);
+        if (lx_t == T_LP && a_alloc) { if (!f77_parse_deferred(s)) return; }
+        else if (lx_t == T_LP) f77_parse_dims(s);
         if (lx_t == T_STAR) {           /* REAL*8 X -- length specifier */
             int n;
             if (f77_sty[s] == TY_CHAR) {
@@ -4741,8 +4837,14 @@ static void f77_stmt_decl(int ty, int skip) {
                 pos = (int)(lx_rts - lx_stmt);
                 if (lx_t == T_EOF) pos = lx_stmt_len;
                 f77_scan_from(dim_off);
-                f77_parse_dims(s);
+                if (a_alloc) { if (!f77_parse_deferred(s)) return; }
+                else f77_parse_dims(s);
                 f77_scan_from(pos);
+            }
+            if (a_alloc) {
+                if (!f77_salloc[s]) { f77_error("an ALLOCATABLE array needs its rank, as (:) or (:,:)"); return; }
+                if (f77_sarg[s]) { f77_error("an ALLOCATABLE dummy argument is not supported"); return; }
+                if (a_param || lx_t == T_ASSIGN) { f77_error("an ALLOCATABLE array cannot have a value in its declaration"); return; }
             }
             if (a_ext) f77_sexternal[s] = 1;
             if (a_intr) f77_sintrinsic[s] = 1;
@@ -5842,9 +5944,31 @@ static void f77_layout_static(void) {
         {
             char *nm;
             f77_sgidx[s] = f77_static_obj("f77s_", f77_sname[s],
-                                          f77_esize(s) * f77_sym_nelem(s), &nm);
+                                          f77_storage_bytes(s), &nm);
             f77_bind_static(s, nm, 0);
         }
+    }
+
+    /* An ALLOCATABLE is in no EQUIVALENCE and has no DATA (F90 5.5.1,
+     * 5.2.10): its slot is a descriptor, which either would read as the
+     * array.  It starts unallocated: a static one is zero already, a frame
+     * one is zeroed here, in the entry block. */
+    for (i = 0; i < f77_eq_n; i++) {
+        if (f77_salloc[f77_eq_sa[i]] || f77_salloc[f77_eq_sb[i]]) {
+            f77_error("an ALLOCATABLE array cannot be in an EQUIVALENCE");
+            return;
+        }
+    }
+    for (i = 0; i < f77_di_n; i++) {
+        if (f77_di_sym[i] >= f77_scope_base && f77_salloc[f77_di_sym[i]]) {
+            f77_error("an ALLOCATABLE array cannot be given DATA");
+            return;
+        }
+    }
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (!f77_salloc[s] || f77_ssaved[s] || f77_sarg[s]) continue;
+        if (f77_scom[s]) { f77_error("an ALLOCATABLE array cannot be in COMMON"); return; }
+        hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 0), f77_iconst(0), 0, NULL);
     }
 
     /* Pour DATA values into the init pool, now that every DATA'd
@@ -6142,6 +6266,167 @@ static void f77_open_dowhile(void) {
     ctl_n = ctl_n + 1;
 }
 
+/* STAT= of ALLOCATE or DEALLOCATE: an INTEGER variable or element; lx_t
+ * past the '='.  Its address, or -1. */
+static int f77_stat_target(void) {
+    int s;
+    if (lx_t != T_NAME) { f77_error("STAT= needs an INTEGER variable"); return -1; }
+    s = f77_sym(lex_name);
+    if (f77_sty[s] != TY_INT || f77_slog[s] || f77_sparam[s]) { f77_error("STAT= needs an INTEGER variable"); return -1; }
+    f77_tok();
+    f77_sstored[s] = 1;
+    if (lx_t == T_LP && f77_srank[s] > 0) { f77_tok(); return f77_subscript_addr(s); }
+    if (f77_srank[s] > 0) { f77_error("STAT= needs a scalar"); return -1; }
+    return f77_sval[s];
+}
+
+/* ALLOCATE (A(lo:hi, n), ... [, STAT=v]) and DEALLOCATE (A, ... [, STAT=v])
+ * (Fortran 90).  Every bound is evaluated, in order, before any storage is
+ * taken (STAT= may come last); a lower bound left out is 1.  ALLOCATE
+ * writes the new bounds only where the storage was taken: one already
+ * allocated, or out of memory, under STAT= keeps its old descriptor. */
+#define F77_MAX_ALLOBJ 32
+static void f77_stmt_allocate(int skip, int alloc) {
+    int obj[F77_MAX_ALLOBJ];
+    int lo[F77_MAX_ALLOBJ][F77_MAX_RANK];
+    int ext[F77_MAX_ALLOBJ][F77_MAX_RANK];
+    int nobj;
+    int statp;
+    int i;
+    int k;
+    f77_scan_from(skip);
+    if (lx_t != T_LP) { f77_error(alloc ? "ALLOCATE needs (objects)" : "DEALLOCATE needs (objects)"); return; }
+    f77_tok();
+    nobj = 0;
+    statp = -1;
+    for (;;) {
+        int s;
+        if (lx_t != T_NAME) { f77_error("expected an ALLOCATABLE array"); return; }
+        if (strcmp(lex_name, "STAT") == 0 && lx_rp < lx_rpe && *lx_rp == '=') {
+            f77_tok();
+            f77_tok();
+            statp = f77_stat_target();
+            if (statp < 0) return;
+        } else {
+            s = f77_sym_find(lex_name);
+            if (s < 0 || !f77_salloc[s]) { f77_error("ALLOCATE and DEALLOCATE need ALLOCATABLE arrays"); return; }
+            if (nobj >= F77_MAX_ALLOBJ) { f77_error("too many objects in one ALLOCATE"); return; }
+            obj[nobj] = s;
+            f77_tok();
+            if (alloc) {
+                if (lx_t != T_LP) { f77_error("ALLOCATE needs the array's bounds"); return; }
+                f77_tok();
+                for (k = 0; ; k++) {
+                    int a;
+                    int b;
+                    if (k >= f77_srank[s]) { f77_error("wrong number of bounds in ALLOCATE"); return; }
+                    a = f77_expr();
+                    a = f77_cvt(a, &ex_hi, ex_ty, TY_INT);
+                    if (lx_t == T_COLON) {
+                        f77_tok();
+                        b = f77_expr();
+                        b = f77_cvt(b, &ex_hi, ex_ty, TY_INT);
+                    } else {
+                        b = a;
+                        a = f77_iconst(1);
+                    }
+                    lo[nobj][k] = a;
+                    /* the extent, MAX(hi - lo + 1, 0) */
+                    b = hi_emit(HI_SUB, TY_INT, b, a, 0, NULL);
+                    b = hi_emit(HI_ADDI, TY_INT, b, -1, 1, NULL);
+                    ext[nobj][k] = f77_select(hi_emit(HI_SGT, TY_INT, b, f77_iconst(0), 0, NULL), b, f77_iconst(0));
+                    if (lx_t != T_COMMA) break;
+                    f77_tok();
+                }
+                if (k + 1 != f77_srank[s]) { f77_error("wrong number of bounds in ALLOCATE"); return; }
+                if (lx_t != T_RP) { f77_error("expected ) after the bounds"); return; }
+                f77_tok();
+            }
+            nobj = nobj + 1;
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after the ALLOCATE list"); return; }
+    f77_tok();
+    if (lx_t != T_EOF) { f77_error("unexpected text after the statement"); return; }
+    for (i = 0; i < nobj; i++) {
+        int s;
+        int args[3];
+        int cur;
+        int r;
+        s = obj[i];
+        f77_sstored[s] = 1;
+        cur = f77_desc_base(s);
+        args[0] = cur;
+        if (alloc) {
+            int n;
+            int changed;
+            n = ext[i][0];
+            for (k = 1; k < f77_srank[s]; k++) n = hi_emit(HI_MUL, TY_INT, n, ext[i][k], 0, NULL);
+            args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
+            args[2] = statp >= 0 ? statp : f77_iconst(0);
+            r = f77_call_i("f77_allocate", 3, args);
+            changed = hi_emit(HI_SNE, TY_INT, r, cur, 0, NULL);
+            for (k = 0; k < f77_srank[s]; k++) {
+                int ol;
+                int oe;
+                ol = f77_desc_load(s, 4 + 8 * k);
+                oe = f77_desc_load(s, 8 + 8 * k);
+                hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 4 + 8 * k), f77_select(changed, lo[i][k], ol), 0, NULL);
+                hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 8 + 8 * k), f77_select(changed, ext[i][k], oe), 0, NULL);
+            }
+        } else {
+            args[1] = statp >= 0 ? statp : f77_iconst(0);
+            r = f77_call_i("f77_deallocate", 2, args);
+        }
+        hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 0), r, 0, NULL);
+    }
+}
+
+/* A RETURN frees the subprogram's allocated, unSAVEd ALLOCATABLE arrays
+ * (Fortran 95's rule).  Its units are never spliced (f77_unosplice). */
+static void f77_alloc_free_all(void) {
+    int s;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int args[1];
+        if (!f77_salloc[s] || f77_ssaved[s] || f77_sarg[s]) continue;
+        args[0] = f77_desc_base(s);
+        f77_call_i("f77_dealloc_auto", 1, args);
+    }
+}
+
+/* The ALLOCATABLE guard: an ALLOCATABLE's slot is its descriptor, and code
+ * that took it for the array's storage -- an element address, an actual
+ * argument, a whole-array I/O item -- would address the descriptor.  Every
+ * use of the slot must be f77_desc_at's ADDI; any other stops the unit. */
+static void f77_desc_guard(void) {
+    int s;
+    int i;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int d;
+        if (!f77_salloc[s]) continue;
+        d = f77_sval[s];
+        for (i = 0; i < h_ninst; i++) {
+            int bad;
+            if (h_kind[i] == HI_NOP) continue;
+            bad = 0;
+            if (h_kind[i] != HI_BR && h_kind[i] != HI_BRC && h_kind[i] != HI_JMPTAB && h_src2[i] == d) bad = 1;
+            if (h_kind[i] != HI_BR && h_src1[i] == d && h_kind[i] != HI_ADDI) bad = 1;
+            if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) && h_cbase[i] >= 0) {
+                int q;
+                for (q = 0; q < h_val[i]; q++) if (h_carg[h_cbase[i] + q] == d) bad = 1;
+            }
+            if (bad) {
+                char m[F77_MAX_NAME + 80];
+                sprintf(m, "the ALLOCATABLE array %s is not supported in this context yet", f77_sname[s]);
+                f77_error(m);
+                return;
+            }
+        }
+    }
+}
+
 /* EXIT and CYCLE (Fortran 90), of the innermost DO: EXIT to the block
  * after it, CYCLE to its step (a counted DO; made here the first time,
  * f77_close_top_do runs the step in it) or its test (DO WHILE).  A
@@ -6420,6 +6705,7 @@ static void f77_emit_return(void) {
         f77_goto_blk(f77_inline_ret_blk);
         return;
     }
+    f77_alloc_free_all();
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0 &&
         f77_sty[f77_result_sym] == TY_DCPLX) {
         /* the result is in the caller's temporary already (hidden arg 0) */
@@ -6603,6 +6889,10 @@ static int f77_actual_addr(void) {
                 f77_tok();
                 return f77_subscript_addr(s);
             }
+            if (f77_salloc[s]) {            /* an ALLOCATABLE: its storage */
+                f77_sstored[s] = 1;
+                return f77_desc_base(s);
+            }
             /* Taking the address of a split double escapes BOTH halves.
              * The promoter sees the lo alloca in h_carg and rejects it, but
              * the hi alloca appears nowhere -- it would stay promoted while
@@ -6726,6 +7016,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -7592,7 +7883,7 @@ static void f77_whole_item(int s, int off) {
     int v;
     int vhi;
     byte = f77_elem_bytes(s, off);
-    addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_sval[s], byte, 0, NULL);
+    addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_salloc[s] ? f77_desc_base(s) : f77_sval[s], byte, 0, NULL);
     if (f77_io_unf) {
         int args[2];
         args[0] = addr;
@@ -7628,14 +7919,15 @@ static void f77_wr_whole_array(int s) {
     int cstride;
 
     rank = f77_srank[s];
-    if (f77_adjustable(s)) {
+    if (f77_adjustable(s) || f77_salloc[s]) {
         /* fort370: an adjustable array's extents are run-time values;
          * its elements, in storage order, are one run of the product of
          * them -- one loop over the element number */
         int n;
         n = f77_iconst(1);
         for (k = 0; k < rank; k++)
-            n = hi_emit(HI_MUL, TY_INT, n, f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]), 0, NULL);
+            n = hi_emit(HI_MUL, TY_INT, n, f77_salloc[s] ? f77_desc_load(s, 8 + 8 * k) :
+                        f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]), 0, NULL);
         f77_frame = f77_frame + 4;
         iv[0] = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
         f77_alloca_add(iv[0], 0 - f77_frame);
@@ -9125,6 +9417,8 @@ static void f77_statement(void) {
     if ((n = f77_starts("OPEN")) != 0)  { f77_stmt_open(n);  goto done; }
     if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
     if (f77_starts("EXIT")) { f77_stmt_exit_cycle(0); goto done; }
+    if ((n = f77_starts("ALLOCATE")) != 0) { f77_stmt_allocate(n, 1); goto done; }
+    if ((n = f77_starts("DEALLOCATE")) != 0) { f77_stmt_allocate(n, 0); goto done; }
     if (f77_starts("CYCLE")) { f77_stmt_exit_cycle(1); goto done; }
     if ((n = f77_starts("INQUIRE")) != 0) { f77_stmt_inquire(n); goto done; }
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }

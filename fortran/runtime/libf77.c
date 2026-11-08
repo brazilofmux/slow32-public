@@ -1453,6 +1453,44 @@ void f77_zpow_z(double *out, const double *a, const double *b) {
 
 double f77_zabs(const double *a) { return hypot(a[0], a[1]); }
 
+/* ALLOCATE and DEALLOCATE (Fortran 90).  The compiler keeps the
+ * descriptor; these hand out and take back the storage.  stat is the
+ * STAT= variable's address, or 0: with it an error sets it nonzero and the
+ * program goes on, without it the error stops the program (F90 6.3).  The
+ * values are gfortran's: 5014 (its LIBERROR_ALLOCATION) for either
+ * ALLOCATE error, 1 for a DEALLOCATE of an array not allocated. */
+void *f77_allocate(void *cur, int bytes, int *stat) {
+    void *p;
+    if (cur) {
+        if (stat) { *stat = 5014; return cur; }
+        fprintf(stderr, "f77: ALLOCATE of an array already allocated\n");
+        exit(2);
+    }
+    p = malloc(bytes > 0 ? (size_t)bytes : 1);
+    if (!p) {
+        if (stat) { *stat = 5014; return 0; }
+        fprintf(stderr, "f77: ALLOCATE: out of memory (%d bytes)\n", bytes);
+        exit(2);
+    }
+    if (stat) *stat = 0;
+    return p;
+}
+
+void *f77_deallocate(void *cur, int *stat) {
+    if (!cur) {
+        if (stat) { *stat = 1; return 0; }
+        fprintf(stderr, "f77: DEALLOCATE of an array not allocated\n");
+        exit(2);
+    }
+    free(cur);
+    if (stat) *stat = 0;
+    return 0;
+}
+
+/* A subprogram's allocated, unSAVEd ALLOCATABLE arrays at its RETURN
+ * (Fortran 95's rule; F90 left them undefined). */
+void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
+
 /* EXPONENT (Fortran 90): e with x = m * 2**e, 0.5 <= |m| < 1; 0 for 0.  A
  * REAL argument arrives widened, which keeps its exponent. */
 int f77_exponent(double x) {

@@ -245,6 +245,9 @@ static void f77_scan_units(void) {
              * temporary, never set (fort370's issue 32, ported).  A
              * false match -- a slash elsewhere at top level -- only
              * costs a missed inline. */
+            /* An ALLOCATABLE array is freed at RETURN; spliced into a
+             * caller that RETURN is a branch (Fortran 90). */
+            if (strstr(lx_stmt, "ALLOCATABLE")) f77_unosplice[f77_nunit - 1] = 1;
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)

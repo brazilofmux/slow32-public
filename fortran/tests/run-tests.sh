@@ -208,6 +208,9 @@ if [ -x "$F77" ]; then
     printf '      X = G(1.0)\n      END\n      COMPLEX*16 FUNCTION G(Y)\n      G = Y\n      END\n' > "$W/lenfn.f"
     printf '      K = KF(3)\n      END\n      INTEGER FUNCTION KF(N)\n      KF = N * KF(N - 1)\n      END\n' > "$W/recfn.f"
     printf '      INTEGER L(4), X\n      X = L\n      END\n' > "$W/wholearr.f"
+    printf '      REAL, ALLOCATABLE :: A(:)\n      REAL B\n      EQUIVALENCE (A, B)\n      END\n' > "$W/alloceq.f"
+    printf '      SUBROUTINE S(A)\n      REAL, ALLOCATABLE :: A(:)\n      END\n' > "$W/allocarg.f"
+    printf '      REAL, ALLOCATABLE :: A(10)\n      END\n' > "$W/allocshape.f"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -253,6 +256,9 @@ if [ -x "$F77" ]; then
              "lenfn:line 1: G is REAL here but COMPLEX*16 where it is defined (line 3)" \
              "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT, which is not supported yet" \
              "wholearr:line 2: a whole array in an expression is not supported yet" \
+             "alloceq:line 4: an ALLOCATABLE array cannot be in an EQUIVALENCE" \
+             "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \
+             "allocshape:line 1: an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \
