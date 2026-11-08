@@ -474,6 +474,19 @@ static char *f77_tyname(int ty, int lg) {
     return "untyped";
 }
 
+/* Under IMPLICIT NONE a function reference needs its name typed in the
+ * referencing unit -- an external, a dummy procedure or a FUNCTION of this
+ * file alike (F77 needs it of every function name; gfortran: "has no
+ * IMPLICIT type").  s < 0: the name was never declared here. */
+static void f77_need_type(int s, char *nm) {
+    if (f77_imp_none && (s < 0 || !f77_styped[s])) {
+        static char msg[F77_MAX_NAME + 40];
+        strcpy(msg, nm);
+        strcat(msg, " is not declared (IMPLICIT NONE)");
+        f77_error(msg);
+    }
+}
+
 static int f77_sym(char *nm) {
     int i;
     i = f77_stfb_n;
@@ -2204,6 +2217,7 @@ static int f77_primary(void) {
                 int clog;
                 /* looked up, not made: a symbol made here moved the frame */
                 s = f77_sym_at(nm, f77_scope_base);
+                f77_need_type(s, nm);
                 if (s >= 0) { cty = f77_sty[s]; clog = f77_slog[s]; }
                 else {
                     cty = f77_implicit_ty(nm);
@@ -2292,6 +2306,7 @@ static int f77_primary(void) {
             int rty;
             int fptr;
             fptr = (f77_sarg[s] && f77_srank[s] == 0) ? f77_sval[s] : -1;
+            f77_need_type(s, nm);
             nargs = 0;
             f77_tok();
             if (lx_t != T_RP) {
@@ -4413,6 +4428,12 @@ static void f77_layout_static(void) {
     if (f77_imp_none) {
         for (s = f77_scope_base; s < f77_nsym; s++) {
             if (f77_styped[s] || f77_sparam[s]) continue;
+            /* EXTERNAL and INTRINSIC name procedures: a subroutine has no
+             * type, and an intrinsic has its own.  An EXTERNAL used as a
+             * function needs one, and is checked where it is referenced
+             * (f77_need_type).  Refusing them here refused LAPACK's
+             * `EXTERNAL XERBLA` and `INTRINSIC ABS` under IMPLICIT NONE. */
+            if (f77_sexternal[s] || f77_sintrinsic[s]) continue;
             {
                 static char msg[F77_MAX_NAME + 40];
                 strcpy(msg, f77_sname[s]);
@@ -5213,17 +5234,26 @@ static int f77_sym_find(char *nm) {
     return -1;
 }
 
-/* ABS(X) or SF(X) as an actual argument is a value, not a variable:
- * the name is an intrinsic or statement function and not an array. */
+/* NAME(...) as an actual argument is a value, not a variable, unless NAME
+ * is an array (an element) or a CHARACTER variable (a substring): it is a
+ * function reference -- a statement function, an intrinsic, an EXTERNAL or
+ * implicitly external function, or a dummy procedure.  This used to answer
+ * yes for statement functions and intrinsics only, so F(G(1)) with G
+ * external passed G's address as a variable and left (1) unparsed
+ * ("expected ) after arguments"): LAPACK's DLAPY2(DNRM2(...), DNRM2(...))
+ * in dgeev and its kin.  A FUNCTION of this file is filtered out before
+ * this is asked (f77_find_func). */
 static int f77_actual_is_call(char *nm) {
     int s;
     int after;
     after = (int)(lx_rte - lx_stmt);
     if (after >= lx_stmt_len || lx_stmt[after] != '(') return 0;   /* a bare name */
     if (f77_stf_find(nm) >= 0) return 1;
-    if (f77_intrinsic(nm) == IN_NONE) return 0;
     s = f77_sym_find(nm);
-    return s < 0 || f77_srank[s] == 0;
+    if (s < 0) return 1;                  /* undeclared and not an array */
+    if (f77_srank[s] > 0) return 0;       /* an array element */
+    if (f77_sty[s] == TY_CHAR) return f77_sexternal[s];   /* a substring, or a CHARACTER function */
+    return 1;
 }
 
 static int f77_actual_addr(void) {
