@@ -169,6 +169,22 @@ if [ ${#corpus[@]} -eq 0 ]; then
     } > "$W/gen_common.s"
     corpus+=("$W/gen_common.s")
 
+    # A generated LONG-LINE case: one .byte line of 80,000 values (~365KB).
+    # Both assemblers read lines into fixed buffers (64KB host, 1KB
+    # selfhost) until 2026-11-08: the host refused a longer line, the
+    # selfhost one let fgets cut it in two, and a list cut inside a number
+    # assembles as two numbers.  clang writes a big table as one line.
+    awk 'BEGIN {
+        print ".data"; print ".globl tab"; print "tab:"
+        s = 7; line = "    .byte "
+        for (i = 0; i < 80000; i++) {
+            s = (s * 1103515245 + 12345) % 2147483648
+            line = line (i ? ", " : "") (int(s / 65536) % 256)
+        }
+        print line; print ".globl after"; print "after:"; print "    .word 305419896"
+    }' > "$W/gen_longline.s"
+    corpus+=("$W/gen_longline.s")
+
     # ...and stage08 cc's own output, the other producer.
     if [ -f "$ROOT/selfhost/stage08/cc.s32x" ]; then
         n=0

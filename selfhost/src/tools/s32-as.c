@@ -128,14 +128,12 @@ static void grow_sym(int need) {
 
 static char *g_str;
 static int g_str_cap;
-/* fdgets is told how much it may write, so this bound must be the
- * BUFFER's size, not MAX_LINE -- they were 1024 and 65536, which let a
- * long enough input line write 64KB into a 1KB buffer and straight
- * through whatever BSS followed it.  No input in the tree comes close
- * (the longest line the compilers emit is 85 chars), so this never
- * fired; it was a latent smash waiting for a wide enough line. */
-#define G_LINE_SIZE 1024
-static char g_line[G_LINE_SIZE];
+/* The input line, grown to fit (read_line).  It was a fixed 1KB buffer,
+ * and fgets cut a longer line in two without a word: clang writes a
+ * 100,000-byte table as one .ascii line, and a long .byte list cut
+ * inside a number assembles as two numbers -- wrong data, no error. */
+static char *g_line;
+static int g_line_cap;
 static int g_ssz;
 static FILE *g_in;
 static FILE *g_out;
@@ -2163,6 +2161,26 @@ int write_obj(char *out) {
     return 0;
 }
 
+/* One whole line of g_in into g_line, however long: 1 if there was one. */
+static int read_line(void) {
+    int len;
+    len = 0;
+    if (g_line == 0) {
+        g_line_cap = 1024;
+        g_line = malloc(g_line_cap);
+        if (g_line == 0) { fputs("out of memory\n", stderr); exit(1); }
+    }
+    while (1) {
+        if (fgets(g_line + len, g_line_cap - len, g_in) == 0) return len > 0;
+        len = len + strlen(g_line + len);
+        if (len > 0 && g_line[len - 1] == '\n') return 1;
+        if (len < g_line_cap - 1) return 1;     /* the last line, no newline */
+        g_line_cap = g_line_cap * 2;
+        g_line = realloc(g_line, g_line_cap);
+        if (g_line == 0) { fputs("out of memory\n", stderr); exit(1); }
+    }
+}
+
 int main(int argc, char **argv) {
     int lno;
     lno = 0;
@@ -2178,7 +2196,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    while (fgets(g_line, G_LINE_SIZE, g_in)) {
+    while (read_line()) {
         lno = lno + 1;
         if (handle(g_line) != 0) {
             fputs("assemble error at line ", stderr);

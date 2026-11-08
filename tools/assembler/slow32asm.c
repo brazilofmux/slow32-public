@@ -9,14 +9,11 @@
 #include "../../common/s32_formats.h"
 #include "../../common/s32_hashtable.h"
 
-#define MAX_LINE 65536
-#define MAX_TOKENS 512
 #define MAX_TOKEN_LEN 16384
 /* Tokens are copied into one pool the size of a line (plus a terminator
  * each), so a token is bounded by the line and not by a slot: clang emits a
  * string constant of any size as one .asciz, and a 16 KB slot cut a 62 KB
  * word list off (GitHub issue 124). */
-#define TOKEN_POOL (MAX_LINE + MAX_TOKENS + 1)
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 
@@ -135,6 +132,16 @@ typedef struct {
     bool is_pcrel_lo;
 } expr_result_t;
 
+/* An operand's name or string past MAX_TOKEN_LEN is refused: it used to be
+ * cut short without a word, and a shortened name is a different symbol. */
+static void sval_check(int i) {
+    if (i >= MAX_TOKEN_LEN - 1) {
+        fprintf(stderr, "Error: a name or string in an operand is longer than %d characters\n",
+                MAX_TOKEN_LEN - 2);
+        exit(1);
+    }
+}
+
 static void scanner_next(scanner_t *s) {
     while (*s->p && isspace(*s->p)) s->p++;
     if (!*s->p) {
@@ -157,18 +164,18 @@ static void scanner_next(scanner_t *s) {
         case '"': {
             s->curr.type = TOK_STRING;
             int i = 0;
-            const int svcap = (int)sizeof(s->curr.sval);  /* leave svcap-1 for the NUL */
-            if (i < svcap - 1) s->curr.sval[i++] = '"';
+            s->curr.sval[i++] = '"';
             while (*s->p && *s->p != '"') {
                 if (*s->p == '\\' && *(s->p+1)) {
-                    if (i < svcap - 1) s->curr.sval[i++] = *s->p++;
-                    else s->p++;
+                    sval_check(i);
+                    s->curr.sval[i++] = *s->p++;
                 }
-                if (i < svcap - 1) s->curr.sval[i++] = *s->p++;
-                else s->p++;
+                sval_check(i);
+                s->curr.sval[i++] = *s->p++;
             }
             if (*s->p == '"') {
-                if (i < svcap - 1) s->curr.sval[i++] = *s->p;
+                sval_check(i);
+                s->curr.sval[i++] = *s->p;
                 s->p++;
             }
             s->curr.sval[i] = '\0';
@@ -188,7 +195,8 @@ static void scanner_next(scanner_t *s) {
                 int i = 0;
                 s->curr.sval[i++] = c;
                 while (isalnum(*s->p) || *s->p == '_' || *s->p == '.' || *s->p == '$') {
-                    if (i < (int)sizeof(s->curr.sval) - 1) s->curr.sval[i++] = *s->p;
+                    sval_check(i);
+                    s->curr.sval[i++] = *s->p;
                     s->p++;
                 }
                 s->curr.sval[i] = '\0';
@@ -1205,14 +1213,37 @@ static char *trim(char *str) {
     return str;
 }
 
-static int tokenize(char *line, char **tokens) {
-    static char pool[TOKEN_POOL];
-    char *const pool_end = pool + TOKEN_POOL - 1;
+/* Split a line into tokens, copied into a pool sized from the line: each
+ * token is at most its own characters plus a NUL, so 2*len+2 always holds
+ * them.  Neither the pool nor the token array has a fixed size -- a line is
+ * as long as the source makes it (clang writes a 100,000-byte table as one
+ * .ascii line), and a fixed buffer either refused it or cut it. */
+static int tokenize(char *line, char ***tokens_out) {
+    static char *pool;
+    static size_t pool_cap;
+    static char **tokens;
+    static int tokens_cap;
+    size_t need = 2 * strlen(line) + 2;
+    if (need > pool_cap) {
+        char *np = realloc(pool, need);
+        if (!np) { fprintf(stderr, "Error: out of memory tokenizing a line\n"); exit(1); }
+        pool = np;
+        pool_cap = need;
+    }
     char *cursor = pool;
     int count = 0;
     char *p = line;
-    
-    while (*p && count < MAX_TOKENS) {
+    *tokens_out = tokens;
+
+    while (*p) {
+        if (count >= tokens_cap) {
+            int nc = tokens_cap ? tokens_cap * 2 : 64;
+            char **nt = realloc(tokens, (size_t)nc * sizeof(char *));
+            if (!nt) { fprintf(stderr, "Error: out of memory tokenizing a line\n"); exit(1); }
+            tokens = nt;
+            tokens_cap = nc;
+            *tokens_out = tokens;
+        }
         // Skip whitespace and commas
         while (*p && (*p == ' ' || *p == '\t' || *p == ',')) p++;
         if (!*p) break;
@@ -1234,12 +1265,8 @@ static int tokenize(char *line, char **tokens) {
 
         while (*p) {
             if (*p == '\\' && *(p+1)) {
-                if (token_ptr + 2 < pool_end) {
-                    *token_ptr++ = *p++;
-                    *token_ptr++ = *p++;
-                } else {
-                    p += 2;
-                }
+                *token_ptr++ = *p++;
+                *token_ptr++ = *p++;
                 continue;
             }
             
@@ -1255,29 +1282,12 @@ static int tokenize(char *line, char **tokens) {
                 }
             }
             
-            if (token_ptr + 1 < pool_end) {
-                *token_ptr++ = *p++;
-            } else {
-                p++;
-            }
+            *token_ptr++ = *p++;
         }
         *token_ptr = '\0';
         cursor = token_ptr + 1;
         if (token_ptr > token_start) {
             count++;
-        }
-    }
-
-    // Error if tokens were silently dropped
-    if (count >= MAX_TOKENS && *p) {
-        // Check if there's actual content remaining (not just whitespace/commas)
-        const char *remaining = p;
-        while (*remaining && (*remaining == ' ' || *remaining == '\t' || *remaining == ','))
-            remaining++;
-        if (*remaining) {
-            fprintf(stderr, "Error: line has more than %d tokens; data truncated (first dropped: \"%.40s%s\")\n",
-                    MAX_TOKENS, remaining, strlen(remaining) > 40 ? "..." : "");
-            return -1;
         }
     }
 
@@ -1853,9 +1863,8 @@ static bool assemble_line(assembler_t *as, char *line) {
     line = trim(line);
     if (strlen(line) == 0) return true;
     
-    static char *tokens[MAX_TOKENS];
-    int num_tokens = tokenize(line, tokens);
-    if (num_tokens < 0) return false;  // tokenizer overflow
+    char **tokens;
+    int num_tokens = tokenize(line, &tokens);
     if (num_tokens == 0) return true;
 
     // "name = target": tokens[0] is a symbol here, so this comes before the
@@ -3910,17 +3919,22 @@ int main(int argc, char *argv[]) {
     // Object files use section-relative addresses
     as.data_start_addr = 0;
     as.generate_object = true;  // Always generate object files
-    char line[MAX_LINE];
+    // A whole line however long: fgets into a fixed buffer cut a longer
+    // line in two, and a .byte list cut inside a number assembles as two.
+    char *line = NULL;
+    size_t line_cap = 0;
     int line_num = 0;
-    
-    while (fgets(line, MAX_LINE, input)) {
+
+    while (getline(&line, &line_cap, input) != -1) {
         line_num++;
         if (!assemble_line(&as, line)) {
-            fprintf(stderr, "Error at line %d: %s", line_num, line);
+            fprintf(stderr, "Error at line %d: %.200s%s\n", line_num, line,
+                    strlen(line) > 200 ? "..." : "");
             fclose(input);
             return 1;
         }
     }
+    free(line);
     fclose(input);
 
     // Relax out-of-range conditional branches (invert + jal) before any
