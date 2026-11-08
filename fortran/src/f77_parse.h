@@ -8346,6 +8346,10 @@ static void f77_check_format(const char *s, int n) {
             int w;
             int d;
             i = i + 1;
+            if (c == 'E') {                          /* ES, EN (Fortran 90) */
+                k = f77_fmt_peek(s, n, &i);
+                if (k == 'S' || k == 'N' || k == 's' || k == 'n') i = i + 1;
+            }
             w = f77_fmt_digits(s, n, &i);
             if (w < 0) {
                 char m[48];

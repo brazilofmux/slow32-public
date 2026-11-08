@@ -35,6 +35,7 @@ static int   fio_len;
 /* Repeat state for the descriptor currently being consumed. */
 static int   fio_rep;            /* repeats left on the active descriptor */
 static int   fio_desc;           /* active descriptor letter, 0 = none */
+#define FIO_ESN 0x100            /* fio_desc of ES is FIO_ESN+'S', of EN FIO_ESN+'N' */
 static int   fio_w, fio_d;       /* width and digits of the active one */
 
 /* Group stack: start position and remaining count of each open ( ). */
@@ -474,6 +475,7 @@ static int fio_fmt_check(void) {
         }
         if (c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' || c == 'L') {
             i++;
+            if (c == 'E' && (toupper((unsigned char)s[i]) == 'S' || toupper((unsigned char)s[i]) == 'N')) i++;   /* ES, EN (F90) */
             if (fio_fmt_digits(s, &i) < 0) {
                 sprintf(why, "%c needs a width", c);
                 fio_fmt_why = why;
@@ -697,7 +699,13 @@ static int fio_next_desc(void) {
         if (c=='I'||c=='i'||c=='F'||c=='f'||c=='E'||c=='e'||
             c=='D'||c=='d'||c=='G'||c=='g'||c=='A'||c=='a'||
             c=='L'||c=='l') {
+            int esn = 0;
             fio_pos++;
+            if ((c == 'E' || c == 'e') && (toupper((unsigned char)fio_fmt[fio_pos]) == 'S' ||
+                                           toupper((unsigned char)fio_fmt[fio_pos]) == 'N')) {
+                esn = toupper((unsigned char)fio_fmt[fio_pos]);        /* ES, EN (F90) */
+                fio_pos++;
+            }
             fio_w = fio_isdigit(fio_fmt[fio_pos]) ? fio_number() : 0;
             fio_d = 0;
             if (fio_fmt[fio_pos] == '.') { fio_pos++; fio_d = fio_number(); }
@@ -710,7 +718,7 @@ static int fio_next_desc(void) {
                 else fio_pos = save;
             }
             fio_rep = n;
-            fio_desc = toupper((unsigned char)c);
+            fio_desc = esn ? FIO_ESN + esn : toupper((unsigned char)c);
             fio_since_data = 1;
             return fio_desc;
         }
@@ -740,6 +748,79 @@ static void fio_consumed(void) {
  *
  * `letter` is the exponent letter to emit (E or D).
  */
+/* The exponent of an E-family field, at q: Ew.dEe gives e digits after
+ * the letter and sign; without e, two digits with the letter up to |exp|
+ * 99, three digits and no letter up to 999 (13.5.9.2.2).  An exponent that
+ * needs more digits than its field is written in full, which makes the
+ * item too wide and the field asterisks.  Returns past it. */
+static char *fio_exp_out(char *q, int expv, int letter) {
+    int sign = expv < 0 ? '-' : '+';
+    int digits;
+    char dbuf[16];
+    int nd = 0;
+    int i2;
+    if (expv < 0) expv = -expv;
+    digits = fio_e > 0 ? fio_e : (expv <= 99 ? 2 : 3);
+    if (fio_e == 0 && expv > 99 && expv <= 999) { /* no letter */ }
+    else *q++ = (char)letter;
+    *q++ = (char)sign;
+    do { dbuf[nd++] = (char)('0' + expv % 10); expv /= 10; } while (expv > 0 && nd < 15);
+    while (nd < digits && nd < 15) dbuf[nd++] = '0';
+    for (i2 = nd - 1; i2 >= 0; i2--) *q++ = dbuf[i2];
+    return q;
+}
+
+/* ESw.d and ENw.d (Fortran 90): ES one nonzero digit before the point and d
+ * after; EN an exponent that is a multiple of 3 and one to three digits
+ * before the point, d after.  The scale factor does not apply to either. */
+static int fio_floor3(int e) { return e >= 0 ? (e / 3) * 3 : -(((-e) + 2) / 3) * 3; }
+
+static void fio_esn(char *out, int outsz, double v, int d, int eng) {
+    char tmp[64];
+    char cf[16];
+    char dig[48];
+    char *p;
+    char *q;
+    int n;
+    int i;
+    int e;
+    int e0;
+    int lead;
+    int neg;
+    if (d < 0) d = 0;
+    if (d > 30) d = 30;
+    /* the exponent at full precision decides EN's digits ahead of the point */
+    snprintf(tmp, sizeof tmp, "%.17E", v);
+    p = strchr(tmp, 'E');
+    e0 = (p && v != 0.0) ? (int)strtol(p + 1, 0, 10) : 0;
+    lead = eng ? e0 - fio_floor3(e0) + 1 : 1;
+    snprintf(cf, sizeof cf, "%%.%dE", lead + d - 1);
+    snprintf(tmp, sizeof tmp, cf, v);
+    p = tmp;
+    neg = 0;
+    if (*p == '-') { neg = 1; p++; }
+    n = 0;
+    for (i = 0; p[i] && p[i] != 'E'; i++) if (p[i] != '.' && n < 47) dig[n++] = p[i];
+    e = p[i] == 'E' ? (int)strtol(p + i + 1, 0, 10) : 0;
+    if (v == 0.0) e = 0;
+    if (eng) {
+        if (e != e0) {
+            /* rounding carried to a power of ten: its digits are 1 and
+             * zeros, so the new group's lead digits are only padding */
+            lead = e - fio_floor3(e) + 1;
+            while (n < lead + d && n < 47) dig[n++] = '0';
+        }
+        e = fio_floor3(e);
+    }
+    q = out;
+    if (neg) *q++ = '-';
+    for (i = 0; i < lead && i < n; i++) *q++ = dig[i];
+    *q++ = '.';
+    for (; i < n && (q - out) < outsz - 8; i++) *q++ = dig[i];
+    q = fio_exp_out(q, e, 'E');
+    *q = 0;
+}
+
 static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
     char tmp[64];
     char cf[16];
@@ -792,26 +873,7 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
         for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
     }
     if (v != 0.0) expv = expv - k;    /* zero's exponent is 0 whatever k: 1PE10.2 is 0.00E+00 */
-    {
-        /* Exponent: Ew.dEe gives e digits after the letter and sign;
-         * without e, two digits with the letter up to |exp| 99, three
-         * digits and no letter up to 999 (13.5.9.2.2).  An exponent
-         * that needs more digits than its field is written in full,
-         * which makes the item too wide and the field asterisks. */
-        int sign = expv < 0 ? '-' : '+';
-        int digits;
-        char dbuf[16];
-        int nd = 0;
-        int i2;
-        if (expv < 0) expv = -expv;
-        digits = fio_e > 0 ? fio_e : (expv <= 99 ? 2 : 3);
-        if (fio_e == 0 && expv > 99 && expv <= 999) { /* no letter */ }
-        else *q++ = (char)letter;
-        *q++ = (char)sign;
-        do { dbuf[nd++] = (char)('0' + expv % 10); expv /= 10; } while (expv > 0 && nd < 15);
-        while (nd < digits && nd < 15) dbuf[nd++] = '0';
-        for (i2 = nd - 1; i2 >= 0; i2--) *q++ = dbuf[i2];
-    }
+    q = fio_exp_out(q, expv, letter);
     *q = 0;
 }
 
@@ -1216,6 +1278,9 @@ void f77_wr_d(double v) {
         fio_efmt(buf, sizeof buf, v, fio_d, d);
         fio_plus(buf);
         fio_drop_zero(buf, fio_w);
+    } else if (d == FIO_ESN + 'S' || d == FIO_ESN + 'N') {
+        fio_esn(buf, sizeof buf, v, fio_d, d == FIO_ESN + 'N');
+        fio_plus(buf);
     } else {
         snprintf(buf, sizeof buf, "%g", v);
     }
