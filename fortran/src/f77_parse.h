@@ -1783,6 +1783,12 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "CLOG") == 0) return IN_LOG;
     if (strcmp(nm, "CSIN") == 0) return IN_SIN;
     if (strcmp(nm, "CCOS") == 0) return IN_COS;
+    /* COMPLEX*16, by IBM's (CD) and gfortran's (Z) names */
+    if (strcmp(nm, "CDSQRT") == 0 || strcmp(nm, "ZSQRT") == 0) return IN_SQRT;
+    if (strcmp(nm, "CDEXP") == 0 || strcmp(nm, "ZEXP") == 0) return IN_EXP;
+    if (strcmp(nm, "CDLOG") == 0 || strcmp(nm, "ZLOG") == 0) return IN_LOG;
+    if (strcmp(nm, "CDSIN") == 0 || strcmp(nm, "ZSIN") == 0) return IN_SIN;
+    if (strcmp(nm, "CDCOS") == 0 || strcmp(nm, "ZCOS") == 0) return IN_COS;
     if (strcmp(nm, "IAND") == 0) return IN_IAND;
     if (strcmp(nm, "IOR") == 0) return IN_IOR;
     if (strcmp(nm, "IEOR") == 0) return IN_IEOR;
@@ -2250,6 +2256,28 @@ static int f77_primary(void) {
                 ex_ty = TY_CPLX;
                 ex_hi = hi_emit(HI_FNEG, TY_FLOAT, ahi, -1, 0, NULL);
                 return a;
+            }
+            if (aty == TY_DCPLX && (in == IN_SQRT || in == IN_EXP || in == IN_LOG ||
+                                    in == IN_SIN || in == IN_COS)) {
+                /* the COMPLEX*16 transcendentals: in the runtime, into a
+                 * fresh temporary */
+                int args[2];
+                int out;
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                out = f77_dcx_temp();
+                args[0] = f77_dcx_arg(out); args[1] = f77_dcx_arg(a);
+                f77_call_i(in == IN_SQRT ? "f77_zsqrt" : in == IN_EXP ? "f77_zexp" :
+                           in == IN_LOG ? "f77_zlog" : in == IN_SIN ? "f77_zsin" : "f77_zcos", 2, args);
+                ex_ty = TY_DCPLX; ex_hi = -1; ex_log = 0;
+                return f77_dcx_mark(out);
+            }
+            if (aty != TY_DCPLX &&
+                (strcmp(nm, "CDSQRT") == 0 || strcmp(nm, "ZSQRT") == 0 || strcmp(nm, "CDEXP") == 0 ||
+                 strcmp(nm, "ZEXP") == 0 || strcmp(nm, "CDLOG") == 0 || strcmp(nm, "ZLOG") == 0 ||
+                 strcmp(nm, "CDSIN") == 0 || strcmp(nm, "ZSIN") == 0 || strcmp(nm, "CDCOS") == 0 ||
+                 strcmp(nm, "ZCOS") == 0 || strcmp(nm, "CDABS") == 0 || strcmp(nm, "ZABS") == 0)) {
+                f77_error("this intrinsic needs a COMPLEX*16 argument");
+                return f77_iconst(0);
             }
             if (aty == TY_DCPLX && in == IN_ABS) {
                 /* |z| of a COMPLEX*16: hypot in the runtime, a double back */
@@ -5799,7 +5827,7 @@ static int f77_actual_addr(void) {
     }
     f77_act_len = -1;
     f77_frame = f77_frame + f77_tysize(vty);
-    tmp = hi_emit(HI_ALLOCA, vty == TY_CPLX ? TY_FLOAT : vty, -1, -1, 0 - f77_frame, NULL);
+    tmp = hi_emit(HI_ALLOCA, f77_aty(vty), -1, -1, 0 - f77_frame, NULL);
     f77_alloca_add(tmp, 0 - f77_frame);
     f77_store_at(tmp, vty, v, vty, vhi);
     return tmp;
@@ -6606,6 +6634,12 @@ static void f77_wr_item(int v, int vty, int vhi) {
     int cb;
     int r;
     cb = h_ncarg;
+    if (vty == TY_DCPLX) {
+        f77_carg(f77_dcx_arg(v), 0);
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_z");
+        h_cbase[r] = cb;
+        return;
+    }
     if (vty == TY_CPLX) {
         f77_carg(v, 0);
         f77_carg(vhi, 0);
@@ -6663,7 +6697,9 @@ static void f77_rd_item(int addr, int ty) {
     }
     cb = h_ncarg;
     f77_carg(addr, 0);
-    if (ty == TY_CPLX)
+    if (ty == TY_DCPLX)
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_z");
+    else if (ty == TY_CPLX)
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_c");
     else if (ty == TY_DOUBLE)
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_d");
@@ -7479,6 +7515,7 @@ static void f77_nml_io(int unit_val, int reading) {
         ty = f77_sty[s];
         if (ty == TY_CHAR) code = 7;
         else if (ty == TY_CPLX) code = 4;
+        else if (ty == TY_DCPLX) code = 5;
         else if (ty == TY_DOUBLE) code = 3;
         else if (ty == TY_FLOAT) code = 2;
         else code = f77_slog[s] ? 6 : 1;

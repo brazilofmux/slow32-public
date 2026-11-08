@@ -1230,15 +1230,19 @@ void f77_wr_r(float v) {
 }
 
 /* A COMPLEX item: two edit descriptors, or "(re,im)" list-directed. */
-void f77_wr_c(float re, float im) {
-    if (fio_listed) {
+/* A COMPLEX or COMPLEX*16 item written list-directed: (re,im), each part
+ * as list-directed output makes a real of its precision, trimmed, and the
+ * pair right-justified after the record's blank -- in 35 columns for
+ * COMPLEX, 53 for COMPLEX*16, gfortran's layout. */
+static void fio_list_cplx(double re, double im, int dbl) {
+    {
         int save;
         int start0;
         fio_putc(' ');
         start0 = fio_len;
         fio_putc('(');
         save = fio_len;
-        fio_list_out_real((double)re, 0);
+        fio_list_out_real(re, dbl);
         /* trim the field to the number: drop the leading blank and the padding */
         {
             int i, j;
@@ -1252,7 +1256,7 @@ void f77_wr_c(float re, float im) {
         }
         fio_putc(',');
         save = fio_len;
-        fio_list_out_real((double)im, 0);
+        fio_list_out_real(im, dbl);
         {
             int i, j;
             int start = save;
@@ -1265,10 +1269,10 @@ void f77_wr_c(float re, float im) {
         }
         fio_col = fio_len;
         fio_putc(')');
-        /* gfortran right-justifies the pair in 35 columns after the blank */
+        /* gfortran right-justifies the pair after the blank */
         {
             int n = fio_len - start0;
-            int pad = 35 - n;
+            int pad = (dbl ? 53 : 35) - n;
             if (pad > 0 && fio_len + pad < FIO_MAXLINE - 1) {
                 memmove(fio_line + start0 + pad, fio_line + start0, (size_t)n);
                 memset(fio_line + start0, ' ', (size_t)pad);
@@ -1278,10 +1282,22 @@ void f77_wr_c(float re, float im) {
         }
         fio_first_item = 0;
         fio_prev_char = 0;
-        return;
     }
+}
+
+void f77_wr_c(float re, float im) {
+    if (fio_listed) { fio_list_cplx((double)re, (double)im, 0); return; }
     f77_wr_d((double)re);
     f77_wr_d((double)im);
+}
+
+/* A COMPLEX*16 item, by its address: list-directed as one pair, formatted
+ * as two DOUBLE PRECISION items, each taking the next edit descriptor. */
+void f77_wr_z(const double *z) {
+    double re = z[0], im = z[1];
+    if (fio_listed) { fio_list_cplx(re, im, 1); return; }
+    f77_wr_d(re);
+    f77_wr_d(im);
 }
 
 void f77_wr_a(const char *s, int len) {
@@ -1436,6 +1452,37 @@ void f77_zpow_z(double *out, const double *a, const double *b) {
 }
 
 double f77_zabs(const double *a) { return hypot(a[0], a[1]); }
+
+/* The COMPLEX*16 transcendentals: the formulas of the COMPLEX ones above,
+ * in double.  gfortran calls the host's csqrt, cexp and so on, which can
+ * round the last bit differently (the libm-host-difference ruling). */
+void f77_zsqrt(double *out, const double *a) {
+    double re = a[0], im = a[1];
+    double m = hypot(re, im);
+    double r = sqrt((m + fabs(re)) / 2.0);
+    if (re >= 0.0) { out[0] = r; out[1] = r == 0.0 ? 0.0 : im / (2.0 * r); }
+    else { out[0] = r == 0.0 ? 0.0 : fabs(im) / (2.0 * r); out[1] = im < 0.0 ? -r : r; }
+}
+void f77_zexp(double *out, const double *a) {
+    double e = exp(a[0]), im = a[1];
+    out[0] = e * cos(im);
+    out[1] = e * sin(im);
+}
+void f77_zlog(double *out, const double *a) {
+    double re = a[0], im = a[1];
+    out[0] = log(hypot(re, im));
+    out[1] = atan2(im, re);
+}
+void f77_zsin(double *out, const double *a) {
+    double re = a[0], im = a[1];
+    out[0] = sin(re) * cosh(im);
+    out[1] = cos(re) * sinh(im);
+}
+void f77_zcos(double *out, const double *a) {
+    double re = a[0], im = a[1];
+    out[0] = cos(re) * cosh(im);
+    out[1] = -sin(re) * sinh(im);
+}
 
 int f77_index(const char *a, int la, const char *b, int lb);
 
@@ -2060,71 +2107,69 @@ void f77_rd_s(char *p, int len) {
 }
 
 /* COMPLEX input: two edit descriptors, or "(re, im)" list-directed. */
+/* A COMPLEX or COMPLEX*16 value, list-directed, once its first token is
+ * in fio_ltok: ( re , im ) with blanks anywhere inside, possibly split
+ * over records, or a lone real (imaginary part 0). */
+static void fio_list_cplx_in(double *re, double *im) {
+    if (fio_ltok[0] == '(') {
+        /* ( re , im ) with blanks anywhere inside, possibly split
+         * over records: gather the text up to the ')' and parse
+         * the two numbers out of it. */
+        char buf[sizeof fio_ltok];
+        int n = 0;
+        int i;
+        char *comma;
+        /* the tokenizer stopped at a blank or comma: pull the rest */
+        for (i = 1; fio_ltok[i]; i++) if (n < (int)sizeof buf - 1) buf[n++] = fio_ltok[i];
+        while (n == 0 || buf[n - 1] != ')') {
+            int c;
+            if (fio_rpos >= fio_rlen) { fio_next_record(); continue; }
+            c = fio_rec[fio_rpos++];
+            if (n < (int)sizeof buf - 1) buf[n++] = (char)c;
+        }
+        buf[n - 1] = 0;
+        comma = strchr(buf, ',');
+        if (comma) *comma = 0;
+        strcpy(fio_ltok, buf);
+        *re = fio_list_real();
+        if (comma) { strcpy(fio_ltok, comma + 1); *im = fio_list_real(); }
+        else *im = 0.0;
+        fio_l_after = 1;
+        return;
+    }
+    *re = fio_list_real();
+    *im = 0.0;
+}
+
 void f77_rd_c(float *p) {
     if (fio_listed) {
         int t;
+        double re, im;
         if (fio_ldone) return;
         t = fio_list_tok();
         if (t == 1) { fio_ldone = 1; return; }
         if (t == 2) return;
-        if (fio_ltok[0] == '(') {
-            /* ( re , im ) with blanks anywhere inside, possibly split
-             * over records: gather the text up to the ')' and parse
-             * the two numbers out of it. */
-            char buf[sizeof fio_ltok];
-            int n = 0;
-            int i;
-            char *comma;
-            /* the tokenizer stopped at a blank or comma: pull the rest */
-            for (i = 1; fio_ltok[i]; i++) if (n < (int)sizeof buf - 1) buf[n++] = fio_ltok[i];
-            while (n == 0 || buf[n - 1] != ')') {
-                int c;
-                if (fio_rpos >= fio_rlen) { fio_next_record(); continue; }
-                c = fio_rec[fio_rpos++];
-                if (n < (int)sizeof buf - 1) buf[n++] = (char)c;
-            }
-            buf[n - 1] = 0;
-            comma = strchr(buf, ',');
-            if (comma) *comma = 0;
-            strcpy(fio_ltok, buf);
-            p[0] = (float)fio_list_real();
-            if (comma) { strcpy(fio_ltok, comma + 1); p[1] = (float)fio_list_real(); }
-            else p[1] = 0.0f;
-            fio_l_after = 1;
-            return;
-        }
-        p[0] = (float)fio_list_real();
-        p[1] = 0.0f;
+        fio_list_cplx_in(&re, &im);
+        p[0] = (float)re;
+        p[1] = (float)im;
         return;
     }
     f77_rd_r(p);
     f77_rd_r(p + 1);
 }
 
-/* DOUBLE COMPLEX input, as f77_rd_c (fort370; only NAMELIST's code 5
- * reaches it from this front end, which has no DOUBLE COMPLEX) */
+/* COMPLEX*16 input, as f77_rd_c: a READ item and NAMELIST's code 5 */
 void f77_rd_z(double *p) {
     if (fio_listed) {
         int t;
+        double re, im;
         if (fio_ldone) return;
         t = fio_list_tok();
         if (t == 1) { fio_ldone = 1; return; }
         if (t == 2) return;
-        if (fio_ltok[0] == '(') {
-            char *comma;
-            char *close;
-            close = strchr(fio_ltok, ')');
-            if (close) *close = 0;
-            comma = strchr(fio_ltok + 1, ',');
-            if (comma) *comma = 0;
-            memmove(fio_ltok, fio_ltok + 1, strlen(fio_ltok + 1) + 1);
-            p[0] = fio_list_real();
-            if (comma) { strcpy(fio_ltok, comma + 1); p[1] = fio_list_real(); }
-            else p[1] = 0.0;
-            return;
-        }
-        p[0] = fio_list_real();
-        p[1] = 0.0;
+        fio_list_cplx_in(&re, &im);
+        p[0] = re;
+        p[1] = im;
         return;
     }
     f77_rd_d(p);
