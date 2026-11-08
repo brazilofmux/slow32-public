@@ -105,6 +105,11 @@ Note which ARTIFACT carries each fix -- most are in `cc.s32x`, but the
 argv fix below lives in `libc.s32a`, so a stale `libc.s32a` keeps the
 bug even beside a fresh compiler.
 
+From 2026-11-08 the kit is built from the tree (`scripts/build-kit.sh`; see
+"Regenerating").  `mdfix.s32x` is no longer in it: its source left this tree
+for the mdtools repository (ba0f67ae), and the kit carries only what the tree
+builds.
+
 Rebuilt 2026-11-07 (tree at `a305c576`).  `cc.s32x` and the tools, `libc.s32a`,
 and the BASIC side built by them.  Three wrong-code fixes in the HIR backend, in
 `cc.s32x` and in `s32-bc`'s own copy of it:
