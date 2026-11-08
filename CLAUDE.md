@@ -463,7 +463,7 @@ cd ~/slow-32/regression && ./run-stage08-fuzz.sh            # 2,000 seeds x 2 pr
 cd ~/slow-32/regression/fuzz && ./cfuzz.py reduce SEED --profile wide   # shrink one
 
 # Its Fortran sibling: ffuzz.py generates fixed-form Fortran 77 with one answer
-# -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX and CHARACTER, EQUIVALENCE, DATA,
+# -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX, COMPLEX*16 and CHARACTER, EQUIVALENCE, DATA,
 # BLOCK DATA, SAVE, CHARACTER*(*) and adjustable-array arguments, 2-D arrays,
 # statement functions, ENTRY, alternate RETURN, computed and assigned GO TO,
 # formatted and list-directed READ from an internal file (integers kept under

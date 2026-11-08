@@ -2,8 +2,8 @@
 """ffuzz.py -- random-program differential for the two Fortran compilers.
 
 Each seed makes one deterministic fixed-form Fortran 77 program that the
-standard gives one answer -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX and
-CHARACTER, EQUIVALENCE, DATA and BLOCK DATA (the rules for each are over
+standard gives one answer -- INTEGER, REAL, DOUBLE PRECISION, COMPLEX,
+COMPLEX*16 and CHARACTER, EQUIVALENCE, DATA and BLOCK DATA (the rules for each are over
 the generator below): INTEGER values kept under 2**15 (every
 assignment reduces MOD 32749, and an expression is at most a sum of two
 products of such values, so nothing reaches 2**31 -- flang hands LLVM
@@ -46,9 +46,10 @@ LIM = 32749
 
 # ------------------------------------------------------------------ program
 # A unit: kind 'main' | 'sub' | 'fn'; params [(name, type)] with type
-# 'i' INTEGER, 'd' DOUBLE PRECISION, 'r' REAL, 'z' COMPLEX, 'c' CHARACTER*(*)
+# 'i' INTEGER, 'd' DOUBLE PRECISION, 'r' REAL, 'z' COMPLEX, 'w' COMPLEX*16,
+# 'c' CHARACTER*(*)
 # (its actual is at least 8 long) or 'a' INTEGER(10); body a list of:
-#   ('ai'|'ad'|'ar'|'az'|'as', lhs, expr)  ('do', var, lo, hi, step, body)
+#   ('ai'|'ad'|'ar'|'az'|'aw'|'as', lhs, expr)  ('do', var, lo, hi, step, body)
 #   ('if', cond, then, else)  ('lif', cond, stmt)  ('aif', expr, neg, zero, pos)
 #   ('call', name, args)  ('print',)
 # Expressions are strings: generation is where the care is.
@@ -60,6 +61,9 @@ LIM = 32749
 #     than one right answer to the last place (Smith's algorithm or not, hypot or
 #     not); complex times real is left out because whether the imaginary part
 #     goes through (a*0 + b*r) decides the sign of a zero.
+#   COMPLEX*16: the same rules as COMPLEX, by DCMPLX/DCONJG/DBLE/DIMAG, and no
+#     mixing with COMPLEX in an expression (whether the COMPLEX part is widened
+#     before or after the arithmetic is the compiler's).
 #   CHARACTER: no assignment reads the variable it sets (F77 forbids the
 #     overlap), literals without commas or apostrophes, substrings in bounds.
 #   SIGN(A,B): B is never zero.  Fortran 77 gives |A| for a B of -0.0
@@ -80,6 +84,7 @@ class Unit:
         self.dbls = [f'D{k}' for k in range(1, ND + 1)]
         self.reals = ['R1', 'R2']
         self.cplx = ['Z1', 'Z2']
+        self.wcpx = ['V1', 'V2']     # COMPLEX*16
         self.chars = [('S1', 8), ('S2', 8), ('S3', 12)]
         self.body = []
         self.data = {}      # main: name -> DATA value list (rendered)
@@ -141,6 +146,11 @@ class Gen:
             return list(u.cplx)
         return u.cplx + self.ptype(u, 'z')
 
+    def wvars(self, u, write=False):
+        if u.kind == 'fn' and write:
+            return list(u.wcpx)
+        return u.wcpx + self.ptype(u, 'w')
+
     def svars(self, u, write=False):
         """(name, length) of the character variables."""
         if u.kind == 'fn' and write:
@@ -201,7 +211,7 @@ class Gen:
         forms = [lambda: f'ABS({a()})', lambda: f'MAX({a()},{a()})', lambda: f'MIN({a()},{a()},{a()})',
                  lambda: f'MOD({a()},{c})', lambda: f'({a()}/{c})', lambda: f'ISIGN({a()},{a()})',
                  lambda: f'INT({self.datom(u, loops, 0)})', lambda: f'IDIM({a()}/2,{a()}/2)',
-                 lambda: f'NINT({self.pick(self.rvars(u))})', lambda: f'INT(REAL({self.pick(self.zvars(u))}))',
+                 lambda: f'NINT({self.pick(self.rvars(u))})', lambda: f'INT(REAL({self.pick(self.zvars(u))}))', lambda: f'INT(DBLE({self.pick(self.wvars(u))}))',
                  lambda: f'ISF({a()},{a()})']
         fns = [x for x in self.units if x.kind == 'fn']
         if fns and self.r.random() < 0.25:
@@ -297,6 +307,26 @@ class Gen:
             return f'{e}{self.pick("+-")}{self.zatom(u, loops)}'
         return e
 
+    # -- COMPLEX*16: as COMPLEX, components under about 4e4 in an atom
+    def watom(self, u, loops, depth=1):
+        r = self.r.random()
+        if depth <= 0 or r < 0.4:
+            return self.pick(self.wvars(u))
+        if r < 0.55:
+            return f'({self.r.randint(-60, 60)}.5D0,{self.r.randint(-60, 60)}.25D0)'
+        if r < 0.85:
+            return f'DCMPLX({self.datom(u, loops, 0)},{self.datom(u, loops, 1)})'
+        return f'DCONJG({self.watom(u, loops, depth - 1)})'
+
+    def wexpr(self, u, loops):
+        e = self.watom(u, loops)
+        r = self.r.random()
+        if r < 0.3:
+            return f'{e}*{self.watom(u, loops, 0)}'
+        if r < 0.7:
+            return f'{e}{self.pick("+-")}{self.watom(u, loops)}'
+        return e
+
     def cond(self, u, loops, depth=1):
         r = self.r.random()
         rel = self.pick(['.LT.', '.LE.', '.EQ.', '.NE.', '.GT.', '.GE.'])
@@ -310,8 +340,10 @@ class Gen:
             return f'{self.datom(u, loops)}{rel}{self.datom(u, loops)}'
         if r < 0.78:
             return f'{self.ratom(u, loops)}{rel}{self.ratom(u, loops)}'
-        if r < 0.85:
+        if r < 0.81:
             return f'{self.pick(self.zvars(u))}{self.pick([".EQ.", ".NE."])}{self.zatom(u, loops)}'
+        if r < 0.85:
+            return f'{self.pick(self.wvars(u))}{self.pick([".EQ.", ".NE."])}{self.watom(u, loops)}'
         if r < 0.93:
             return f'{self.pick(["LLT", "LLE", "LGT", "LGE"])}({self.spiece(u)},{self.spiece(u)})'
         return f'{self.spiece(u)}{rel}{self.spiece(u)}'
@@ -330,8 +362,10 @@ class Gen:
             return ('ad', self.pick(self.dvars(u, write=True)), self.dexpr(u, loops))
         if r < 0.70:
             return ('ar', self.pick(self.rvars(u, write=True)), self.rexpr(u, loops))
-        if r < 0.82:
+        if r < 0.79:
             return ('az', self.pick(self.zvars(u, write=True)), self.zexpr(u, loops))
+        if r < 0.86:
+            return ('aw', self.pick(self.wvars(u, write=True)), self.wexpr(u, loops))
         name, n = self.pick(self.svars(u, write=True))
         avoid = {name} | ({'SQ', 'SE'} if name in ('SQ', 'SE') else set())
         lhs = name
@@ -402,6 +436,7 @@ class Gen:
             'd': u.dbls + self.ptype(u, 'd'),
             'r': u.reals + self.ptype(u, 'r'),
             'z': u.cplx + self.ptype(u, 'z'),
+            'w': u.wcpx + self.ptype(u, 'w'),
             'c': [v for v, n in u.chars if n >= 8] + self.ptype(u, 'c'),
         }
         for xs in free.values():
@@ -432,6 +467,8 @@ class Gen:
             return f'{r.randint(-99, 99)}.{self.pick(["0", "5", "25", "75"])}'
         if t == 'z':
             return f'({r.randint(-60, 60)}.5,{r.randint(-60, 60)}.25)'
+        if t == 'w':
+            return f'({r.randint(-60, 60)}.5D0,{r.randint(-60, 60)}.25D0)'
         return self.slit(r.randint(1, 8))
 
     def make(self):
@@ -443,7 +480,7 @@ class Gen:
             self.units.append(f)
         for k in range(nsub):
             ps = [(f'M{j}', 'i') for j in range(1, self.r.randint(1, 3) + 1)]
-            for t, nm, most in (('d', 'X', 2), ('r', 'Y', 1), ('z', 'W', 1), ('c', 'SA', 1)):
+            for t, nm, most in (('d', 'X', 2), ('r', 'Y', 1), ('z', 'W', 1), ('w', 'U', 1), ('c', 'SA', 1)):
                 ps += [(f'{nm}{j}' if nm != 'SA' else f'SA{j}', t) for j in range(1, self.r.randint(0, most) + 1)]
             if self.r.random() < 0.5:
                 ps.append(('K', 'a'))
@@ -455,7 +492,7 @@ class Gen:
             s.body = self.block(s, {}, 0, 6)
             self.units.append(s)
         m = Unit('FZ', 'main', [])
-        for vs, t in ((m.ints, 'i'), (m.dbls, 'd'), (m.reals, 'r'), (m.cplx, 'z')):
+        for vs, t in ((m.ints, 'i'), (m.dbls, 'd'), (m.reals, 'r'), (m.cplx, 'z'), (m.wcpx, 'w')):
             for v in vs:
                 m.data[v] = [self.dval(t)]
         for v, n in m.chars:
@@ -536,6 +573,11 @@ class Render:
             out += card(f'{pad}TR = REAL(TZ) - AINT(REAL(TZ)/97.0)*97.0')
             out += card(f'{pad}TQ = AIMAG(TZ) - AINT(AIMAG(TZ)/97.0)*97.0')
             out += card(f'{pad}{s[1]} = CMPLX(TR,TQ)')
+        elif k == 'aw':
+            out += card(f'{pad}TW = {s[2]}')
+            out += card(f'{pad}TD = DBLE(TW) - AINT(DBLE(TW)/997.0D0)*997.0D0')
+            out += card(f'{pad}TF = DIMAG(TW) - AINT(DIMAG(TW)/997.0D0)*997.0D0')
+            out += card(f'{pad}{s[1]} = DCMPLX(TD,TF)')
         elif k == 'as':
             out += card(f'{pad}{s[1]} = {s[2]}')
         elif k == 'do':
@@ -615,6 +657,7 @@ class Render:
                                ('902', ','.join(u.dbls) + ',DE,DC1'),
                                ('903', ','.join(u.reals) + ',RD1'),
                                ('903', ','.join(u.cplx)),
+                               ('902', ','.join(u.wcpx)),
                                ('904', ','.join(v for v, _ in u.chars) + ',SQ,SE,SD,SB'),
                                ('901', 'KC1,KC2,KD1,KD2,(LA(JP),JP=1,10),(KA(JP),JP=1,10),(IQ(JP),JP=1,6)'),
                                ('901', 'MA'),
@@ -646,10 +689,11 @@ def render(units):
         if u.kind == 'sub':
             decl += ['NFLAG', 'NALT']
         out += card('INTEGER ' + ','.join(decl))
-        out += card('DOUBLE PRECISION ' + ','.join(pt('d') + u.dbls + ['TD', 'DSF', 'XX'] +
+        out += card('DOUBLE PRECISION ' + ','.join(pt('d') + u.dbls + ['TD', 'TF', 'DSF', 'XX'] +
                                                    (['DQ(3)', 'DE', 'DM(3,2)'] if u.kind == 'main' else [])))
         out += card('REAL ' + ','.join(pt('r') + u.reals + ['TR', 'TQ']))
         out += card('COMPLEX ' + ','.join(pt('z') + u.cplx + ['TZ']))
+        out += card('COMPLEX*16 ' + ','.join(pt('w') + u.wcpx + ['TW']))
         for v, n in u.chars:
             out += card(f'CHARACTER*{n} {v}')
         for p in pt('c'):
@@ -696,6 +740,8 @@ def render(units):
                 out += card(f'{v} = {(k * 31 + len(u.name)) % 97 - 48}.5')
             for k, v in enumerate(u.cplx):
                 out += card(f'{v} = ({(k * 17 + 3) % 61 - 30}.25,{(k * 29 + 7) % 61 - 30}.5)')
+            for k, v in enumerate(u.wcpx):
+                out += card(f'{v} = ({(k * 23 + 5) % 61 - 30}.5D0,{(k * 31 + 11) % 61 - 30}.25D0)')
             for k, (v, n) in enumerate(u.chars):
                 out += card(f"{v} = '{u.name[:3]}{'QRSTUVWXYZ'[k]}{k}'")
             out += card('DO 99 J1 = 1, 10')
