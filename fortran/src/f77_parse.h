@@ -3150,8 +3150,24 @@ static int f77_starts(char *kw) {
 /* The unit terminator is the statement END, exactly. A prefix match
  * swallows ENDIF/ENDFILE and was the slice2 vacuous-pass bug; the
  * inliner still had the prefix form. */
+/* END, or Fortran 90's END SUBROUTINE [name], END FUNCTION [name], END
+ * PROGRAM [name], END BLOCK DATA [name].  Not ENDDO, ENDIF or ENDFILE: the
+ * word after END must be a unit's, and only a name may follow it. */
 static int f77_is_unit_end(void) {
-    return f77_starts("END") && lx_stmt_len == 3;
+    static const char *kinds[] = { "SUBROUTINE", "FUNCTION", "PROGRAM", "BLOCKDATA", 0 };
+    int k;
+    int i;
+    if (!f77_starts("END")) return 0;
+    if (lx_stmt_len == 3) return 1;
+    for (k = 0; kinds[k]; k++) {
+        int n;
+        n = (int)strlen(kinds[k]);
+        if (strncmp(lx_stmt + 3, kinds[k], n) != 0) continue;
+        for (i = 3 + n; i < lx_stmt_len; i++)
+            if (!lx_isalpha(lx_stmt[i]) && !lx_isdigit(lx_stmt[i]) && lx_stmt[i] != '_') return 0;
+        return 1;
+    }
+    return 0;
 }
 
 /* Offset of the first `c` at paren depth zero, or -1.  Character
@@ -3642,6 +3658,129 @@ static void f77_cx_round(void) {
     }
 }
 static void f77_cpower(void);
+static int f77_cx_promote(int a, int b);
+
+/* An intrinsic in a constant expression (Fortran 90 initialization
+ * expressions: elemental intrinsics of constants, and the inquiries):
+ * HUGE TINY EPSILON, DCMPLX CMPLX, DBLE REAL INT NINT ABS, MAX MIN MOD.
+ * lx_t is the name, '(' next.  0 when the name is none of these (or is an
+ * array of the unit): the caller goes on as before. */
+static int f77_cintrinsic(void) {
+    static const char *names[] = { "HUGE", "TINY", "EPSILON", "DCMPLX", "CMPLX", "DBLE", "REAL",
+                                   "INT", "NINT", "ABS", "MAX", "MIN", "MOD", 0 };
+    char nm[F77_MAX_NAME];
+    int ty[8]; int iv[8]; double dv[8]; double d2[8];
+    int n;
+    int k;
+    int s;
+    int rty;
+    for (k = 0; names[k]; k++) if (strcmp(lex_name, names[k]) == 0) break;
+    if (!names[k]) return 0;
+    s = f77_sym_find(lex_name);
+    if (s >= 0 && (f77_srank[s] > 0 || f77_sparam[s])) return 0;
+    strcpy(nm, lex_name);
+    f77_tok();                                   /* the name */
+    f77_tok();                                   /* ( */
+    n = 0;
+    for (;;) {
+        f77_cexpr();
+        if (n < 8) {
+            ty[n] = f77_cx_ty; iv[n] = f77_cx_i; dv[n] = f77_cx_d;
+            d2[n] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
+            if (ty[n] == TY_INT) dv[n] = (double)iv[n];
+        }
+        n = n + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after an intrinsic's arguments"); return 1; }
+    f77_tok();
+    if (n > 8) { f77_error("too many arguments to an intrinsic in a constant expression"); return 1; }
+    f77_cx_d2 = 0.0;
+    if (strcmp(nm, "HUGE") == 0 || strcmp(nm, "TINY") == 0 || strcmp(nm, "EPSILON") == 0) {
+        /* by the argument's type, its value unused */
+        int big;
+        big = nm[0] == 'H';
+        f77_cx_ty = ty[0];
+        if (ty[0] == TY_INT && big) { f77_cx_i = 2147483647; f77_cx_d = 2147483647.0; return 1; }
+        if (ty[0] == TY_FLOAT) f77_cx_d = big ? 3.4028234663852886e38 : nm[0] == 'T' ? 1.1754943508222875e-38 : 1.1920928955078125e-07;
+        else if (ty[0] == TY_DOUBLE) f77_cx_d = big ? 1.7976931348623157e308 : nm[0] == 'T' ? 2.2250738585072014e-308 : 2.220446049250313e-16;
+        else { f77_error("HUGE, TINY and EPSILON need a REAL or DOUBLE PRECISION argument (HUGE an INTEGER too)"); return 1; }
+        f77_cx_i = 0;
+        return 1;
+    }
+    if (strcmp(nm, "DCMPLX") == 0 || strcmp(nm, "CMPLX") == 0) {
+        f77_cx_ty = nm[0] == 'D' ? TY_DCPLX : TY_CPLX;
+        f77_cx_d = dv[0];
+        f77_cx_d2 = n > 1 ? dv[1] : d2[0];
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
+        return 1;
+    }
+    if (strcmp(nm, "DBLE") == 0 || strcmp(nm, "REAL") == 0 || strcmp(nm, "INT") == 0 || strcmp(nm, "NINT") == 0) {
+        /* of a COMPLEX the real part; REAL of a COMPLEX*16 is DOUBLE
+         * PRECISION, as gfortran has it */
+        rty = nm[0] == 'D' ? TY_DOUBLE : nm[0] == 'R' ? (ty[0] == TY_DCPLX ? TY_DOUBLE : TY_FLOAT) : TY_INT;
+        f77_cx_ty = rty;
+        if (rty == TY_INT) {
+            double t;
+            t = dv[0];
+            if (nm[0] == 'N') t = t < 0 ? t - 0.5 : t + 0.5;
+            f77_cx_i = (int)t;
+            f77_cx_d = (double)f77_cx_i;
+            return 1;
+        }
+        f77_cx_d = dv[0];
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
+        return 1;
+    }
+    if (strcmp(nm, "ABS") == 0) {
+        f77_cx_ty = ty[0];
+        if (f77_iscx(ty[0])) {
+            /* f77 is built without libm, and |z| needs a rounded sqrt */
+            f77_error("ABS of a COMPLEX in a constant expression is not supported");
+            return 1;
+        } else {
+            f77_cx_d = dv[0] < 0 ? -dv[0] : dv[0];
+            f77_cx_i = iv[0] < 0 ? -iv[0] : iv[0];
+            if (ty[0] == TY_INT) return 1;
+        }
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
+        return 1;
+    }
+    /* MAX MIN MOD: one type for all the arguments */
+    rty = ty[0];
+    for (k = 1; k < n; k++) rty = f77_cx_promote(rty, ty[k]);
+    if (f77_iscx(rty)) { f77_error("MAX, MIN and MOD do not take COMPLEX"); return 1; }
+    f77_cx_ty = rty;
+    if (strcmp(nm, "MOD") == 0) {
+        if (n != 2) { f77_error("MOD takes two arguments"); return 1; }
+        if (rty == TY_INT) {
+            if (iv[1] == 0) { f77_error("MOD by zero in a constant expression"); return 1; }
+            f77_cx_i = iv[0] % iv[1];
+            f77_cx_d = (double)f77_cx_i;
+            return 1;
+        }
+        /* an exact real remainder needs fmod, and f77 is built without libm */
+        f77_error("MOD of a REAL in a constant expression is not supported");
+        return 1;
+    } else {
+        double r;
+        int ri;
+        r = dv[0]; ri = iv[0];
+        for (k = 1; k < n; k++) {
+            if (nm[1] == 'A' ? dv[k] > r : dv[k] < r) { r = dv[k]; ri = iv[k]; }
+        }
+        if (rty == TY_INT) { f77_cx_i = ri; f77_cx_d = (double)ri; return 1; }
+        f77_cx_d = r;
+    }
+    f77_cx_round();
+    f77_cx_i = (int)f77_cx_d;
+    return 1;
+}
+
 static void f77_cprimary(void) {
     if (lx_t == T_SCON) {
         f77_cx_ty = TY_CHAR; f77_cx_sidx = lex_sidx; f77_cx_i = lex_slen; f77_cx_d = 0.0;
@@ -3685,6 +3824,7 @@ static void f77_cprimary(void) {
         return;
     }
     if (lx_t == T_PLUS) { f77_tok(); f77_cpower(); return; }
+    if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '(' && f77_cintrinsic()) return;
     if (lx_t == T_NAME) {
         int s;
         int b;
@@ -8563,6 +8703,7 @@ static void f77_statement(void) {
         /* Names of external procedures.  Recorded so that passing one
          * as an actual argument is refused instead of passing the
          * address of a variable of that name. */
+        if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;    /* Fortran 90 */
         f77_scan_from(n);
         while (lx_t == T_NAME) {
             f77_sexternal[f77_sym(lex_name)] = 1;
@@ -8573,6 +8714,7 @@ static void f77_statement(void) {
         goto done;
     }
     if ((n = f77_starts("INTRINSIC")) != 0) {
+        if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;    /* Fortran 90 */
         f77_scan_from(n);
         while (lx_t == T_NAME) {
             f77_sintrinsic[f77_sym(lex_name)] = 1;
@@ -8649,7 +8791,11 @@ static void f77_statement(void) {
     if (f77_starts("DIMENSION")) { f77_stmt_decl(-1, 9); goto done; }
     if (f77_starts("REAL"))     { f77_stmt_decl(TY_FLOAT, 4); goto done; }
     if ((n = f77_starts("COMMON")) != 0) { f77_stmt_common(n); goto done; }
-    if ((n = f77_starts("SAVE")) != 0)   { f77_stmt_save(n);   goto done; }
+    if ((n = f77_starts("SAVE")) != 0)   {
+        if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;    /* Fortran 90 */
+        f77_stmt_save(n);
+        goto done;
+    }
     if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
