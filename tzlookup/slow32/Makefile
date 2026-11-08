@@ -4,7 +4,7 @@
 # the 101 KB of tables are never duplicated. Only the lookup logic and CLI are
 # ported to plain C (see tzlookup.c / tz_cli.c).
 
-SLOW32  ?= $(HOME)/slow-32
+SLOW32  ?= $(abspath ../..)
 LLVM    ?= $(HOME)/llvm-project/build/bin
 CLANG    = $(LLVM)/clang
 LLC      = $(LLVM)/llc
@@ -29,8 +29,7 @@ all: tz.s32x tz_test.s32x
 
 %.s32o: %.c
 	$(CLANG) $(CFLAGS) $< -o $*.ll
-	$(LLC) $(LLCFLAGS) $*.ll -o $*.s.raw
-	python3 chunk_long_strings.py $*.s.raw $*.s
+	$(LLC) $(LLCFLAGS) $*.ll -o $*.s
 	$(AS) $*.s $@
 
 tz.s32x: tz_cli.s32o tzlookup.s32o
@@ -50,4 +49,4 @@ dist: tz.s32x
 	@echo "copied tz.s32x -> $(S32X)/tz.s32x"
 
 clean:
-	rm -f *.ll *.s *.s.raw *.s32o *.s32x
+	rm -f *.ll *.s *.s32o *.s32x
