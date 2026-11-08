@@ -1,0 +1,31 @@
+#!/bin/bash
+# s32fc for fortran/'s f77: what LAPACK's Makefiles call FC when
+# flang/tests/lapack/run.py builds the tree with --f77.  -c: Fortran to a
+# .s32o under the name asked for (a module's NAME.mod lands in the
+# current directory, the Makefile's).  Otherwise a link: objects and
+# archives to a .s32x.  f77 has no optimization levels; -O and the like
+# are taken and ignored.
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"; FL="$(dirname "$(dirname "$HERE")")"; ROOT="$(dirname "$FL")"
+compile=0; out=; src=; objs=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -c) compile=1 ;;
+        -o) out="$2"; shift ;;
+        -O*|-frecursive|-fno-*|-g|-I*) ;;
+        *.f|*.F|*.f90|*.F90) src="$1" ;;
+        *) objs+=("$1") ;;
+    esac
+    shift
+done
+if [ "$compile" = 1 ]; then
+    [ -n "$out" ] || { b="$(basename "$src")"; out="${b%.*}.o"; }
+    t="$out.$$"
+    "$FL/out/f77" "$src" "$t.s" || exit 1
+    "$ROOT/tools/assembler/slow32asm" "$t.s" "$out" > /dev/null; rc=$?
+    rm -f "$t.s"
+    exit $rc
+fi
+exec "$ROOT/tools/linker/s32-ld" -o "$out" --mmio 64K --heap-size 64M --stack-size 256M \
+    "$ROOT/runtime/crt0.s32o" "${objs[@]}" "$FL/runtime/libf77.s32o" \
+    "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a"

@@ -5736,8 +5736,41 @@ static int f77_cblk_find(char *nm) {
     if (f77_ncblk >= F77_MAX_CBLK) { f77_error("too many COMMON blocks"); return 0; }
     strcpy(f77_cblk_name[f77_ncblk], mangled);
     f77_cblk_gidx[f77_ncblk] = f77_g_add(f77_cblk_name[f77_ncblk], 0);
+    ps_glocal[f77_cblk_gidx[f77_ncblk]] = 0;    /* one block for every file naming it */
     f77_ncblk = f77_ncblk + 1;
     return f77_ncblk - 1;
+}
+
+/* A COMMON block is one object for the whole program, whatever files
+ * name it.  A block DATA initializes (BLOCK DATA, or DATA in a unit) is
+ * defined here, global; any other is a common symbol (.comm), which the
+ * linker makes one block of, the largest size, a definition elsewhere
+ * winning -- emitted by f77_cblk_comm after the backend's data, the
+ * backend told it is extern.  Each block was a local label: two files
+ * naming /INFOC/ had two blocks, and LAPACK's testing XERBLA read the
+ * INFOT and SRNAMT its callers had never set. */
+static void cg_s(char *s);
+static void cg_n(int v);
+static void f77_cblk_finish(void) {
+    int i;
+    for (i = 0; i < f77_ncblk; i++) {
+        int g;
+        g = f77_cblk_gidx[i];
+        if (ps_ginit_start[g] < 0) ps_gextern[g] = 1;
+    }
+}
+static void f77_cblk_comm(void) {
+    int i;
+    for (i = 0; i < f77_ncblk; i++) {
+        int g;
+        g = f77_cblk_gidx[i];
+        if (!ps_gextern[g]) continue;
+        cg_s(".comm ");
+        cg_s(ps_gname[g]);
+        cg_s(", ");
+        cg_n(ps_gsize[g] > 0 ? ps_gsize[g] : 4);
+        cg_s(", 8\n");
+    }
 }
 
 /* COMMON [/name/] a, b /name2/ c ...  -- also blank COMMON via // or a
@@ -8296,6 +8329,19 @@ static void f77_stmt_call1(int skip) {
          * of the file or EXTERNAL makes it the program's: LEN bits of M
          * from bit I into N from bit J.  The items are taken as
          * fullword INTEGERs. */
+        /* Fortran 95's CPU_TIME(T): processor seconds, REAL or DOUBLE
+         * PRECISION, unless the program has its own */
+        if (strcmp(nm, "CPU_TIME") == 0 && fptr < 0 && nalt == 0 && f77_find_unit(nm) < 0 &&
+            !(ds >= 0 && (f77_sexternal[ds] || f77_slink[ds]))) {
+            int args[1];
+            if (nargs != 1 || (tys[0] != TY_FLOAT && tys[0] != TY_DOUBLE)) {
+                f77_error("CPU_TIME needs one REAL or DOUBLE PRECISION argument");
+                return;
+            }
+            args[0] = addrs[0];
+            f77_call_i(tys[0] == TY_FLOAT ? "f77_cpu_time_r" : "f77_cpu_time_d", 1, args);
+            return;
+        }
         if (strcmp(nm, "MVBITS") == 0 && fptr < 0 && nalt == 0 && f77_find_unit(nm) < 0 &&
             !(ds >= 0 && f77_sexternal[ds])) {
             int v[5];

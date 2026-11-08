@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 #include <ctype.h>
 
 #define FIO_MAXFMT   1024
@@ -1555,6 +1556,10 @@ void *f77_deallocate(void *cur, int *stat) {
 /* A subprogram's allocated, unSAVEd ALLOCATABLE arrays at its RETURN
  * (Fortran 95's rule; F90 left them undefined). */
 void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
+
+/* CPU_TIME (Fortran 95): the processor time used, in seconds. */
+void f77_cpu_time_r(float *t) { *t = (float)((double)clock() / CLOCKS_PER_SEC); }
+void f77_cpu_time_d(double *t) { *t = (double)clock() / CLOCKS_PER_SEC; }
 
 /* LEN_TRIM (Fortran 90), and with it TRIM: the length less trailing
  * blanks. */

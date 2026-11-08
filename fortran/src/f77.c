@@ -686,6 +686,7 @@ static void hl_func(Node *fn) {
     memcpy(f77_uimp_log[u], f77_imp_log, sizeof(f77_imp_log));
     memcpy(f77_uimp_nar[u], f77_imp_nar, sizeof(f77_imp_nar));
     f77_uimp_none[u] = f77_imp_none;
+    if (u == f77_nunit - 1) f77_cblk_finish();     /* the last unit: the blocks are complete */
     if (f77_ukind[u] == F77_UNIT_MODULE) f77_mod_snapshot(u);
     else {
         int v;
@@ -780,6 +781,7 @@ int main(int argc, char **argv) {
     cg_fd = fd;
     cg_outpath = argv[2];
     gen_program(&f77_program);
+    f77_cblk_comm();
     cg_flush();
     close(fd);
     if (f77_nerr == 0) f77_mod_write();

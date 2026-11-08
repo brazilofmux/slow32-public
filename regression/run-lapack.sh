@@ -5,6 +5,9 @@
 # threshold than the host.  The corpus asks whether a program passes; this looks at
 # numbers: x**n by pow, a last place off, held the corpus steady and failed csep here.
 # After a change to flang, flang-rt, the SLOW-32 backend or the C library.
+# --f77: SLOW-32's side built by fortran/'s f77 instead (fortran/tests/lapack/s32fc),
+# the DMD routines and their four suites left out (USE ISO_FORTRAN_ENV, F2003);
+# after a change to fortran/.
 #
 # Needs flang/build.sh run since flang was built, and LAPACK, not in git, at the commit
 # run.py pins:
@@ -20,11 +23,17 @@ L="${LLVM_PROJECT:-$HOME/llvm-project}"; LAPACK="${LAPACK:-$HOME/refs/lapack}"
 FLANG="$L/build-flang/bin/flang"; RTLIB="$ROOT/flang/out/libflangrt.s32a"
 die() { echo "run-lapack: $1" >&2; exit 2; }
 
+F77=0
+for a in "$@"; do [ "$a" = --f77 ] && F77=1; done
 [ -d "$LAPACK" ] || die "no LAPACK at $LAPACK"
 command -v gfortran > /dev/null || die "no gfortran"
-[ -x "$FLANG" ] || die "no flang at $FLANG"
-[ -f "$RTLIB" ] || die "no $RTLIB: run flang/build.sh"
-[ "$RTLIB" -nt "$FLANG" ] || die "flang is newer than its runtime and modules: run flang/build.sh"
+if [ "$F77" = 1 ]; then
+    [ -x "$ROOT/fortran/out/f77" ] && [ -f "$ROOT/fortran/runtime/libf77.s32o" ] || die "no f77: run fortran/build.sh"
+else
+    [ -x "$FLANG" ] || die "no flang at $FLANG"
+    [ -f "$RTLIB" ] || die "no $RTLIB: run flang/build.sh"
+    [ "$RTLIB" -nt "$FLANG" ] || die "flang is newer than its runtime and modules: run flang/build.sh"
+fi
 
 TOP="${TMPDIR:-/tmp}"; TOP="${TOP%/}"
 WORK="$(mktemp -d "$TOP/lapack.XXXXXX")" || exit 2

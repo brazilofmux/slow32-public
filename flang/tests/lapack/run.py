@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""run.py OUT [-j N] [--match RE] [--engine PATH] [--build-only]: reference LAPACK on
-SLOW-32, its own test suite, with the same built by gfortran on the host beside it.
+"""run.py OUT [-j N] [--match RE] [--engine PATH] [--build-only] [--f77]: reference LAPACK
+on SLOW-32, its own test suite, with the same built by gfortran on the host beside it.
+SLOW-32's side is built by flang, or with --f77 by fortran/'s f77 (fortran/tests/lapack/s32fc).
+f77 has no USE ISO_FORTRAN_ENV, Fortran 2003, so its tree goes without the DMD routines
+and their four suites (drop_dmd) until a ruling says otherwise.
 
 LAPACK is BSD but stays in ~/refs (LAPACK= says where).  Copies go in OUT, each built
 by LAPACK's own Makefiles: OUT/s32 through s32fc, OUT/host by gfortran.  A side is built once:
@@ -94,7 +97,25 @@ def fix_upstream(tree):
             f.write(s.replace(a, a + '      MAXC2NRM = RWORK( KP1 )\n'))
 
 
-def build(out, side):
+def drop_dmd(tree):
+    """The DMD routines (xGEDMD, xGEDMDQ) and the programs that test them, out of the
+    Makefiles of a tree f77 builds: they USE ISO_FORTRAN_ENV."""
+    edits = [('SRC/Makefile', [(f' {c}gedmd.o {c}gedmdq.o', '') for c in 'scdz']),
+             ('TESTING/EIG/Makefile', [(f'{t}: xeigtst{c} xdmdeigtst{c}', f'{t}: xeigtst{c}')
+                                       for t, c in (('single', 's'), ('complex', 'c'), ('double', 'd'), ('complex16', 'z'))])]
+    for name, pairs in edits:
+        p = os.path.join(tree, name)
+        with open(p, newline='') as f:
+            s = f.read()
+        for a, b in pairs:
+            if s.count(a) != 1:
+                sys.exit(f'{p}: not the Makefile drop_dmd expects ({a!r})')
+            s = s.replace(a, b)
+        with open(p, 'w', newline='') as f:
+            f.write(s)
+
+
+def build(out, side, f77=False):
     tree = os.path.join(out, side)
     stamp = os.path.join(tree, '.built')
     if os.path.exists(stamp):
@@ -102,10 +123,12 @@ def build(out, side):
     if not os.path.isdir(tree):
         shutil.copytree(LAPACK, tree, ignore=shutil.ignore_patterns('.git'))
         fix_upstream(tree)
+        if f77 and side == 's32':
+            drop_dmd(tree)
     shutil.copy(os.path.join(HERE, 'make.inc.' + ('s32' if side == 's32' else 'host')),
                 os.path.join(tree, 'make.inc'))
-    env = dict(os.environ, S32FC=os.path.join(HERE, 's32fc'),
-               S32AR=os.path.join(ROOT, 'tools/utilities/s32-ar'))
+    fc = os.path.join(ROOT, 'fortran/tests/lapack/s32fc') if f77 else os.path.join(HERE, 's32fc')
+    env = dict(os.environ, S32FC=fc, S32AR=os.path.join(ROOT, 'tools/utilities/s32-ar'))
     # One at a time, since lapacklib and tmglib both make in SRC.
     for where, target in (('.', 'blaslib'), ('.', 'lapacklib'), ('.', 'tmglib'),
                           ('TESTING/LIN', 'all'), ('TESTING/EIG', 'all')):
@@ -143,6 +166,7 @@ def main():
     ap.add_argument('--match')
     ap.add_argument('--engine', default=DBT)
     ap.add_argument('--build-only', action='store_true')
+    ap.add_argument('--f77', action='store_true', help="SLOW-32's side built by fortran/'s f77")
     a = ap.parse_args()
     out = os.path.abspath(a.out)
     have = subprocess.run(['git', '-C', LAPACK, 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
@@ -150,11 +174,12 @@ def main():
         print(f'run.py: LAPACK at {LAPACK} is at {have or "nothing"}, not {PINNED}', file=sys.stderr)
         return 2
     os.makedirs(out, exist_ok=True)
-    build(out, 's32')
+    build(out, 's32', a.f77)
     build(out, 'host')
     if a.build_only:
         return 0
-    list_ = [s for s in suites() if not a.match or re.search(a.match, s[0])]
+    list_ = [s for s in suites() if (not a.match or re.search(a.match, s[0]))
+             and not (a.f77 and s[0].endswith('dmd'))]
     with ThreadPoolExecutor(a.j) as pool:
         s32 = list(pool.map(lambda s: one(os.path.join(out, 's32'), s, a.engine), list_))
         host = list(pool.map(lambda s: one(os.path.join(out, 'host'), s, None), list_))

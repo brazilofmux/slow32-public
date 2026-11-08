@@ -169,6 +169,40 @@ else
     done
 fi
 
+# --- Gate: programs of several files ------------------------------------
+# tests/multi/<name>/ holds the files of one program, compiled one at a
+# time and linked, and <name>/expected what gfortran prints for them
+# (recorded with gfortran on all the files at once).  The differential
+# gate above builds every program from one file, so it never saw what
+# only crosses files: COMMON blocks were a local label per file, two
+# files naming /INFOC/ had two blocks (found by LAPACK's testing XERBLA),
+# and a module reaches another file only through its .mod.
+if [ -x "$F77" ]; then
+    for d in "$HERE"/multi/*/; do
+        [ -d "$d" ] || continue
+        b="$(basename "$d")"
+        mw="$W/multi-$b"
+        mkdir -p "$mw"
+        objs=()
+        fail=""
+        for f in "$d"*.f "$d"*.f90; do
+            [ -e "$f" ] || continue
+            o="$mw/$(basename "$f").s32o"
+            if ! (cd "$mw" && "$F77" "$f" "$o.s") > "$mw/cc.log" 2>&1; then fail="f77 compile $(basename "$f")"; break; fi
+            "$AS" "$o.s" "$o" > /dev/null 2>&1 || { fail="assemble"; break; }
+            objs+=("$o")
+        done
+        if [ -z "$fail" ] && ! "$LD" -o "$mw/p.s32x" --mmio 64K "$RT/crt0.s32o" "${objs[@]}" "$LIBF77" \
+                  "$RT/libc_mmio.s32a" "$RT/libs32.s32a" > "$mw/ld.log" 2>&1; then fail="link"; fi
+        if [ -n "$fail" ]; then report "multi:$b" 1 "$fail"; continue; fi
+        (cd "$mw" && "$EMU" "$mw/p.s32x" < /dev/null 2>/dev/null) \
+            | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
+            > "$mw/got"
+        if diff -q "$d/expected" "$mw/got" > /dev/null 2>&1; then report "multi:$b" 0
+        else report "multi:$b" 1 "output differs from expected"; diff "$d/expected" "$mw/got" | head -6; fi
+    done
+fi
+
 # --- Gate: program units the compiler must refuse ----------------------
 # How the compiler divides a source into units is where a mistake loses
 # a unit without a word.  A PROGRAM statement inside a subprogram (its
