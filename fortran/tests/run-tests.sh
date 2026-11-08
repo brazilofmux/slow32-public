@@ -207,6 +207,7 @@ if [ -x "$F77" ]; then
     printf '      X = 1.0\n      CALL FOO(X) Z\n      END\n      SUBROUTINE FOO(Y)\n      Y = 2.0\n      END\n' > "$W/callline.f"
     printf '      X = G(1.0)\n      END\n      COMPLEX*16 FUNCTION G(Y)\n      G = Y\n      END\n' > "$W/lenfn.f"
     printf '      K = KF(3)\n      END\n      INTEGER FUNCTION KF(N)\n      KF = N * KF(N - 1)\n      END\n' > "$W/recfn.f"
+    printf '      INTEGER L(4), X\n      X = L\n      END\n' > "$W/wholearr.f"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -251,6 +252,7 @@ if [ -x "$F77" ]; then
              "callline:line 2: unexpected text after the statement" \
              "lenfn:line 1: G is REAL here but COMPLEX*16 where it is defined (line 3)" \
              "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT, which is not supported yet" \
+             "wholearr:line 2: a whole array in an expression is not supported yet" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

@@ -198,6 +198,7 @@ static int f77_ci_n;
 static int f77_unit_nparams;
 static int f77_rd_len;
 static int f77_inline_depth;
+static int f77_reduce(int in);
 static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
 static void f77_assign_params(int n);
 
@@ -1320,7 +1321,11 @@ static int f77_elem_bytes(int s, int off) {
     return hi_emit(HI_MUL, TY_INT, off, f77_iconst(t), 0, NULL);
 }
 
-static int f77_subscript_addr(int s) {
+/* The address of A(idx[0], ..., idx[n-1]), the subscripts INTEGER values
+ * already computed: the address arithmetic of f77_subscript_addr, which
+ * parses the subscripts and comes here, and of array sections, whose
+ * subscripts are the indices of loops the front end generates. */
+static int f77_elem_addr(int s, int *idxs, int n) {
     int off;
     int cstride;      /* constant part of the running stride */
     int vstride;      /* runtime stride value, or -1 while still constant */
@@ -1343,10 +1348,8 @@ static int f77_subscript_addr(int s) {
     coff = 0;
     cstride = 1;
     vstride = -1;
-    k = 0;
-    for (;;) {
-        idx = f77_expr();
-        idx = f77_cvt(idx, &ex_hi, ex_ty, TY_INT);
+    for (k = 0; k < n; k++) {
+        idx = idxs[k];
         if (k < f77_srank[s]) {
             if (f77_slov[s][k] >= 0)
                 idx = hi_emit(HI_SUB, TY_INT, idx, f77_slov[s][k], 0, NULL);
@@ -1382,13 +1385,8 @@ static int f77_subscript_addr(int s) {
                 cstride = cstride * f77_sext[s][k];
             }
         }
-        k = k + 1;
-        if (lx_t != T_COMMA) break;
-        f77_tok();
     }
-    if (lx_t != T_RP) { f77_error("expected ) after subscripts"); }
-    else f77_tok();
-    if (k != f77_srank[s]) f77_error("wrong number of subscripts");
+    if (n != f77_srank[s]) f77_error("wrong number of subscripts");
 
     if (off < 0) off = f77_iconst(0);
     byte = f77_elem_bytes(s, off);
@@ -1406,6 +1404,25 @@ static int f77_subscript_addr(int s) {
             addr = hi_emit(HI_ADD, HL_ADDR_TY, addr, f77_iconst(cb), 0, NULL);
     }
     return addr;
+}
+
+static int f77_subscript_addr(int s) {
+    int idxs[F77_MAX_RANK + 1];
+    int n;
+    int idx;
+    n = 0;
+    for (;;) {
+        idx = f77_expr();
+        idx = f77_cvt(idx, &ex_hi, ex_ty, TY_INT);
+        if (n <= F77_MAX_RANK) idxs[n] = idx;
+        n = n + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after subscripts"); }
+    else f77_tok();
+    if (n > F77_MAX_RANK) { f77_error("wrong number of subscripts"); n = F77_MAX_RANK; }
+    return f77_elem_addr(s, idxs, n);
 }
 
 /* A static local's loads may hoist only if nothing but this unit's own
@@ -1609,6 +1626,10 @@ static int f77_select(int cond, int a, int b) {
 #define IN_CEILING 55  /* Fortran 90: CEILING, FLOOR, EXPONENT */
 #define IN_FLOOR   56
 #define IN_EXPONENT 57
+#define IN_MAXLOC  58  /* Fortran 90 reductions of a rank-1 array */
+#define IN_MINLOC  59
+#define IN_MAXVAL  60
+#define IN_MINVAL  61
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1765,6 +1786,10 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "CEILING") == 0) return IN_CEILING;
     if (strcmp(nm, "FLOOR") == 0) return IN_FLOOR;
     if (strcmp(nm, "EXPONENT") == 0) return IN_EXPONENT;
+    if (strcmp(nm, "MAXLOC") == 0) return IN_MAXLOC;
+    if (strcmp(nm, "MINLOC") == 0) return IN_MINLOC;
+    if (strcmp(nm, "MAXVAL") == 0) return IN_MAXVAL;
+    if (strcmp(nm, "MINVAL") == 0) return IN_MINVAL;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
@@ -2189,6 +2214,7 @@ static int f77_primary(void) {
             f77_tok();
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
+            if (in >= IN_MAXLOC && in <= IN_MINVAL) return f77_reduce(in);
             a = f77_expr(); aty = ex_ty; ahi = ex_hi;
 
             if (in >= IN_IAND && in <= IN_IBCLR) {
@@ -2792,6 +2818,15 @@ static int f77_primary(void) {
             else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
             return r;
         }
+        if (f77_srank[s] > 0) {
+            /* A whole array as an operand: F77 has none, and F90's array
+             * expressions are milestone 3.  It had compiled, X = L giving
+             * X a word of L's storage.  (An actual argument, an I/O list
+             * item and a DATA name reach their own code, not this.) */
+            f77_error("a whole array in an expression is not supported yet");
+            ex_ty = f77_sty[s]; ex_hi = -1;
+            return f77_iconst(0);
+        }
         return f77_load_sym(s);
     }
     f77_error("bad expression");
@@ -3344,6 +3379,374 @@ static void f77_goto_blk(int b) {
     f77_cur_blk_live = 0;
 }
 
+/* --- array sections (Fortran 90) ------------------------------------
+ *
+ * A section's subscripts: per dimension a scalar or a triplet
+ * [lo]:[hi][:stride], the bounds defaulting to the declared ones.  Its
+ * elements are reached by loops the front end generates, one per triplet,
+ * through f77_elem_addr -- no new HIR.  Milestone 1 has the section as the
+ * target of a scalar and as the argument of a rank-1 reduction (MAXLOC,
+ * MINLOC, MAXVAL, MINVAL); array expressions are milestone 3's. */
+
+/* A frame INTEGER temporary (a loop's index or trip count: promoted). */
+static int f77_int_temp(void) {
+    int t;
+    f77_frame = f77_frame + 4;
+    t = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - f77_frame, NULL);
+    f77_alloca_add(t, 0 - f77_frame);
+    return t;
+}
+
+/* A counted loop: idx from lo by st, MAX((hi-lo+st)/st, 0) times, as a
+ * DO loop.  f77_loop_begin leaves the body's block current; the body
+ * reads the index with hi_emit(HI_LOAD, TY_INT, l->idx, ...). */
+typedef struct { int idx; int trip; int st; int body; int exit; } F77Loop;
+
+static void f77_loop_begin(F77Loop *l, int lo, int hi, int st) {
+    int t;
+    int c;
+    l->idx = f77_int_temp();
+    l->trip = f77_int_temp();
+    l->st = st;
+    l->body = hir_new_block();
+    l->exit = hir_new_block();
+    hi_emit(HI_STORE, TY_INT, l->idx, lo, 0, NULL);
+    t = hi_emit(HI_SUB, TY_INT, hi, lo, 0, NULL);
+    t = hi_emit(HI_ADD, TY_INT, t, st, 0, NULL);
+    t = hi_emit(HI_DIV, TY_INT, t, st, 0, NULL);
+    hi_emit(HI_STORE, TY_INT, l->trip, t, 0, NULL);
+    c = hi_emit(HI_SGT, TY_INT, t, f77_iconst(0), 0, NULL);
+    hi_emit(HI_BRC, TY_VOID, c, l->body, l->exit, NULL);
+    f77_cur_blk_live = 0;
+    f77_begin_blk(l->body);
+}
+
+static void f77_loop_end(F77Loop *l) {
+    int v;
+    int c;
+    if (f77_cur_blk_live) {
+        v = hi_emit(HI_LOAD, TY_INT, l->idx, -1, 0, NULL);
+        v = hi_emit(HI_ADD, TY_INT, v, l->st, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, l->idx, v, 0, NULL);
+        v = hi_emit(HI_LOAD, TY_INT, l->trip, -1, 0, NULL);
+        v = hi_emit(HI_ADDI, TY_INT, v, -1, -1, NULL);
+        hi_emit(HI_STORE, TY_INT, l->trip, v, 0, NULL);
+        c = hi_emit(HI_SGT, TY_INT, v, f77_iconst(0), 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, c, l->body, l->exit, NULL);
+    }
+    f77_cur_blk_live = 0;
+    f77_begin_blk(l->exit);
+}
+
+/* A dimension's declared lower and upper bounds as INTEGER values; -1 for
+ * the upper of an assumed-size (*) dimension. */
+static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
+    int ext;
+    *lo = f77_slov[s][k] >= 0 ? f77_slov[s][k] : f77_iconst(f77_slo[s][k]);
+    if (k == f77_srank[s] - 1 && f77_sassz[s]) { *hi = -1; return; }
+    ext = f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]);
+    *hi = hi_emit(HI_ADD, TY_INT, *lo, ext, 0, NULL);
+    *hi = hi_emit(HI_ADDI, TY_INT, *hi, -1, -1, NULL);
+}
+
+/* The subscripts of a section, lx_t just past its '(' and the ')' eaten:
+ * per dimension a scalar (trip[k] 0, idx[k] its value) or a triplet
+ * (trip[k] 1, lo/hi/st[k]).  Returns the number of triplets, -1 on error. */
+static int f77_section_subs(int s, int *idx, int *trip, int *lo, int *hi, int *st) {
+    int k;
+    int nt;
+    nt = 0;
+    for (k = 0; ; k++) {
+        if (k >= f77_srank[s]) { f77_error("wrong number of subscripts"); return -1; }
+        trip[k] = 0;
+        idx[k] = -1;
+        if (lx_t != T_COLON) {
+            idx[k] = f77_expr();
+            idx[k] = f77_cvt(idx[k], &ex_hi, ex_ty, TY_INT);
+        }
+        if (lx_t == T_COLON) {
+            int dlo;
+            int dhi;
+            trip[k] = 1;
+            nt = nt + 1;
+            f77_dim_bounds(s, k, &dlo, &dhi);
+            lo[k] = idx[k] >= 0 ? idx[k] : dlo;   /* [lo]: */
+            f77_tok();                          /* : */
+            if (lx_t != T_COLON && lx_t != T_COMMA && lx_t != T_RP) {
+                hi[k] = f77_expr();
+                hi[k] = f77_cvt(hi[k], &ex_hi, ex_ty, TY_INT);
+            } else {
+                if (dhi < 0) { f77_error("the last dimension of an assumed-size array needs an upper bound in a section"); return -1; }
+                hi[k] = dhi;
+            }
+            st[k] = f77_iconst(1);
+            if (lx_t == T_COLON) {
+                f77_tok();
+                st[k] = f77_expr();
+                st[k] = f77_cvt(st[k], &ex_hi, ex_ty, TY_INT);
+            }
+        }
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after section subscripts"); return -1; }
+    f77_tok();
+    if (k + 1 != f77_srank[s]) { f77_error("wrong number of subscripts"); return -1; }
+    return nt;
+}
+
+/* Does the statement text from `from` name a whole array (an array name
+ * without subscripts) or a section (a non-CHARACTER array subscripted
+ * with a ':') -- an array expression, milestone 3's?  A substring such as
+ * ICHAR(S(1:1)) is no section.  Text-level, as the classifier is. */
+static int f77_text_has_array_expr(int from) {
+    int i;
+    i = from;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '\'') {
+            i = i + 1;
+            while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1;
+            i = i + 1;
+            continue;
+        }
+        if (lx_isalpha(lx_stmt[i]) && (i == from || !(lx_isalpha(lx_stmt[i - 1]) || lx_isdigit(lx_stmt[i - 1]) ||
+                                                      lx_stmt[i - 1] == '_' || lx_stmt[i - 1] == '.'))) {
+            char nm[F77_MAX_NAME];
+            int n;
+            int sy;
+            n = 0;
+            while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+                if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
+                i = i + 1;
+            }
+            nm[n] = 0;
+            if (i < lx_stmt_len && lx_stmt[i] == '.') continue;     /* .EQ. and kin */
+            sy = f77_sym_find(nm);
+            if (sy < 0 || f77_srank[sy] == 0 || f77_sparam[sy]) continue;
+            if (i >= lx_stmt_len || lx_stmt[i] != '(') return 1;   /* a whole array */
+            if (f77_sty[sy] != TY_CHAR) {
+                int d;
+                int j;
+                d = 0;
+                for (j = i; j < lx_stmt_len; j++) {
+                    if (lx_stmt[j] == '\'') { j = j + 1; while (j < lx_stmt_len && lx_stmt[j] != '\'') j = j + 1; continue; }
+                    if (lx_stmt[j] == '(') d = d + 1;
+                    else if (lx_stmt[j] == ')') { d = d - 1; if (d == 0) break; }
+                    else if (lx_stmt[j] == ':' && d == 1) return 1;
+                }
+            }
+            continue;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+/* A(section) = scalar.  The right side, a scalar, and the scalar
+ * subscripts are evaluated once, before the loops; the elements are
+ * reached in column order, the first triplet innermost. */
+static void f77_section_assign(int s) {
+    int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+    int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+    F77Loop lp[F77_MAX_RANK];
+    int v; int vty; int vhi;
+    int k;
+    int nt;
+    int rank;
+    rank = f77_srank[s];
+    for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
+    nt = f77_section_subs(s, idx, trip, lo, hi, st);
+    if (nt < 0) return;
+    if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
+    f77_tok();
+    if (f77_text_has_array_expr((int)(lx_rts - lx_stmt))) {
+        f77_error("an array expression on the right of a section assignment is not supported yet");
+        return;
+    }
+    v = f77_expr();
+    vty = ex_ty; vhi = ex_hi;
+    if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric section"); return; }
+    v = f77_cvt(v, &vhi, vty, f77_sty[s]);
+    vty = f77_sty[s];
+    f77_sstored[s] = 1;
+    for (k = rank - 1; k >= 0; k--)
+        if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
+    {
+        int cur[F77_MAX_RANK];
+        for (k = 0; k < rank; k++)
+            cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+        f77_store_at(f77_elem_addr(s, cur, rank), f77_mty(s), v, vty, vhi);
+    }
+    for (k = 0; k < rank; k++)
+        if (trip[k]) f77_loop_end(&lp[k]);
+}
+
+/* MAXLOC MINLOC MAXVAL MINVAL of a rank-1 array or section, [DIM=]1
+ * allowed; lx_t just past the '('.  libgfortran's order, so that NaNs go
+ * as gfortran has them: the location starts at 1 for a non-empty array,
+ * the first element that is not a NaN sets the extreme, and only a
+ * strictly greater (less) one after it moves it; MAXVAL of no elements is
+ * -HUGE (MINVAL +HUGE), of NaNs alone a NaN.  A loop with branches in the
+ * front end, no new HIR. */
+static int f77_reduce(int in) {
+    int s;
+    int ty;
+    int lo; int hi; int st;
+    int ismax;
+    int wantloc;
+    int found; int loc; int pos; int mxlo; int mxhi;
+    int n0;
+    F77Loop lp;
+    ismax = in == IN_MAXLOC || in == IN_MAXVAL;
+    wantloc = in == IN_MAXLOC || in == IN_MINLOC;
+    if (lx_t != T_NAME || (s = f77_sym_find(lex_name)) < 0 || f77_srank[s] == 0) {
+        f77_error("MAXLOC, MINLOC, MAXVAL and MINVAL need an array");
+        return f77_iconst(0);
+    }
+    if (f77_srank[s] != 1) { f77_error("a reduction of an array of rank above 1 is not supported yet"); return f77_iconst(0); }
+    ty = f77_sty[s];
+    if (ty != TY_INT && ty != TY_FLOAT && ty != TY_DOUBLE) {
+        f77_error("MAXLOC, MINLOC, MAXVAL and MINVAL need an INTEGER, REAL or DOUBLE PRECISION array");
+        return f77_iconst(0);
+    }
+    f77_tok();
+    if (lx_t == T_LP) {
+        int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+        int l[F77_MAX_RANK]; int h[F77_MAX_RANK]; int t[F77_MAX_RANK];
+        if (!f77_paren_has_colon()) { f77_error("MAXLOC, MINLOC, MAXVAL and MINVAL need an array, not an element"); return f77_iconst(0); }
+        f77_tok();
+        if (f77_section_subs(s, idx, trip, l, h, t) != 1) return f77_iconst(0);
+        lo = l[0]; hi = h[0]; st = t[0];
+    } else {
+        f77_dim_bounds(s, 0, &lo, &hi);
+        if (hi < 0) { f77_error("an assumed-size array has no upper bound to reduce to"); return f77_iconst(0); }
+        st = f77_iconst(1);
+    }
+    if (lx_t == T_COMMA) {
+        /* [DIM=]1: a rank-1 array's only dimension */
+        f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "DIM") == 0) { f77_tok(); if (lx_t == T_ASSIGN) f77_tok(); }
+        else if (lx_t == T_NAME && strcmp(lex_name, "MASK") == 0) { f77_error("MASK= is not supported yet"); return f77_iconst(0); }
+        {
+            int d;
+            d = f77_expr();
+            if (ex_ty != TY_INT || h_kind[d] != HI_ICONST || h_val[d] != 1) {
+                f77_error("a rank-1 array's DIM is the constant 1");
+                return f77_iconst(0);
+            }
+        }
+    } else if (wantloc) {
+        f77_error("MAXLOC and MINLOC without DIM= give an array, which is not supported yet");
+        return f77_iconst(0);
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after a reduction's arguments"); return f77_iconst(0); }
+    f77_tok();
+
+    found = f77_int_temp(); loc = f77_int_temp(); pos = f77_int_temp();
+    mxlo = f77_int_temp(); mxhi = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, found, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, loc, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, mxhi, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, ty == TY_FLOAT ? TY_FLOAT : TY_INT, mxlo, ty == TY_FLOAT ? f77_rconst(0.0) : f77_iconst(0), 0, NULL);
+    if (ty == TY_FLOAT) h_ty[mxlo] = TY_FLOAT;
+    f77_loop_begin(&lp, lo, hi, st);
+    {
+        int i; int x; int xhi; int p; int fb; int b_first; int b_more; int b_take; int b_join; int c; int e;
+        i = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+        x = f77_load_at(f77_elem_addr(s, &i, 1), ty);
+        xhi = ex_hi;
+        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+        p = hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL);
+        hi_emit(HI_STORE, TY_INT, pos, p, 0, NULL);
+        /* the location is 1 before anything is found, for a non-empty array */
+        e = hi_emit(HI_SEQ, TY_INT, p, f77_iconst(1), 0, NULL);
+        b_first = hir_new_block(); b_more = hir_new_block(); b_take = hir_new_block(); b_join = hir_new_block();
+        {
+            int b_one; int b_go;
+            b_one = hir_new_block(); b_go = hir_new_block();
+            hi_emit(HI_BRC, TY_VOID, e, b_one, b_go, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_one);
+            hi_emit(HI_STORE, TY_INT, loc, f77_iconst(1), 0, NULL);
+            f77_goto_blk(b_go);
+            f77_begin_blk(b_go);
+        }
+        fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_more, b_first, NULL);
+        f77_cur_blk_live = 0;
+        /* not found yet: take x unless it is a NaN */
+        f77_begin_blk(b_first);
+        if (ty == TY_DOUBLE) c = f77_fp64_call2("__fp64_eq", x, xhi, x, xhi, NULL);
+        else if (ty == TY_FLOAT) c = hi_emit(HI_FEQ, TY_INT, x, x, 0, NULL);
+        else c = f77_iconst(1);
+        hi_emit(HI_BRC, TY_VOID, c, b_take, b_join, NULL);
+        f77_cur_blk_live = 0;
+        /* found: take x only past the extreme */
+        f77_begin_blk(b_more);
+        {
+            int m; int mh;
+            m = hi_emit(HI_LOAD, ty == TY_FLOAT ? TY_FLOAT : TY_INT, mxlo, -1, 0, NULL);
+            mh = hi_emit(HI_LOAD, TY_INT, mxhi, -1, 0, NULL);
+            if (ty == TY_DOUBLE)
+                c = ismax ? f77_fp64_call2("__fp64_lt", m, mh, x, xhi, NULL) : f77_fp64_call2("__fp64_lt", x, xhi, m, mh, NULL);
+            else if (ty == TY_FLOAT)
+                c = ismax ? hi_emit(HI_FLT, TY_INT, m, x, 0, NULL) : hi_emit(HI_FLT, TY_INT, x, m, 0, NULL);
+            else
+                c = ismax ? hi_emit(HI_SLT, TY_INT, m, x, 0, NULL) : hi_emit(HI_SLT, TY_INT, x, m, 0, NULL);
+        }
+        hi_emit(HI_BRC, TY_VOID, c, b_take, b_join, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_take);
+        hi_emit(HI_STORE, ty == TY_FLOAT ? TY_FLOAT : TY_INT, mxlo, x, 0, NULL);
+        if (ty == TY_DOUBLE) hi_emit(HI_STORE, TY_INT, mxhi, xhi, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, loc, p, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, found, f77_iconst(1), 0, NULL);
+        f77_goto_blk(b_join);
+        f77_begin_blk(b_join);
+    }
+    f77_loop_end(&lp);
+    ex_log = 0;
+    if (wantloc) {
+        ex_ty = TY_INT; ex_hi = -1;
+        return hi_emit(HI_LOAD, TY_INT, loc, -1, 0, NULL);
+    }
+    /* MAXVAL/MINVAL: nothing found -- no elements: -HUGE (+HUGE); NaNs
+     * alone: a NaN */
+    {
+        int b_none; int b_done; int fb; int p; int e;
+        b_none = hir_new_block(); b_done = hir_new_block();
+        fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_done, b_none, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_none);
+        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+        e = hi_emit(HI_SEQ, TY_INT, p, f77_iconst(0), 0, NULL);
+        if (ty == TY_INT) {
+            hi_emit(HI_STORE, TY_INT, mxlo, f77_iconst(ismax ? -2147483647 : 2147483647), 0, NULL);
+        } else if (ty == TY_FLOAT) {
+            int big; int nan;
+            union { float f; int i; } u;
+            u.f = ismax ? -3.4028234663852886e38f : 3.4028234663852886e38f;
+            big = f77_iconst(u.i);
+            nan = f77_iconst(0x7FC00000);
+            hi_emit(HI_STORE, TY_INT, mxlo, f77_select(e, big, nan), 0, NULL);
+        } else {
+            int hlo; int hhi; int nlo; int nhi;
+            hlo = f77_dconst(ismax ? -1.7976931348623157e308 : 1.7976931348623157e308, &hhi);
+            nlo = f77_iconst(0);
+            nhi = f77_iconst(0x7FF80000);
+            hi_emit(HI_STORE, TY_INT, mxlo, f77_select(e, hlo, nlo), 0, NULL);
+            hi_emit(HI_STORE, TY_INT, mxhi, f77_select(e, hhi, nhi), 0, NULL);
+        }
+        f77_goto_blk(b_done);
+        f77_begin_blk(b_done);
+    }
+    ex_ty = ty;
+    ex_hi = ty == TY_DOUBLE ? hi_emit(HI_LOAD, TY_INT, mxhi, -1, 0, NULL) : -1;
+    return hi_emit(HI_LOAD, ty == TY_FLOAT ? TY_FLOAT : TY_INT, mxlo, -1, 0, NULL);
+}
+
 static void f77_stmt_assign(void) {
     int s;
     int v;
@@ -3367,6 +3770,11 @@ static void f77_stmt_assign(void) {
         return;
     }
     addr = f77_sval[s];
+    if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
+        f77_tok();
+        f77_section_assign(s);
+        return;
+    }
     if (lx_t == T_LP && f77_srank[s] > 0) {
         f77_tok();
         addr = f77_subscript_addr(s);
