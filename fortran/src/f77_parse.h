@@ -1606,6 +1606,9 @@ static int f77_select(int cond, int a, int b) {
 #define IN_CMPLX  41
 #define IN_CONJG  42
 #define IN_DCMPLX 54   /* COMPLEX*16 constructor (DCMPLX) */
+#define IN_CEILING 55  /* Fortran 90: CEILING, FLOOR, EXPONENT */
+#define IN_FLOOR   56
+#define IN_EXPONENT 57
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1759,6 +1762,9 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "AINT") == 0 || strcmp(nm, "DINT") == 0) return IN_AINT;
     if (strcmp(nm, "ANINT") == 0 || strcmp(nm, "DNINT") == 0) return IN_ANINT;
     if (strcmp(nm, "NINT") == 0 || strcmp(nm, "IDNINT") == 0) return IN_NINT;
+    if (strcmp(nm, "CEILING") == 0) return IN_CEILING;
+    if (strcmp(nm, "FLOOR") == 0) return IN_FLOOR;
+    if (strcmp(nm, "EXPONENT") == 0) return IN_EXPONENT;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
@@ -2383,6 +2389,40 @@ static int f77_primary(void) {
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 ex_ty = aty; ex_hi = ahi;
                 return a;
+            }
+            if (in == IN_CEILING || in == IN_FLOOR) {
+                /* the INTEGER next above (below) x: truncate, and step
+                 * by one when the truncation went the other way */
+                int t; int b; int bhi2; int c;
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (aty != TY_FLOAT && aty != TY_DOUBLE) { f77_error("CEILING and FLOOR need a REAL or DOUBLE PRECISION argument"); return f77_iconst(0); }
+                bhi2 = ahi;
+                t = f77_cvt(a, &bhi2, aty, TY_INT);
+                bhi2 = -1;
+                b = f77_cvt(t, &bhi2, TY_INT, aty);
+                if (aty == TY_DOUBLE) {
+                    c = in == IN_CEILING ? f77_fp64_call2("__fp64_lt", b, bhi2, a, ahi, NULL)
+                                         : f77_fp64_call2("__fp64_lt", a, ahi, b, bhi2, NULL);
+                } else {
+                    c = in == IN_CEILING ? hi_emit(HI_FLT, TY_INT, b, a, 0, NULL)
+                                         : hi_emit(HI_FLT, TY_INT, a, b, 0, NULL);
+                }
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return hi_emit(in == IN_CEILING ? HI_ADD : HI_SUB, TY_INT, t, c, 0, NULL);
+            }
+            if (in == IN_EXPONENT) {
+                /* frexp's exponent, in the runtime; 0 for 0 */
+                int cb; int r;
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (aty != TY_FLOAT && aty != TY_DOUBLE) { f77_error("EXPONENT needs a REAL or DOUBLE PRECISION argument"); return f77_iconst(0); }
+                a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                cb = h_ncarg;
+                f77_carg(a, 1);
+                f77_carg(ahi, 2);
+                r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_exponent");
+                h_cbase[r] = cb;
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return r;
             }
             if (in == IN_INT || in == IN_REAL || in == IN_DBLE) {
                 rty = (in == IN_INT) ? TY_INT : (in == IN_REAL ? TY_FLOAT : TY_DOUBLE);

@@ -1453,6 +1453,15 @@ void f77_zpow_z(double *out, const double *a, const double *b) {
 
 double f77_zabs(const double *a) { return hypot(a[0], a[1]); }
 
+/* EXPONENT (Fortran 90): e with x = m * 2**e, 0.5 <= |m| < 1; 0 for 0.  A
+ * REAL argument arrives widened, which keeps its exponent. */
+int f77_exponent(double x) {
+    int e;
+    if (x == 0.0) return 0;
+    (void)frexp(x, &e);
+    return e;
+}
+
 /* The COMPLEX*16 transcendentals: the formulas of the COMPLEX ones above,
  * in double.  gfortran calls the host's csqrt, cexp and so on, which can
  * round the last bit differently (the libm-host-difference ruling). */
