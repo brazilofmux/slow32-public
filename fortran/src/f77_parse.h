@@ -1983,15 +1983,26 @@ static int f77_primary(void) {
         if (lx_t == T_COMMA) {
             /* (re, im): a COMPLEX constant (F77 takes constants; any
              * real expressions are accepted) */
+            /* COMPLEX*16 when a part is DOUBLE PRECISION, as gfortran
+             * has it; each part converted from its own type */
             int re; int im; int rty;
-            re = f77_cvt(v, &ex_hi, ex_ty, TY_FLOAT);
+            int vty; int vhi; int ihi;
+            vty = ex_ty; vhi = ex_hi;
             f77_tok();
             im = f77_expr();
-            rty = ex_ty;
-            im = f77_cvt(im, &ex_hi, rty, TY_FLOAT);
+            rty = ex_ty; ihi = ex_hi;
             if (lx_t != T_RP) f77_error("expected ) after complex constant");
             f77_tok();
-            ex_ty = TY_CPLX; ex_hi = im; ex_log = 0;
+            ex_log = 0;
+            if (vty == TY_DOUBLE || rty == TY_DOUBLE) {
+                re = f77_cvt(v, &vhi, vty, TY_DOUBLE);
+                im = f77_cvt(im, &ihi, rty, TY_DOUBLE);
+                ex_ty = TY_DCPLX; ex_hi = -1;
+                return f77_dcx_make(re, vhi, im, ihi);
+            }
+            re = f77_cvt(v, &vhi, vty, TY_FLOAT);
+            im = f77_cvt(im, &ihi, rty, TY_FLOAT);
+            ex_ty = TY_CPLX; ex_hi = im;
             return re;
         }
         if (lx_t != T_RP) f77_error("expected )");
@@ -2511,6 +2522,13 @@ static int f77_primary(void) {
             ex_ty = f77_sty[s];
             ex_log = f77_slog[s];
             if (ex_ty == TY_CPLX) { ex_hi = f77_rconst(f77_spdval2[s]); return f77_rconst(f77_spdval[s]); }
+            if (ex_ty == TY_DCPLX) {
+                int re; int rehi; int im; int imhi;
+                re = f77_dconst(f77_spdval[s], &rehi);
+                im = f77_dconst(f77_spdval2[s], &imhi);
+                ex_hi = -1;
+                return f77_dcx_make(re, rehi, im, imhi);
+            }
             if (ex_ty == TY_DOUBLE) return f77_dconst(f77_spdval[s], &ex_hi);
             if (ex_ty == TY_FLOAT) return f77_rconst(f77_spdval[s]);
             return f77_iconst(f77_spival[s]);
@@ -3390,8 +3408,29 @@ static int  f77_cxb_n;
 
 static void f77_cexpr(void);
 
-/* A complex type: one here, COMPLEX (fort370 also has COMPLEX*16). */
-static int f77_iscx(int ty) { return ty == TY_CPLX; }
+/* A complex type: COMPLEX or COMPLEX*16.  The imaginary part is f77_cx_d2. */
+static int f77_iscx(int ty) { return ty == TY_CPLX || ty == TY_DCPLX; }
+
+/* A complex constant's part, as its own type makes it: a REAL part is
+ * rounded to single precision, an INTEGER or DOUBLE PRECISION one kept
+ * (the evaluator holds every value as a double).  The constant is
+ * COMPLEX*16 when a part is DOUBLE PRECISION, as gfortran has it --
+ * (0.1D0, 0.2) is the double 0.1 and the single 0.2 widened. */
+static double f77_cx_part(double d, int ty) { return ty == TY_FLOAT ? (double)(float)d : d; }
+
+/* The evaluator holds every value as a double, but a REAL or COMPLEX one is
+ * single precision: rounded as each literal is read and after each
+ * operation, as the arithmetic at run time rounds it.  Without this,
+ * PARAMETER (D = 1.0/3.0) gave a DOUBLE PRECISION D the double third,
+ * not the REAL third widened, and DATA D /0.1/ the double 0.1, where F77
+ * converts the REAL constant (gfortran: 0.10000000149011612). */
+static void f77_cx_round(void) {
+    if (f77_cx_ty == TY_FLOAT) f77_cx_d = (double)(float)f77_cx_d;
+    else if (f77_cx_ty == TY_CPLX) {
+        f77_cx_d = (double)(float)f77_cx_d;
+        f77_cx_d2 = (double)(float)f77_cx_d2;
+    }
+}
 static void f77_cpower(void);
 static void f77_cprimary(void) {
     if (lx_t == T_SCON) {
@@ -3400,7 +3439,7 @@ static void f77_cprimary(void) {
         return;
     }
     if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); return; }
-    if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
+    if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = (int)f77_cx_d; f77_tok(); return; }
     if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
     if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); return; }
     if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); return; }
@@ -3409,14 +3448,16 @@ static void f77_cprimary(void) {
         f77_cexpr();
         if (lx_t == T_COMMA) {
             double re;
-            re = f77_cx_d;
+            int rty;
+            rty = f77_cx_ty;
+            re = f77_cx_part(f77_cx_d, rty);
             f77_tok();
             f77_cexpr();
             if (lx_t != T_RP) { f77_error("expected ) after complex constant"); return; }
             f77_tok();
-            f77_cx_d2 = f77_cx_d;
+            f77_cx_d2 = f77_cx_part(f77_cx_d, f77_cx_ty);
+            f77_cx_ty = (rty == TY_DOUBLE || f77_cx_ty == TY_DOUBLE) ? TY_DCPLX : TY_CPLX;
             f77_cx_d = re;
-            f77_cx_ty = TY_CPLX;
             f77_cx_i = (int)re;
             return;
         }
@@ -3511,6 +3552,7 @@ static void f77_cpower(void) {
             rr = rr / den; ri = 0.0 - ri / den;
         }
         f77_cx_d = rr; f77_cx_d2 = ri; f77_cx_i = (int)rr;
+        f77_cx_round();
     } else {
         double r;
         r = 1.0;
@@ -3519,11 +3561,15 @@ static void f77_cpower(void) {
             if (r == 0.0) { f77_error("zero to a negative power in constant expression"); r = 1.0; }
             r = 1.0 / r;
         }
-        f77_cx_d = r; f77_cx_i = (int)r;
+        f77_cx_d = r;
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
     }
 }
 
 static int f77_cx_promote(int a, int b) {
+    if (a == TY_DCPLX || b == TY_DCPLX ||
+        (a == TY_CPLX && b == TY_DOUBLE) || (a == TY_DOUBLE && b == TY_CPLX)) return TY_DCPLX;
     if (a == TY_CPLX || b == TY_CPLX) return TY_CPLX;
     if (a == TY_DOUBLE || b == TY_DOUBLE) return TY_DOUBLE;
     if (a == TY_FLOAT || b == TY_FLOAT) return TY_FLOAT;
@@ -3560,7 +3606,8 @@ static void f77_cterm(void) {
             }
             f77_cx_d = re;
             f77_cx_d2 = im;
-            f77_cx_i = (int)re;
+            f77_cx_round();
+            f77_cx_i = (int)f77_cx_d;
             continue;
         }
         f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
@@ -3575,6 +3622,7 @@ static void f77_cterm(void) {
             if (f77_cx_d == 0.0) { f77_error("division by zero in constant expression"); f77_cx_d = 1.0; }
             f77_cx_d = dv / f77_cx_d;
         }
+        f77_cx_round();
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
         else f77_cx_i = (int)f77_cx_d;
     }
@@ -3597,12 +3645,14 @@ static void f77_cexpr(void) {
             f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
             f77_cx_d = add ? dv + f77_cx_d : dv - f77_cx_d;
             f77_cx_d2 = add ? d2v + bi : d2v - bi;
+            f77_cx_round();
             f77_cx_i = (int)f77_cx_d;
             continue;
         }
         f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
         if (add) { f77_cx_i = iv + f77_cx_i; f77_cx_d = dv + f77_cx_d; }
         else     { f77_cx_i = iv - f77_cx_i; f77_cx_d = dv - f77_cx_d; }
+        f77_cx_round();
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
         else f77_cx_i = (int)f77_cx_d;
     }
@@ -4143,7 +4193,13 @@ static void f77_stmt_parameter(int skip) {
             return;
         } else if (f77_sty[s] == TY_CPLX) {
             f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_d;
-            f77_spdval2[s] = (f77_cx_ty == TY_CPLX) ? f77_cx_d2 : 0.0;
+            f77_spdval2[s] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
+            f77_spival[s] = (int)f77_spdval[s];
+        } else if (f77_sty[s] == TY_DCPLX) {
+            /* each part as its constant's type makes it: a REAL one
+             * rounded to single precision, then widened */
+            f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_part(f77_cx_d, f77_cx_ty);
+            f77_spdval2[s] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
             f77_spival[s] = (int)f77_spdval[s];
         } else if (f77_sty[s] == TY_INT) {
             f77_spival[s] = (f77_cx_ty == TY_INT) ? f77_cx_i : (int)f77_cx_d;
@@ -4217,7 +4273,7 @@ static void f77_data_const(void) {
     if (lx_t == T_MINUS) { neg = 1; f77_tok(); }
     else if (lx_t == T_PLUS) f77_tok();
     if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); }
-    else if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
+    else if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = (int)f77_cx_d; f77_tok(); }
     else if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
     else if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); }
     else if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); }
@@ -4225,17 +4281,19 @@ static void f77_data_const(void) {
     else if (lx_t == T_LP) {
         /* (re, im) */
         double re;
+        int rty;
         f77_tok();
         f77_data_const();
-        re = f77_cx_d;
+        rty = f77_cx_ty;
+        re = f77_cx_part(f77_cx_d, rty);
         if (lx_t != T_COMMA) { f77_error("expected , in complex constant"); return; }
         f77_tok();
         f77_data_const();
         if (lx_t != T_RP) { f77_error("expected ) after complex constant"); return; }
         f77_tok();
-        f77_cx_d2 = f77_cx_d;
+        f77_cx_d2 = f77_cx_part(f77_cx_d, f77_cx_ty);
+        f77_cx_ty = (rty == TY_DOUBLE || f77_cx_ty == TY_DOUBLE) ? TY_DCPLX : TY_CPLX;
         f77_cx_d = re;
-        f77_cx_ty = TY_CPLX;
         f77_cx_i = (int)re;
     }
     else if (lx_t == T_NAME) {
@@ -4884,7 +4942,7 @@ static void f77_layout_static(void) {
             /* the constant's bits, right-justified in the item: zeros
              * on the left of one too short, the leftmost bits of one
              * too long lost (MIL-STD-1753 2.8) */
-            if (f77_sty[s] == TY_CPLX) {
+            if (f77_sty[s] == TY_CPLX || f77_sty[s] == TY_DCPLX) {
                 f77_error("a hexadecimal or octal constant cannot initialize a COMPLEX item");
                 return;
             }
@@ -4894,8 +4952,15 @@ static void f77_layout_static(void) {
             union { float f; unsigned char b[4]; } u;
             u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
             for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
-            u.f = (f77_di_ty[i] == TY_CPLX) ? (float)f77_di_d2[i] : 0.0f;
+            u.f = f77_iscx(f77_di_ty[i]) ? (float)f77_di_d2[i] : 0.0f;
             for (k = 0; k < 4; k++) ps_ginit_pool[off + 4 + k] = u.b[k];
+        } else if (f77_sty[s] == TY_DCPLX) {
+            /* each part as its constant's type makes it (f77_cx_part) */
+            union { double d; unsigned char b[8]; } u;
+            u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_cx_part(f77_di_d[i], f77_di_ty[i]);
+            for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
+            u.d = f77_iscx(f77_di_ty[i]) ? f77_di_d2[i] : 0.0;
+            for (k = 0; k < 8; k++) ps_ginit_pool[off + 8 + k] = u.b[k];
         } else if (f77_sty[s] == TY_DOUBLE) {
             union { double d; unsigned char b[8]; } u;
             u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
