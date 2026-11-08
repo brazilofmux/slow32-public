@@ -33,8 +33,10 @@ emulator -> base -+-> toolchain   LLVM+clang, MLIR+flang, libc++, flang-rt, runt
    changes.  Backend work, which moves often, never needs a new flang.  The
    same pin keeps the IR it writes readable by the `llc` beside it.
 2. **The kit can be built from the tree.**
-   - stage08 builds from the checked-in stage07, on the emulator, and
-     reproduces byte for byte (`cc.s32x` a5df327b on the Mac).
+   - The self-hosted chain builds from its seeds (forth/kernel.s32x and
+     prelude.fth; no stage's binaries are in git) with `make -C
+     selfhost/stageNN` for 00..08 on the DBT, and reproduces byte for byte
+     (`cc.s32x` a5df327b on the Mac).  About 100 s in the image.
    - The apps have build scripts: `lua`, `nano`, `prolog`, `islisp`,
      `sqlite`, `xbase`, `sbasic`, `forth`, `dfsort` (s32sort), `examples`
      (benchmark_core, mdfix, phonetic, validatecsv), `tzlookup/slow32`.
@@ -80,7 +82,9 @@ image (`docker cp`), not the input to it.  The kit gate is unchanged
 
 ## Status (2026-11-08)
 
-- Step 1, selfhost: done (ef6f5027).  Byte-identical to the Mac's stage08.
+- Step 1, selfhost: done (ef6f5027; from the seeds since b3366023, after the
+  builder's trial found stage07 was never in git).  Byte-identical to the
+  Mac's stage08.
 - Step 2, kit from the tree: done (b49620f1, fa3bce0f).  The image's kit
   and a Mac build hold the same 90 files.
 - Step 3, written and checked as far as the Mac can:

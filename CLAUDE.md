@@ -173,8 +173,8 @@ substituted 1:1.
   libsbasic.s32a, no LLVM.  Gate: sbc/tests/run-stage08.sh.
 - `slow32:selfhost` (artifact image, FROM scratch; not on Docker Hub):
   stage08's cc.s32x, tools and libc laid out as the kit holds them
-  (`/kit`), and cc-x64/cc-a64 (`/cross`), built from the tree in under a
-  minute.  slow32:kit and slow32:toolchain copy from it.
+  (`/kit`), and cc-x64/cc-a64 (`/cross`), bootstrapped from the seeds
+  (forth/kernel.s32x; no stage's binaries are in git) in under two minutes.  slow32:kit and slow32:toolchain copy from it.
 - `slow32:llvm-<key>`, `slow32:flang-<key>` (artifact images, FROM scratch;
   not on Docker Hub): /opt/llvm with the libc++ source, and flang with the
   flang-rt source.  The key is `docker/image-key.sh llvm|flang`, a hash of
