@@ -218,6 +218,10 @@ if [ -x "$F77" ]; then
     printf '#if 1\n      X = 1\n      END\n' > "$W/cppopen.F"
     printf 'x = 1 & y = 2\nend\n' > "$W/freeamp.f90"
     printf "x = 1\nprint *, 'open\nend\n" > "$W/freestr.f90"
+    printf 'real(16) :: q\nend\n' > "$W/kindq.f90"
+    printf 'integer(8) :: i8\nend\n' > "$W/kindi8.f90"
+    printf 'x = 1.0_k\nend\n' > "$W/kindlit.f90"
+    printf 'y = 2.0_16\nend\n' > "$W/kindlit16.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -273,6 +277,10 @@ if [ -x "$F77" ]; then
              "cppopen:line 3: #if without #endif" \
              "freeamp:line 1: & in the middle of a line" \
              "freestr:line 2: a character constant runs off the line" \
+             "kindq:line 1: kind 16 of this type is not supported" \
+             "kindi8:line 1: kind 8 of this type is not supported" \
+             "kindlit:line 1: the kind of a constant must be digits or an INTEGER named constant, not K" \
+             "kindlit16:line 1: REAL kind 16 is not supported" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

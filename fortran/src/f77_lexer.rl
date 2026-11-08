@@ -61,6 +61,10 @@ static char   lex_name[F77_MAX_NAME];  /* T_NAME text (upper case) */
 static int    lex_namelen;
 static int    lex_ival;                /* T_ICON value */
 static double lex_dval;                /* T_RCON / T_DCON value */
+static char   lex_kind[F77_MAX_NAME];  /* a number's _kind suffix (Fortran 90), "" for none */
+/* The parser's: a number with a kind suffix, resolved to its type as it
+ * is scanned (f77_kind_lit).  None in the token dump. */
+static void (*lx_kind_hook)(void);
 static int    lex_sidx;                /* T_SCON: string-pool index */
 static int    lex_slen;                /* T_SCON: length in bytes */
 
@@ -134,6 +138,20 @@ static int f77_number(char *ts, char *te, char *pe) {
 
     /* Back off a trailing dot that introduces a dotted operator. */
     if (te > ts && te[-1] == '.' && f77_is_dotop(te - 1, pe)) te = te - 1;
+    /* A kind suffix (Fortran 90): 1.0_WP, 0._SP, 7_4.  Kept in lex_kind,
+     * and the token's length takes it in. */
+    lex_kind[0] = 0;
+    if (te + 1 < pe && *te == '_' && (lx_isalpha(te[1]) || lx_isdigit(te[1]))) {
+        char *q;
+        int k;
+        q = te + 1;
+        k = 0;
+        while (q < pe && (lx_isalpha(*q) || lx_isdigit(*q) || *q == '_')) {
+            if (k < F77_MAX_NAME - 1) lex_kind[k++] = *q;
+            q = q + 1;
+        }
+        lex_kind[k] = 0;
+    }
 
     isreal = 0;
     isdbl = 0;
@@ -156,6 +174,7 @@ static int f77_number(char *ts, char *te, char *pe) {
         lex_dval = strtod(buf, NULL);
         lx_t = isdbl ? T_DCON : T_RCON;
     }
+    if (lex_kind[0]) return (int)(te - ts) + 1 + (int)strlen(lex_kind);
     return (int)(te - ts);
 }
 
@@ -281,4 +300,5 @@ static void f77_tok(void) {
     lx_ract = act;
     lx_rts = ts;
     lx_rte = te;
+    if ((lx_t == T_ICON || lx_t == T_RCON || lx_t == T_DCON) && lex_kind[0] && lx_kind_hook) lx_kind_hook();
 }

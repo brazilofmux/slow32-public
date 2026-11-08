@@ -628,6 +628,7 @@ static int  f77_ukind[F77_MAX_UNIT];
 static int  f77_upos[F77_MAX_UNIT];    /* source offset of the header */
 static int  f77_uline[F77_MAX_UNIT];
 static int  f77_urty[F77_MAX_UNIT];    /* FUNCTION result type */
+static int  f77_urpend[F77_MAX_UNIT];  /* ... its kind not told by the scan (REAL(K), K not found) */
 static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*) */
 static int  f77_urlog[F77_MAX_UNIT];   /* LOGICAL FUNCTION */
 static int  f77_urnar[F77_MAX_UNIT];   /* INTEGER*2 or LOGICAL*1 FUNCTION: f77_snar of the result */
@@ -874,6 +875,10 @@ static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
 static int f77_tfree_mark(void);
 static int f77_implied_do(void (*items)(int, int));
+static int f77_is_inquiry(char *nm);
+static int f77_inquiry(char *nm, int t, int *iv, double *dv);
+static int f77_const_int(int *v);
+static int f77_kind_ty(int ty, int k);
 static void f77_tfree_to(int mark);
 static int f77_urty_of(int u);
 static int f77_load_at(int addr, int ty);
@@ -1687,6 +1692,7 @@ static int f77_select(int cond, int a, int b) {
 #define IN_TRANSFER 63    /* an actual argument only (f77_transfer_actual) */
 #define IN_TRIM     64    /* Fortran 90 CHARACTER: TRIM, LEN_TRIM */
 #define IN_LEN_TRIM 65
+#define IN_INQUIRY  66    /* HUGE TINY EPSILON KIND DIGITS ...: f77_inquiry */
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -1850,6 +1856,7 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "ALLOCATED") == 0) return IN_ALLOCATED;
     if (strcmp(nm, "TRANSFER") == 0) return IN_TRANSFER;
     if (strcmp(nm, "TRIM") == 0) return IN_TRIM;
+    if (f77_is_inquiry(nm)) return IN_INQUIRY;
     if (strcmp(nm, "LEN_TRIM") == 0) return IN_LEN_TRIM;
     if (strcmp(nm, "DIM") == 0 || strcmp(nm, "IDIM") == 0 ||
         strcmp(nm, "DDIM") == 0) return IN_DIM;
@@ -2288,6 +2295,29 @@ static int f77_primary(void) {
                 ex_ty = TY_INT;
                 return f77_iconst(0);
             }
+            if (in == IN_INQUIRY) {
+                /* a constant of the argument's type: an array names its
+                 * elements' type, and an expression's value is unused */
+                int as;
+                int t;
+                int iv;
+                double dv;
+                if (lx_t == T_NAME && (as = f77_sym_find(lex_name)) >= 0 && f77_srank[as] > 0 &&
+                    lx_rp < lx_rpe && (*lx_rp == ')' || *lx_rp == ',')) {
+                    t = f77_sty[as];
+                    f77_tok();
+                } else {
+                    f77_expr();
+                    t = ex_ty;
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                t = f77_inquiry(nm, t, &iv, &dv);
+                ex_hi = -1; ex_log = 0;
+                if (t == TY_DOUBLE) { ex_ty = TY_DOUBLE; return f77_dconst(dv, &ex_hi); }
+                if (t == TY_FLOAT) { ex_ty = TY_FLOAT; return f77_rconst(dv); }
+                ex_ty = TY_INT;
+                return f77_iconst(t == TY_INT ? iv : 0);
+            }
             if (in == IN_ALLOCATED) {
                 int as;
                 if (lx_t != T_NAME || (as = f77_sym_find(lex_name)) < 0 || !f77_salloc[as]) {
@@ -2550,6 +2580,16 @@ static int f77_primary(void) {
             }
             if (in == IN_INT || in == IN_REAL || in == IN_DBLE) {
                 rty = (in == IN_INT) ? TY_INT : (in == IN_REAL ? TY_FLOAT : TY_DOUBLE);
+                if (lx_t == T_COMMA && in != IN_DBLE) {
+                    /* REAL(X, KIND), INT(X, KIND) (Fortran 90) */
+                    f77_tok();
+                    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+                    {
+                        int k;
+                        rty = f77_const_int(&k) ? f77_kind_ty(rty, k) : -1;
+                    }
+                    if (rty < 0) { f77_error("this kind is not supported"); return f77_iconst(0); }
+                }
                 a = f77_cvt(a, &ahi, aty, rty);
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 ex_ty = rty; ex_hi = ahi;
@@ -4587,6 +4627,167 @@ static void f77_cx_round(void) {
 static void f77_cpower(void);
 static int f77_cx_promote(int a, int b);
 
+/* The unit scan's constant expressions (f77_scan_mode): a kind before the
+ * unit is compiled -- REAL(WP) :: F types FUNCTION F's result, which its
+ * callers and its own binding need -- with names from the scan's table of
+ * the unit's INTEGER named constants, and errors not reported but
+ * remembered (f77_scan_bad): what the scan cannot tell, the compilation
+ * will, or refuse. */
+static char f77_sk_name[64][F77_MAX_NAME];
+static int f77_sk_val[64];
+static int f77_sk_n;
+static int f77_sk_unit = -1;
+static int f77_scan_const(char *nm, int *v) {
+    int i;
+    *v = 0;
+    for (i = 0; i < f77_sk_n; i++)
+        if (strcmp(f77_sk_name[i], nm) == 0) { *v = f77_sk_val[i]; return 1; }
+    return 0;
+}
+/* The table is the unit's: a new unit starts it empty. */
+static void f77_scan_begin(int unit) {
+    if (f77_sk_unit != unit) { f77_sk_n = 0; f77_sk_unit = unit; }
+}
+static void f77_scan_const_add(int unit, char *nm, int v) {
+    f77_scan_begin(unit);
+    if (f77_sk_n >= 64) return;
+    strcpy(f77_sk_name[f77_sk_n], nm);
+    f77_sk_val[f77_sk_n] = v;
+    f77_sk_n = f77_sk_n + 1;
+}
+
+/* The type a kind type parameter (Fortran 90) gives a base type, as
+ * gfortran numbers them: REAL 4 and 8, COMPLEX 4 and 8 (its parts'),
+ * INTEGER and LOGICAL 4.  -1 for one this compiler has not. */
+static int f77_kind_ty(int ty, int k) {
+    if (ty == TY_FLOAT || ty == TY_DOUBLE) return k == 4 ? TY_FLOAT : k == 8 ? TY_DOUBLE : -1;
+    if (ty == TY_CPLX || ty == TY_DCPLX) return k == 4 ? TY_CPLX : k == 8 ? TY_DCPLX : -1;
+    if (ty == TY_INT) return k == 4 ? TY_INT : -1;
+    if (ty == TY_CHAR) return k == 1 ? TY_CHAR : -1;
+    return -1;
+}
+/* KIND of a value of type ty. */
+static int f77_ty_kind(int ty) {
+    return ty == TY_DOUBLE || ty == TY_DCPLX ? 8 : ty == TY_CHAR ? 1 : 4;
+}
+
+/* A kind selector after a type keyword, lx_t at its '(': (n) or
+ * (KIND=n), n a constant expression.  The type it makes, -1 after an
+ * error.  DOUBLE PRECISION has none. */
+static void f77_cexpr(void);
+static int f77_kind_sel(int ty) {
+    int r;
+    char m[80];
+    f77_tok();                                   /* ( */
+    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+    f77_cexpr();
+    if (f77_cx_ty != TY_INT) { f77_error("a kind is an INTEGER constant"); return -1; }
+    if (lx_t != T_RP) { f77_error("expected ) after a kind"); return -1; }
+    f77_tok();
+    if (ty == TY_DOUBLE) { f77_error("DOUBLE PRECISION takes no kind"); return -1; }
+    r = f77_kind_ty(ty, f77_cx_i);
+    if (r < 0) {
+        sprintf(m, "kind %d of this type is not supported", f77_cx_i);
+        f77_error(m);
+    }
+    return r;
+}
+
+/* An INTEGER constant expression: 1 and its value, else 0. */
+static int f77_const_int(int *v) {
+    f77_cexpr();
+    *v = f77_cx_i;
+    return f77_cx_ty == TY_INT;
+}
+
+/* f77_kind_sel in the unit scan: the type, or -2 when the scan cannot
+ * tell (a name not in its table, or a kind not supported -- which the
+ * compilation reports). */
+static int f77_scan_kind_sel(int ty) {
+    int r;
+    f77_scan_mode = 1;
+    f77_scan_bad = 0;
+    r = f77_kind_sel(ty);
+    f77_scan_mode = 0;
+    return f77_scan_bad || r < 0 ? -2 : r;
+}
+
+/* The inquiry intrinsics (Fortran 90), by the argument's type alone:
+ * HUGE TINY EPSILON (of the argument's type), and KIND RADIX DIGITS
+ * MINEXPONENT MAXEXPONENT PRECISION RANGE (INTEGER) -- gfortran's numbers;
+ * RANGE and PRECISION of a COMPLEX are its parts'.  The result's type
+ * with its value in *iv and *dv; -1 when nm is none of them, -2 after an
+ * error.  The constant evaluator and expressions share it. */
+static int f77_is_inquiry(char *nm) {
+    static const char *names[] = { "HUGE", "TINY", "EPSILON", "KIND", "RADIX", "DIGITS", "MINEXPONENT",
+                                   "MAXEXPONENT", "PRECISION", "RANGE", 0 };
+    int k;
+    for (k = 0; names[k]; k++) if (strcmp(nm, names[k]) == 0) return 1;
+    return 0;
+}
+static int f77_inquiry(char *nm, int t, int *iv, double *dv) {
+    int dbl;
+    *iv = 0;
+    *dv = 0.0;
+    if (!f77_is_inquiry(nm)) return -1;
+    dbl = t == TY_DOUBLE || t == TY_DCPLX;
+    if (nm[0] == 'H' || nm[0] == 'T' || nm[0] == 'E') {
+        int big;
+        big = nm[0] == 'H';
+        if (t == TY_INT && big) { *iv = 2147483647; *dv = 2147483647.0; return TY_INT; }
+        if (t == TY_FLOAT) *dv = big ? 3.4028234663852886e38 : nm[0] == 'T' ? 1.1754943508222875e-38 : 1.1920928955078125e-07;
+        else if (t == TY_DOUBLE) *dv = big ? 1.7976931348623157e308 : nm[0] == 'T' ? 2.2250738585072014e-308 : 2.220446049250313e-16;
+        else { f77_error("HUGE, TINY and EPSILON need a REAL or DOUBLE PRECISION argument (HUGE an INTEGER too)"); return -2; }
+        return t;
+    }
+    if (strcmp(nm, "KIND") == 0) *iv = f77_ty_kind(t);
+    else if (t == TY_CHAR) { f77_error("this inquiry needs a numeric argument"); return -2; }
+    else if (strcmp(nm, "RADIX") == 0) *iv = 2;
+    else if (t == TY_INT) {
+        if (strcmp(nm, "DIGITS") == 0) *iv = 31;
+        else if (strcmp(nm, "RANGE") == 0) *iv = 9;
+        else { f77_error("this inquiry needs a REAL or COMPLEX argument"); return -2; }
+    } else if (strcmp(nm, "DIGITS") == 0) *iv = dbl ? 53 : 24;
+    else if (strcmp(nm, "MINEXPONENT") == 0) *iv = dbl ? -1021 : -125;
+    else if (strcmp(nm, "MAXEXPONENT") == 0) *iv = dbl ? 1024 : 128;
+    else if (strcmp(nm, "PRECISION") == 0) *iv = dbl ? 15 : 6;
+    else *iv = dbl ? 307 : 37;
+    *dv = (double)*iv;
+    return TY_INT;
+}
+
+/* A number with a kind suffix, just scanned (the lexer's lx_kind_hook):
+ * the suffix is digits or an INTEGER named constant, and a REAL constant
+ * of kind 8 becomes DOUBLE PRECISION -- its value was read in double
+ * precision already. */
+static void f77_kind_lit(void) {
+    char nm[F77_MAX_NAME];
+    char m[96];
+    int k;
+    strcpy(nm, lex_kind);
+    lex_kind[0] = 0;
+    if (lx_isdigit(nm[0])) k = atoi(nm);
+    else if (f77_scan_mode) {
+        if (!f77_scan_const(nm, &k)) { f77_scan_bad = 1; return; }
+    } else {
+        int s;
+        s = f77_sym_find(nm);
+        if (s < 0 || !f77_sparam[s] || f77_sty[s] != TY_INT) {
+            sprintf(m, "the kind of a constant must be digits or an INTEGER named constant, not %s", nm);
+            f77_error(m);
+            return;
+        }
+        k = f77_spival[s];
+    }
+    if (lx_t == T_DCON) { f77_error("a constant has a D exponent and a kind both"); return; }
+    if (f77_kind_ty(lx_t == T_ICON ? TY_INT : TY_FLOAT, k) < 0) {
+        sprintf(m, "%s kind %d is not supported", lx_t == T_ICON ? "INTEGER" : "REAL", k);
+        f77_error(m);
+        return;
+    }
+    if (lx_t == T_RCON && k == 8) lx_t = T_DCON;
+}
+
 /* An intrinsic in a constant expression (Fortran 90 initialization
  * expressions: elemental intrinsics of constants, and the inquiries):
  * HUGE TINY EPSILON, DCMPLX CMPLX, DBLE REAL INT NINT ABS, MAX MIN MOD.
@@ -4594,7 +4795,9 @@ static int f77_cx_promote(int a, int b);
  * array of the unit): the caller goes on as before. */
 static int f77_cintrinsic(void) {
     static const char *names[] = { "HUGE", "TINY", "EPSILON", "DCMPLX", "CMPLX", "DBLE", "REAL",
-                                   "INT", "NINT", "ABS", "MAX", "MIN", "MOD", 0 };
+                                   "INT", "NINT", "ABS", "MAX", "MIN", "MOD", "KIND", "RADIX", "DIGITS",
+                                   "MINEXPONENT", "MAXEXPONENT", "PRECISION", "RANGE", "SELECTED_REAL_KIND",
+                                   "SELECTED_INT_KIND", "SQRT", "CEILING", "FLOOR", 0 };
     char nm[F77_MAX_NAME];
     int ty[8]; int iv[8]; double dv[8]; double d2[8];
     int n;
@@ -4624,20 +4827,61 @@ static int f77_cintrinsic(void) {
     f77_tok();
     if (n > 8) { f77_error("too many arguments to an intrinsic in a constant expression"); return 1; }
     f77_cx_d2 = 0.0;
-    if (strcmp(nm, "HUGE") == 0 || strcmp(nm, "TINY") == 0 || strcmp(nm, "EPSILON") == 0) {
-        /* by the argument's type, its value unused */
-        int big;
-        big = nm[0] == 'H';
+    if (f77_is_inquiry(nm)) {
+        int r;
+        r = f77_inquiry(nm, ty[0], &f77_cx_i, &f77_cx_d);
+        if (r < 0) return 1;
+        f77_cx_ty = r;
+        if (r != TY_INT) f77_cx_i = 0;
+        return 1;
+    }
+    if (strcmp(nm, "SELECTED_REAL_KIND") == 0 || strcmp(nm, "SELECTED_INT_KIND") == 0) {
+        /* the kinds this compiler has: -1 when none will do (for REAL, -1
+         * past the precision, -2 past the range, -3 past both) */
+        int k;
+        for (k = 0; k < n; k++)
+            if (ty[k] != TY_INT) { f77_error("SELECTED_REAL_KIND and SELECTED_INT_KIND take INTEGER arguments"); return 1; }
+        f77_cx_ty = TY_INT;
+        if (nm[9] == 'I') f77_cx_i = iv[0] <= 9 ? 4 : -1;
+        else {
+            int p; int r;
+            p = n > 0 ? iv[0] : 0;
+            r = n > 1 ? iv[1] : 0;
+            if (p <= 6 && r <= 37) f77_cx_i = 4;
+            else if (p <= 15 && r <= 307) f77_cx_i = 8;
+            else f77_cx_i = (p > 15 ? -1 : 0) + (r > 307 ? -2 : 0);
+        }
+        f77_cx_d = (double)f77_cx_i;
+        return 1;
+    }
+    if (strcmp(nm, "SQRT") == 0) {
+        /* correctly rounded by IEEE 754 on every host, so the host's
+         * sqrt folds it as the target computes it; a REAL in double then
+         * rounded to single is correctly rounded too (53 >= 2*24 + 2) */
+        if (ty[0] != TY_FLOAT && ty[0] != TY_DOUBLE) { f77_error("SQRT in a constant expression needs a REAL or DOUBLE PRECISION argument"); return 1; }
+        if (dv[0] < 0) { f77_error("SQRT of a negative constant"); return 1; }
         f77_cx_ty = ty[0];
-        if (ty[0] == TY_INT && big) { f77_cx_i = 2147483647; f77_cx_d = 2147483647.0; return 1; }
-        if (ty[0] == TY_FLOAT) f77_cx_d = big ? 3.4028234663852886e38 : nm[0] == 'T' ? 1.1754943508222875e-38 : 1.1920928955078125e-07;
-        else if (ty[0] == TY_DOUBLE) f77_cx_d = big ? 1.7976931348623157e308 : nm[0] == 'T' ? 2.2250738585072014e-308 : 2.220446049250313e-16;
-        else { f77_error("HUGE, TINY and EPSILON need a REAL or DOUBLE PRECISION argument (HUGE an INTEGER too)"); return 1; }
-        f77_cx_i = 0;
+        f77_cx_d = sqrt(dv[0]);
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
+        return 1;
+    }
+    if (strcmp(nm, "CEILING") == 0 || strcmp(nm, "FLOOR") == 0) {
+        double t;
+        if (ty[0] != TY_FLOAT && ty[0] != TY_DOUBLE) { f77_error("CEILING and FLOOR need a REAL argument"); return 1; }
+        t = nm[0] == 'C' ? ceil(dv[0]) : floor(dv[0]);
+        if (t > 2147483647.0 || t < -2147483648.0) { f77_error("CEILING or FLOOR out of INTEGER range"); return 1; }
+        f77_cx_ty = TY_INT;
+        f77_cx_i = (int)t;
+        f77_cx_d = t;
         return 1;
     }
     if (strcmp(nm, "DCMPLX") == 0 || strcmp(nm, "CMPLX") == 0) {
         f77_cx_ty = nm[0] == 'D' ? TY_DCPLX : TY_CPLX;
+        if (nm[0] == 'C' && n == 3) {               /* CMPLX(X, Y, KIND) */
+            f77_cx_ty = f77_kind_ty(TY_CPLX, iv[2]);
+            if (ty[2] != TY_INT || f77_cx_ty < 0) { f77_error("CMPLX's KIND is 4 or 8"); return 1; }
+        }
         f77_cx_d = dv[0];
         f77_cx_d2 = n > 1 ? dv[1] : d2[0];
         f77_cx_round();
@@ -4648,6 +4892,10 @@ static int f77_cintrinsic(void) {
         /* of a COMPLEX the real part; REAL of a COMPLEX*16 is DOUBLE
          * PRECISION, as gfortran has it */
         rty = nm[0] == 'D' ? TY_DOUBLE : nm[0] == 'R' ? (ty[0] == TY_DCPLX ? TY_DOUBLE : TY_FLOAT) : TY_INT;
+        if (n == 2 && nm[0] != 'D') {               /* REAL(X, KIND), INT(X, KIND), NINT(X, KIND) */
+            rty = f77_kind_ty(rty, iv[1]);
+            if (ty[1] != TY_INT || rty < 0) { f77_error("this kind is not supported"); return 1; }
+        }
         f77_cx_ty = rty;
         if (rty == TY_INT) {
             double t;
@@ -4665,7 +4913,7 @@ static int f77_cintrinsic(void) {
     if (strcmp(nm, "ABS") == 0) {
         f77_cx_ty = ty[0];
         if (f77_iscx(ty[0])) {
-            /* f77 is built without libm, and |z| needs a rounded sqrt */
+            /* |z| is a hypot, which no libm rounds the same everywhere */
             f77_error("ABS of a COMPLEX in a constant expression is not supported");
             return 1;
         } else {
@@ -4690,8 +4938,11 @@ static int f77_cintrinsic(void) {
             f77_cx_d = (double)f77_cx_i;
             return 1;
         }
-        /* an exact real remainder needs fmod, and f77 is built without libm */
-        f77_error("MOD of a REAL in a constant expression is not supported");
+        /* fmod is exact, so the host's is the target's */
+        if (dv[1] == 0) { f77_error("MOD by zero in a constant expression"); return 1; }
+        f77_cx_d = fmod(dv[0], dv[1]);
+        f77_cx_round();
+        f77_cx_i = (int)f77_cx_d;
         return 1;
     } else {
         double r;
@@ -4761,6 +5012,14 @@ static void f77_cprimary(void) {
                 f77_tok();
                 return;
             }
+        }
+        if (f77_scan_mode) {
+            /* the unit scan: its table of INTEGER named constants */
+            int v;
+            if (!f77_scan_const(lex_name, &v)) f77_scan_bad = 1;
+            f77_cx_ty = TY_INT; f77_cx_i = v; f77_cx_d = (double)v;
+            f77_tok();
+            return;
         }
         s = f77_sym(lex_name);
         if (f77_sparam[s] && f77_sty[s] == TY_CHAR) {
@@ -5165,8 +5424,9 @@ static void f77_stmt_decl(int ty, int skip) {
         if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
         clen = f77_char_len();
     } else if (lx_t == T_LP && ty >= 0) {
-        f77_error("a KIND in a type declaration is not supported yet");
-        return;
+        /* a kind: REAL(WP), REAL(KIND=8), COMPLEX(DP) (Fortran 90) */
+        ty = f77_kind_sel(ty);
+        if (ty < 0) return;
     }
     if (has_dc) {
         /* [, attribute]... :: */
@@ -5269,6 +5529,16 @@ static void f77_stmt_decl(int ty, int skip) {
             if (a_save && !f77_save_note(s)) return;
         }
         f77_realloc_sym(s);
+        if (ty >= 0 && f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_urpend[f77_cur_unit] &&
+            strcmp(f77_sname[s], f77_uname[f77_cur_unit]) == 0) {
+            /* the result's kind, which the scan could not tell: known now,
+             * before any reference in the unit (the scan refuses callers
+             * that came first) */
+            if (f77_sty[s] == TY_CHAR || f77_sty[s] == TY_DCPLX)   /* bound with hidden arguments, or without */
+                f77_error("this FUNCTION's result kind must be known from its unit's INTEGER, PARAMETER statements");
+            f77_urty[f77_cur_unit] = f77_sty[s];
+            f77_urpend[f77_cur_unit] = 0;
+        }
         if (lx_t == T_SLASH && ty >= 0 && !dcolon && !f77_decl_init(s)) return;
         if (dcolon && a_param) {
             if (lx_t != T_ASSIGN) { f77_error("a PARAMETER needs = value"); return; }
@@ -8110,7 +8380,14 @@ static void f77_emit_copyout(void) {
     }
 }
 
-static int f77_urty_of(int u) { return f77_urty[u]; }
+static int f77_urty_of(int u) {
+    if (f77_urpend[u]) {
+        char m[160];
+        sprintf(m, "the result kind of %s is not known where it is referenced", f77_uname[u]);
+        f77_error(m);
+    }
+    return f77_urty[u];
+}
 
 /* Index of the FUNCTION unit called `nm`, or -1.  Phase 1 records every
  * unit in the file before any of them is compiled, so a call can be

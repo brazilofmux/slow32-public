@@ -15,12 +15,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <math.h>      /* sqrt, fmod, ceil, floor: constant folding, exact on every host */
 
 #include "f77_shim.h"
 #include "f77_contract.h"
 
 static void f77_error(char *msg);
 static int f77_nerr;      /* errors reported; the parser checks it per statement */
+static int f77_scan_mode; /* the unit scan evaluating a kind (f77_scan_kind_sel) */
+static int f77_scan_bad;  /* ... and something it could not tell */
 
 #include "f77_card.h"
 #include "f77_lexer_gen.c"
@@ -36,6 +39,7 @@ static int f77_nerr;      /* errors reported; the parser checks it per statement
 
 
 static void f77_error(char *msg) {
+    if (f77_scan_mode) { f77_scan_bad = 1; return; }
     lx_put_where(lx_stmt_line);
     fdputs(msg, 2);
     fdputc('\n', 2);
@@ -115,6 +119,21 @@ static int *f77_dn_ty;
 static int f77_dn_n;
 static int f77_dn_cap;
 static int f77_dn_unit = -1;
+
+/* Does the declaration being scanned carry the attribute `at` before
+ * its :: (Fortran 90)?  Text-level, as the scan is. */
+static int f77_has_attr(char *at) {
+    int dc;
+    int n;
+    int i;
+    dc = f77_toplevel(':', 0);
+    if (dc < 0 || dc + 1 >= lx_stmt_len || lx_stmt[dc + 1] != ':') return 0;
+    n = (int)strlen(at);
+    for (i = 0; i + n < dc; i++)
+        if (lx_stmt[i] == ',' && strncmp(lx_stmt + i + 1, at, (size_t)n) == 0 &&
+            (lx_stmt[i + 1 + n] == ',' || lx_stmt[i + 1 + n] == ':')) return 1;
+    return 0;
+}
 
 static void f77_dn_note(int unit, char *nm, int ty) {
     int q;
@@ -343,6 +362,8 @@ static void f77_scan_units(void) {
             int clen;
             int lg;
             int tnar;
+            int kpend;
+            kpend = 0;
             clen = 1;
             lg = 0;
             tnar = 0;
@@ -355,7 +376,18 @@ static void f77_scan_units(void) {
             else if (f77_starts("COMPLEX")) { ty = TY_CPLX; skip = 7; }
             if (ty >= 0) {
                 int dc;
+                int iparam;
+                f77_scan_begin(f77_nunit - 1);
+                /* INTEGER, PARAMETER :: WP = KIND(1.D0): the scan's table */
+                iparam = ty == TY_INT && !lg && f77_has_attr("PARAMETER");
                 f77_scan_from(skip);
+                if (lx_t == T_LP && ty != TY_CHAR) {
+                    /* a kind (Fortran 90): REAL(WP) :: F */
+                    int kt;
+                    kt = f77_scan_kind_sel(ty);
+                    if (kt == -2) kpend = 1;
+                    else ty = kt;
+                }
                 if (lx_t == T_STAR) {
                     int n;
                     if (ty == TY_CHAR) { f77_tok(); clen = f77_char_len(); }
@@ -395,9 +427,18 @@ static void f77_scan_units(void) {
                         f77_urty[f77_nunit - 1] = ty;
                         f77_urlog[f77_nunit - 1] = lg;
                         f77_urnar[f77_nunit - 1] = tnar;
+                        f77_urpend[f77_nunit - 1] = kpend;
                         if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
                     } else {
-                        f77_dn_note(f77_nunit - 1, dnm, ty);
+                        f77_dn_note(f77_nunit - 1, dnm, kpend ? -1 : ty);
+                    }
+                    if (iparam && lx_t == T_ASSIGN) {
+                        f77_tok();
+                        f77_scan_mode = 1;
+                        f77_scan_bad = 0;
+                        f77_cexpr();
+                        f77_scan_mode = 0;
+                        if (!f77_scan_bad && f77_cx_ty == TY_INT) f77_scan_const_add(f77_nunit - 1, dnm, f77_cx_i);
                     }
                     if (lx_t == T_LP) {
                         int depth;
@@ -585,6 +626,7 @@ int main(int argc, char **argv) {
     close(fd);
 
     lx_inname = argv[1];
+    lx_kind_hook = f77_kind_lit;
     /* The form and the preprocessing by the name, as gfortran and flang
      * have them: .f90 and .f95 free form, a capital F preprocessed. */
     {

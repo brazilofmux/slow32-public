@@ -8,6 +8,6 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$HERE/out"
 CC="${CC:-cc}"
-$CC -O1 -w -o "$HERE/out/f77" "$HERE/src/f77.c"
+$CC -O1 -w -o "$HERE/out/f77" "$HERE/src/f77.c" -lm
 echo "built: $HERE/out/f77"
 "$HERE/runtime/build.sh"
