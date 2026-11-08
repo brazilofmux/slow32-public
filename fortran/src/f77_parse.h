@@ -198,6 +198,7 @@ static int f77_ci_n;
 static int f77_unit_nparams;
 static int f77_rd_len;
 static int f77_inline_depth;
+static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
 static void f77_assign_params(int n);
 
 /* COMPLEX: a parser-level type id (never the type of an HIR
@@ -824,6 +825,7 @@ static int ctl_test[F77_MAX_CTL];    /* DO: test block */
 static int ctl_body[F77_MAX_CTL];    /* DO: body head, the rotated back edge */
 
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
+static int ctl_cont[F77_MAX_CTL];    /* DO: the step, made by the first CYCLE (-1: none) */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
 static int ctl_n;
 
@@ -2130,6 +2132,25 @@ static int f77_primary(void) {
         int in;
         strcpy(nm, lex_name);
         u = f77_find_func(nm);
+
+        /* Inside a FUNCTION its name -- and an ENTRY's -- is the result
+         * variable (F77 15.5.1; F90 12.5.2.2 without RESULT), so F(N-1)
+         * there subscripts a scalar: F77 has no recursion, and F90's
+         * direct recursion needs RESULT (milestone 4).  It had compiled
+         * as a recursive call. */
+        if (u >= 0 && f77_result_sym >= 0 && f77_inline_depth == 0 &&
+            lx_rp < lx_rpe && *lx_rp == '(') {
+            int k;
+            int is_res;
+            is_res = strcmp(nm, f77_sname[f77_result_sym]) == 0;
+            for (k = 0; k < f77_stfb_n; k++)
+                if (f77_stfb_sym[k] == f77_result_sym && strcmp(f77_stfb_name[k], nm) == 0) is_res = 1;
+            if (is_res) {
+                f77_error("a FUNCTION's name is its result here: a recursive reference needs RESULT, which is not supported yet");
+                ex_ty = TY_INT;
+                return f77_iconst(0);
+            }
+        }
 
         /* A statement function of this unit shadows everything. */
         {
@@ -5421,6 +5442,7 @@ static void f77_open_do(void) {
     ctl_test[ctl_n] = b_test;
     ctl_body[ctl_n] = b_body;
     ctl_exit[ctl_n] = b_exit;
+    ctl_cont[ctl_n] = -1;
     ctl_n = ctl_n + 1;
 }
 
@@ -5438,6 +5460,10 @@ static void f77_close_top_do(void) {
             f77_cur_blk_live = 0;
             f77_begin_blk(ctl_exit[ctl_n]);
             return;
+        }
+        if (ctl_cont[ctl_n] >= 0) {         /* a CYCLE came here: the step is its block */
+            f77_goto_blk(ctl_cont[ctl_n]);
+            f77_begin_blk(ctl_cont[ctl_n]);
         }
         if (f77_cur_blk_live) {
             int vty;
@@ -5524,7 +5550,24 @@ static void f77_open_dowhile(void) {
     ctl_test[ctl_n] = b_test;
     ctl_body[ctl_n] = b_body;
     ctl_exit[ctl_n] = b_exit;
+    ctl_cont[ctl_n] = -1;
     ctl_n = ctl_n + 1;
+}
+
+/* EXIT and CYCLE (Fortran 90), of the innermost DO: EXIT to the block
+ * after it, CYCLE to its step (a counted DO; made here the first time,
+ * f77_close_top_do runs the step in it) or its test (DO WHILE).  A
+ * construct name after either is milestone 2's. */
+static void f77_stmt_exit_cycle(int cycle) {
+    int k;
+    if (lx_stmt_len != (cycle ? 5 : 4)) { f77_error("a construct name on EXIT or CYCLE is not supported yet"); return; }
+    k = ctl_n - 1;
+    while (k >= f77_ctl_base && ctl_kind[k] != F77_CTL_DO) k = k - 1;
+    if (k < f77_ctl_base) { f77_error(cycle ? "CYCLE outside a DO loop" : "EXIT outside a DO loop"); return; }
+    if (!cycle) { f77_goto_blk(ctl_exit[k]); return; }
+    if (ctl_var[k] < 0) { f77_goto_blk(ctl_test[k]); return; }
+    if (ctl_cont[k] < 0) ctl_cont[k] = hir_new_block();
+    f77_goto_blk(ctl_cont[k]);
 }
 
 /* Is the statement DO [label [,]] WHILE (e)? */
@@ -8493,6 +8536,8 @@ static void f77_statement(void) {
     if ((n = f77_starts("READ")) != 0)  { f77_stmt_read(n);  goto done; }
     if ((n = f77_starts("OPEN")) != 0)  { f77_stmt_open(n);  goto done; }
     if ((n = f77_starts("CLOSE")) != 0) { f77_stmt_close(n); goto done; }
+    if (f77_starts("EXIT")) { f77_stmt_exit_cycle(0); goto done; }
+    if (f77_starts("CYCLE")) { f77_stmt_exit_cycle(1); goto done; }
     if ((n = f77_starts("INQUIRE")) != 0) { f77_stmt_inquire(n); goto done; }
     if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
     if ((n = f77_starts("BACKSPACE")) != 0) {

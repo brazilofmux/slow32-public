@@ -285,6 +285,55 @@ static int lx_expand(const char *t, int n, int file, char *out, int cap, int *ol
 
 /* --- statement assembly --------------------------------------------- */
 
+/* Drop `n` characters of the assembled statement at `at`. */
+static void lx_stmt_cut(int at, int n) {
+    memmove(lx_stmt + at, lx_stmt + at + n, (size_t)(lx_stmt_len - at - n));
+    memmove(lx_brk + at, lx_brk + at + n, (size_t)(lx_stmt_len - at - n));
+    lx_stmt_len = lx_stmt_len - n;
+}
+
+/* RECURSIVE (Fortran 90) on a SUBROUTINE or FUNCTION header -- RECURSIVE
+ * SUBROUTINE S, RECURSIVE [type] FUNCTION F, type RECURSIVE FUNCTION F -- is
+ * dropped from the text, so the unit scan and the parser see the header
+ * they know.  Nothing more is needed: a subprogram's locals are in its
+ * frame already (SAVE and DATA make the static ones, as F90 has it).  Only
+ * a statement with no '=' outside parentheses: an assignment to a
+ * variable whose name begins RECURSIVE is left alone. */
+static void lx_strip_recursive(void) {
+    static const char *after[] = { "SUBROUTINE", "FUNCTION", "INTEGER", "REAL", "DOUBLE",
+                                   "COMPLEX", "LOGICAL", "CHARACTER", 0 };
+    static const char *types[] = { "INTEGER", "REAL", "DOUBLEPRECISION", "DOUBLECOMPLEX",
+                                   "COMPLEX", "LOGICAL", 0 };
+    int i;
+    int depth;
+    if (lx_stmt_len < 17) return;
+    depth = 0;
+    for (i = 0; i < lx_stmt_len; i++) {
+        if (lx_stmt[i] == '\'') return;        /* no header has a string */
+        if (lx_stmt[i] == '(') depth = depth + 1;
+        else if (lx_stmt[i] == ')') depth = depth - 1;
+        else if (lx_stmt[i] == '=' && depth == 0) return;
+    }
+    if (strncmp(lx_stmt, "RECURSIVE", 9) == 0) {
+        for (i = 0; after[i]; i++)
+            if (strncmp(lx_stmt + 9, after[i], strlen(after[i])) == 0) {
+                lx_stmt_cut(0, 9);
+                lx_brk[0] = 0;
+                return;
+            }
+        return;
+    }
+    for (i = 0; types[i]; i++) {
+        int n;
+        n = (int)strlen(types[i]);
+        if (strncmp(lx_stmt, types[i], n) == 0 && n + 17 <= lx_stmt_len &&
+            strncmp(lx_stmt + n, "RECURSIVEFUNCTION", 17) == 0) {
+            lx_stmt_cut(n, 9);
+            return;
+        }
+    }
+}
+
 /* True when the line starting at `p` is a comment or is entirely blank.
  * F77: C or * in column 1.  D in column 1 is a debug line, which we
  * treat as a comment (the historic default when debug lines are off). */
@@ -603,6 +652,7 @@ static int f77_next_stmt(void) {
         }
     }
 
+    lx_strip_recursive();
     lx_stmt[lx_stmt_len] = 0;
     return lx_stmt_len > 0 || lx_stmt_label >= 0;
 }
