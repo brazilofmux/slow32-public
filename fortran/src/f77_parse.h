@@ -1215,6 +1215,50 @@ static int f77_balance(int *a, int *ahi, int aty, int *b, int *bhi, int bty) {
     return TY_INT;
 }
 
+/* --- COMPLEX*16 arithmetic ------------------------------------------- */
+
+/* A COMPLEX*16 value passed to one of the runtime's helpers: an alias of
+ * the address (the guard allows the value itself only as an address, and
+ * not as a call argument, which is how an unhandled use would look). */
+static int f77_dcx_arg(int v) { return hi_emit(HI_ADDI, HL_ADDR_TY, v, -1, 0, NULL); }
+
+static int f77_call_i(char *name, int nargs, int *args);
+
+/* a op b, both COMPLEX*16, op one of + - * /.  + - * inline on the parts
+ * with the double-precision primitives -- the product the textbook
+ * (ar br - ai bi, ar bi + ai br), as gfortran computes it for finite
+ * values; / in the runtime (f77_zdiv, Smith's method). */
+static int f77_dcx_binop(int op, int a, int b) {
+    int ar; int arh; int ai; int aih;
+    int br; int brh; int bi; int bih;
+    int re; int reh; int im; int imh;
+    if (op == T_SLASH) {
+        int args[3];
+        int out;
+        out = f77_dcx_temp();
+        args[0] = f77_dcx_arg(out); args[1] = f77_dcx_arg(a); args[2] = f77_dcx_arg(b);
+        f77_call_i("f77_zdiv", 3, args);
+        return f77_dcx_mark(out);
+    }
+    ar = f77_dcx_part(a, 0, &arh); ai = f77_dcx_part(a, 1, &aih);
+    br = f77_dcx_part(b, 0, &brh); bi = f77_dcx_part(b, 1, &bih);
+    if (op == T_PLUS || op == T_MINUS) {
+        char *f;
+        f = op == T_PLUS ? "__fp64_add" : "__fp64_sub";
+        re = f77_fp64_call2(f, ar, arh, br, brh, &reh);
+        im = f77_fp64_call2(f, ai, aih, bi, bih, &imh);
+    } else {
+        int t1; int t1h; int t2; int t2h;
+        t1 = f77_fp64_call2("__fp64_mul", ar, arh, br, brh, &t1h);
+        t2 = f77_fp64_call2("__fp64_mul", ai, aih, bi, bih, &t2h);
+        re = f77_fp64_call2("__fp64_sub", t1, t1h, t2, t2h, &reh);
+        t1 = f77_fp64_call2("__fp64_mul", ar, arh, bi, bih, &t1h);
+        t2 = f77_fp64_call2("__fp64_mul", ai, aih, br, brh, &t2h);
+        im = f77_fp64_call2("__fp64_add", t1, t1h, t2, t2h, &imh);
+    }
+    return f77_dcx_make(re, reh, im, imh);
+}
+
 /* Integer constants are cached PER BASIC BLOCK.  CSE hashes on operand
  * instruction indices, so two identical expressions built from two
  * separately-emitted ICONSTs of the same value never match -- which is
@@ -1729,6 +1773,7 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "DIMAG") == 0) return IN_AIMAG;
     if (strcmp(nm, "DCONJG") == 0) return IN_CONJG;
     if (strcmp(nm, "DREAL") == 0) return IN_DBLE;
+    if (strcmp(nm, "CDABS") == 0 || strcmp(nm, "ZABS") == 0) return IN_ABS;
     if (strcmp(nm, "CABS") == 0) return IN_ABS;
     if (strcmp(nm, "CSQRT") == 0) return IN_SQRT;
     if (strcmp(nm, "CEXP") == 0) return IN_EXP;
@@ -2024,6 +2069,15 @@ static int f77_primary(void) {
             ex_ty = TY_DOUBLE;
             return f77_fp64_pair1("__fp64_neg", v, vhi, &ex_hi);
         }
+        if (save == TY_DCPLX) {
+            int re; int reh; int im; int imh;
+            re = f77_dcx_part(v, 0, &reh);
+            im = f77_dcx_part(v, 1, &imh);
+            re = f77_fp64_pair1("__fp64_neg", re, reh, &reh);
+            im = f77_fp64_pair1("__fp64_neg", im, imh, &imh);
+            ex_ty = TY_DCPLX; ex_hi = -1;
+            return f77_dcx_make(re, reh, im, imh);
+        }
         if (save == TY_CPLX) {
             ex_ty = TY_CPLX;
             ex_hi = hi_emit(HI_FNEG, TY_FLOAT, vhi, -1, 0, NULL);
@@ -2164,6 +2218,16 @@ static int f77_primary(void) {
                 if (in == IN_AIMAG) { ex_ty = TY_FLOAT; ex_hi = -1; return ahi; }
                 ex_ty = TY_CPLX;
                 ex_hi = hi_emit(HI_FNEG, TY_FLOAT, ahi, -1, 0, NULL);
+                return a;
+            }
+            if (aty == TY_DCPLX && in == IN_ABS) {
+                /* |z| of a COMPLEX*16: hypot in the runtime, a double back */
+                int args[1];
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                args[0] = f77_dcx_arg(a);
+                a = f77_call_i("f77_zabs", 1, args);
+                ex_hi = hi_emit(HI_CALLHI, TY_INT, a, -1, 0, NULL);
+                ex_ty = TY_DOUBLE; ex_log = 0;
                 return a;
             }
             if (aty == TY_CPLX && (in == IN_ABS || in == IN_SQRT || in == IN_EXP ||
@@ -2635,6 +2699,26 @@ static int f77_power(void) {
         b = f77_power();
         bty = ex_ty;
         bhi = ex_hi;
+        if (aty == TY_DCPLX || bty == TY_DCPLX ||
+            (aty == TY_CPLX && bty == TY_DOUBLE) || (aty == TY_DOUBLE && bty == TY_CPLX)) {
+            /* COMPLEX*16: z**n by binary exponentiation in libgfortran's
+             * order, z**w as exp(w log z), both in the runtime */
+            int out;
+            int args[3];
+            out = f77_dcx_temp();
+            a = f77_cvt(a, &ahi, aty, TY_DCPLX);
+            args[0] = f77_dcx_arg(out); args[1] = f77_dcx_arg(a);
+            if (bty == TY_INT) {
+                args[2] = b;
+                f77_call_i("f77_zpow_i", 3, args);
+            } else {
+                b = f77_cvt(b, &bhi, bty, TY_DCPLX);
+                args[2] = f77_dcx_arg(b);
+                f77_call_i("f77_zpow_z", 3, args);
+            }
+            ex_ty = TY_DCPLX; ex_hi = -1;
+            return f77_dcx_mark(out);
+        }
         if (aty == TY_CPLX || bty == TY_CPLX) {
             /* z**n by repeated squaring, z**w as exp(w log z): both in
              * the runtime, which writes the pair to a frame temporary. */
@@ -2701,6 +2785,13 @@ static int f77_term(void) {
         b = f77_power();
         bty = ex_ty; bhi = ex_hi;
         rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
+        if (rty == TY_DCPLX) {
+            a = f77_dcx_binop(op, a, b);
+            ahi = -1;
+            aty = rty;
+            ex_log = 0;
+            continue;
+        }
         if (rty == TY_CPLX) {
             int t1; int t2; int re; int im;
             if (op == T_STAR) {
@@ -2749,6 +2840,13 @@ static int f77_arith(void) {
         b = f77_term();
         bty = ex_ty; bhi = ex_hi;
         rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
+        if (rty == TY_DCPLX) {
+            a = f77_dcx_binop(op, a, b);
+            ahi = -1;
+            aty = rty;
+            ex_log = 0;
+            continue;
+        }
         if (rty == TY_CPLX) {
             a = hi_emit(op == T_PLUS ? HI_FADD : HI_FSUB, TY_FLOAT, a, b, 0, NULL);
             ahi = hi_emit(op == T_PLUS ? HI_FADD : HI_FSUB, TY_FLOAT, ahi, bhi, 0, NULL);
@@ -2836,6 +2934,18 @@ static int f77_relat(void) {
         rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
         ex_ty = TY_INT;
         ex_log = 1;
+        if (rty == TY_DCPLX) {
+            int ar; int arh; int ai; int aih; int br; int brh; int bi; int bih;
+            int e1; int e2;
+            if (op != T_EQ && op != T_NE) { f77_error("COMPLEX operands allow only .EQ. and .NE."); return f77_iconst(0); }
+            ar = f77_dcx_part(a, 0, &arh); ai = f77_dcx_part(a, 1, &aih);
+            br = f77_dcx_part(b, 0, &brh); bi = f77_dcx_part(b, 1, &bih);
+            e1 = f77_fp64_call2("__fp64_eq", ar, arh, br, brh, NULL);
+            e2 = f77_fp64_call2("__fp64_eq", ai, aih, bi, bih, NULL);
+            r = hi_emit(HI_AND, TY_INT, e1, e2, 0, NULL);
+            if (op == T_NE) r = hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
+            return r;
+        }
         if (rty == TY_CPLX) {
             int e1; int e2;
             if (op != T_EQ && op != T_NE) { f77_error("COMPLEX operands allow only .EQ. and .NE."); return f77_iconst(0); }

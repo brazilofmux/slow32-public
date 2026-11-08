@@ -1375,6 +1375,68 @@ void f77_ccos(float *out, float re, float im) {
     out[1] = (float)(-sin((double)re) * sinh((double)im));
 }
 
+/* --- COMPLEX*16 primitives ---------------------------------------------
+ *
+ * A COMPLEX*16 is two doubles, real then imaginary; the compiler passes
+ * each by its address and takes results back through a 16-byte frame
+ * temporary (`out`, which may be the address of an operand: every result
+ * is formed in locals before it is stored). */
+
+/* a / b by Smith's method: the divisor's larger part divides the other,
+ * so no square of it is formed and none overflows.  gfortran's own
+ * algorithm (libgcc's __divdc3) scales differently, so the last bit can
+ * differ for some operands; the exact cases agree. */
+void f77_zdiv(double *out, const double *a, const double *b) {
+    double ar = a[0], ai = a[1], br = b[0], bi = b[1], r, den, re, im;
+    if (fabs(br) >= fabs(bi)) {
+        r = bi / br; den = br + bi * r;
+        re = (ar + ai * r) / den; im = (ai - ar * r) / den;
+    } else {
+        r = br / bi; den = br * r + bi;
+        re = (ar * r + ai) / den; im = (ai * r - ar) / den;
+    }
+    out[0] = re; out[1] = im;
+}
+
+/* z**n by binary exponentiation in libgfortran's order (pow_c8_i4):
+ * a negative n inverts z first, then the bits of |n| from the bottom. */
+void f77_zpow_i(double *out, const double *a, int n) {
+    double pr = 1.0, pi = 0.0, xr = a[0], xi = a[1], t;
+    unsigned u;
+    if (n != 0) {
+        if (n < 0) {
+            double one[2] = { 1.0, 0.0 }, x[2] = { xr, xi }, q[2];
+            u = 0u - (unsigned)n;
+            f77_zdiv(q, one, x);
+            xr = q[0]; xi = q[1];
+        } else {
+            u = (unsigned)n;
+        }
+        for (;;) {
+            if (u & 1u) { t = pr * xr - pi * xi; pi = pr * xi + pi * xr; pr = t; }
+            u >>= 1;
+            if (!u) break;
+            t = xr * xr - xi * xi; xi = xr * xi + xi * xr; xr = t;
+        }
+    }
+    out[0] = pr; out[1] = pi;
+}
+
+/* z**w as exp(w log z); 0**w is 0, as f77_cpow_c has it. */
+void f77_zpow_z(double *out, const double *a, const double *b) {
+    double lr, li, wr, wi, e;
+    if (a[0] == 0.0 && a[1] == 0.0) { out[0] = 0.0; out[1] = 0.0; return; }
+    lr = log(hypot(a[0], a[1]));
+    li = atan2(a[1], a[0]);
+    wr = b[0] * lr - b[1] * li;
+    wi = b[0] * li + b[1] * lr;
+    e = exp(wr);
+    out[0] = e * cos(wi);
+    out[1] = e * sin(wi);
+}
+
+double f77_zabs(const double *a) { return hypot(a[0], a[1]); }
+
 int f77_index(const char *a, int la, const char *b, int lb);
 
 /* --- specific intrinsics as actual arguments ---------------------------
