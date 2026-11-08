@@ -934,15 +934,22 @@ s32kbasic --any prog.bas out.s32x    # s32-sbc only
 
 ## Regenerating
 
-BASIC, after the toolchain below, from `slow-32` with the kit's tools:
-`KIT_TOOLS=~/s32x KIT_RT=~/s32x/selfhost sbc/build-kit.sh ~/s32x`.
+From `slow-32`, the whole kit, from the tree:
 
-From `slow-32/selfhost/stage08` after `make`, into the kit at `~/s32x/selfhost/`:
+    scripts/build-kit.sh ~/s32x
 
-- `include/`   ← `stage08/include/`
-- `crt0.s32o`  ← `stage08/lib/crt0.s32o`
-- `libc.s32a`  ← `s32-ar rc libc.s32a` over `stage08/lib/*.s32o` (minus `crt0.s32o`)
-- `README.md`  ← `stage08/RUNTIME_KIT.md` (this file)
+It is in three parts (`scripts/build-kit.sh OUT stage08 apps basic`, all
+three by default):
+- **stage08:** `make` in `selfhost/stage08`, laid out as the kit holds it:
+  - `cc.s32x`, `s32-as/ld/ar.s32x`, `slow32dis/dump.s32x` at the top
+  - `selfhost/include/` from `stage08/include/`
+  - `selfhost/crt0.s32o` from `stage08/lib/crt0.s32o`
+  - `selfhost/libc.s32a`: `s32-ar rc` over `stage08/lib/*.s32o`, minus `crt0.s32o`
+  - `selfhost/README.md`: this file
+- **apps:** each program by its own build script, with clang.
+- **basic:** the two BASIC compilers by the kit's own tools
+  (`sbc/build-kit.sh`).
 
-The compiler and tools themselves (`cc.s32x`, `s32-as.s32x`, `s32-ld.s32x`,
-`s32-ar.s32x`) go one level up, in `~/s32x/`.
+slow32:kit is built by the same script (Dockerfile.selfhost, Dockerfile.kit),
+and the image and a Mac build hold the same bytes.  `regal.s32x` is never in
+the kit.

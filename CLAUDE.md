@@ -171,26 +171,33 @@ substituted 1:1.
   cc.s32x from slow32:kit compiles on the emulator), and `s32basic`
   (s32-bc if it takes the program, else s32-sbc); both link
   libsbasic.s32a, no LLVM.  Gate: sbc/tests/run-stage08.sh.
+- `slow32:selfhost` (artifact image, FROM scratch; not on Docker Hub):
+  stage08's cc.s32x, tools and libc laid out as the kit holds them
+  (`/kit`), and cc-x64/cc-a64 (`/cross`), built from the tree in under a
+  minute.  slow32:kit copies from it (slow32:toolchain will, docs/plans/containers.md).
 - `slow32:kit` (FROM base): + `/opt/slow32/kit`, the self-hosted kit
-  (`~/s32x`: cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
+  (cc.s32x, s32-as/ld/ar.s32x, selfhost libc, and the built apps)
   and `s32kcc`, C to `.s32x` through that toolchain on the emulator, and
   `s32kbasic [--qb | --any] prog.bas [out.s32x]`, the two BASIC compilers
-  built by that toolchain (`sbc/build-kit.sh`; no LLVM, no host compiler). The
-  kit is not in git, so this one is built by `scripts/build-kit-image.sh`
-  on a machine with the kit (both arches with `--push`), not by ~/builder;
-  `regal.s32x` is excluded.
+  built by that toolchain (`sbc/build-kit.sh`; no LLVM, no host compiler).
+  Built from the tree since 2026-11-08 by `scripts/build-kit.sh`, the
+  script that also makes `~/s32x` (`scripts/build-kit.sh ~/s32x`): the image
+  and the Mac hold the same bytes.  Local build and gate:
+  `scripts/build-kit-image.sh`.  `regal.s32x` is never in it.
 
 ```bash
 # Build images (if not already built) -- in this order, it is a chain
 podman build -t slow32:emulator  -f Dockerfile.emulator  .
 podman build -t slow32:base      -f Dockerfile.base      .
+podman build -t slow32:selfhost  -f Dockerfile.selfhost  .
 podman build -t slow32:toolchain -f Dockerfile.toolchain .
 podman build -t slow32:pascal    -f Dockerfile.pascal    .
 podman build -t slow32:cobol     -f Dockerfile.cobol     .
 podman build -t slow32:fortran   -f Dockerfile.fortran   .
 podman build -t slow32:forth     -f Dockerfile.forth     .
+podman build -t slow32:kit       -f Dockerfile.kit       .   # needs selfhost and toolchain
 podman build -t slow32:basic     -f Dockerfile.basic     .   # needs slow32:kit
-scripts/build-kit-image.sh   # slow32:kit, context = staged ~/s32x, gated
+scripts/build-kit-image.sh   # selfhost + kit from the tree, then the kit gate
 
 # Run programs with the emulator container (easy wrapper script;
 # auto-detects podman/docker and falls back to the legacy

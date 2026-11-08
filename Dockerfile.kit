@@ -1,30 +1,72 @@
-# SLOW-32 Kit Image: slow32:base + the self-hosted kit (~/s32x).
+# SLOW-32 Kit Image: slow32:base + the self-hosted kit, built from the tree.
 #
 #   slow32:base   emulators + as/ld/ar/utilities + runtime
 #     -> slow32:kit   + /opt/slow32/kit: the SELF-HOSTED toolchain (cc.s32x,
 #                     s32-as/ld/ar.s32x, slow32dis/dump.s32x, selfhost/
 #                     {include,crt0.s32o,libc.s32a}) and the built apps
 #                     (lua, nano, prolog, sbasic, xbase, islisp, sqlite3, the
-#                     Forth kernel, ...), plus `s32kcc`, C -> .s32x through
-#                     that toolchain running on the emulator.
+#                     Forth kernel, s32sort, tz, ...), plus `s32kcc`, C -> .s32x
+#                     through that toolchain running on the emulator.
 #                     s32-bc.s32x and s32-sbc.s32x, the two BASIC compilers
-#                     built by that toolchain, with basic/ (their run time,
-#                     stage08's too), and `s32kbasic`: BASIC -> .s32x the
-#                     same way, no LLVM and no host compiler anywhere.
+#                     built by that toolchain, with basic/ (their run time),
+#                     and `s32kbasic`: BASIC -> .s32x the same way.
 #
-# The context is NOT the tree: it is a staged copy of the kit made by
-# scripts/build-kit-image.sh, which also applies the exclusion list (the
-# kit is hand-curated build products, not in git, so ~/builder cannot make
-# this image from a clean clone; the script builds and pushes both arches
-# from a machine that has the kit).  COPY-only on purpose: a COPY-only
-# Dockerfile builds for the other architecture without emulation.
+# Built from the tree like every other image (docs/plans/containers.md): the
+# stage08 part comes from slow32:selfhost, and scripts/build-kit.sh builds
+# the rest -- the same script `scripts/build-kit.sh ~/s32x` runs on the Mac.
+# The apps' build scripts expect the tree's tools at tools/... and clang at
+# ~/llvm-project/build/bin; the builder stage puts the image's there, so the
+# scripts run unchanged.  regal.s32x is never in it.
+#
+# Gate: regression/run-kit-differential.sh, run-kit-tools-differential.sh,
+# run-kit-islisp.sh and run-kit-basic.sh inside the image (KIT=/opt/slow32/kit).
 ARG BASE_IMAGE=slow32:base
-FROM ${BASE_IMAGE}
-COPY kit/ /opt/slow32/kit/
-COPY bin/s32kcc /opt/slow32/bin/s32kcc
-COPY bin/s32kbasic /opt/slow32/bin/s32kbasic
+ARG TOOLCHAIN_IMAGE=slow32:toolchain
+ARG SELFHOST_IMAGE=slow32:selfhost
 
-# Usage:  s32kcc prog.c [-I dir]... [-o prog.s32x]; s32run prog.s32x
-#         s32kbasic [--qb | --any] prog.bas [out.s32x]; s32run out.s32x
-#         s32run /opt/slow32/kit/lua.s32x < script.lua   (the port reads stdin)
+FROM ${SELFHOST_IMAGE} AS selfhost
+FROM ${TOOLCHAIN_IMAGE} AS toolchain
+
+# FROM base, not the toolchain: the assembler, linker, emulators and runtime
+# are base's, current for this round.  Only LLVM comes from the toolchain.
+FROM ${BASE_IMAGE} AS kit-builder
+RUN apk add --no-cache build-base bash libstdc++
+COPY --from=toolchain /opt/llvm /opt/llvm
+WORKDIR /build
+COPY slow32cc /build/
+COPY scripts/build-kit.sh /build/scripts/
+COPY common /build/common
+COPY runtime /build/runtime
+COPY examples/benchmark_core.c examples/phonetic.c examples/validatecsv.c /build/examples/
+COPY lua /build/lua
+COPY nano /build/nano
+COPY prolog /build/prolog
+COPY sbasic /build/sbasic
+COPY xbase /build/xbase
+COPY forth /build/forth
+COPY islisp /build/islisp
+COPY dfsort /build/dfsort
+# s32sort is libcob's sort engine, from its header
+COPY cobol/libcob/xsort.h /build/cobol/libcob/
+COPY sqlite /build/sqlite
+COPY tzlookup /build/tzlookup
+COPY sbc /build/sbc
+# The tree's tool paths, and the LLVM path every build script assumes
+RUN mkdir -p tools/assembler tools/linker tools/utilities tools/emulator tools/dbt \
+             /root/llvm-project/build && \
+    ln -s /opt/slow32/bin/slow32asm  tools/assembler/slow32asm && \
+    ln -s /opt/slow32/bin/s32-ld     tools/linker/s32-ld && \
+    ln -s /opt/slow32/bin/s32-ar     tools/utilities/s32-ar && \
+    ln -s /usr/local/bin/slow32      tools/emulator/slow32 && \
+    ln -s /usr/local/bin/slow32-fast tools/emulator/slow32-fast && \
+    ln -s /usr/local/bin/slow32-dbt  tools/dbt/slow32-dbt && \
+    ln -s /opt/llvm/bin /root/llvm-project/build/bin
+COPY --from=selfhost /kit/ /out/kit/
+RUN bash scripts/build-kit.sh /out/kit apps basic
+
+FROM ${BASE_IMAGE}
+COPY --from=kit-builder /out/kit/ /opt/slow32/kit/
+COPY docker/bin/s32kcc docker/bin/s32kbasic /opt/slow32/bin/
+RUN chmod +x /opt/slow32/bin/s32kcc /opt/slow32/bin/s32kbasic
+
 WORKDIR /data

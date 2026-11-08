@@ -1,84 +1,48 @@
 #!/bin/bash
-# Build slow32:kit -- slow32:base plus the kit (~/s32x) -- and, with --push,
-# build it for BOTH architectures and push the arch tags to ECR for
-# ~/builder/manifest.sh to stitch.
+# Build slow32:selfhost and slow32:kit from the tree for this machine's
+# architecture, and gate the kit inside the image.  ~/builder builds the
+# same two Dockerfiles in a round, per arch, and pushes them; this is the
+# local check (docs/plans/containers.md).
 #
-# Why this is not a ~/builder job: the kit is a hand-curated drop of build
-# products (see selfhost/stage08/RUNTIME_KIT.md "Regenerating" and the
-# provenance map), not a git repository, so a clean clone has nothing to
-# build it from.  This script runs on a machine that has the kit.  The
-# Dockerfile is COPY-only, so the non-native architecture builds without
-# emulation on top of that arch's base pulled from ECR.
+#   scripts/build-kit-image.sh [--base IMG] [--toolchain IMG]
 #
-#   scripts/build-kit-image.sh            local: host arch, FROM slow32:base
-#   scripts/build-kit-image.sh --push     both arches FROM ECR base, gated, pushed
+# --base       the slow32:base to build on (default slow32:base)
+# --toolchain  the image LLVM comes from (default slow32:toolchain)
 #
-# Gate (always, host arch): regression/run-kit-differential.sh,
-# run-kit-tools-differential.sh and run-kit-islisp.sh INSIDE the built
-# image, i.e. the kit's own tools driven on the image's engines, and the
-# shipped islisp.s32x over islisp/tests with committed expected output.
-# And run-kit-basic.sh: the kit's BASIC compilers against its interpreter.
-# (BUILD_TIMEOUT: the harness's 180 s skips a test whose build takes longer,
-# with exit 0, and the largest take that on a 4-vCPU host: this is ample.)
+# Gate, inside the kit image: regression/run-kit-differential.sh,
+# run-kit-tools-differential.sh and run-kit-islisp.sh -- the kit's own
+# tools driven on the image's engines, and the shipped islisp.s32x over
+# islisp/tests -- and run-kit-basic.sh, the kit's BASIC compilers against its
+# interpreter.  (BUILD_TIMEOUT: the harness's 180 s skips a test whose build
+# takes longer, with exit 0, and the largest take that on a 4-vCPU host.)
 #
-# EXCLUDED from the image (the same editorial line as the public mirror,
-# applied to layers -- an image is an extractable archive):
-#   regal.s32x   the user's ledger tooling; not for public consumption
-#   .backup-prefix  an old rebuild's leftover copies of the tools
+# The kit was a hand-made drop (~/s32x) until 2026-11-08; now ~/s32x is
+# made from the tree (scripts/build-kit.sh ~/s32x), the same bytes the
+# image holds.  regal.s32x is never in either.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-KIT="${KIT:-$HOME/s32x}"
-REP1="274462252673.dkr.ecr.us-west-2.amazonaws.com"
-EXCLUDE=(regal.s32x .DS_Store .backup-prefix)
-PUSH=0
-[ "${1:-}" = "--push" ] && PUSH=1
-
-[ -f "$KIT/cc.s32x" ] || { echo "no kit at $KIT (set KIT=)"; exit 1; }
-case "$(uname -m)" in x86_64) HOST=amd64 ;; arm64|aarch64) HOST=arm64 ;; *) echo "arch?"; exit 1 ;; esac
-
-# Stage the context under $HOME (podman's VM does not share /tmp).
-CTX="$(mktemp -d "$HOME/.kit-image.XXXXXX")"
-trap 'rm -rf "$CTX"' EXIT
-mkdir -p "$CTX/kit" "$CTX/bin"
-ex=(); for e in "${EXCLUDE[@]}"; do ex+=(--exclude "$e"); done
-rsync -a "${ex[@]}" "$KIT/" "$CTX/kit/"
-cp "$ROOT/docker/bin/s32kcc" "$CTX/bin/s32kcc"; chmod +x "$CTX/bin/s32kcc"
-cp "$ROOT/docker/bin/s32kbasic" "$CTX/bin/s32kbasic"; chmod +x "$CTX/bin/s32kbasic"
-for e in "${EXCLUDE[@]}"; do [ ! -e "$CTX/kit/$e" ] || { echo "exclusion failed: $e"; exit 1; }; done
-echo "context: $(du -sh "$CTX/kit" | cut -f1) from $KIT, excluding: ${EXCLUDE[*]}"
-
-build() {  # build <arch> <base-image> <tag>
-    podman build --platform "linux/$1" -f "$ROOT/Dockerfile.kit" \
-        --build-arg BASE_IMAGE="$2" -t "$3" "$CTX" >/dev/null
-    echo "built $3 ($1)"
-}
-
-if [ "$PUSH" = 1 ]; then
-    aws ecr get-login-password --region us-west-2 | podman login --username AWS --password-stdin "$REP1" >/dev/null
-    podman pull -q --platform "linux/$HOST" "$REP1/slow32:base" >/dev/null
-    build "$HOST" "$REP1/slow32:base" "slow32:kit-$HOST"
-    HOST_TAG="slow32:kit-$HOST"
-else
-    build "$HOST" "slow32:base" "slow32:kit"
-    HOST_TAG="slow32:kit"
+BASE=slow32:base; TOOLCHAIN=slow32:toolchain
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --base) BASE="$2"; shift ;;
+        --toolchain) TOOLCHAIN="$2"; shift ;;
+        *) echo "usage: build-kit-image.sh [--base IMG] [--toolchain IMG]" >&2; exit 2 ;;
+    esac
+    shift
+done
+cd "$ROOT"
+podman build -q -f Dockerfile.selfhost --build-arg BASE_IMAGE="$BASE" -t slow32:selfhost . >/dev/null
+echo "built slow32:selfhost"
+podman build -q -f Dockerfile.kit --build-arg BASE_IMAGE="$BASE" --build-arg TOOLCHAIN_IMAGE="$TOOLCHAIN" \
+    --build-arg SELFHOST_IMAGE=slow32:selfhost -t slow32:kit . >/dev/null
+echo "built slow32:kit"
+if podman run --rm slow32:kit test -e /opt/slow32/kit/regal.s32x; then
+    echo "regal.s32x is in the kit" >&2; exit 1
 fi
 
-echo "--- gate: kit differentials and kit islisp inside $HOST_TAG"
+echo "--- gate: kit differentials, kit islisp and kit BASIC inside slow32:kit"
 podman run --rm -v "$ROOT:/ws" -w /ws/regression \
     -e KIT=/opt/slow32/kit -e BUILD_TIMEOUT="${BUILD_TIMEOUT:-1800}" \
     -e SLOW32=/usr/local/bin/slow32 -e SLOW32_FAST=/usr/local/bin/slow32-fast \
     -e SLOW32_DBT=/usr/local/bin/slow32-dbt -e QEMU_S32=/usr/local/bin/qemu-system-slow32 \
-    --entrypoint bash "$HOST_TAG" -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh && ./run-kit-basic.sh'
-
-if [ "$PUSH" = 1 ]; then
-    for arch in arm64 amd64; do
-        [ "$arch" = "$HOST" ] || {
-            podman pull -q --platform "linux/$arch" "$REP1/slow32:base" >/dev/null
-            build "$arch" "$REP1/slow32:base" "slow32:kit-$arch"
-        }
-        podman tag "slow32:kit-$arch" "$REP1/slow32:kit-$arch"
-        podman push -q "$REP1/slow32:kit-$arch"
-        echo "pushed $REP1/slow32:kit-$arch"
-    done
-    echo "now: ~/builder/manifest.sh stitches slow32:kit"
-fi
+    --entrypoint bash slow32:kit -c './run-kit-differential.sh && ./run-kit-tools-differential.sh && ./run-kit-islisp.sh && ./run-kit-basic.sh'

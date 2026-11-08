@@ -52,6 +52,9 @@
  * Plain C: the same source builds for the host, and dfsort/tests runs
  * every deck on both and compares the bytes. */
 
+/* strdup is POSIX, and the host build is -std=c99: without this a strict
+ * libc (glibc, musl) hides it, and the call returns an implicit int. */
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

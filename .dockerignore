@@ -91,6 +91,21 @@
 !sbc/compile.sh
 !sbc/bc/
 
+# Kit image (Dockerfile.kit): scripts/build-kit.sh and what its apps part
+# builds -- each app's own build script and sources (docs/plans/containers.md).
+!slow32cc
+!scripts/build-kit.sh
+!examples/benchmark_core.c
+!examples/phonetic.c
+!examples/validatecsv.c
+!lua/
+!nano/
+!prolog/
+!islisp/
+!dfsort/
+!sqlite/
+!tzlookup/
+!sbc/build-kit.sh
 # Emulator build needs:
 !tools/emulator/
 !tools/dbt/
@@ -160,3 +175,13 @@ sbc/bc/*.s
 selfhost/stage08-cross-x64/out/
 selfhost/stage08-cross-a64/out/
 selfhost/stage08/out/
+# Kit app outputs (rebuilt in the kit-builder stage); tzlookup's raw data
+# download is 211 MB and the build reads only gen/
+islisp/out/
+dfsort/out/
+sqlite/out/
+tzlookup/data/
+tzlookup/slow32/*.s32o
+tzlookup/slow32/*.s32x
+tzlookup/slow32/*.ll
+tzlookup/slow32/*.s
