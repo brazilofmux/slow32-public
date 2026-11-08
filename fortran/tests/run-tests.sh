@@ -125,7 +125,8 @@ else
             "$HERE/oracle.sh" "$OW/$b.$x" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
         fi
         # our compiler -> .s -> .s32o -> .s32x -> emulator
-        if ! "$F77" "$f" "$W/$b.s" >"$W/$b.cc.log" 2>&1; then
+        # from $W: a module's .mod file lands in the current directory
+        if ! (cd "$W" && "$F77" "$f" "$W/$b.s") >"$W/$b.cc.log" 2>&1; then
             report "diff:$b" 1 "f77 compile"; continue
         fi
         "$AS" "$W/$b.s" "$W/$b.s32o" >/dev/null 2>&1 || { report "diff:$b" 1 "assemble"; continue; }
@@ -222,6 +223,12 @@ if [ -x "$F77" ]; then
     printf 'integer(8) :: i8\nend\n' > "$W/kindi8.f90"
     printf 'x = 1.0_k\nend\n' > "$W/kindlit.f90"
     printf 'y = 2.0_16\nend\n' > "$W/kindlit16.f90"
+    printf 'module mv\nreal :: x\nend module mv\n' > "$W/modvar.f90"
+    printf 'module mi\ninterface\nsubroutine s(x)\nend subroutine s\nend interface\nend module mi\n' > "$W/modibody.f90"
+    printf 'use nosuch\nend\n' > "$W/usenone.f90"
+    printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
+    printf 'x = 1.0\ncall s\ncontains\nsubroutine s\ny = x\nend subroutine s\nend\n' > "$W/hostvar.f90"
+    printf 'module mg\ninterface g\nmodule procedure a\nend interface\ncontains\nsubroutine a(x)\nreal x\nend subroutine a\nend module mg\nuse mg\ncall g(1)\nend\n' > "$W/genmiss.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -281,6 +288,12 @@ if [ -x "$F77" ]; then
              "kindi8:line 1: kind 8 of this type is not supported" \
              "kindlit:line 1: the kind of a constant must be digits or an INTEGER named constant, not K" \
              "kindlit16:line 1: REAL kind 16 is not supported" \
+             "modvar:line 3: X: a module variable is not supported yet" \
+             "modibody:line 2: an INTERFACE block of interface bodies is not supported yet" \
+             "usenone:line 1: no module NOSUCH: neither in this file before the USE, nor a .mod file of it here" \
+             "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
+             "hostvar:line 6: X: host association with a variable is not supported yet" \
+             "genmiss:line 11: no procedure of the generic G takes these arguments" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \
@@ -317,7 +330,7 @@ if [ -x "$F77" ]; then
              "incafter:f77: line 3: statement label 99 is referred to but never defined"; do
         b="${c%%:*}"; msg="${c#*:}"
         f="$W/$b.f"; for e in F f90; do [ -f "$W/$b.$e" ] && f="$W/$b.$e"; done
-        if "$F77" "$f" "$W/$b.s" >"$W/$b.err" 2>&1; then
+        if (cd "$W" && "$F77" "$f" "$W/$b.s") >"$W/$b.err" 2>&1; then
             report "refuse:$b" 1 "compiled"
         elif ! grep -qF "$msg" "$W/$b.err"; then
             report "refuse:$b" 1 "said: $(head -1 "$W/$b.err")"

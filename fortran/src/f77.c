@@ -74,7 +74,9 @@ static void f77_check_unit_names(void) {
                  * points are units after the ordinary ones) */
                 a = f77_uline[i] <= f77_uline[j] ? i : j;
                 b = a == i ? j : i;
-                if (strcmp(f77_uname[i], f77_uname[j]) == 0) {
+                /* two of one name and one host; procedures of different
+                 * hosts are scoped apart (their link names differ) */
+                if (strcmp(f77_uname[i], f77_uname[j]) == 0 && f77_uhost[i] == f77_uhost[j]) {
                     sprintf(m, "%s is already a subprogram or ENTRY name (%s)", f77_uname[b], lx_where_text(f77_uline[a]));
                     f77_report_at(f77_uline[b], m);
                     break;
@@ -187,6 +189,9 @@ static void f77_scan_units(void) {
     int started;
     int ended;        /* the unit begun last has had its END */
     int mains;        /* main programs begun */
+    int hstack[4];    /* Fortran 90: the units whose CONTAINS we are past */
+    int hn;
+    int in_iface;     /* inside INTERFACE ... END INTERFACE */
 
     f77_nunit = 0;
     f77_nent = 0;
@@ -199,10 +204,64 @@ static void f77_scan_units(void) {
     started = 0;
     ended = 0;
     mains = 0;
+    hn = 0;
+    in_iface = 0;
+    { int z; for (z = 0; z < F77_MAX_UNIT; z++) f77_uhost[z] = -1; }
     pos = lx_pos;
     line = lx_line;
 
     while (f77_next_stmt()) {
+        /* Fortran 90's structure: an INTERFACE block's headers are no
+         * units; CONTAINS ends its unit's body and opens a host for the
+         * procedures after it; an END after the last of them is the
+         * host's. */
+        if (in_iface) {
+            if (lx_stmt_len >= 12 && strncmp(lx_stmt, "ENDINTERFACE", 12) == 0) in_iface = 0;
+            if (started && f77_nunit > 0) f77_ustmts[f77_nunit - 1]++;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
+        if (started && !ended && f77_starts("INTERFACE") && f77_toplevel('=', 0) < 0) in_iface = 1;
+        if (f77_is_contains()) {
+            if (!started || ended) { f77_error("CONTAINS outside a program unit"); return; }
+            if (hn >= 3) { f77_error("procedures nested too deep"); return; }
+            if (f77_ukind[f77_nunit - 1] == F77_UNIT_BDATA) { f77_error("CONTAINS in BLOCK DATA"); return; }
+            hstack[hn++] = f77_nunit - 1;
+            f77_unosplice[f77_nunit - 1] = 1;
+            ended = 1;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
+        if (hn > 0 && ended && f77_is_unit_end()) {
+            hn = hn - 1;                               /* the host's END */
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
+        if (hn > 0 && ended && !f77_starts("SUBROUTINE") && f77_unit_header_ty() < 0) {
+            f77_error("only a SUBROUTINE or FUNCTION may follow CONTAINS");
+            return;
+        }
+        if (f77_starts("MODULE") && !f77_starts("MODULEPROCEDURE") && f77_toplevel('=', 0) < 0) {
+            if (started && !ended) { f77_error("MODULE inside a program unit: the END before it is missing"); return; }
+            if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
+            f77_upos[f77_nunit] = pos;
+            f77_uline[f77_nunit] = line;
+            f77_ukind[f77_nunit] = F77_UNIT_MODULE;
+            f77_urty[f77_nunit] = TY_INT;
+            f77_scan_from(6);
+            if (lx_t != T_NAME) { f77_error("MODULE needs a name"); return; }
+            strcpy(f77_uname[f77_nunit], lex_name);
+            f77_unosplice[f77_nunit] = 1;
+            f77_nunit = f77_nunit + 1;
+            started = 1;
+            ended = 0;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
         /* A PROGRAM statement inside a subprogram means the END before
          * it is missing; taken as more of that unit, the main program
          * would vanish without a word.  (In a main program a second one
@@ -218,7 +277,7 @@ static void f77_scan_units(void) {
         /* After an END, a statement that is no subprogram's header
          * begins the main program, with a PROGRAM statement or without
          * one: the main program may follow its subprograms. */
-        if (started && ended && !f77_starts("SUBROUTINE") && !f77_starts("BLOCKDATA")
+        if (started && ended && hn == 0 && !f77_starts("SUBROUTINE") && !f77_starts("BLOCKDATA")
             && f77_unit_header_ty() < 0) {
             if (mains > 0) { f77_error("more than one main program"); return; }
             if (f77_nunit >= F77_MAX_UNIT) { f77_error("too many program units"); return; }
@@ -267,6 +326,7 @@ static void f77_scan_units(void) {
             /* An ALLOCATABLE array is freed at RETURN; spliced into a
              * caller that RETURN is a branch (Fortran 90). */
             if (strstr(lx_stmt, "ALLOCATABLE")) f77_unosplice[f77_nunit - 1] = 1;
+            if (f77_starts("USE")) f77_unosplice[f77_nunit - 1] = 1;
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)
@@ -324,6 +384,10 @@ static void f77_scan_units(void) {
             f77_upos[f77_nunit] = pos;
             f77_uline[f77_nunit] = line;
             f77_unit_name(f77_nunit);
+            if (hn > 0) {
+                f77_uhost[f77_nunit] = hstack[hn - 1];
+                f77_unosplice[f77_nunit] = 1;
+            }
             f77_collect_dummies(f77_starts("SUBROUTINE") ? 10 : f77_function_skip(), f77_nunit);
             if (rty >= 0) {
                 /* the header is classified many times; its length is
@@ -471,6 +535,7 @@ static void f77_scan_units(void) {
         line = lx_line;
     }
 
+    if (hn > 0 || in_iface) { f77_error(in_iface ? "INTERFACE without END INTERFACE" : "CONTAINS without its unit's END"); return; }
     /* Each ENTRY becomes a unit of its own, after the ordinary ones. */
     {
         int q;
@@ -487,6 +552,7 @@ static void f77_scan_units(void) {
             f77_urlen[f77_nunit] = 1;
             strcpy(f77_uname[f77_nunit], f77_ent_name[q]);
             f77_uentry_parent[f77_nunit] = par;
+            f77_uhost[f77_nunit] = f77_uhost[par];
             f77_unosplice[f77_nunit] = 1;
             {
                 int d;
@@ -494,6 +560,20 @@ static void f77_scan_units(void) {
                     if (f77_famd_unit[d] == -2 - q) f77_famd_unit[d] = f77_nunit;
             }
             f77_nunit = f77_nunit + 1;
+        }
+    }
+    /* The names they link by: their own, but a module's procedure's
+     * MOD.PROC, an internal procedure's HOST.PROC, a module's f77md_MOD. */
+    {
+        int u;
+        for (u = 0; u < f77_nunit; u++) {
+            if (f77_ukind[u] == F77_UNIT_MODULE) { strcpy(f77_ulink[u], "f77md_"); strcat(f77_ulink[u], f77_uname[u]); }
+            else if (f77_uhost[u] >= 0) {
+                strcpy(f77_ulink[u], f77_ulink[f77_uhost[u]][0] && f77_ukind[f77_uhost[u]] != F77_UNIT_MODULE
+                                         ? f77_ulink[f77_uhost[u]] : f77_uname[f77_uhost[u]]);
+                strcat(f77_ulink[u], ".");
+                strcat(f77_ulink[u], f77_uname[u]);
+            } else strcpy(f77_ulink[u], f77_uname[u]);
         }
     }
     f77_check_unit_names();
@@ -571,7 +651,7 @@ static void hl_func(Node *fn) {
          * match here swallowed everything after the first ENDIF -- the
          * unit ended there, fell off returning 0, and slice2 passed
          * vacuously against the oracle for a full day. */
-        if (f77_is_unit_end()) break;
+        if (f77_is_unit_end() || f77_is_contains()) break;
         if (!f77_next_stmt()) break;
         if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
     }
@@ -597,6 +677,25 @@ static void hl_func(Node *fn) {
      * every dummy this unit turned out to store (see f77_ldro_note). */
     f77_ldro_finalize();
     f77_dcx_guard();
+
+    /* Fortran 90: what the unit leaves its procedures -- its implicit
+     * typing; a module's table; a host's PARAMETERs and names -- and a
+     * module procedure's own entry in its module's table. */
+    memcpy(f77_uimp_map[u], f77_imp_map, sizeof(f77_imp_map));
+    memcpy(f77_uimp_len[u], f77_imp_len, sizeof(f77_imp_len));
+    memcpy(f77_uimp_log[u], f77_imp_log, sizeof(f77_imp_log));
+    memcpy(f77_uimp_nar[u], f77_imp_nar, sizeof(f77_imp_nar));
+    f77_uimp_none[u] = f77_imp_none;
+    if (f77_ukind[u] == F77_UNIT_MODULE) f77_mod_snapshot(u);
+    else {
+        int v;
+        for (v = 0; v < f77_nunit; v++)
+            if (f77_uhost[v] == u) { f77_host_save(u); break; }
+    }
+    if (f77_uhost[u] >= 0 && f77_uentry_parent[u] < 0) {
+        if (f77_ukind[f77_uhost[u]] == F77_UNIT_MODULE) f77_mod_proc(u);
+        else f77_hostnames_check();
+    }
 
     fn->locals_size = f77_frame;
 }
@@ -659,7 +758,7 @@ int main(int argc, char **argv) {
         int i;
         i = 0;
         while (i < f77_nunit) {
-            f77_units[i].name = f77_uname[i];
+            f77_units[i].name = f77_ulink[i];
             f77_units[i].nparams = 0;
             f77_units[i].is_varargs = 0;
             f77_units[i].unit = i;
@@ -683,6 +782,7 @@ int main(int argc, char **argv) {
     gen_program(&f77_program);
     cg_flush();
     close(fd);
+    if (f77_nerr == 0) f77_mod_write();
 
     if (getenv("HIR_PAIR_STATS")) {
         int z;

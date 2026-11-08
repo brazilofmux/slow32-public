@@ -169,6 +169,8 @@ static int  f77_slen[F77_MAX_SYM];     /* length in bytes, -1 = assumed (*) */
 static int  f77_slenv[F77_MAX_SYM];    /* HIR value of the length when -1 */
 static int  f77_spstr[F77_MAX_SYM];    /* CHARACTER PARAMETER: string index */
 static int  f77_sexternal[F77_MAX_SYM]; /* named in EXTERNAL */
+static char *f77_slink[F77_MAX_SYM];     /* a USEd module procedure's link name, or NULL */
+static int  f77_sme[F77_MAX_SYM];        /* ... its module entity (a procedure, a generic), or -1 */
 static int  f77_sintrinsic[F77_MAX_SYM]; /* named in INTRINSIC */
 /* ALLOCATABLE (Fortran 90): the symbol's slot is a descriptor, 4 + 8*rank
  * bytes -- the storage's address, then per dimension its lower bound and
@@ -193,6 +195,7 @@ static int  f77_imp_len[26];           /* IMPLICIT CHARACTER*n per letter */
 static int  ex_len;
 static int  ex_clen;
 static int  f77_act_len;               /* length of the last f77_actual_addr, or -1 */
+static int  f77_act_ty;                /* ... its type, +16 for a whole array, -1 a procedure (generic resolution) */
 
 /* The unit's dummies in order (also the copy-in list), the count of
  * its incoming words, and the length of the last CHARACTER READ
@@ -551,6 +554,8 @@ static int f77_sym(char *nm) {
     f77_slenv[f77_nsym] = -1;
     f77_spstr[f77_nsym] = -1;
     f77_sexternal[f77_nsym] = 0;
+    f77_slink[f77_nsym] = NULL;
+    f77_sme[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
     f77_sintrinsic[f77_nsym] = 0;
     f77_slog[f77_nsym] = 0;
@@ -602,6 +607,8 @@ static int f77_sym_temp(int ty) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_slink[s] = NULL;
+    f77_sme[s] = -1;
     f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
@@ -621,9 +628,56 @@ static int f77_sym_temp(int ty) {
 #define F77_UNIT_SUBR    1
 #define F77_UNIT_FUNC    2
 #define F77_UNIT_BDATA   3     /* BLOCK DATA: declarations only */
+#define F77_UNIT_MODULE  4     /* MODULE (Fortran 90): its specification part, an empty function */
 #define F77_MAX_UNIT     256
+#define F77_MAX_LINK     (3 * F77_MAX_NAME)
 
 static char f77_uname[F77_MAX_UNIT][F77_MAX_NAME];
+/* Fortran 90 hosts.  A module procedure's host is its MODULE, an internal
+ * procedure's the unit whose CONTAINS it follows (-1: none).  Such a unit
+ * is linked under a name no Fortran name can be, MOD.PROC or HOST.PROC --
+ * reference LAPACK has an external SISNAN beside LA_XISNAN's, and an
+ * external SLAISNAN beside SISNAN's internal one -- and is seen by name
+ * only from its host and the host's other procedures (and, for a module
+ * procedure, where a USE brings it). */
+static int  f77_uhost[F77_MAX_UNIT];
+static char f77_ulink[F77_MAX_UNIT][F77_MAX_LINK];
+
+/* modules (Fortran 90): see f77_mod_snapshot */
+#define F77_MAX_MOD    64
+#define F77_MAX_MODENT 4096
+#define F77_ME_PARAM   1
+#define F77_ME_PROC    2
+#define F77_ME_GENERIC 3
+static int    f77_nmod;
+static char   f77_mod_name[F77_MAX_MOD][F77_MAX_NAME];
+static int    f77_mod_unit[F77_MAX_MOD];         /* its unit in this file, -1 if read */
+static int    f77_nme;
+static int    f77_me_mod[F77_MAX_MODENT];
+static int    f77_me_home[F77_MAX_MODENT];       /* the module whose procedures a generic names */
+static char   f77_me_name[F77_MAX_MODENT][F77_MAX_NAME];
+static int    f77_me_kind[F77_MAX_MODENT];
+static int    f77_me_ty[F77_MAX_MODENT];         /* a PARAMETER's type, a FUNCTION's result's */
+static int    f77_me_log[F77_MAX_MODENT];
+static int    f77_me_ival[F77_MAX_MODENT];       /* PARAMETER: value; CHARACTER: length */
+static double f77_me_d[F77_MAX_MODENT];
+static double f77_me_d2[F77_MAX_MODENT];
+static char  *f77_me_str[F77_MAX_MODENT];        /* CHARACTER value; link name; a generic's specifics */
+static int    f77_me_pkind[F77_MAX_MODENT];      /* F77_UNIT_SUBR or F77_UNIT_FUNC */
+static int    f77_me_nargs[F77_MAX_MODENT];
+static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array */
+/* the generics a unit's INTERFACE blocks name, until its snapshot */
+static char   f77_gi_name[32][F77_MAX_NAME];
+static char   f77_gi_spec[32][512];
+static int    f77_gi_n;
+/* per unit: its implicit typing at the end, for the units it hosts */
+static int    f77_uimp_map[F77_MAX_UNIT][26];
+static int    f77_uimp_len[F77_MAX_UNIT][26];
+static int    f77_uimp_log[F77_MAX_UNIT][26];
+static int    f77_uimp_nar[F77_MAX_UNIT][26];
+static int    f77_uimp_none[F77_MAX_UNIT];
+
+static int f77_generic_pick(int g, int *tys, int n);
 static int  f77_ukind[F77_MAX_UNIT];
 static int  f77_upos[F77_MAX_UNIT];    /* source offset of the header */
 static int  f77_uline[F77_MAX_UNIT];
@@ -686,6 +740,8 @@ static int f77_sym_param(char *nm, int index) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_slink[s] = NULL;
+    f77_sme[s] = -1;
     f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
@@ -2811,6 +2867,10 @@ static int f77_primary(void) {
                 int clog;
                 /* looked up, not made: a symbol made here moved the frame */
                 s = f77_sym_at(nm, f77_scope_base);
+                /* an internal or module procedure has an explicit
+                 * interface (Fortran 90): its definition types the
+                 * reference, and the caller declares nothing */
+                if (f77_uhost[u] >= 0) goto typed;
                 f77_need_type(s, nm);
                 if (s >= 0) { cty = f77_sty[s]; clog = f77_slog[s]; }
                 else {
@@ -2825,16 +2885,17 @@ static int f77_primary(void) {
                     f77_error(m);
                 }
             }
+        typed:
             if (rty == TY_CHAR) {
                 int rl;
                 rl = f77_urlen[u];
                 if (rl < 0) rl = f77_slen[f77_sym(nm)];
-                r = f77_char_fcall(f77_uname[u], rl, addrs, lens, nargs);
+                r = f77_char_fcall(f77_ulink[u], rl, addrs, lens, nargs);
                 f77_tfree_to(mk);
                 return r;
             }
             if (rty == TY_DCPLX) {
-                r = f77_dcx_fcall(f77_uname[u], -1, addrs, lens, nargs);
+                r = f77_dcx_fcall(f77_ulink[u], -1, addrs, lens, nargs);
                 f77_tfree_to(mk);
                 return r;
             }
@@ -2861,7 +2922,7 @@ static int f77_primary(void) {
                 nc = nc + 1;
             }
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1,
-                        nc, f77_uname[u]);
+                        nc, f77_ulink[u]);
             h_cbase[r] = cb;
             ex_ty = rty;
             ex_log = f77_urlog[u];
@@ -2918,6 +2979,9 @@ static int f77_primary(void) {
             int rty;
             int fptr;
             int mk;
+            int tys[64];
+            char *cname;
+            int rlog;
             mk = f77_tfree_mark();
             fptr = (f77_sarg[s] && f77_srank[s] == 0) ? f77_sval[s] : -1;
             f77_need_type(s, nm);
@@ -2925,7 +2989,7 @@ static int f77_primary(void) {
             f77_tok();
             if (lx_t != T_RP) {
                 for (;;) {
-                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
+                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; }
                     else f77_actual_addr();
                     nargs = nargs + 1;
                     if (lx_t != T_COMMA) break;
@@ -2935,11 +2999,22 @@ static int f77_primary(void) {
             if (lx_t != T_RP) f77_error("expected ) after arguments");
             else f77_tok();
             /* The type is the caller's declaration of the name (or the
-             * implicit rule): INTEGER IRAND / CHARACTER*8 CDATE. */
+             * implicit rule): INTEGER IRAND / CHARACTER*8 CDATE -- but a
+             * USEd module procedure's is its own, and a generic's the
+             * specific's its actuals pick. */
             rty = f77_sty[s];
+            rlog = f77_slog[s];
+            cname = strdup(nm);
+            if (f77_sme[s] >= 0) {
+                int e;
+                e = f77_sme[s];
+                if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick(e, tys, nargs > 64 ? 64 : nargs);
+                if (e >= 0 && f77_me_pkind[e] != F77_UNIT_FUNC) { f77_error("a SUBROUTINE referenced as a FUNCTION"); e = -1; }
+                if (e >= 0) { rty = f77_me_ty[e]; rlog = f77_me_log[e]; cname = f77_me_str[e]; }
+            } else if (f77_slink[s]) cname = f77_slink[s];
             if (rty == TY_CHAR || rty == TY_DCPLX) {
-                r = rty == TY_CHAR ? f77_char_fcall(strdup(nm), f77_slen[s], addrs, lens, nargs)
-                                   : f77_dcx_fcall(strdup(nm), fptr, addrs, lens, nargs);
+                r = rty == TY_CHAR ? f77_char_fcall(cname, f77_slen[s], addrs, lens, nargs)
+                                   : f77_dcx_fcall(cname, fptr, addrs, lens, nargs);
                 f77_tfree_to(mk);
                 return r;
             }
@@ -2965,10 +3040,10 @@ static int f77_primary(void) {
                             nc, NULL);
             else
                 r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1,
-                            nc, strdup(nm));
+                            nc, cname);
             h_cbase[r] = cb;
             ex_ty = rty;
-            ex_log = f77_slog[s];
+            ex_log = rlog;
             ex_hi = -1;
             if (rty == TY_DOUBLE) ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
@@ -3388,8 +3463,11 @@ static int f77_starts(char *kw) {
 /* END, or Fortran 90's END SUBROUTINE [name], END FUNCTION [name], END
  * PROGRAM [name], END BLOCK DATA [name].  Not ENDDO, ENDIF or ENDFILE: the
  * word after END must be a unit's, and only a name may follow it. */
+/* CONTAINS (Fortran 90): the end of its unit's body; procedures follow. */
+static int f77_is_contains(void) { return lx_stmt_len == 8 && strncmp(lx_stmt, "CONTAINS", 8) == 0; }
+
 static int f77_is_unit_end(void) {
-    static const char *kinds[] = { "SUBROUTINE", "FUNCTION", "PROGRAM", "BLOCKDATA", 0 };
+    static const char *kinds[] = { "SUBROUTINE", "FUNCTION", "PROGRAM", "BLOCKDATA", "MODULE", 0 };
     int k;
     int i;
     if (!f77_starts("END")) return 0;
@@ -3415,6 +3493,7 @@ static int f77_eq_is_assign(int i) {
     char b;
     if (i < 0 || i >= lx_stmt_len || lx_stmt[i] != '=') return 0;
     if (i + 1 < lx_stmt_len && lx_stmt[i + 1] == '=') return 0;
+    if (i + 1 < lx_stmt_len && lx_stmt[i + 1] == '>') return 0;     /* => (a USE rename) */
     b = i > 0 ? lx_stmt[i - 1] : 0;
     return !(b == '=' || b == '/' || b == '<' || b == '>');
 }
@@ -3491,7 +3570,9 @@ static int f77_classify(void) {
         c = f77_toplevel(':', 0);
         if (c >= 0 && c + 1 < lx_stmt_len && lx_stmt[c + 1] == ':') return S_KEYWORD;
     }
+    /* an assignment's '=', not a USE rename's => (nor == or /=) */
     eq = f77_toplevel('=', 0);
+    while (eq >= 0 && !f77_eq_is_assign(eq)) eq = f77_toplevel('=', eq + 1);
     if (eq >= 0) return S_ASSIGN;
     return S_KEYWORD;
 }
@@ -7727,6 +7808,8 @@ static int f77_actual_addr(void) {
     int vhi;
     int tmp;
 
+    f77_act_ty = -1;
+
     if (lx_t == T_NAME && strcmp(lex_name, "TRANSFER") == 0 && lx_rp < lx_rpe && *lx_rp == '(' &&
         f77_find_unit(lex_name) < 0) {
         int ts;
@@ -7751,7 +7834,15 @@ static int f77_actual_addr(void) {
                            !f77_sarg[sf] && !f77_scom[sf] && !f77_sparam[sf])) {
                 if ((sf >= 0 && f77_sexternal[sf]) || f77_find_unit(lex_name) >= 0) {
                     char *pn;
-                    pn = strdup(lex_name);
+                    int pu;
+                    /* by the name it links by: a USEd or hosted procedure's */
+                    pu = f77_find_unit(lex_name);
+                    if (sf >= 0 && f77_slink[sf]) pn = f77_slink[sf];
+                    else if (pu >= 0) pn = f77_ulink[pu];
+                    else pn = strdup(lex_name);
+                    if (sf >= 0 && f77_sme[sf] >= 0 && f77_me_kind[f77_sme[sf]] == F77_ME_GENERIC) {
+                        f77_error("a generic name cannot be an actual argument");
+                    }
                     f77_tok();
                     f77_act_len = -1;
                     return hi_emit(HI_FADDR, HL_ADDR_TY, -1, -1, 0, pn);
@@ -7786,6 +7877,7 @@ static int f77_actual_addr(void) {
             f77_tok();
             v = f77_char_ref(s);
             f77_act_len = ex_len;
+            f77_act_ty = TY_CHAR;
             if (f77_srank[s] == 0) f77_sstored[s] = 1;
             return v;
         }
@@ -7794,8 +7886,10 @@ static int f77_actual_addr(void) {
             f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0) {
                 f77_tok();
+                f77_act_ty = f77_sty[s];
                 return f77_subscript_addr(s);
             }
+            f77_act_ty = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0);
             if (f77_salloc[s]) {            /* an ALLOCATABLE: its storage */
                 f77_sstored[s] = 1;
                 return f77_desc_base(s);
@@ -7817,6 +7911,7 @@ static int f77_actual_addr(void) {
     v = f77_expr();
     vty = ex_ty;
     vhi = ex_hi;
+    f77_act_ty = vty;
     if (vty == TY_CHAR) {
         /* A character value is already an address. */
         f77_act_len = ex_len;
@@ -7923,6 +8018,8 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_slink[s] = NULL;
+    f77_sme[s] = -1;
     f77_salloc[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
@@ -8147,6 +8244,8 @@ static void f77_stmt_call1(int skip) {
     char nm[F77_MAX_NAME];
     int addrs[64];
     int lens[64];
+    int tys[64];
+    char *cname;
     int alts[16];
     int nalt;
     int cb;
@@ -8178,7 +8277,7 @@ static void f77_stmt_call1(int skip) {
                 }
                 /* Evaluated before any h_carg slot is reserved -- see
                  * the note in the FUNCTION path. */
-                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
+                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; }
                 else f77_actual_addr();
                 nargs = nargs + 1;
                 if (lx_t != T_COMMA) break;
@@ -8241,7 +8340,24 @@ static void f77_stmt_call1(int skip) {
         }
     }
     if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
-    else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, strdup(nm));
+    else {
+        /* the name it links by: a hosted unit's, a USEd procedure's, the
+         * specific a generic's actuals pick */
+        int cu;
+        int ds;
+        cname = strdup(nm);
+        cu = f77_find_unit(nm);
+        ds = f77_sym_find(nm);
+        if (cu >= 0) cname = f77_ulink[cu];
+        else if (ds >= 0 && f77_sme[ds] >= 0) {
+            int e;
+            e = f77_sme[ds];
+            if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick(e, tys, nargs > 64 ? 64 : nargs);
+            if (e >= 0 && f77_me_pkind[e] != F77_UNIT_SUBR) { f77_error("a FUNCTION called as a SUBROUTINE"); e = -1; }
+            if (e >= 0) cname = f77_me_str[e];
+        } else if (ds >= 0 && f77_slink[ds]) cname = f77_slink[ds];
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, cname);
+    }
     h_cbase[r] = cb;
     f77_tfree_to(f77_call_mk);                /* before the alternate returns branch */
     if (nalt > 0) {
@@ -8393,15 +8509,31 @@ static int f77_urty_of(int u) {
  * unit in the file before any of them is compiled, so a call can be
  * resolved even when the callee appears later in the source. */
 /* Any program unit with this name -- SUBROUTINE or FUNCTION. */
+/* Does unit `from` see hosted unit u by name: is u's host `from` or one
+ * of `from`'s hosts?  (A procedure sees its own host's procedures, and an
+ * internal procedure its host's siblings.) */
+static int f77_unit_sees(int from, int u) {
+    int h;
+    if (f77_uhost[u] < 0) return 1;
+    for (h = from; h >= 0; h = f77_uhost[h])
+        if (h == f77_uhost[u]) return 1;
+    return 0;
+}
+
 static int f77_find_unit(char *nm) {
     int i;
+    int found;
+    found = -1;
     i = 0;
     while (i < f77_nunit) {
-        if (f77_ukind[i] != F77_UNIT_PROGRAM &&
-            strcmp(f77_uname[i], nm) == 0) return i;
+        if (f77_ukind[i] != F77_UNIT_PROGRAM && f77_ukind[i] != F77_UNIT_MODULE &&
+            strcmp(f77_uname[i], nm) == 0 && f77_unit_sees(f77_cur_unit, i)) {
+            /* the innermost: an internal procedure hides an external of its name */
+            if (found < 0 || f77_uhost[i] >= 0) found = i;
+        }
         i = i + 1;
     }
-    return -1;
+    return found;
 }
 
 static int f77_find_func(char *nm) {
@@ -8411,6 +8543,566 @@ static int f77_find_func(char *nm) {
         if (f77_ukind[i] == F77_UNIT_FUNC && strcmp(f77_uname[i], nm) == 0)
             return i;
         i = i + 1;
+    }
+    return -1;
+}
+
+/* --- modules (Fortran 90) ---------------------------------------------
+ *
+ * A module is a table of entities: its PARAMETERs, its procedures (link
+ * name, result type, the dummies' types) and its generic interfaces.  A
+ * module of this file fills it as it is compiled -- the specification
+ * part at its CONTAINS or END (f77_mod_snapshot), each procedure at the
+ * end of its own unit (f77_mod_proc) -- and f77_mod_write leaves it in
+ * NAME.mod, in text, for USE in later compilations (f77_mod_read).
+ * Module procedures see the table by host association, a USE by name.
+ * What a module may not hold yet -- variables, interface bodies -- is
+ * refused there. */
+static int f77_mod_find(char *nm) {
+    int i;
+    for (i = 0; i < f77_nmod; i++) if (strcmp(f77_mod_name[i], nm) == 0) return i;
+    return -1;
+}
+static int f77_mod_new(char *nm, int unit) {
+    if (f77_nmod >= F77_MAX_MOD) { f77_error("too many modules"); return -1; }
+    strcpy(f77_mod_name[f77_nmod], nm);
+    f77_mod_unit[f77_nmod] = unit;
+    f77_nmod = f77_nmod + 1;
+    return f77_nmod - 1;
+}
+static int f77_me_new(int m, char *nm, int kind) {
+    int e;
+    if (f77_nme >= F77_MAX_MODENT) { f77_error("too many module entities"); return -1; }
+    e = f77_nme;
+    f77_nme = f77_nme + 1;
+    f77_me_mod[e] = m;
+    f77_me_home[e] = m;
+    strcpy(f77_me_name[e], nm);
+    f77_me_kind[e] = kind;
+    f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
+    f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0;
+    return e;
+}
+static int f77_me_find(int m, char *nm) {
+    int e;
+    for (e = 0; e < f77_nme; e++)
+        if (f77_me_mod[e] == m && strcmp(f77_me_name[e], nm) == 0) return e;
+    return -1;
+}
+
+/* The specification part of the module compiled as unit u, at its
+ * CONTAINS or END: its PARAMETERs, and the generics its INTERFACE blocks
+ * named. */
+static void f77_mod_snapshot(int u) {
+    int m;
+    int s;
+    int g;
+    m = f77_mod_find(f77_uname[u]);
+    if (m < 0) m = f77_mod_new(f77_uname[u], u);
+    if (m < 0) return;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int e;
+        if (!f77_sparam[s]) {
+            if (f77_sexternal[s] || f77_sintrinsic[s]) continue;
+            {
+                char msg[160];
+                sprintf(msg, "%s: a module variable is not supported yet", f77_sname[s]);
+                f77_error(msg);
+            }
+            continue;
+        }
+        e = f77_me_new(m, f77_sname[s], F77_ME_PARAM);
+        if (e < 0) return;
+        f77_me_ty[e] = f77_sty[s];
+        f77_me_log[e] = f77_slog[s];
+        f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : f77_spival[s];
+        f77_me_d[e] = f77_spdval[s];
+        f77_me_d2[e] = f77_spdval2[s];
+        if (f77_sty[s] == TY_CHAR) {
+            int k;
+            k = f77_spstr[s];
+            f77_me_str[e] = (char *)malloc((size_t)lex_str_len[k] + 1);
+            memcpy(f77_me_str[e], lex_strpool + lex_str_off[k], (size_t)lex_str_len[k]);
+            f77_me_str[e][lex_str_len[k]] = 0;
+        }
+    }
+    for (g = 0; g < f77_gi_n; g++) {
+        int e;
+        e = f77_me_new(m, f77_gi_name[g], F77_ME_GENERIC);
+        if (e < 0) return;
+        f77_me_str[e] = strdup(f77_gi_spec[g]);
+    }
+    f77_gi_n = 0;
+}
+
+/* A module procedure, unit u, compiled: its entry in its module's
+ * table.  The dummies are read from the header again, now that the
+ * unit's declarations have typed them. */
+static void f77_mod_proc(int u) {
+    int m;
+    int e;
+    int n;
+    m = f77_mod_find(f77_uname[f77_uhost[u]]);
+    if (m < 0) return;
+    e = f77_me_new(m, f77_uname[u], F77_ME_PROC);
+    if (e < 0) return;
+    f77_me_str[e] = strdup(f77_ulink[u]);
+    f77_me_pkind[e] = f77_ukind[u];
+    f77_me_ty[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urty[u] : TY_INT;
+    f77_me_log[e] = f77_urlog[u];
+    if (f77_ukind[u] == F77_UNIT_FUNC && (f77_urty[u] == TY_CHAR || f77_urty[u] == TY_DCPLX)) {
+        f77_error("a CHARACTER or COMPLEX*16 module FUNCTION is not supported yet");
+        return;
+    }
+    lx_pos = f77_upos[u];
+    lx_line = f77_uline[u];
+    n = 0;
+    if (f77_next_stmt()) {
+        f77_scan_from(f77_ukind[u] == F77_UNIT_SUBR ? 10 : f77_function_skip());
+        if (lx_t == T_NAME) f77_tok();
+        if (lx_t == T_LP) {
+            f77_tok();
+            while (lx_t == T_NAME || lx_t == T_STAR) {
+                int s;
+                int t;
+                t = -1;
+                if (lx_t == T_NAME) {
+                    s = f77_sym_find(lex_name);
+                    if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0);
+                }
+                if (n < 16) f77_me_argty[e][n] = t;
+                n = n + 1;
+                f77_tok();
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+        }
+    }
+    f77_me_nargs[e] = n;
+}
+
+/* Entity e of a module under the name `local` in the current unit. */
+static void f77_me_bind(int e, char *local) {
+    int s;
+    if (f77_me_kind[e] == F77_ME_PARAM) {
+        s = f77_sym(local);
+        f77_sparam[s] = 1;
+        f77_sty[s] = f77_me_ty[e];
+        f77_styped[s] = 1;
+        f77_slog[s] = f77_me_log[e];
+        f77_spival[s] = f77_me_ty[e] == TY_CHAR ? 0 : f77_me_ival[e];
+        f77_spdval[s] = f77_me_d[e];
+        f77_spdval2[s] = f77_me_d2[e];
+        if (f77_me_ty[e] == TY_CHAR) {
+            f77_slen[s] = f77_me_ival[e];
+            f77_spstr[s] = f77_intern_str(f77_me_str[e], f77_me_ival[e]);
+        }
+        return;
+    }
+    if (f77_me_kind[e] == F77_ME_PROC) {
+        s = f77_sym(local);
+        f77_sexternal[s] = 1;
+        f77_styped[s] = 1;
+        f77_sty[s] = f77_me_ty[e];
+        f77_slog[s] = f77_me_log[e];
+        f77_slink[s] = f77_me_str[e];
+        f77_sme[s] = e;
+        return;
+    }
+    /* a generic: resolved where it is referenced */
+    s = f77_sym(local);
+    f77_sexternal[s] = 1;
+    f77_styped[s] = 1;
+    f77_sme[s] = e;
+}
+
+/* The whole of module m, as host association or a USE without ONLY
+ * gives it. */
+static void f77_mod_bind_all(int m) {
+    int e;
+    for (e = 0; e < f77_nme; e++)
+        if (f77_me_mod[e] == m) f77_me_bind(e, f77_me_name[e]);
+}
+
+/* A host of internal procedures keeps, after it is compiled, its
+ * PARAMETERs as a table of its own (named #u, a name no module has) and
+ * the names of its other entities.  Its internal procedures get the
+ * PARAMETERs; a name of the others they take implicitly would be host
+ * association with a variable, which is refused, not made a local. */
+static char  f77_host_keybuf[16];
+static char *f77_host_key(int u) { sprintf(f77_host_keybuf, "#%d", u); return f77_host_keybuf; }
+static char  f77_hostnames[F77_MAX_SYM][F77_MAX_NAME];
+static int   f77_hostnames_n;
+static char  f77_uhn_pool[F77_MAX_UNIT][4096];   /* a host's other names, space-separated */
+static void f77_host_save(int u) {
+    int m;
+    int s;
+    int k;
+    m = f77_mod_find(f77_host_key(u));
+    if (m < 0) m = f77_mod_new(f77_host_key(u), u);
+    if (m < 0) return;
+    k = 0;
+    f77_uhn_pool[u][0] = 0;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int e;
+        if (f77_sme[s] >= 0) {
+            /* a procedure or generic the host has by USE: its internal
+             * procedures have it too */
+            int o;
+            o = f77_sme[s];
+            e = f77_me_new(m, f77_sname[s], f77_me_kind[o]);
+            if (e < 0) return;
+            f77_me_home[e] = f77_me_home[o];
+            f77_me_ty[e] = f77_me_ty[o]; f77_me_log[e] = f77_me_log[o];
+            f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o];
+            f77_me_nargs[e] = f77_me_nargs[o];
+            memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
+            continue;
+        }
+        if (!f77_sparam[s]) {
+            int n;
+            n = (int)strlen(f77_sname[s]);
+            if (k + n + 2 < 4096) { memcpy(f77_uhn_pool[u] + k, f77_sname[s], (size_t)n); k = k + n; f77_uhn_pool[u][k++] = ' '; f77_uhn_pool[u][k] = 0; }
+            continue;
+        }
+        e = f77_me_new(m, f77_sname[s], F77_ME_PARAM);
+        if (e < 0) return;
+        f77_me_ty[e] = f77_sty[s];
+        f77_me_log[e] = f77_slog[s];
+        f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : f77_spival[s];
+        f77_me_d[e] = f77_spdval[s];
+        f77_me_d2[e] = f77_spdval2[s];
+        if (f77_sty[s] == TY_CHAR) {
+            int q;
+            q = f77_spstr[s];
+            f77_me_str[e] = (char *)malloc((size_t)lex_str_len[q] + 1);
+            memcpy(f77_me_str[e], lex_strpool + lex_str_off[q], (size_t)lex_str_len[q]);
+            f77_me_str[e][lex_str_len[q]] = 0;
+        }
+    }
+}
+static void f77_hostnames_load(int h) {
+    char *p;
+    f77_hostnames_n = 0;
+    p = f77_uhn_pool[h];
+    while (*p) {
+        int n;
+        n = 0;
+        while (p[n] && p[n] != ' ') n = n + 1;
+        if (n > 0 && n < F77_MAX_NAME && f77_hostnames_n < F77_MAX_SYM) {
+            memcpy(f77_hostnames[f77_hostnames_n], p, (size_t)n);
+            f77_hostnames[f77_hostnames_n][n] = 0;
+            f77_hostnames_n = f77_hostnames_n + 1;
+        }
+        p = p + n;
+        while (*p == ' ') p = p + 1;
+    }
+}
+/* At an internal procedure's end: an implicitly typed local named as a
+ * host variable is host association, not supported yet. */
+static void f77_hostnames_check(void) {
+    int s;
+    int k;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (f77_styped[s] || f77_sarg[s] || f77_sparam[s] || f77_sexternal[s]) continue;
+        if (s == f77_result_sym) continue;
+        for (k = 0; k < f77_hostnames_n; k++) {
+            if (strcmp(f77_hostnames[k], f77_sname[s]) == 0) {
+                char m[160];
+                sprintf(m, "%s: host association with a variable is not supported yet", f77_sname[s]);
+                f77_error(m);
+                break;
+            }
+        }
+    }
+}
+
+/* --- USE and INTERFACE (Fortran 90) ------------------------------------ */
+
+static char f77_mod_dir_buf[1024];
+
+/* NAME.mod (lower case, as gfortran names it) from the current
+ * directory: the table a compilation of the module left. */
+static int f77_mod_read(char *nm) {
+    char path[F77_MAX_NAME + 8];
+    char *buf;
+    char *p;
+    int fd;
+    int n;
+    int cap;
+    int m;
+    int k;
+    for (k = 0; nm[k]; k++) path[k] = (char)(nm[k] >= 'A' && nm[k] <= 'Z' ? nm[k] - 'A' + 'a' : nm[k]);
+    strcpy(path + k, ".mod");
+    fd = open(path, 0);
+    if (fd < 0) return -1;
+    cap = 1 << 20;
+    buf = (char *)malloc((size_t)cap + 1);
+    n = (int)read(fd, buf, (size_t)cap);
+    close(fd);
+    if (n < 0) n = 0;
+    buf[n] = 0;
+    if (strncmp(buf, "F77MOD 1 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
+    m = f77_mod_new(nm, -1);
+    if (m < 0) { free(buf); return -2; }
+    p = strchr(buf, '\n');
+    while (p && *p) {
+        char kind;
+        char name[F77_MAX_NAME];
+        int e;
+        p = p + 1;
+        if (!*p) break;
+        kind = *p;
+        if (sscanf(p + 2, "%63s", name) != 1) break;
+        if (kind == 'P') {
+            int ty; int lg; int iv; int len;
+            char d1[64]; char d2[64];
+            char *q;
+            e = f77_me_new(m, name, F77_ME_PARAM);
+            if (e < 0) break;
+            sscanf(p + 2, "%*s %d %d %d %63s %63s %d", &ty, &lg, &iv, d1, d2, &len);
+            f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_ival[e] = iv;
+            f77_me_d[e] = strtod(d1, NULL); f77_me_d2[e] = strtod(d2, NULL);
+            if (ty == TY_CHAR) {
+                q = strchr(p, '|');
+                f77_me_str[e] = (char *)malloc((size_t)len + 1);
+                if (q) memcpy(f77_me_str[e], q + 1, (size_t)len);
+                f77_me_str[e][len] = 0;
+                p = q ? q + 1 + len : p;
+            }
+        } else if (kind == 'R') {
+            int pk; int ty; int lg; int na; int a;
+            char link[F77_MAX_LINK];
+            char *q;
+            e = f77_me_new(m, name, F77_ME_PROC);
+            if (e < 0) break;
+            sscanf(p + 2, "%*s %255s %d %d %d %d", link, &pk, &ty, &lg, &na);
+            f77_me_str[e] = strdup(link);
+            f77_me_pkind[e] = pk; f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_nargs[e] = na;
+            q = p + 2;
+            for (a = 0; a < 6; a++) { while (*q && *q != ' ') q++; while (*q == ' ') q++; }
+            for (a = 0; a < na && a < 16; a++) {
+                f77_me_argty[e][a] = (int)strtol(q, &q, 10);
+            }
+        } else if (kind == 'G') {
+            char *q;
+            char *eol;
+            e = f77_me_new(m, name, F77_ME_GENERIC);
+            if (e < 0) break;
+            q = p + 2 + strlen(name);
+            while (*q == ' ') q++;
+            eol = strchr(q, '\n');
+            if (!eol) eol = q + strlen(q);
+            f77_me_str[e] = (char *)malloc((size_t)(eol - q) + 1);
+            memcpy(f77_me_str[e], q, (size_t)(eol - q));
+            f77_me_str[e][eol - q] = 0;
+        }
+        p = strchr(p, '\n');
+    }
+    free(buf);
+    return m;
+}
+
+/* Every module of this file into its NAME.mod, after a clean compilation. */
+static void f77_mod_write(void) {
+    int m;
+    for (m = 0; m < f77_nmod; m++) {
+        char path[F77_MAX_NAME + 8];
+        FILE *f;
+        int k;
+        int e;
+        if (f77_mod_unit[m] < 0 || f77_mod_name[m][0] == '#') continue;
+        for (k = 0; f77_mod_name[m][k]; k++) {
+            char c;
+            c = f77_mod_name[m][k];
+            path[k] = (char)(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+        }
+        strcpy(path + k, ".mod");
+        f = fopen(path, "w");
+        if (!f) { f77_error("cannot write a .mod file"); return; }
+        fprintf(f, "F77MOD 1 %s\n", f77_mod_name[m]);
+        for (e = 0; e < f77_nme; e++) {
+            if (f77_me_mod[e] != m) continue;
+            if (f77_me_kind[e] == F77_ME_PARAM) {
+                fprintf(f, "P %s %d %d %d %a %a %d", f77_me_name[e], f77_me_ty[e], f77_me_log[e], f77_me_ival[e],
+                        f77_me_d[e], f77_me_d2[e], f77_me_ty[e] == TY_CHAR ? f77_me_ival[e] : 0);
+                if (f77_me_ty[e] == TY_CHAR) { fputc('|', f); fwrite(f77_me_str[e], 1, (size_t)f77_me_ival[e], f); }
+                fputc('\n', f);
+            } else if (f77_me_kind[e] == F77_ME_PROC) {
+                int a;
+                fprintf(f, "R %s %s %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
+                        f77_me_log[e], f77_me_nargs[e]);
+                for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
+                fputc('\n', f);
+            } else {
+                fprintf(f, "G %s %s\n", f77_me_name[e], f77_me_str[e]);
+            }
+        }
+        fclose(f);
+    }
+}
+
+/* USE name [, rename-list] | USE name, ONLY: [only-list] (Fortran 90),
+ * each item local => name, or name.  A module of this file compiled
+ * before the USE, else NAME.mod. */
+static void f77_stmt_use(int skip) {
+    char mname[F77_MAX_NAME];
+    int m;
+    int only;
+    int e;
+    char loc[64][F77_MAX_NAME];
+    char rem[64][F77_MAX_NAME];
+    int nr;
+    int k;
+    if (!f77_decls_open) { f77_error("USE after the first executable statement"); return; }
+    f77_scan_from(skip);
+    if (lx_t == T_COMMA || lx_t == T_COLON) {
+        f77_error("USE, INTRINSIC and USE :: are Fortran 2003, not supported");
+        return;
+    }
+    if (lx_t != T_NAME) { f77_error("USE needs a module name"); return; }
+    strcpy(mname, lex_name);
+    f77_tok();
+    m = f77_mod_find(mname);
+    if (m < 0) m = f77_mod_read(mname);
+    if (m == -2) return;
+    if (m < 0) {
+        char msg[160];
+        sprintf(msg, "no module %s: neither in this file before the USE, nor a .mod file of it here", mname);
+        f77_error(msg);
+        return;
+    }
+    only = 0;
+    nr = 0;
+    if (lx_t == T_COMMA) {
+        f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "ONLY") == 0 && lx_rp < lx_rpe && *lx_rp == ':') {
+            only = 1;
+            f77_tok();
+            f77_tok();                           /* : */
+        }
+        while (lx_t == T_NAME) {
+            if (nr >= 64) { f77_error("too many names in a USE"); return; }
+            strcpy(loc[nr], lex_name);
+            strcpy(rem[nr], lex_name);
+            f77_tok();
+            if (lx_t == T_EQ || lx_t == T_ASSIGN) {
+                /* => : the lexer's = then > */
+                if (lx_t == T_ASSIGN) f77_tok();
+                if (lx_t != T_GT && lx_t != T_GE) { f77_error("expected => in a USE"); return; }
+                f77_tok();
+                if (lx_t != T_NAME) { f77_error("expected a name after =>"); return; }
+                strcpy(rem[nr], lex_name);
+                f77_tok();
+            } else if (!only) { f77_error("expected => in a USE rename"); return; }
+            nr = nr + 1;
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+    }
+    if (lx_t != T_EOF) { f77_error("unexpected text in a USE"); return; }
+    for (k = 0; k < nr; k++) {
+        e = f77_me_find(m, rem[k]);
+        if (e < 0) {
+            char msg[200];
+            sprintf(msg, "module %s has no %s", mname, rem[k]);
+            f77_error(msg);
+            return;
+        }
+        f77_me_bind(e, loc[k]);
+    }
+    if (!only) {
+        for (e = 0; e < f77_nme; e++) {
+            int renamed;
+            if (f77_me_mod[e] != m) continue;
+            renamed = 0;
+            for (k = 0; k < nr; k++) if (strcmp(rem[k], f77_me_name[e]) == 0) renamed = 1;
+            if (!renamed) f77_me_bind(e, f77_me_name[e]);
+        }
+    }
+}
+
+/* INTERFACE: a generic name for module procedures,
+ *   INTERFACE name / MODULE PROCEDURE a, b / END INTERFACE,
+ * in a module.  Interface bodies, operators and assignment are refused.
+ * f77_iface_open is the generic being read, -1 when none is. */
+static int f77_iface_open = -1;
+static void f77_stmt_interface(void) {
+    f77_scan_from(9);
+    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("an INTERFACE outside a module's specification part is not supported yet"); return; }
+    if (lx_t != T_NAME) { f77_error("an INTERFACE block of interface bodies is not supported yet"); return; }
+    if ((strcmp(lex_name, "OPERATOR") == 0 || strcmp(lex_name, "ASSIGNMENT") == 0) && lx_rp < lx_rpe && *lx_rp == '(') {
+        f77_error("INTERFACE OPERATOR and ASSIGNMENT are not supported yet");
+        return;
+    }
+    if (f77_gi_n >= 32) { f77_error("too many generic interfaces"); return; }
+    strcpy(f77_gi_name[f77_gi_n], lex_name);
+    f77_gi_spec[f77_gi_n][0] = 0;
+    f77_iface_open = f77_gi_n;
+    f77_gi_n = f77_gi_n + 1;
+    f77_tok();
+}
+/* A statement inside an INTERFACE block: 1 when it was one. */
+static int f77_iface_stmt(void) {
+    int n;
+    if (f77_iface_open < 0) return 0;
+    if (lx_stmt_len >= 12 && strncmp(lx_stmt, "ENDINTERFACE", 12) == 0) {
+        f77_scan_from(12);
+        if (lx_t == T_NAME) {
+            if (strcmp(lex_name, f77_gi_name[f77_iface_open]) != 0) f77_error("END INTERFACE names another interface");
+            f77_tok();
+        }
+        if (f77_gi_spec[f77_iface_open][0] == 0) f77_error("a generic interface with no MODULE PROCEDURE");
+        f77_iface_open = -1;
+        return 1;
+    }
+    if ((n = f77_starts("MODULEPROCEDURE")) != 0) {
+        f77_scan_from(n);
+        while (lx_t == T_NAME) {
+            char *sp;
+            sp = f77_gi_spec[f77_iface_open];
+            if (strlen(sp) + strlen(lex_name) + 2 >= 512) { f77_error("too many procedures in a generic"); return 1; }
+            if (sp[0]) strcat(sp, " ");
+            strcat(sp, lex_name);
+            f77_tok();
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        return 1;
+    }
+    f77_error("an interface body is not supported yet");
+    lx_t = T_EOF;
+    return 1;
+}
+
+/* A reference to the generic of module entity g with these actuals'
+ * types (f77_act_tys): the specific whose dummies match, by the entity
+ * of its module; -1, reported, when none does. */
+static int f77_generic_pick(int g, int *tys, int n) {
+    char *p;
+    int m;
+    m = f77_me_home[g];
+    p = f77_me_str[g];
+    while (*p) {
+        char nm[F77_MAX_NAME];
+        int k;
+        int e;
+        k = 0;
+        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
+        nm[k] = 0;
+        while (*p == ' ') p++;
+        e = f77_me_find(m, nm);
+        if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] == n) {
+            int a;
+            for (a = 0; a < n && a < 16; a++) if (f77_me_argty[e][a] != tys[a]) break;
+            if (a == n || a == 16) return e;
+        }
+    }
+    {
+        char msg[160];
+        sprintf(msg, "no procedure of the generic %s takes these arguments", f77_me_name[g]);
+        f77_error(msg);
     }
     return -1;
 }
@@ -8487,8 +9179,26 @@ static void f77_bind_unit(int u) {
     }
     f77_imp_ready = 1;
     f77_imp_none = 0;
+    f77_hostnames_n = 0;
+    if (f77_uhost[u] >= 0) {
+        /* a hosted procedure (Fortran 90): its host's implicit typing,
+         * and what host association gives it -- a module's entities, an
+         * internal procedure its host's PARAMETERs (and the names of the
+         * host's variables, which it may not use yet) */
+        int h;
+        int m;
+        h = f77_uhost[u];
+        memcpy(f77_imp_map, f77_uimp_map[h], sizeof(f77_imp_map));
+        memcpy(f77_imp_len, f77_uimp_len[h], sizeof(f77_imp_len));
+        memcpy(f77_imp_log, f77_uimp_log[h], sizeof(f77_imp_log));
+        memcpy(f77_imp_nar, f77_uimp_nar[h], sizeof(f77_imp_nar));
+        f77_imp_none = f77_uimp_none[h];
+        m = f77_mod_find(f77_ukind[h] == F77_UNIT_MODULE ? f77_uname[h] : f77_host_key(h));
+        if (m >= 0) f77_mod_bind_all(m);
+        if (f77_ukind[h] != F77_UNIT_MODULE) f77_hostnames_load(h);
+    }
 
-    if (f77_ukind[u] == F77_UNIT_PROGRAM || f77_ukind[u] == F77_UNIT_BDATA) {
+    if (f77_ukind[u] == F77_UNIT_PROGRAM || f77_ukind[u] == F77_UNIT_BDATA || f77_ukind[u] == F77_UNIT_MODULE) {
         hl_param_nflat = 0;
         hl_nparams = 0;
         return;
@@ -10216,6 +10926,12 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("PROGRAM")) return 1;
     if (f77_starts("SUBROUTINE")) return 1;
     if (f77_unit_header_ty() >= 0) return 1;
+    /* Fortran 90's specification statements */
+    if (f77_starts("USE")) return 1;
+    if (f77_starts("INTERFACE")) return 1;
+    if (f77_starts("ENDINTERFACE")) return 1;
+    if (f77_starts("MODULEPROCEDURE")) return 1;
+    if (f77_starts("MODULE")) return 1;
     return 0;
 }
 
@@ -10235,6 +10951,19 @@ static void f77_statement(void) {
     lx_t = T_EOF;
     nerr0 = f77_nerr;
     cls = f77_classify();
+
+    /* Fortran 90: the statements of an INTERFACE block, and USE */
+    if (f77_iface_stmt()) goto done;
+    if (cls == S_KEYWORD && (n = f77_starts("USE")) != 0) {
+        f77_stmt_use(n);
+        goto done;
+    }
+    if (cls == S_KEYWORD && f77_starts("INTERFACE")) {
+        f77_stmt_interface();
+        goto done;
+    }
+    if (cls == S_KEYWORD && f77_starts("MODULE") && f77_ukind[f77_cur_unit] == F77_UNIT_MODULE &&
+        !f77_starts("MODULEPROCEDURE")) goto done;               /* the module's own header */
 
     if (cls == S_ASSIGN && f77_stf_define()) goto done;
 
@@ -10735,8 +11464,8 @@ static void f77_statement(void) {
         goto done;
     }
 
-    if (f77_is_unit_end()) {
-        /* Falling off END returns like RETURN does -- a FUNCTION hands
+    if (f77_is_unit_end() || f77_is_contains()) {
+        /* Falling off END (or CONTAINS, which ends the body) returns like RETURN does -- a FUNCTION hands
          * back its result variable.  This emitted a bare `return 0`
          * for years: every direct caller was spliced inline and read
          * the variable itself, so only a FUNCTION reached through a
