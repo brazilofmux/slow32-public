@@ -59,6 +59,12 @@ static int  f77_slov[F77_MAX_SYM][F77_MAX_RANK];      /* HIR value of the lower 
 /* An assumed-size dummy, A(*) or A(N,*): its size is not known anywhere
  * (the * is recorded as an extent of 1). */
 static int  f77_sassz[F77_MAX_SYM];
+/* An automatic array (Fortran 90): a local whose bounds are not
+ * constant, REAL W(MAX(M,N)) -- storage allocated when the declarations
+ * close (f77_layout_static), freed at RETURN.  It had been taken for an
+ * adjustable dummy's shape on a slot of one element, and LAPACK's
+ * DTRSYL3 wrote its norms over the frame. */
+static int  f77_sauto[F77_MAX_SYM];
 static int f77_adjustable(int s) {
     int k;
     for (k = 0; k < f77_srank[s]; k++)
@@ -554,6 +560,7 @@ static int f77_sym(char *nm) {
     f77_slenv[f77_nsym] = -1;
     f77_spstr[f77_nsym] = -1;
     f77_sexternal[f77_nsym] = 0;
+    f77_sauto[f77_nsym] = 0;
     f77_slink[f77_nsym] = NULL;
     f77_sme[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
@@ -607,6 +614,7 @@ static int f77_sym_temp(int ty) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_sauto[s] = 0;
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;
@@ -740,6 +748,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_sauto[s] = 0;
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;
@@ -781,6 +790,7 @@ static int f77_storage_bytes(int s) {
 
 static void f77_realloc_sym(int s) {
     int bytes;
+    if (f77_sauto[s] && !f77_decls_open) return;     /* its storage is allocated */
     f77_shi[s] = -1;
     if (f77_sarg[s]) {
         /* By-reference dummy: storage belongs to the caller.  Only the
@@ -5373,6 +5383,7 @@ static void f77_parse_dims(int s) {
     if (rank > F77_MAX_RANK) { f77_error("too many dimensions"); rank = F77_MAX_RANK; }
     f77_srank[s] = rank;
     f77_sassz[s] = f77_bound_star;
+    f77_sauto[s] = !f77_sarg[s] && !f77_salloc[s] && f77_adjustable(s);
 }
 
 /* A CHARACTER length after the `*`: n, (cexpr), or (*) for an
@@ -6772,6 +6783,28 @@ static void f77_layout_static(void) {
         if (f77_scom[s]) { f77_error("an ALLOCATABLE array cannot be in COMMON"); return; }
         hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 0), f77_iconst(0), 0, NULL);
     }
+    /* automatic arrays: their storage, by the extents just computed */
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int n;
+        int k;
+        int args[3];
+        if (!f77_sauto[s]) continue;
+        if (f77_sarg[s] || f77_salloc[s]) { f77_sauto[s] = 0; continue; }
+        if (f77_scom[s] || f77_ssaved[s] || f77_sgidx[s] >= 0) {
+            f77_error("an automatic array cannot be in COMMON, SAVEd, or in an EQUIVALENCE");
+            return;
+        }
+        if (f77_inline_depth > 0) { f77_error("an automatic array in a spliced unit (an f77 defect)"); return; }
+        n = f77_iconst(f77_esize(s));
+        for (k = 0; k < f77_srank[s]; k++) {
+            int e;
+            e = f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]);
+            e = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
+            n = hi_emit(HI_MUL, TY_INT, n, e, 0, NULL);
+        }
+        args[0] = f77_iconst(0); args[1] = n; args[2] = f77_iconst(0);
+        f77_sval[s] = f77_call_i("f77_allocate", 3, args);
+    }
 
     /* Pour DATA values into the init pool, now that every DATA'd
      * variable is a static object of known size.  A touched object
@@ -7192,6 +7225,11 @@ static void f77_alloc_free_all(void) {
     int s;
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int args[1];
+        if (f77_sauto[s] && !f77_decls_open) {
+            args[0] = f77_sval[s];
+            f77_call_i("f77_dealloc_auto", 1, args);
+            continue;
+        }
         if (!f77_salloc[s] || f77_ssaved[s] || f77_sarg[s]) continue;
         args[0] = f77_desc_base(s);
         f77_call_i("f77_dealloc_auto", 1, args);
@@ -8051,6 +8089,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_slenv[s] = -1;
     f77_spstr[s] = -1;
     f77_sexternal[s] = 0;
+    f77_sauto[s] = 0;
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;

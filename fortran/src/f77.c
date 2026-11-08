@@ -182,6 +182,65 @@ static void f77_collect_dummies(int skip, int unit) {
     }
 }
 
+/* Might the declaration being scanned declare an automatic array -- an
+ * entity that is not a dummy of unit u, with a name inside its
+ * dimensions?  Such a unit is not inlined: the splice has no place to
+ * allocate it.  A PARAMETER in a bound answers yes too, which costs only
+ * the inline. */
+static int f77_scan_may_auto(int u) {
+    int i;
+    int skip;
+    if (f77_starts("DIMENSION")) skip = 9;
+    else if (f77_starts("DOUBLEPRECISION")) skip = 15;
+    else if (f77_starts("DOUBLECOMPLEX")) skip = 13;
+    else if (f77_starts("INTEGER") || f77_starts("LOGICAL") || f77_starts("COMPLEX")) skip = 7;
+    else if (f77_starts("REAL")) skip = 4;
+    else return 0;                   /* CHARACTER's lengths are no arrays' */
+    i = skip;
+    {
+        int dc;
+        dc = f77_toplevel(':', 0);
+        if (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') i = dc + 2;
+        else if (i < lx_stmt_len && lx_stmt[i] == '(') { int d = 0; for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } } }
+        else if (i < lx_stmt_len && lx_stmt[i] == '*') { i++; while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++; }
+    }
+    while (i < lx_stmt_len) {
+        char nm[F77_MAX_NAME];
+        int n;
+        int q;
+        int dummy;
+        n = 0;
+        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+            if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
+            i++;
+        }
+        nm[n] = 0;
+        if (n == 0) { i++; continue; }
+        if (i < lx_stmt_len && lx_stmt[i] == '(') {
+            int d;
+            int alpha;
+            d = 0;
+            alpha = 0;
+            for (; i < lx_stmt_len; i++) {
+                if (lx_stmt[i] == '(') d++;
+                else if (lx_stmt[i] == ')') { if (--d == 0) { i++; break; } }
+                else if (lx_isalpha(lx_stmt[i])) alpha = 1;
+            }
+            dummy = 0;
+            for (q = 0; q < f77_nfamd; q++)
+                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) dummy = 1;
+            if (alpha && !dummy) return 1;
+        }
+        /* to the next entity: past a *len, an initializer, the comma */
+        while (i < lx_stmt_len && lx_stmt[i] != ',') {
+            if (lx_stmt[i] == '(') { int d = 0; for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) break; } }
+            i++;
+        }
+        i++;
+    }
+    return 0;
+}
+
 static void f77_scan_units(void) {
     int pos;
     int line;
@@ -327,6 +386,7 @@ static void f77_scan_units(void) {
              * caller that RETURN is a branch (Fortran 90). */
             if (strstr(lx_stmt, "ALLOCATABLE")) f77_unosplice[f77_nunit - 1] = 1;
             if (f77_starts("USE")) f77_unosplice[f77_nunit - 1] = 1;
+            if (f77_scan_may_auto(f77_nunit - 1)) f77_unosplice[f77_nunit - 1] = 1;
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)
