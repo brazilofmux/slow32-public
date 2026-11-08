@@ -3,12 +3,22 @@
 # SLOW-32 cross-compiler (cc-x64 + ld-x64 + libc_x64). The output is an
 # x86-64 binary (runs on an x86-64 host or under qemu), NOT a .s32x.
 #
-# Usage: cc-x64 <input.c> [output]   (output defaults to input basename, no ext)
+# Usage: cc-x64 <input.c> [output]  or  cc-x64 <input.c> -o <output>
+#        (output defaults to input basename, no ext)
 set -e
 TOOLS="${SLOW32_X64_TOOLS:-/opt/slow32/x64}"
-[ $# -ge 1 ] || { echo "Usage: cc-x64 <input.c> [output]"; exit 1; }
-IN="$1"
-OUT="${2:-$(basename "${IN%.c}")}"
+usage() { echo "Usage: cc-x64 <input.c> [output]  or  cc-x64 <input.c> -o <output>" >&2; exit 1; }
+IN=""; OUT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) [ $# -ge 2 ] || usage; OUT="$2"; shift ;;
+        -*) echo "cc-x64: unknown option $1" >&2; usage ;;
+        *) if [ -z "$IN" ]; then IN="$1"; elif [ -z "$OUT" ]; then OUT="$1"; else usage; fi ;;
+    esac
+    shift
+done
+[ -n "$IN" ] || usage
+OUT="${OUT:-$(basename "${IN%.c}")}"
 OBJ="$(mktemp)"
 trap 'rm -f "$OBJ"' EXIT
 "$TOOLS/cc-x64" --hir -c "$IN" -o "$OBJ"
