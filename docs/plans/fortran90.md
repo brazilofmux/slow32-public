@@ -205,20 +205,21 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    PARAMETER took the PARAMETER's value; ELSE and ELSE IF without the
    construct name in a named IF were refused; IMPLICIT in a contained
    procedure did not give its letters back from the host's IMPLICIT
-   NONE.  Still refused by name: a RECURSIVE host's locals in its
-   internal procedures, ENTRY in an array-valued function, a generic of
-   scalar and array-valued functions where an array is wanted.
+   NONE.  Still refused by name: ENTRY in an array-valued function, a
+   generic of scalar and array-valued functions where an array is wanted
+   (a RECURSIVE host's locals in its internal procedures came with the
+   leftovers, bf5ad581).
 5. **Derived types and pointers**: TYPE, components, structure constructors,
    POINTER and TARGET, ALLOCATABLE components (as in F95's TR), NULLIFY and
    ASSOCIATED, pointers to arrays.
 
-   **Status 2026-11-09: in progress.**  Done: derived types (a8c334cd),
-   functions of a derived type (531c403e), POINTER and TARGET with
-   NULLIFY, ASSOCIATED, pointer arrays and pointer dummies (7cf3b5fe),
-   defined operators and ASSIGNMENT(=) (adfddbc6) -- INTERFACE
-   OPERATOR(op), .NAME. operators binary and unary, through USE ONLY and
-   PUBLIC/PRIVATE.  Left: ALLOCATABLE components (refused by name).
-   Refused by name: a defined operation in an array expression (F95's
+   **Status 2026-11-09: done.**  Derived types (a8c334cd), functions of a
+   derived type (531c403e), POINTER and TARGET with NULLIFY, ASSOCIATED,
+   pointer arrays and pointer dummies (7cf3b5fe), defined operators and
+   ASSIGNMENT(=) (adfddbc6) -- INTERFACE OPERATOR(op), .NAME. operators
+   binary and unary, through USE ONLY and PUBLIC/PRIVATE -- and
+   ALLOCATABLE components (b9893620).  Refused by name: a defined
+   operation on array operands (a specific with array dummies, or F95's
    ELEMENTAL), an operator's array-valued function.
 
    Found on the way, pre-existing: a generic whose specifics differed
@@ -228,6 +229,62 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    neither the procedures nor the generics it had by USE.
 6. **Fortran 95**: PURE, ELEMENTAL, FORALL, NULL(), default initialization,
    CPU_TIME, and the F95 deletions noted as warnings, not removals.
+
+   **Not started.**  The work paused after milestone 5 (below).
+
+## Fortran 90: where it stopped (2026-11-09)
+
+Milestones 1 to 5 are done, and after them the list of what a Fortran 90
+program could still trip on was worked off:
+
+- initial values of arrays and structures, PARAMETER arrays (c7d811cc);
+- the intrinsics that were missing (f97d18a8);
+- vector subscripts (2b43a055);
+- non-advancing I/O with SIZE= and EOR=, B/O/Z editing, the rest of
+  OPEN's and INQUIRE's specifiers, a NAMELIST group in column 1
+  (0a658b23);
+- arrays of structures in expressions and I/O, implied DOs whose items
+  need evaluating first, a constructor in a WHERE, a RECURSIVE host's
+  locals in its internal procedures, ASSOCIATED with an array or section
+  TARGET, a derived type renamed by USE (bf5ad581).
+
+Gates at the pause: tests/run-tests.sh 443/0, FCVS 192/192, ffuzz 2000
+of 2000 the same as flang, LAPACK built by f77 printing what gfortran's
+build prints in 90 of 90 suites.
+
+What is left is refused by name, none of it accepted and wrong.  The
+ones a program is likeliest to meet:
+
+- a defined operation on array operands, and an operator whose function
+  is array-valued;
+- ALLOCATABLE dummies and function results, POINTER function results
+  (the first two are the F95 TR's, the third is Fortran 90's);
+- a type with ALLOCATABLE components: no structure constructor, no
+  initial value, no array assignment, no component of such a type in
+  turn, no array of it whose size is not constant;
+- a component of an array of structures that is itself an array (A%V),
+  or whose size does not divide the structure's (a CHARACTER*3 beside an
+  INTEGER); substrings of such components;
+- a POINTER component of an array of structures taken across the array;
+  a pointer to an ALLOCATABLE component; a vector subscript on a vector
+  subscript;
+- a local a RECURSIVE host first names in its executable text
+  (implicitly typed) and its internal procedures use;
+- ENTRY in an array-valued function; a generic of scalar and
+  array-valued functions where an array is wanted; array-valued
+  functions of assumed CHARACTER length, INTEGER*2 or LOGICAL*1;
+- EOSHIFT of structures without a BOUNDARY; TRANSFER to a structure;
+- in constant expressions: an element of a module's PARAMETER array, a
+  structure PARAMETER, RESHAPE's PAD and ORDER;
+- Fortran 95's own: ELEMENTAL, FORALL, a WHERE inside a WHERE, a masked
+  ELSEWHERE, default initialization of components (milestone 6).
+
+Processor-dependent and left different from gfortran: the layout of
+NAMELIST output, the unit STOP's message goes to.
+
+Milestone 6 is the next thing if this resumes; the gfortran corpus
+(regression/run-flang-corpus.sh's programs, built by f77 with recorded
+verdicts) is the measure this plan promised and has not been set up.
 
 ## Oracles and corpora
 

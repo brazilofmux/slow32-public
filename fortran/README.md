@@ -27,6 +27,18 @@ MVBITS, in line; and `Z'..'`/`O'..'` constants in DATA for INTEGER,
 LOGICAL, REAL and DOUBLE PRECISION items.  fort370's IBM extensions
 (DEFINE FILE, `u'r`, FIND, PUNCH, unquoted `Z1F`) are not taken.
 
+And since November 2026, COMPLEX*16 and **Fortran 90**: free form,
+array expressions, sections and constructors, WHERE, the array
+intrinsics, ALLOCATABLE and assumed-shape arrays, modules, internal
+procedures, interfaces and generics, RECURSIVE, OPTIONAL and keyword
+arguments, derived types, pointers, defined operators and assignment,
+NAMELIST, non-advancing I/O.  Reference LAPACK built by this compiler
+prints what gfortran's build prints in 90 of its 90 test suites
+(`regression/run-lapack.sh --f77`), and `regression/fuzz/ffuzz.py` holds
+it to flang on random programs.  What it does not take it refuses by
+name; [`../docs/plans/fortran90.md`](../docs/plans/fortran90.md) has
+the milestones and the list of what is left.
+
 The transcendentals are calls by their C libm names, on purpose:
 slow32 and slow32-fast execute the Newton-series SLOW-32 code linked
 from `libs32.s32a`, while slow32-dbt and qemu-tcg find those names in
@@ -203,7 +215,11 @@ programs under `tests/f77/` (a sibling `.in` is stdin) whose output
 must match gfortran's byte for byte; the ones named for a feature
 (`character1`, `complex1`, `entry1`, `dummyproc*`, `unformatted1`,
 `internal1`, `dblescape`) were written while bringing up that feature
-against the FCVS and are the regression guard for it.
+against the FCVS and are the regression guard for it.  The `f90*` ones are
+the Fortran 90 features; `multi:` tests are programs of several files
+under `tests/multi/`, compiled one at a time (modules through their
+`.mod` files) and held to a recorded `expected`; `refuse:` tests are
+what the compiler must reject, each with its one message.
 
 ## The FCVS
 
