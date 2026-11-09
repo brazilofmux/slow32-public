@@ -15087,11 +15087,16 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     f77_cur_unit = save_unit;
     f77_inline_ret_blk = save_ret;
     f77_inline_result = save_result;
+    /* f77_nsym is deliberately NOT restored: the FUNCTION result
+     * symbol must outlive the splice so the caller can load it.  The
+     * callee's names end here, though: left as they were, the caller's
+     * first use of a name after the call found the callee's variable of
+     * that name -- its type, its rank, a dummy's actual -- where it
+     * should have made its own (X = 2.5 stored 2 after a call of a
+     * FUNCTION with an INTEGER X). */
+    for (i = f77_scope_base; i < f77_nsym; i++) f77_sname[i][0] = '%';
     f77_scope_base = save_scope;
     f77_label_base = save_lblbase;
-    /* f77_nsym is deliberately NOT restored: the FUNCTION result
-     * symbol must outlive the splice so the caller can load it, and
-     * the scope base already hides the callee's names. */
     f77_nlabel = save_nlabel;
     ctl_n = save_ctl;
     f77_ctl_base = save_ctl_base;
