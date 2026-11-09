@@ -234,6 +234,9 @@ fi
 # asterisks).  The runtime used to read each some other way.  A list after
 # PRINT f or READ f needs its comma (prcomma, rdcomma): blanks do not count,
 # so PRINT * 1234 was PRINT*1234 and printed 1234 (from fort370, MV410).
+# The reductions (Fortran 90) of an array expression: DIM= that would give
+# an array, an argument that is no array or of the wrong type, a keyword
+# the intrinsic does not take, a DIM outside the rank (sumdim .. sizedim).
 # Construct names (Fortran 90; cn*): each names one construct and no
 # variable; END DO, END IF, ELSE and ELSE IF carry the construct's name or
 # none, as it has one or not; EXIT and CYCLE name a DO around them (EXIT
@@ -284,6 +287,15 @@ if [ -x "$F77" ]; then
     printf 'if (.true.) then\nelse\nelse\nend if\nend\n' > "$W/else2.f90"
     printf 'if (.true.) then\nelse\nelse if (.true.) then\nend if\nend\n' > "$W/elseelif.f90"
     printf 'if (.true.) then\nendif(3)\nend\n' > "$W/endifjunk.f90"
+    printf 'integer m(2,2)\nm = 1\nprint *, sum(m, 1)\nend\n' > "$W/sumdim.f90"
+    printf 'x = 1.0\nprint *, sum(x)\nend\n' > "$W/sumscal.f90"
+    printf 'logical l(2)\nl = .true.\nprint *, sum(l)\nend\n' > "$W/sumlog.f90"
+    printf 'integer k(2)\nk = 1\nprint *, count(k)\nend\n' > "$W/cntnum.f90"
+    printf 'real a(2,2)\na = 1.0\nprint *, dot_product(a, a)\nend\n' > "$W/dotrank.f90"
+    printf 'integer k(2)\nk = 1\nprint *, sum(k, foo=1)\nend\n' > "$W/sumkw.f90"
+    printf 'integer k(2)\nk = 1\nprint *, lbound(k)\nend\n' > "$W/lbnodim.f90"
+    printf 'integer k(2)\nk = 1\nprint *, maxloc(k)\nend\n' > "$W/mlnodim.f90"
+    printf 'integer k(2)\nk = 1\nprint *, size(k, 3)\nend\n' > "$W/sizedim.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -365,6 +377,15 @@ if [ -x "$F77" ]; then
              "else2:line 3: a second ELSE in one IF construct" \
              "elseelif:line 3: ELSE IF after ELSE" \
              "endifjunk:line 2: unexpected text after END IF" \
+             "sumdim:line 3: SUM with DIM= of an array of rank above 1 gives an array, which is not supported yet" \
+             "sumscal:line 2: SUM needs an array" \
+             "sumlog:line 3: SUM of a LOGICAL array" \
+             "cntnum:line 3: COUNT needs a LOGICAL array" \
+             "dotrank:line 3: DOT_PRODUCT needs arrays of rank 1" \
+             "sumkw:line 3: the arguments of SUM are not ones it takes" \
+             "lbnodim:line 3: LBOUND without DIM= gives an array, which is not supported yet" \
+             "mlnodim:line 3: MAXLOC without DIM= gives an array, which is not supported yet" \
+             "sizedim:line 3: DIM= of SIZE is outside the array's rank" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \
