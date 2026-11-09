@@ -1113,6 +1113,9 @@ static void f77_kw_take(char *kw);
 static void f77_kw_skip(char *kw);
 static int f77_hconst(int v, int *out);
 static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n);
+static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt, int *isch);
+static int f77_me_find(int m, char *nm);
+static int f77_generic_all_afn(int g);
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
                              char kws[][F77_MAX_NAME], int *pn);
 static int f77_tfree_mark(void);
@@ -3486,8 +3489,8 @@ static int f77_primary(void) {
             f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me);
             f77_naa = aamk;
             if (me >= 0 && f77_me_rrank[me] > 0) {
-                if (f77_sme[s] >= 0 && f77_me_kind[f77_sme[s]] == F77_ME_GENERIC) {
-                    f77_error("an array-valued FUNCTION through a generic interface is not supported yet");
+                if (f77_sme[s] >= 0 && f77_me_kind[f77_sme[s]] == F77_ME_GENERIC && f77_afn_desc < 0) {
+                    f77_error("an array-valued FUNCTION through a generic of scalar and array-valued ones is not supported yet");
                     ex_ty = rty; ex_hi = -1;
                     f77_tfree_to(mk);
                     return f77_iconst(0);
@@ -9622,6 +9625,8 @@ static int f77_transfer_actual(void) {
     int tmp;
     int args[3];
     int n;
+    int mchar;         /* MOLD is CHARACTER: msz its length, the result's hidden one */
+    mchar = 0;
     f77_tok();                                   /* TRANSFER */
     f77_tok();                                   /* ( */
     /* SOURCE: copied below, once the temporary exists; parsed first, so
@@ -9647,7 +9652,7 @@ static int f77_transfer_actual(void) {
             (after >= lx_stmt_len || lx_stmt[after] != '(' || f77_sty[s] != TY_CHAR)) {
             f77_tok();
             rank = f77_srank[s];
-            if (f77_sty[s] == TY_CHAR) { f77_error("TRANSFER of CHARACTER is not supported yet"); return f77_iconst(0); }
+            if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0) { f77_error("TRANSFER of an assumed-length CHARACTER array is not supported"); return f77_iconst(0); }
             for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
             if (lx_t == T_LP && f77_paren_has_colon()) {
                 f77_tok();
@@ -9686,16 +9691,16 @@ static int f77_transfer_actual(void) {
             int v; int vty; int vhi;
             v = f77_expr();
             vty = ex_ty; vhi = ex_hi;
-            if (vty == TY_CHAR) { f77_error("TRANSFER of CHARACTER is not supported yet"); return f77_iconst(0); }
             esz = f77_tysize(vty);
-            if (vty == TY_DCPLX) sval = f77_dcx_arg(v);
+            if (vty == TY_CHAR) { sval = v; srcb = ex_len; esz = -1; }    /* its bytes, a run-time count perhaps */
+            else if (vty == TY_DCPLX) sval = f77_dcx_arg(v);
             else {
                 f77_frame = f77_frame + esz;
                 sval = hi_emit(HI_ALLOCA, f77_aty(vty), -1, -1, 0 - f77_frame, NULL);
                 f77_alloca_add(sval, 0 - f77_frame);
                 f77_store_at(sval, vty, v, vty, vhi);
             }
-            srcb = f77_iconst(esz);
+            if (vty != TY_CHAR) srcb = f77_iconst(esz);
             s = -1;
         }
         if (lx_t != T_COMMA) { f77_error("TRANSFER needs a MOLD"); return f77_iconst(0); }
@@ -9719,21 +9724,28 @@ static int f77_transfer_actual(void) {
             f77_tok();
             if (lx_t != T_RP) { f77_error("expected /) after an array constructor"); return f77_iconst(0); }
             f77_tok();
-            if (ty0 == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
-            msz = f77_tysize(ty0);
+            if (ty0 == TY_CHAR) {
+                if (ex_clen < 0) { f77_error("TRANSFER's CHARACTER MOLD needs a length known here"); return f77_iconst(0); }
+                msz = ex_clen;
+                mchar = 1;
+            } else msz = f77_tysize(ty0);
             marr = 1;
         } else {
             int ms;
             ms = lx_t == T_NAME ? f77_sym_find(lex_name) : -1;
             if (ms >= 0 && f77_srank[ms] > 0 && (after >= lx_stmt_len || lx_stmt[after] != '(')) {
                 f77_tok();
-                if (f77_sty[ms] == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
+                if (f77_sty[ms] == TY_CHAR && f77_slen[ms] < 0) { f77_error("TRANSFER's CHARACTER MOLD needs a length known here"); return f77_iconst(0); }
+                mchar = f77_sty[ms] == TY_CHAR;
                 msz = f77_esize(ms);
                 marr = 1;
             } else {
                 f77_expr();
-                if (ex_ty == TY_CHAR) { f77_error("TRANSFER to CHARACTER is not supported yet"); return f77_iconst(0); }
-                msz = f77_tysize(ex_ty);
+                if (ex_ty == TY_CHAR) {
+                    if (ex_clen < 0) { f77_error("TRANSFER's CHARACTER MOLD needs a length known here"); return f77_iconst(0); }
+                    msz = ex_clen;
+                    mchar = 1;
+                } else msz = f77_tysize(ex_ty);
             }
         }
         if (lx_t == T_COMMA) {
@@ -9758,7 +9770,8 @@ static int f77_transfer_actual(void) {
         args[0] = f77_iconst(0); args[1] = n; args[2] = f77_iconst(0);
         tmp = f77_call_i("f77_allocate", 3, args);
         if (sval >= 0) {
-            f77_copy_bytes(tmp, sval, esz);
+            if (esz < 0) f77_copy_n(tmp, sval, srcb);           /* a CHARACTER SOURCE */
+            else f77_copy_bytes(tmp, sval, esz);
         } else {
             /* SOURCE's elements in array element order, the first
              * subscript fastest */
@@ -9784,7 +9797,7 @@ static int f77_transfer_actual(void) {
     f77_tfree_sym[f77_ntfree] = -1;
     f77_tfree_unpack[f77_ntfree] = 0;
     f77_ntfree = f77_ntfree + 1;
-    f77_act_len = -1;
+    f77_act_len = mchar ? f77_iconst(msz) : -1;
     return tmp;
 }
 
@@ -10055,13 +10068,71 @@ static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt
     return -1;
 }
 
+/* Are all of generic g's specifics array-valued FUNCTIONs?  Then a
+ * reference is evaluated whole, as one to such a FUNCTION is. */
+static int f77_generic_all_afn(int g) {
+    char *p; int any;
+    any = 0;
+    p = f77_me_str[g];
+    while (*p) {
+        char nm[F77_MAX_NAME]; int k; int e;
+        k = 0;
+        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
+        nm[k] = 0;
+        while (*p == ' ') p++;
+        e = f77_me_find(f77_me_home[g], nm);
+        if (e < 0 || f77_me_kind[e] != F77_ME_PROC || f77_me_rrank[e] == 0) return 0;
+        any = 1;
+    }
+    return any;
+}
+
 /* A generic's specific, by the actuals' types and ranks; keywords not
  * taken through a generic yet. */
 static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n) {
-    int i;
-    for (i = 0; i < n; i++)
-        if (kws[i][0]) { f77_error("keyword arguments through a generic interface are not supported yet"); return -1; }
-    return f77_generic_pick(g, tys, n);
+    int i; int anykw;
+    char *p;
+    int m;
+    anykw = 0;
+    for (i = 0; i < n; i++) if (kws[i][0]) anykw = 1;
+    if (!anykw) return f77_generic_pick(g, tys, n);
+    /* keywords: each specific's dummies by name (F90 14.1.2.3), the
+     * actuals put in their places, the rest OPTIONAL */
+    m = f77_me_home[g];
+    p = f77_me_str[g];
+    while (*p) {
+        char nm[F77_MAX_NAME];
+        static char names[64][F77_MAX_NAME];
+        int opt[64]; int isch[64]; int got[16];
+        int k; int e; int nd; int ok;
+        k = 0;
+        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
+        nm[k] = 0;
+        while (*p == ' ') p++;
+        e = f77_me_find(m, nm);
+        if (e < 0 || f77_me_kind[e] != F77_ME_PROC) continue;
+        nd = f77_callee_dummies(-1, e, names, opt, isch);
+        if (nd < n || nd > 16) continue;
+        for (k = 0; k < nd; k++) got[k] = 0;
+        ok = 1;
+        for (i = 0; i < n && ok; i++) {
+            int j; int t;
+            if (!kws[i][0]) j = i;
+            else { for (j = 0; j < nd; j++) if (strcmp(names[j], kws[i]) == 0) break; }
+            if (j >= nd || got[j]) { ok = 0; break; }
+            got[j] = 1;
+            t = f77_me_argty[e][j];
+            if ((t & 255) != (tys[i] & 255) || ((t >> 12) & 15) != ((tys[i] >> 12) & 15)) ok = 0;
+        }
+        for (k = 0; k < nd && ok; k++) if (!got[k] && !opt[k]) ok = 0;
+        if (ok) return e;
+    }
+    {
+        char msg[160];
+        sprintf(msg, "no procedure of the generic %s takes these arguments", f77_me_name[g]);
+        f77_error(msg);
+    }
+    return -1;
 }
 
 /* Keyword actuals and absent OPTIONAL dummies (Fortran 90 12.4.1): the
@@ -10835,6 +10906,7 @@ static int f77_av_kind(int b, int open) {
         int e;
         e = f77_sme[sy];
         if (f77_me_kind[e] == F77_ME_PROC && f77_me_rrank[e] > 0) return AV_UFUNC;
+        if (f77_me_kind[e] == F77_ME_GENERIC && f77_generic_all_afn(e)) return AV_UFUNC;
     }
     if (sy < 0 || (f77_srank[sy] == 0 && !f77_sarg[sy])) {
         int u;
@@ -13348,8 +13420,9 @@ static void f77_ib_begin(void) {
     lx_t = T_EOF;
 }
 
-static void f77_ib_end(void) {
-    int e; int k; int rs;
+/* The table of this unit's interface bodies, and of its generics when it
+ * is no module ("@u"). */
+static int f77_ib_table(void) {
     if (f77_ib_tab < 0 || f77_ib_tab_unit != f77_cur_unit) {
         char key[24];
         sprintf(key, "@%d", f77_cur_unit);
@@ -13357,7 +13430,12 @@ static void f77_ib_end(void) {
         if (f77_ib_tab < 0) f77_ib_tab = f77_mod_new(key, f77_cur_unit);
         f77_ib_tab_unit = f77_cur_unit;
     }
-    e = f77_me_new(f77_ib_tab, f77_ib_name, F77_ME_PROC);
+    return f77_ib_tab;
+}
+
+static void f77_ib_end(void) {
+    int e; int k; int rs;
+    e = f77_me_new(f77_ib_table(), f77_ib_name, F77_ME_PROC);
     if (e < 0) return;
     f77_me_iface[e] = 1;
     f77_me_str[e] = strdup(f77_ib_name);             /* an external's link name */
@@ -13417,7 +13495,6 @@ static void f77_stmt_interface(void) {
         f77_error("INTERFACE OPERATOR and ASSIGNMENT are not supported yet");
         return;
     }
-    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("a generic INTERFACE outside a module's specification part is not supported yet"); return; }
     if (f77_gi_n >= 32) { f77_error("too many generic interfaces"); return; }
     strcpy(f77_gi_name[f77_gi_n], lex_name);
     f77_gi_spec[f77_gi_n][0] = 0;
@@ -13446,12 +13523,51 @@ static int f77_iface_stmt(void) {
             f77_tok();
         }
         if (f77_iface_open >= 0 && f77_gi_spec[f77_iface_open][0] == 0) f77_error("a generic interface with no procedure");
+        if (f77_iface_open >= 0) {
+            /* its interface bodies all FUNCTIONs or all SUBROUTINEs
+             * (F90 14.1.2.3) */
+            char *p; int kind;
+            kind = 0;
+            p = f77_gi_spec[f77_iface_open];
+            while (*p) {
+                char nm[F77_MAX_NAME]; int k; int e;
+                k = 0;
+                while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
+                nm[k] = 0;
+                while (*p == ' ') p++;
+                e = f77_ib_tab >= 0 && f77_ib_tab_unit == f77_cur_unit ? f77_me_find(f77_ib_tab, nm) : -1;
+                if (e < 0) continue;
+                if (kind && f77_me_pkind[e] != kind) { f77_error("a generic's procedures are all FUNCTIONs or all SUBROUTINEs"); break; }
+                kind = f77_me_pkind[e];
+            }
+        }
+        if (f77_iface_open >= 0 && f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) {
+            /* a generic of a unit that is no module: its own, now, its
+             * specifics the interface bodies of its table */
+            int e; int g;
+            g = f77_iface_open;
+            e = f77_me_new(f77_ib_table(), f77_gi_name[g], F77_ME_GENERIC);
+            if (e >= 0) {
+                f77_me_str[e] = strdup(f77_gi_spec[g]);
+                if (f77_sym_find(f77_gi_name[g]) >= 0) {
+                    char m[F77_MAX_NAME + 60];
+                    sprintf(m, "%s, a generic name, is declared otherwise too", f77_gi_name[g]);
+                    f77_error(m);
+                } else f77_me_bind(e, f77_gi_name[g]);
+            }
+            f77_gi_n = g;                        /* not a module's, for a snapshot */
+        }
         f77_iface_open = -1;
         return 1;
     }
     if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) { f77_ib_begin(); return 1; }
     if ((n = f77_starts("MODULEPROCEDURE")) != 0) {
         if (f77_iface_open < 0) { f77_error("MODULE PROCEDURE is a generic interface's"); lx_t = T_EOF; return 1; }
+        if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) {
+            f77_error("MODULE PROCEDURE is in a module's generic interface (F90 12.3.2.1)");
+            lx_t = T_EOF;
+            return 1;
+        }
         f77_scan_from(n);
         while (lx_t == T_NAME) {
             char *sp;

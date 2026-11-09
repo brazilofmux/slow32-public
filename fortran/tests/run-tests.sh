@@ -340,7 +340,7 @@ if [ -x "$F77" ]; then
     printf 'integer k(3)\nk = f()\nend\nfunction f()\ninteger f(3)\nf = 1\nend\n' > "$W/afnext.f90"
     printf 'function f(n)\ncharacter(len=*) f(2)\nf = "a"\nend\n' > "$W/afnclen.f90"
     printf 'function f()\ninteger f(2)\nf = 1\nentry g()\nf = 2\nend\n' > "$W/afnent.f90"
-    printf 'module m\ninterface g\nmodule procedure f\nend interface\ncontains\nfunction f(x)\nreal x\nreal f(2)\nf = x\nend function\nend module\nuse m\nreal a(2)\na = g(1.0)\nend\n' > "$W/afngen.f90"
+    printf 'module m\ninterface g\nmodule procedure f, h\nend interface\ncontains\nfunction f(x)\nreal x\nreal f(2)\nf = x\nend function\ninteger function h(i)\nh = i\nend function\nend module\nuse m\nreal a(2)\na = g(1.0)\nend\n' > "$W/afngen.f90"
     printf 'integer n(2)\nreal a(4), b(2,2)\nn = 2\na = 1.0\nb = reshape(a, n(1:2))\nend\n' > "$W/rshdyn.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = 1.0\nprint *, matmul(a, b)\nend\n' > "$W/mmrank.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = transpose(a)\nend\n' > "$W/trrank.f90"
@@ -353,6 +353,9 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf 'program p\ninterface g\nreal function f(x)\nend function\nsubroutine s(i)\nend subroutine\nend interface\nend\n' > "$W/genmix.f90"
+    printf 'program p\ninterface g\nmodule procedure f\nend interface\nend\n' > "$W/genmodp.f90"
+    printf 'subroutine s(c)\ncharacter*(*) c\ncall t(transfer(1, c))\nend\n' > "$W/trclen.f90"
     printf "character*2 c(2)\nc = 'ab'\nprint *, repeat(c, 2)\nend\n" > "$W/reparr.f90"
     printf "print *, repeat('ab', -1)\nend\n" > "$W/repneg.f90"
     printf 'integer, parameter :: k = selected_real_kind()\nend\n' > "$W/selknone.f90"
@@ -436,6 +439,9 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "genmix:line 7: a generic's procedures are all FUNCTIONs or all SUBROUTINEs" \
+             "genmodp:line 3: MODULE PROCEDURE is in a module's generic interface (F90 12.3.2.1)" \
+             "trclen:line 3: TRANSFER's CHARACTER MOLD needs a length known here" \
              "reparr:line 3: REPEAT's arguments are scalars" \
              "repneg:line 1: REPEAT's NCOPIES is less than 0" \
              "selknone:line 1: SELECTED_REAL_KIND takes P, R or both" \
@@ -517,7 +523,7 @@ if [ -x "$F77" ]; then
              "afnext:line 2: F is array-valued: it needs an explicit interface" \
              "afnclen:line 1: an array-valued FUNCTION of assumed CHARACTER length is not supported" \
              "afnent:line 1: ENTRY in an array-valued FUNCTION is not supported" \
-             "afngen:line 14: an array-valued FUNCTION through a generic interface is not supported yet" \
+             "afngen:line 17: an array-valued FUNCTION through a generic of scalar and array-valued ones is not supported yet" \
              "rshdyn:line 5: RESHAPE's SHAPE must be an array of constant size, 1 to 7" \
              "mmrank:line 4: MATMUL needs a matrix and a matrix, or a matrix and a vector" \
              "trrank:line 3: TRANSPOSE needs an array of rank 2" \
