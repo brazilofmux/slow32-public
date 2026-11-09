@@ -1631,6 +1631,41 @@ void *f77_as_pack(const int *d, int rank, int esz) {
     return run;
 }
 
+/* An array constructor's values (Fortran 90) as the compiler evaluates
+ * them, one 16-byte slot each, since their number can be known only by
+ * running the implied-DOs: f77_vec_take hands over the slots (freed with
+ * f77_dealloc_auto) and frees the rest. */
+typedef struct { char *p; int n; int cap; } f77_vec;
+
+void *f77_vec_new(void) {
+    f77_vec *v = malloc(sizeof *v);
+    if (!v || !(v->p = malloc(16 * 16))) { fprintf(stderr, "f77: out of memory for an array constructor\n"); exit(2); }
+    v->n = 0;
+    v->cap = 16;
+    return v;
+}
+
+void f77_vec_push(void *h, const void *val) {
+    f77_vec *v = h;
+    if (v->n == v->cap) {
+        char *q = realloc(v->p, (size_t)v->cap * 2 * 16);
+        if (!q) { fprintf(stderr, "f77: out of memory for an array constructor\n"); exit(2); }
+        v->p = q;
+        v->cap *= 2;
+    }
+    memcpy(v->p + (long)v->n * 16, val, 16);
+    v->n++;
+}
+
+int f77_vec_count(void *h) { return ((f77_vec *)h)->n; }
+
+void *f77_vec_take(void *h) {
+    f77_vec *v = h;
+    char *p = v->p;
+    free(v);
+    return p;
+}
+
 void f77_as_unpack(const int *d, int rank, int esz, void *run) {
     if (run == (void *)(long)d[0]) return;
     f77_as_walk(d, rank, esz, run, 0);

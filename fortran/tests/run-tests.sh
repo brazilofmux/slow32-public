@@ -240,6 +240,11 @@ fi
 # Assumed-shape dummies (Fortran 90; as*): an explicit interface, an array
 # actual of the dummy's rank, and only for a dummy; CHARACTER ones and an
 # assumed-size actual are refused.
+# A whole CHARACTER array was its first element wherever it was not an
+# actual argument or I/O's: D = C assigned C(1) to D(1) and stopped
+# (charwhole).  The array-valued intrinsics' limits: RESHAPE's ORDER and a
+# SHAPE of no constant size, MATMUL's and TRANSPOSE's ranks, SPREAD's DIM,
+# an array inside a constructor, MERGE's sources of two types.
 # WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
 # Fortran 95's; its body is array assignments; its mask is a LOGICAL array
 # of the assignments' rank (where*).
@@ -261,7 +266,6 @@ if [ -x "$F77" ]; then
     printf '      SUBROUTINE S(A)\n      REAL, ALLOCATABLE :: A(:)\n      END\n' > "$W/allocarg.f"
     printf '      REAL, ALLOCATABLE :: A(10)\n      END\n' > "$W/allocshape.f"
     printf '      INTEGER K(3)\n      K(1:3) = (/ 1, 2 /)\n      END\n' > "$W/aconshape.f"
-    printf '      INTEGER K(2)\n      K = 2 * (/ 1, 2 /)\n      END\n' > "$W/aconexpr.f"
     printf '      INTEGER K(2), J\n      J = TRANSFER(1.0, 0)\n      END\n' > "$W/xferexpr.f"
     printf '#define N 3\n      X = N\n      END\n' > "$W/cppdef.F"
     printf '#if 1\n      X = 1\n      END\n' > "$W/cppopen.F"
@@ -299,7 +303,6 @@ if [ -x "$F77" ]; then
     printf 'integer k(2)\nk = 1\nprint *, count(k)\nend\n' > "$W/cntnum.f90"
     printf 'real a(2,2)\na = 1.0\nprint *, dot_product(a, a)\nend\n' > "$W/dotrank.f90"
     printf 'integer k(2)\nk = 1\nprint *, sum(k, foo=1)\nend\n' > "$W/sumkw.f90"
-    printf 'integer k(2)\nk = 1\nprint *, lbound(k)\nend\n' > "$W/lbnodim.f90"
     printf 'integer k(2)\nk = 1\nprint *, maxloc(k)\nend\n' > "$W/mlnodim.f90"
     printf 'integer k(2)\nk = 1\nprint *, size(k, 3)\nend\n' > "$W/sizedim.f90"
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\nwhere (a > 1.0) a = 2.0\nend where\nend\n' > "$W/wherenest.f90"
@@ -318,6 +321,14 @@ if [ -x "$F77" ]; then
     printf 'subroutine s\nreal x(:)\nend\n' > "$W/aslocal.f90"
     printf 'module m\ncontains\nsubroutine s(c)\ncharacter*4 c(:)\nend subroutine\nend module\n' > "$W/aschar.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nsubroutine t(y)\nuse m\nreal y(*)\ncall s(y)\nend\n' > "$W/asasz.f90"
+    printf "character*2 c(2), d(2)\nc(1) = 'ab'\nc(2) = 'cd'\nd = c\nend\n" > "$W/charwhole.f90"
+    printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1/))\nend\n' > "$W/rshord.f90"
+    printf 'integer n(2)\nreal a(4), b(2,2)\nn = 2\na = 1.0\nb = reshape(a, n(1:2))\nend\n' > "$W/rshdyn.f90"
+    printf 'real a(2), b(2)\na = 1.0\nb = 1.0\nprint *, matmul(a, b)\nend\n' > "$W/mmrank.f90"
+    printf 'real a(2), b(2)\na = 1.0\nb = transpose(a)\nend\n' > "$W/trrank.f90"
+    printf 'integer k(2), m(2,2)\nk = 1\nn = 1\nm = spread(k, n, 2)\nend\n' > "$W/sprdim.f90"
+    printf 'integer k(2), m(4)\nk = 1\nm = 2 * (/ k, k /)\nend\n' > "$W/aconarr.f90"
+    printf 'real a(2)\na = merge(1.0, 2, .true.)\nend\n' > "$W/mrgty.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -367,7 +378,6 @@ if [ -x "$F77" ]; then
              "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \
              "allocshape:line 1: an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE" \
              "aconshape:line 2: the array constructor has 2 values for 3 elements" \
-             "aconexpr:line 2: an array constructor is supported only as the right side of an array assignment" \
              "xferexpr:line 2: TRANSFER is supported only as an actual argument" \
              "cppdef:line 1: only the preprocessor's conditionals are supported (#if, #ifdef, #ifndef, #elif, #else, #endif)" \
              "cppopen:line 3: #if without #endif" \
@@ -405,7 +415,6 @@ if [ -x "$F77" ]; then
              "cntnum:line 3: COUNT needs a LOGICAL array" \
              "dotrank:line 3: DOT_PRODUCT needs arrays of rank 1" \
              "sumkw:line 3: the arguments of SUM are not ones it takes" \
-             "lbnodim:line 3: LBOUND without DIM= gives an array, which is not supported yet" \
              "mlnodim:line 3: MAXLOC without DIM= gives an array, which is not supported yet" \
              "sizedim:line 3: DIM= of SIZE is outside the array's rank" \
              "wherenest:line 4: a WHERE inside a WHERE is Fortran 95's, not supported" \
@@ -424,6 +433,14 @@ if [ -x "$F77" ]; then
              "aslocal:line 2: a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's" \
              "aschar:line 4: a CHARACTER assumed-shape array is not supported yet" \
              "asasz:line 10: an assumed-size array cannot be the actual of an assumed-shape dummy" \
+             "charwhole:line 4: a whole CHARACTER array is supported only as an actual argument or in an I/O list" \
+             "rshord:line 3: ORDER= of RESHAPE is not supported yet" \
+             "rshdyn:line 5: RESHAPE's SHAPE must be an array of constant size, 1 to 7" \
+             "mmrank:line 4: MATMUL needs a matrix and a matrix, or a matrix and a vector" \
+             "trrank:line 3: TRANSPOSE needs an array of rank 2" \
+             "sprdim:line 4: DIM= of SPREAD is supported only as a constant" \
+             "aconarr:line 3: an array inside an array constructor is not supported yet" \
+             "mrgty:line 2: MERGE's TSOURCE and FSOURCE differ in type" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \
