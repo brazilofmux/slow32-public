@@ -122,7 +122,7 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    TRANSPOSE, RESHAPE, SPREAD, SHAPE, SIZE, LBOUND, UBOUND, ANY, ALL, COUNT,
    PACK, UNPACK, CSHIFT, EOSHIFT, MERGE).
 
-   **Status 2026-11-08: done but for CHARACTER arrays.**
+   **Done 2026-11-09.**
    - Reductions of any array expression, with MASK, and with DIM on any
      rank.
    - SIZE, LBOUND, UBOUND and SHAPE.
@@ -135,8 +135,18 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    - The array-valued intrinsics: MATMUL, TRANSPOSE, RESHAPE, SPREAD,
      PACK, UNPACK, CSHIFT, EOSHIFT, MERGE, and MAXLOC and MINLOC without
      DIM.
-   - Constructors anywhere an array may be; array expressions as actual
-     arguments and I/O items.
+   - Constructors anywhere an array may be, arrays among their values;
+     array expressions as actual arguments and I/O items.
+   - CHARACTER arrays in all of the above: assignment (a substring of
+     each element too, C(:)(2:3)), expressions, sections as actuals,
+     assumed-shape dummies, the intrinsics.
+   - RESHAPE's ORDER; an array SHIFT and BOUNDARY.
+   - Array-valued functions, internal and module (milestone 4's, done
+     here because a result like that had been stored to every element
+     as if it were a scalar).  The callee copies its result to the heap
+     at each return and fills in the caller's descriptor, hidden
+     argument 0; the caller names it as a hidden array, as it does
+     MATMUL's.
 
    How the array-valued ones fit one pass: before a consumer's loops
    (an assignment's right side, a reduction's arguments, a WHERE mask, a
@@ -147,6 +157,17 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    the HIR backend.
 
    Found on the way, all pre-existing:
+   - an array-valued FUNCTION's result was stored to every element of
+     the target as a scalar;
+   - the shapes in an array expression were never checked: N = N(1:2)
+     read past the section (checked now where the extents are
+     constants, as gfortran checks them);
+   - a generic interface ignored the actuals' rank and called its rank-1
+     specific for every array;
+   - an array right after a dot operator (.NOT. K) was not seen as an
+     operand, and as the target the overlap check missed it:
+     L(2:5) = K(1:4) .AND. .NOT. L(1:4) read elements already stored;
+   - TRIM of an array was trimmed elementwise;
    - MAXVAL of no INTEGER elements was -HUGE, not -HUGE-1;
    - a whole LOGICAL array in list-directed output printed 1 and 0;
    - a whole CHARACTER array was its first element: D = C assigned C(1)
@@ -154,9 +175,11 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    - two ELSEs in one IF, ELSE IF after ELSE, and text after END IF were
      taken silently.
 
-   Left: CHARACTER array assignment and expressions; RESHAPE's ORDER; an
-   array SHIFT or BOUNDARY; an array inside a constructor.  All are
-   refused by name.
+   Still refused by name, for milestone 4: an array-valued function
+   through a generic interface, or with ENTRY; CHARACTER and COMPLEX*16
+   module functions; TRANSFER of CHARACTER.  Not yet written, F90
+   intrinsics outside the array ones: ADJUSTL, ADJUSTR, REPEAT, SCAN,
+   VERIFY, ACHAR, IACHAR, INDEX's BACK.
 4. **Procedures and modules**: modules and USE (ONLY, renames,
    PUBLIC/PRIVATE), explicit interfaces, OPTIONAL and keyword arguments,
    generic interfaces, operator and assignment overloading, internal
