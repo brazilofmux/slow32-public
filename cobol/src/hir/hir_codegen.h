@@ -785,6 +785,8 @@ static int hcg_retpin_kind_ok(int k) {
  * it (hcg_dst falls back to 1), a call returns in it, and the argument
  * marshaller stages stack arguments through it.  Anything of that sort
  * between the definition and the RET makes pinning unsafe. */
+static int hcg_addi_lnt(int i);
+static int hcg_has_sym_base(int inst);
 static int hcg_retpin_clobbers_r1(int e) {
     int k;
     int j;
@@ -832,6 +834,14 @@ static int hcg_retpin_clobbers_r1(int e) {
      * stage an ADDRESS through r1 (operand check below). */
     if (hi_has_value(k) && ra_reg[e] < 0) return 1;
     if (ra_reg[e] == 1 || ra_reg[e] == 2) return 1;
+    /* A load or store selected in the symbol form forms its address's
+     * %hi in r1 (hcg_load_saddr, hcg_store_saddr), whatever register
+     * the address has: f77's COMMON member, an ADDI of the block given
+     * a register at entry, was stored through `lui r1, %hi(blk+12)`
+     * between a LOGICAL FUNCTION's result and its RET, and the function
+     * returned the address's upper half -- LAPACK's DLCTSX, under f77
+     * (the xGD suites). */
+    if ((k == HI_LOAD || k == HI_STORE) && hcg_addi_lnt(e) == BG_SADDR && hcg_has_sym_base(h_src1[e])) return 1;
     /* src1 is staged through scratch 1 (hcg_src(v, 1)).  src2 uses
      * scratch 2, so a remat ICONST there is not an r1 clobber:
      * afterloop's i=i+1 is ADD with ICONST 1 as src2, diamond's

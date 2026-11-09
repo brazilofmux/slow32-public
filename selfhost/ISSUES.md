@@ -4069,3 +4069,23 @@ COBOL's generated code is unchanged (asm-snapshot over 1,154 programs); s32-bc's
 changes in 5 of 114 programs, whose output does not; stage08 184/184 with the
 fixed point, SQLite identical, cfuzz 4,000 ok.  Not shown reachable from C.
 Gate: `fortran/tests/f77/dcxpair1.f90`, wrong on the f77 before the fix.
+
+### 117. [RESOLVED 2026-11-08] A pinned return value overwritten by a symbol-form store: wrong code
+
+Return-value pinning (GitHub issue 72) computes a value whose only use is the
+RET straight into r1, when nothing between it and the RET touches r1
+(`hcg_retpin_clobbers_r1`).  A load or store selected in the symbol form forms
+its address's upper half in r1 -- `lui r1, %hi(g+12)` -- and the check let it
+by whenever the address operand had a register of its own, which it does when
+the address is kept from the function's entry: f77's COMMON members, and C's
+`&g.i` held in a pointer.  `r = 0` went into r1, the store of `g.i` overwrote
+it, and the function returned the address's upper half.  From C:
+`tests/test_retpin_saddr.c`, wrong on the stage08 before the fix.
+
+The check now counts a load or store whose selection is the symbol form
+(`hcg_addi_lnt` = BG_SADDR on a symbol base) as clobbering r1.  Fixed in all four
+copies.  Found by LAPACK built by f77: the testing selector DLCTSX returned
+.TRUE. for its first call, so SDIM came out wrong in the xGD suites' expert
+driver (DGX: 30 of 150).  COBOL's and s32-bc's generated code are unchanged
+(1,154 and 114 programs); stage08 185/185 with the fixed point, SQLite identical,
+cfuzz 4,000 ok.  Gates: `tests/test_retpin_saddr.c`, `fortran/tests/f77/retpin1.f`.
