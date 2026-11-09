@@ -237,6 +237,9 @@ fi
 # The reductions (Fortran 90) of an array expression: DIM= that would give
 # an array, an argument that is no array or of the wrong type, a keyword
 # the intrinsic does not take, a DIM outside the rank (sumdim .. sizedim).
+# Assumed-shape dummies (Fortran 90; as*): an explicit interface, an array
+# actual of the dummy's rank, and only for a dummy; CHARACTER ones and an
+# assumed-size actual are refused.
 # WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
 # Fortran 95's; its body is array assignments; its mask is a LOGICAL array
 # of the assignments' rank (where*).
@@ -309,6 +312,12 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
     printf 'real a(2), m(2,2)\na = 1.0\nm = 1.0\nwhere (m > 0.0) a = 2.0\nend\n' > "$W/whereshape.f90"
     printf "character*4 c(3)\ncall s(c(1:3:2))\nend\n" > "$W/charsec.f90"
+    printf 'real a(3)\na = 1.0\ncall s(a)\nend\nsubroutine s(x)\nreal x(:)\nend\n' > "$W/asext.f90"
+    printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nuse m\ny = 1.0\ncall s(y)\nend\n' > "$W/asscal.f90"
+    printf 'module m\ncontains\nsubroutine s(x)\nreal x(:,:)\nend subroutine\nend module\nuse m\nreal a(3)\ncall s(a)\nend\n' > "$W/asrank.f90"
+    printf 'subroutine s\nreal x(:)\nend\n' > "$W/aslocal.f90"
+    printf 'module m\ncontains\nsubroutine s(c)\ncharacter*4 c(:)\nend subroutine\nend module\n' > "$W/aschar.f90"
+    printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nsubroutine t(y)\nuse m\nreal y(*)\ncall s(y)\nend\n' > "$W/asasz.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -409,6 +418,12 @@ if [ -x "$F77" ]; then
              "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \
              "whereshape:line 4: the shapes of a WHERE's mask and its assignment do not conform" \
              "charsec:line 2: a CHARACTER section as an actual argument is not supported yet" \
+             "asext:line 3: S has an assumed-shape dummy argument: it needs an explicit interface" \
+             "asscal:line 9: an assumed-shape dummy needs an array or a section as its actual" \
+             "asrank:line 9: an actual of rank 1 for an assumed-shape dummy of rank 2" \
+             "aslocal:line 2: a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's" \
+             "aschar:line 4: a CHARACTER assumed-shape array is not supported yet" \
+             "asasz:line 10: an assumed-size array cannot be the actual of an assumed-shape dummy" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

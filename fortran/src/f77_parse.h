@@ -184,6 +184,11 @@ static int  f77_sintrinsic[F77_MAX_SYM]; /* named in INTRINSIC */
  * reached only by an ADDI of the slot (f77_desc_at), which the guard holds
  * it to. */
 static int  f77_salloc[F77_MAX_SYM];
+/* An assumed-shape dummy (Fortran 90): A(:), A(lo:,:) ...  Its value is
+ * a descriptor the caller built -- the base address, then per dimension
+ * the extent and the stride in elements -- and its lower bounds are the
+ * declaration's (f77_slo).  Never inlined (the scan marks the unit). */
+static int  f77_sashape[F77_MAX_SYM];
 /* LOGICAL shares TY_INT with INTEGER in the backend; what tells them
  * apart for list-directed output (T/F vs a number) is this flag on the
  * symbol, carried through expressions in ex_log. */
@@ -582,6 +587,7 @@ static int f77_sym(char *nm) {
     f77_slink[f77_nsym] = NULL;
     f77_sme[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
+    f77_sashape[f77_nsym] = 0;
     f77_sintrinsic[f77_nsym] = 0;
     f77_slog[f77_nsym] = 0;
     f77_snar[f77_nsym] = 0;
@@ -636,6 +642,7 @@ static int f77_sym_temp(int ty) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;
+    f77_sashape[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -691,7 +698,7 @@ static double f77_me_d2[F77_MAX_MODENT];
 static char  *f77_me_str[F77_MAX_MODENT];        /* CHARACTER value; link name; a generic's specifics */
 static int    f77_me_pkind[F77_MAX_MODENT];      /* F77_UNIT_SUBR or F77_UNIT_FUNC */
 static int    f77_me_nargs[F77_MAX_MODENT];
-static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array */
+static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array, +256*rank assumed-shape */
 /* the generics a unit's INTERFACE blocks name, until its snapshot */
 static char   f77_gi_name[32][F77_MAX_NAME];
 static char   f77_gi_spec[32][512];
@@ -734,6 +741,7 @@ static int f77_text_unit(void) {
 #define F77_MAX_FAMD 512
 static char f77_famd_name[F77_MAX_FAMD][F77_MAX_NAME];
 static int  f77_famd_unit[F77_MAX_FAMD];
+static int  f77_famd_as[F77_MAX_FAMD];     /* its rank, when an assumed-shape array (the scan) */
 static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
 static int  f77_hdr_clen_off;
@@ -770,6 +778,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;
+    f77_sashape[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -973,6 +982,9 @@ static int f77_expr(void);
 static int f77_power(void);
 static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
+static int f77_naa;            /* array actuals recorded (f77_aa_*) */
+static int f77_act_aa;         /* the last f77_actual_addr's entry, or -1 */
+static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e);
 static int f77_tfree_mark(void);
 static int f77_implied_do(void (*items)(int, int));
 static int f77_is_inquiry(char *nm);
@@ -1485,6 +1497,20 @@ static int f77_elem_addr(int s, int *idxs, int n) {
      * subtraction costs nothing at run time.  A lower bound over a
      * RUNTIME stride (adjustable dimensions) keeps the subtraction on
      * the index, as before. */
+    if (f77_sashape[s]) {
+        /* assumed shape: base + sum((i - lo) * stride) elements, the
+         * strides the caller's */
+        int d;
+        if (n != f77_srank[s]) f77_error("wrong number of subscripts");
+        off = -1;
+        for (k = 0; k < n && k < f77_srank[s]; k++) {
+            d = hi_emit(HI_ADDI, TY_INT, idxs[k], -1, 0 - f77_slo[s][k], NULL);
+            d = hi_emit(HI_MUL, TY_INT, d, f77_desc_load(s, 8 + 8 * k), 0, NULL);
+            off = off < 0 ? d : hi_emit(HI_ADD, TY_INT, off, d, 0, NULL);
+        }
+        if (off < 0) off = f77_iconst(0);
+        return hi_emit(HI_ADD, HL_ADDR_TY, f77_desc_base(s), f77_elem_bytes(s, off), 0, NULL);
+    }
     if (f77_salloc[s]) {
         /* bounds and storage from the descriptor (ALLOCATABLE) */
         int stride;
@@ -2893,9 +2919,12 @@ static int f77_primary(void) {
             int rty;
             int addrs[64];
             int lens[64];
+            int aas[64];
+            int aamk;
             int ai;
             int mk;
             mk = f77_tfree_mark();
+            aamk = f77_naa;
             f77_tok();
             nargs = 0;
             if (lx_t == T_LP) {
@@ -2906,7 +2935,7 @@ static int f77_primary(void) {
                          * h_carg slots: an actual may itself contain a
                          * call, which would otherwise interleave its
                          * arguments with ours. */
-                        if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; }
+                        if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; }
                         else f77_actual_addr();
                         nargs = nargs + 1;
                         if (lx_t != T_COMMA) break;
@@ -2916,6 +2945,8 @@ static int f77_primary(void) {
                 if (lx_t != T_RP) f77_error("expected ) after arguments");
                 else f77_tok();
             }
+            f77_actuals_final(addrs, aas, nargs, u, -1);
+            f77_naa = aamk;
             rty = f77_urty_of(u);
             {
                 /* fort370: the caller's type for the name, declared or
@@ -3043,16 +3074,20 @@ static int f77_primary(void) {
             int fptr;
             int mk;
             int tys[64];
+            int aas[64];
+            int aamk;
+            int me;
             char *cname;
             int rlog;
             mk = f77_tfree_mark();
+            aamk = f77_naa;
             fptr = (f77_sarg[s] && f77_srank[s] == 0) ? f77_sval[s] : -1;
             f77_need_type(s, nm);
             nargs = 0;
             f77_tok();
             if (lx_t != T_RP) {
                 for (;;) {
-                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; }
+                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; }
                     else f77_actual_addr();
                     nargs = nargs + 1;
                     if (lx_t != T_COMMA) break;
@@ -3068,13 +3103,17 @@ static int f77_primary(void) {
             rty = f77_sty[s];
             rlog = f77_slog[s];
             cname = strdup(nm);
+            me = -1;
             if (f77_sme[s] >= 0) {
                 int e;
                 e = f77_sme[s];
                 if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick(e, tys, nargs > 64 ? 64 : nargs);
                 if (e >= 0 && f77_me_pkind[e] != F77_UNIT_FUNC) { f77_error("a SUBROUTINE referenced as a FUNCTION"); e = -1; }
                 if (e >= 0) { rty = f77_me_ty[e]; rlog = f77_me_log[e]; cname = f77_me_str[e]; }
+                me = e;
             } else if (f77_slink[s]) cname = f77_slink[s];
+            f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me);
+            f77_naa = aamk;
             if (rty == TY_CHAR || rty == TY_DCPLX) {
                 r = rty == TY_CHAR ? f77_char_fcall(cname, f77_slen[s], addrs, lens, nargs)
                                    : f77_dcx_fcall(cname, fptr, addrs, lens, nargs);
@@ -3756,6 +3795,11 @@ static void f77_loop_end(F77Loop *l) {
  * the upper of an assumed-size (*) dimension. */
 static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
     int ext;
+    if (f77_sashape[s]) {
+        *lo = f77_iconst(f77_slo[s][k]);
+        *hi = hi_emit(HI_ADDI, TY_INT, f77_desc_load(s, 4 + 8 * k), -1, f77_slo[s][k] - 1, NULL);
+        return;
+    }
     if (f77_salloc[s]) {
         *lo = f77_desc_load(s, 4 + 8 * k);
         *hi = hi_emit(HI_ADD, TY_INT, *lo, f77_desc_load(s, 8 + 8 * k), 0, NULL);
@@ -5915,12 +5959,66 @@ static int f77_bound(int *val) {
 }
 
 /* Parse `(d1[,d2...])` after a name, each dimension `[lo:]hi`. */
+/* Is the array spec at lx_t's '(' an assumed shape -- every item [lo]:
+ * with nothing after its colon? */
+static int f77_spec_is_assumed(void) {
+    int i; int d; int colon; int any;
+    i = (int)(lx_rts - lx_stmt);
+    if (i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    d = 0; colon = 0; any = 0;
+    for (; i < lx_stmt_len; i++) {
+        int c;
+        c = lx_stmt[i];
+        if (c == '(') { d = d + 1; if (d == 1) continue; }
+        if (c == ')') { d = d - 1; if (d == 0) return any && colon; }
+        if (d != 1) continue;
+        if (c == ':') { colon = 1; any = 1; if (lx_stmt[i + 1] != ',' && lx_stmt[i + 1] != ')') return 0; }
+        else if (c == ',') { if (!colon) return 0; colon = 0; }
+    }
+    return 0;
+}
+
+/* An assumed shape, (:), (0:,:) ..., lx_t at the '(': a dummy's, whose
+ * bounds come from its actual (f77_sashape).  The lower bounds are
+ * constants. */
+static void f77_parse_assumed(int s) {
+    int rank;
+    rank = 0;
+    f77_tok();
+    for (;;) {
+        int lo;
+        lo = 1;
+        if (lx_t != T_COLON) {
+            f77_cexpr();
+            if (f77_cx_ty != TY_INT) { f77_error("an assumed-shape array's lower bound is supported only as an INTEGER constant"); return; }
+            lo = f77_cx_i;
+        }
+        if (lx_t != T_COLON) { f77_error("expected : in an assumed shape"); return; }
+        f77_tok();
+        if (rank >= F77_MAX_RANK) { f77_error("too many dimensions"); return; }
+        f77_slo[s][rank] = lo;
+        f77_sext[s][rank] = 1;
+        f77_slov[s][rank] = -1;
+        f77_sextv[s][rank] = -1;
+        rank = rank + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after an assumed shape"); return; }
+    f77_tok();
+    if (!f77_sarg[s]) { f77_error("a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's"); return; }
+    if (f77_sty[s] == TY_CHAR) { f77_error("a CHARACTER assumed-shape array is not supported yet"); return; }
+    f77_srank[s] = rank;
+    f77_sashape[s] = 1;
+}
+
 static void f77_parse_dims(int s) {
     int rank;
     int lo;
     int hi;
     int losym;
     int hisym;
+    if (f77_spec_is_assumed()) { f77_parse_assumed(s); return; }
     rank = 0;
     f77_tok();                       /* past ( */
     f77_bound_star = 0;
@@ -7837,7 +7935,7 @@ static void f77_desc_guard(void) {
     int i;
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int d;
-        if (!f77_salloc[s]) continue;
+        if (!f77_salloc[s] && !f77_sashape[s]) continue;
         d = f77_sval[s];
         for (i = 0; i < h_ninst; i++) {
             int bad;
@@ -7845,13 +7943,14 @@ static void f77_desc_guard(void) {
             bad = 0;
             if (h_kind[i] != HI_BR && h_kind[i] != HI_BRC && h_kind[i] != HI_JMPTAB && h_src2[i] == d) bad = 1;
             if (h_kind[i] != HI_BR && h_src1[i] == d && h_kind[i] != HI_ADDI) bad = 1;
-            if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) && h_cbase[i] >= 0) {
+            if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) && h_cbase[i] >= 0 && f77_salloc[s]) {
                 int q;
                 for (q = 0; q < h_val[i]; q++) if (h_carg[h_cbase[i] + q] == d) bad = 1;
             }
             if (bad) {
                 char m[F77_MAX_NAME + 80];
-                sprintf(m, "the ALLOCATABLE array %s is not supported in this context yet", f77_sname[s]);
+                sprintf(m, "the %s array %s is not supported in this context yet",
+                        f77_salloc[s] ? "ALLOCATABLE" : "assumed-shape", f77_sname[s]);
                 f77_error(m);
                 return;
             }
@@ -8326,6 +8425,7 @@ static int f77_actual_is_call(char *nm) {
 #define F77_MAX_TFREE 64
 static int f77_tfree_list[F77_MAX_TFREE];
 static int f77_tfree_sym[F77_MAX_TFREE];       /* a section's array, or -1 */
+static int f77_tfree_unpack[F77_MAX_TFREE];    /* an assumed-shape array f77_as_pack ran for */
 static int f77_tfree_idx[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_tfree_trip[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_tfree_lo[F77_MAX_TFREE][F77_MAX_RANK];
@@ -8340,6 +8440,17 @@ static void f77_tfree_to(int mark) {
     while (f77_ntfree > mark) {
         f77_ntfree = f77_ntfree - 1;
         e = f77_ntfree;
+        if (f77_tfree_unpack[e]) {
+            int ua[4];
+            int us;
+            us = f77_tfree_sym[e];
+            ua[0] = f77_sval[us];
+            ua[1] = f77_iconst(f77_srank[us]);
+            ua[2] = f77_iconst(f77_esize(us));
+            ua[3] = f77_tfree_list[e];
+            f77_call_i("f77_as_unpack", 4, ua);
+            continue;
+        }
         if (f77_tfree_sym[e] >= 0)
             f77_section_copy(f77_tfree_sym[e], f77_tfree_list[e], f77_tfree_idx[e], f77_tfree_trip[e],
                              f77_tfree_lo[e], f77_tfree_st[e], f77_tfree_ext[e], 1);
@@ -8541,6 +8652,7 @@ static int f77_transfer_actual(void) {
     if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many TRANSFER arguments in one statement"); return tmp; }
     f77_tfree_list[f77_ntfree] = tmp;
     f77_tfree_sym[f77_ntfree] = -1;
+    f77_tfree_unpack[f77_ntfree] = 0;
     f77_ntfree = f77_ntfree + 1;
     f77_act_len = -1;
     return tmp;
@@ -8574,53 +8686,195 @@ static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *
         if (trip[k]) f77_loop_end(&lp[k]);
 }
 
-/* A section as an actual argument (Fortran 90), lx_t past its '(': what
- * the callee receives, an array's storage.  A section that is plainly
- * contiguous -- its triplets the leading dimensions, all but the last a
- * bare ':', the last of stride 1: A(I:N), M(:,J), M(:,J:K) -- passes its
- * first element's address.  Any other goes through a heap temporary,
- * copied in before the call and back out after it (f77_tfree_to): the
- * sequence association F90 12.4.1.4 gives an array element sequence. */
-static int f77_section_actual(int s) {
-    int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
-    int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
-    int ext[F77_MAX_RANK];
-    int k; int nt; int last; int contig; int n; int tmp; int e;
-    int first[F77_MAX_RANK];
-    int args[3];
-    nt = f77_section_subs(s, idx, trip, lo, hi, st);
-    if (nt < 0) return f77_iconst(0);
+/* Array actuals (Fortran 90), deferred: f77_actual_addr records a whole
+ * array or a section here (f77_act_aa), and what the callee receives is
+ * decided once the call knows its callee (f77_actuals_final): a
+ * descriptor for an assumed-shape dummy, else the array's storage.  A
+ * section's subscripts are evaluated where it is parsed. */
+#define F77_MAX_AA 64
+static int f77_aa_sym[F77_MAX_AA];
+static int f77_aa_sec[F77_MAX_AA];
+static int f77_aa_idx[F77_MAX_AA][F77_MAX_RANK];
+static int f77_aa_trip[F77_MAX_AA][F77_MAX_RANK];
+static int f77_aa_lo[F77_MAX_AA][F77_MAX_RANK];
+static int f77_aa_st[F77_MAX_AA][F77_MAX_RANK];
+static int f77_aa_ext[F77_MAX_AA][F77_MAX_RANK];
+static int f77_aa_contig[F77_MAX_AA];
+static int f77_aa_new(int s) {
+    int e;
+    if (f77_naa >= F77_MAX_AA) { f77_error("too many array arguments in one statement"); return -1; }
+    e = f77_naa;
+    f77_naa = e + 1;
+    f77_aa_sym[e] = s;
+    f77_aa_sec[e] = 0;
+    f77_aa_contig[e] = 0;
+    return e;
+}
+
+/* A section actual, lx_t past its '(': recorded, and a placeholder
+ * returned.  Plainly contiguous -- its triplets the leading dimensions,
+ * all but the last a bare ':', the last of stride 1: A(I:N), M(:,J),
+ * M(:,J:K) -- of an array whose storage is one run. */
+static int f77_aa_section(int s) {
+    int hi[F77_MAX_RANK];
+    int k; int nt; int last; int e;
+    e = f77_aa_new(s);
+    if (e < 0) return f77_iconst(0);
+    f77_aa_sec[e] = 1;
+    nt = f77_section_subs(s, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], hi, f77_aa_st[e]);
+    if (nt < 0) { f77_act_aa = -1; return f77_iconst(0); }
     last = -1;
     for (k = 0; k < f77_srank[s]; k++) {
-        if (trip[k]) { ext[k] = f77_extent(lo[k], hi[k], st[k]); last = k; }
-        first[k] = trip[k] ? lo[k] : idx[k];
+        f77_aa_ext[e][k] = 0;
+        if (f77_aa_trip[e][k]) { f77_aa_ext[e][k] = f77_extent(f77_aa_lo[e][k], hi[k], f77_aa_st[e][k]); last = k; }
     }
-    contig = 1;
+    f77_aa_contig[e] = !f77_sashape[s];
     for (k = 0; k < last; k++)
-        if (!trip[k] || !f77_sec_full[k]) contig = 0;
-    if (last >= 0 && !(h_kind[st[last]] == HI_ICONST && h_val[st[last]] == 1)) contig = 0;
-    if (contig) return f77_elem_addr(s, first, f77_srank[s]);
+        if (!f77_aa_trip[e][k] || !f77_sec_full[k]) f77_aa_contig[e] = 0;
+    if (last >= 0 && !(h_kind[f77_aa_st[e][last]] == HI_ICONST && h_val[f77_aa_st[e][last]] == 1)) f77_aa_contig[e] = 0;
+    f77_act_aa = e;
+    return f77_iconst(0);
+}
+
+/* What a section gives a dummy that is not assumed-shape: its first
+ * element's address when contiguous, else a heap temporary copied in now
+ * and back out after the call (f77_tfree_to) -- the array element
+ * sequence F90 12.4.1.4 gives. */
+static int f77_aa_storage(int e) {
+    int s; int k; int n; int tmp; int t;
+    int first[F77_MAX_RANK];
+    int args[3];
+    s = f77_aa_sym[e];
+    for (k = 0; k < f77_srank[s]; k++) first[k] = f77_aa_trip[e][k] ? f77_aa_lo[e][k] : f77_aa_idx[e][k];
+    if (f77_aa_contig[e]) return f77_elem_addr(s, first, f77_srank[s]);
     if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many array temporaries in one statement"); return f77_iconst(0); }
     n = f77_iconst(1);
     for (k = 0; k < f77_srank[s]; k++)
-        if (trip[k]) n = hi_emit(HI_MUL, TY_INT, n, ext[k], 0, NULL);
+        if (f77_aa_trip[e][k]) n = hi_emit(HI_MUL, TY_INT, n, f77_aa_ext[e][k], 0, NULL);
     args[0] = f77_iconst(0);
     args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
     args[2] = f77_iconst(0);
     tmp = f77_call_i("f77_allocate", 3, args);
-    f77_section_copy(s, tmp, idx, trip, lo, st, ext, 0);
-    e = f77_ntfree;
-    f77_tfree_list[e] = tmp;
-    f77_tfree_sym[e] = s;
+    f77_section_copy(s, tmp, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], f77_aa_st[e], f77_aa_ext[e], 0);
+    t = f77_ntfree;
+    f77_tfree_list[t] = tmp;
+    f77_tfree_sym[t] = s;
+    f77_tfree_unpack[t] = 0;
     for (k = 0; k < f77_srank[s]; k++) {
-        f77_tfree_idx[e][k] = idx[k];
-        f77_tfree_trip[e][k] = trip[k];
-        f77_tfree_lo[e][k] = lo[k];
-        f77_tfree_st[e][k] = st[k];
-        f77_tfree_ext[e][k] = trip[k] ? ext[k] : 0;
+        f77_tfree_idx[t][k] = f77_aa_idx[e][k];
+        f77_tfree_trip[t][k] = f77_aa_trip[e][k];
+        f77_tfree_lo[t][k] = f77_aa_lo[e][k];
+        f77_tfree_st[t][k] = f77_aa_st[e][k];
+        f77_tfree_ext[t][k] = f77_aa_ext[e][k];
     }
-    f77_ntfree = e + 1;
+    f77_ntfree = t + 1;
     return tmp;
+}
+
+/* A descriptor of array actual e for an assumed-shape dummy of rank r,
+ * in the frame: the base address, then per dimension the extent and the
+ * stride in elements -- a whole array's strides the products of its
+ * extents, a section's the triplet's stride times its dimension's. */
+static int f77_aa_desc(int e, int r) {
+    int s; int k; int j; int desc; int base; int str; int rank;
+    int first[F77_MAX_RANK];
+    static char m[120];
+    s = f77_aa_sym[e];
+    rank = 0;
+    if (f77_aa_sec[e]) { for (k = 0; k < f77_srank[s]; k++) rank = rank + (f77_aa_trip[e][k] ? 1 : 0); }
+    else rank = f77_srank[s];
+    if (rank != r) {
+        sprintf(m, "an actual of rank %d for an assumed-shape dummy of rank %d", rank, r);
+        f77_error(m);
+        return f77_iconst(0);
+    }
+    if (!f77_aa_sec[e] && f77_sashape[s]) return f77_sval[s];      /* its own descriptor */
+    desc = f77_char_temp(4 + 8 * r);
+    if (f77_aa_sec[e]) {
+        for (k = 0; k < f77_srank[s]; k++) first[k] = f77_aa_trip[e][k] ? f77_aa_lo[e][k] : f77_aa_idx[e][k];
+        base = f77_elem_addr(s, first, f77_srank[s]);
+    } else base = f77_salloc[s] ? f77_desc_base(s) : f77_sval[s];
+    hi_emit(HI_STORE, TY_INT, desc, base, 0, NULL);
+    str = f77_iconst(1);
+    j = 0;
+    for (k = 0; k < f77_srank[s]; k++) {
+        int lo; int hi; int ext; int dstr;
+        if (f77_sashape[s]) dstr = f77_desc_load(s, 8 + 8 * k);
+        else dstr = str;
+        if (!f77_sashape[s] && k + 1 < f77_srank[s]) {
+            f77_dim_bounds(s, k, &lo, &hi);
+            str = hi_emit(HI_MUL, TY_INT, str, f77_extent(lo, hi, f77_iconst(1)), 0, NULL);
+        }
+        if (f77_aa_sec[e]) {
+            if (!f77_aa_trip[e][k]) continue;
+            ext = f77_aa_ext[e][k];
+            dstr = hi_emit(HI_MUL, TY_INT, dstr, f77_aa_st[e][k], 0, NULL);
+        } else {
+            f77_dim_bounds(s, k, &lo, &hi);
+            if (hi < 0) { f77_error("an assumed-size array cannot be the actual of an assumed-shape dummy"); return f77_iconst(0); }
+            ext = f77_extent(lo, hi, f77_iconst(1));
+        }
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, desc, -1, 4 + 8 * j, NULL), ext, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, desc, -1, 8 + 8 * j, NULL), dstr, 0, NULL);
+        j = j + 1;
+    }
+    return desc;
+}
+
+/* An assumed-shape array passed whole to a dummy that is not: its
+ * elements in one run (f77_as_pack), back after the call. */
+static int f77_aa_pack(int s) {
+    int args[3];
+    int run;
+    int t;
+    if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many array temporaries in one statement"); return f77_iconst(0); }
+    args[0] = f77_sval[s];
+    args[1] = f77_iconst(f77_srank[s]);
+    args[2] = f77_iconst(f77_esize(s));
+    run = f77_call_i("f77_as_pack", 3, args);
+    t = f77_ntfree;
+    f77_tfree_list[t] = run;
+    f77_tfree_sym[t] = s;
+    f77_tfree_unpack[t] = 1;
+    f77_ntfree = t + 1;
+    return run;
+}
+
+/* The rank of dummy k of unit u when it is assumed-shape (the scan), else 0. */
+static int f77_unit_dummy_as(int u, int k) {
+    int q; int n;
+    n = 0;
+    for (q = 0; q < f77_nfamd; q++)
+        if (f77_famd_unit[q] == u) { if (n == k) return f77_famd_as[q]; n = n + 1; }
+    return 0;
+}
+
+/* Once a call knows its callee -- unit u of this file, or module
+ * procedure e, or neither (-1, -1): an implicit interface -- each actual
+ * becomes what its dummy takes.  An assumed-shape dummy needs an explicit
+ * interface (F90 12.3.1.1), so a unit of this file that is no module or
+ * internal procedure is refused one. */
+static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
+    int i; int r;
+    static char m[F77_MAX_NAME + 100];
+    for (i = 0; i < nargs && i < 64; i++) {
+        r = 0;
+        if (u >= 0) r = f77_unit_dummy_as(u, i);
+        else if (e >= 0 && i < 16) r = f77_me_argty[e][i] >> 8;
+        if (r > 0 && u >= 0 && f77_uhost[u] < 0) {
+            sprintf(m, "%s has an assumed-shape dummy argument: it needs an explicit interface", f77_uname[u]);
+            f77_error(m);
+            return;
+        }
+        if (r > 0 && aas[i] < 0) {
+            f77_error("an assumed-shape dummy needs an array or a section as its actual");
+            continue;
+        }
+        if (aas[i] < 0) continue;
+        if (r > 0) addrs[i] = f77_aa_desc(aas[i], r);
+        else if (f77_aa_sec[aas[i]]) addrs[i] = f77_aa_storage(aas[i]);
+        else if (f77_sashape[f77_aa_sym[aas[i]]]) addrs[i] = f77_aa_pack(f77_aa_sym[aas[i]]);
+    }
 }
 
 static int f77_actual_addr(void) {
@@ -8631,6 +8885,7 @@ static int f77_actual_addr(void) {
     int tmp;
 
     f77_act_ty = -1;
+    f77_act_aa = -1;
 
     if (lx_t == T_NAME && strcmp(lex_name, "TRANSFER") == 0 && lx_rp < lx_rpe && *lx_rp == '(' &&
         f77_find_unit(lex_name) < 0) {
@@ -8713,7 +8968,7 @@ static int f77_actual_addr(void) {
             if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
                 f77_tok();
                 f77_act_ty = f77_sty[s] + 16;
-                return f77_section_actual(s);
+                return f77_aa_section(s);
             }
             if (lx_t == T_LP && f77_srank[s] > 0) {
                 f77_tok();
@@ -8721,6 +8976,8 @@ static int f77_actual_addr(void) {
                 return f77_subscript_addr(s);
             }
             f77_act_ty = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0);
+            if (f77_srank[s] > 0) f77_act_aa = f77_aa_new(s);
+            if (f77_sashape[s]) return f77_sval[s];   /* f77_actuals_final decides */
             if (f77_salloc[s]) {            /* an ALLOCATABLE: its storage */
                 f77_sstored[s] = 1;
                 return f77_desc_base(s);
@@ -8853,6 +9110,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_salloc[s] = 0;
+    f77_sashape[s] = 0;
     f77_sintrinsic[s] = 0;
     f77_slog[s] = 0;
     f77_snar[s] = 0;
@@ -9077,6 +9335,9 @@ static void f77_stmt_call1(int skip) {
     int addrs[64];
     int lens[64];
     int tys[64];
+    int aas[64];
+    int aamk;
+    int fe;
     char *cname;
     int alts[16];
     int nalt;
@@ -9093,6 +9354,7 @@ static void f77_stmt_call1(int skip) {
 
     nargs = 0;
     nalt = 0;
+    aamk = f77_naa;
     if (lx_t == T_LP) {
         f77_tok();
         if (lx_t != T_RP) {
@@ -9109,7 +9371,7 @@ static void f77_stmt_call1(int skip) {
                 }
                 /* Evaluated before any h_carg slot is reserved -- see
                  * the note in the FUNCTION path. */
-                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; }
+                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; }
                 else f77_actual_addr();
                 nargs = nargs + 1;
                 if (lx_t != T_COMMA) break;
@@ -9118,6 +9380,22 @@ static void f77_stmt_call1(int skip) {
         }
         if (lx_t != T_RP) f77_error("expected ) after arguments");
         else f77_tok();
+    }
+    {
+        /* the callee, for its dummies: a unit of this file, else a module
+         * procedure (a generic's specific), else an implicit interface */
+        int fu; int ds;
+        fu = -1; fe = -1;
+        ds = f77_sym_find(nm);
+        if (!(ds >= 0 && f77_sarg[ds] && f77_srank[ds] == 0)) {
+            fu = f77_find_unit(nm);
+            if (fu < 0 && ds >= 0 && f77_sme[ds] >= 0) {
+                fe = f77_sme[ds];
+                if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick(fe, tys, nargs > 64 ? 64 : nargs);
+            }
+        }
+        f77_actuals_final(addrs, aas, nargs, fu, fe);
+        f77_naa = aamk;
     }
     fptr = -1;
     {
@@ -9196,8 +9474,7 @@ static void f77_stmt_call1(int skip) {
         if (cu >= 0) cname = f77_ulink[cu];
         else if (ds >= 0 && f77_sme[ds] >= 0) {
             int e;
-            e = f77_sme[ds];
-            if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick(e, tys, nargs > 64 ? 64 : nargs);
+            e = fe;                       /* picked above, for the actuals */
             if (e >= 0 && f77_me_pkind[e] != F77_UNIT_SUBR) { f77_error("a FUNCTION called as a SUBROUTINE"); e = -1; }
             if (e >= 0) cname = f77_me_str[e];
         } else if (ds >= 0 && f77_slink[ds]) cname = f77_slink[ds];
@@ -9514,7 +9791,7 @@ static void f77_mod_proc(int u) {
                 t = -1;
                 if (lx_t == T_NAME) {
                     s = f77_sym_find(lex_name);
-                    if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0);
+                    if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0);
                 }
                 if (n < 16) f77_me_argty[e][n] = t;
                 n = n + 1;
@@ -9940,7 +10217,7 @@ static int f77_generic_pick(int g, int *tys, int n) {
         e = f77_me_find(m, nm);
         if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] == n) {
             int a;
-            for (a = 0; a < n && a < 16; a++) if (f77_me_argty[e][a] != tys[a]) break;
+            for (a = 0; a < n && a < 16; a++) if ((f77_me_argty[e][a] & 255) != tys[a]) break;
             if (a == n || a == 16) return e;
         }
     }
@@ -10423,6 +10700,21 @@ static void f77_wr_whole_array(int s) {
     int cstride;
 
     rank = f77_srank[s];
+    if (f77_sashape[s]) {
+        /* assumed shape: its elements through the strides, first
+         * dimension fastest */
+        F77Loop lp[F77_MAX_RANK];
+        int cur[F77_MAX_RANK];
+        int lo; int hi;
+        for (k = rank - 1; k >= 0; k--) {
+            f77_dim_bounds(s, k, &lo, &hi);
+            f77_loop_begin(&lp[k], lo, hi, f77_iconst(1));
+        }
+        for (k = 0; k < rank; k++) cur[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+        f77_io_elem(s, f77_elem_addr(s, cur, rank));
+        for (k = 0; k < rank; k++) f77_loop_end(&lp[k]);
+        return;
+    }
     if (f77_adjustable(s) || f77_salloc[s]) {
         /* fort370: an adjustable array's extents are run-time values;
          * its elements, in storage order, are one run of the product of

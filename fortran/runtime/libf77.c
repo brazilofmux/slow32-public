@@ -1581,6 +1581,62 @@ void *f77_deallocate(void *cur, int *stat) {
  * (Fortran 95's rule; F90 left them undefined). */
 void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
 
+/* An assumed-shape array's descriptor (Fortran 90), as the compiler
+ * builds it: d[0] the base address, then per dimension d[1+2k] the
+ * extent and d[2+2k] the stride, in elements.  f77_as_pack gives an
+ * old-style callee the array's elements in one run: the base when the
+ * strides already make one, else a heap copy, which f77_as_unpack copies
+ * back and frees after the call (it does nothing to the base). */
+static int f77_as_contig(const int *d, int rank) {
+    int k;
+    int want = 1;
+    for (k = 0; k < rank; k++) {
+        if (d[1 + 2 * k] > 1 && d[2 + 2 * k] != want) return 0;
+        want *= d[1 + 2 * k];
+    }
+    return 1;
+}
+
+static void f77_as_walk(const int *d, int rank, int esz, char *run, int in) {
+    int cnt[8];
+    int k;
+    int n = 1;
+    long p;
+    char *base = (char *)(long)d[0];
+    for (k = 0; k < rank; k++) { cnt[k] = 0; n *= d[1 + 2 * k]; }
+    for (p = 0; p < n; p++) {
+        long off = 0;
+        for (k = 0; k < rank; k++) off += (long)cnt[k] * d[2 + 2 * k];
+        if (in) memcpy(run + p * esz, base + off * esz, (size_t)esz);
+        else memcpy(base + off * esz, run + p * esz, (size_t)esz);
+        for (k = 0; k < rank; k++) {
+            if (++cnt[k] < d[1 + 2 * k]) break;
+            cnt[k] = 0;
+        }
+    }
+}
+
+void *f77_as_pack(const int *d, int rank, int esz) {
+    int k;
+    int n = 1;
+    char *run;
+    if (f77_as_contig(d, rank)) return (void *)(long)d[0];
+    for (k = 0; k < rank; k++) n *= d[1 + 2 * k];
+    run = malloc(n * esz > 0 ? (size_t)(n * esz) : 1);
+    if (!run) {
+        fprintf(stderr, "f77: out of memory for an array argument (%d bytes)\n", n * esz);
+        exit(2);
+    }
+    f77_as_walk(d, rank, esz, run, 1);
+    return run;
+}
+
+void f77_as_unpack(const int *d, int rank, int esz, void *run) {
+    if (run == (void *)(long)d[0]) return;
+    f77_as_walk(d, rank, esz, run, 0);
+    free(run);
+}
+
 /* CPU_TIME (Fortran 95): the processor time used, in seconds. */
 void f77_cpu_time_r(float *t) { *t = (float)((double)clock() / CLOCKS_PER_SEC); }
 void f77_cpu_time_d(double *t) { *t = (double)clock() / CLOCKS_PER_SEC; }
