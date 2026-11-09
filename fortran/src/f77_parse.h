@@ -2366,6 +2366,7 @@ static int f77_is_ptrassign(void);
 static int f77_associated(void);
 static void f77_stmt_ptrassign(void);
 static int f77_ptr_object(void);
+static void f77_ptr_assign_rhs(int ps);
 static int f77_ptr_slot(int ps);
 static char f77_td_name[F77_MAX_NAME];
 static int f77_cintrinsic_int(void);
@@ -17011,8 +17012,12 @@ static int f77_dt_temp_comp(int c, int addr) {
     f77_sexternal[t] = 0; f77_sauto[t] = 0; f77_slink[t] = NULL; f77_sme[t] = -1; f77_sassoc[t] = 0;
     f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
     f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
-    f77_sptr[t] = f77_dc_ptr[c]; f77_starg[t] = 0;
+    f77_sptr[t] = f77_dc_ptr[c] != 0; f77_starg[t] = 0;
     if (f77_dc_ptr[c] && f77_dc_rank[c] > 0) f77_sashape[t] = 1;     /* a pointer array: its descriptor */
+    /* a slot or descriptor of its own address, even at offset 0: the
+     * guard (f77_desc_guard) reads every use of it, and the structure's
+     * own address has others */
+    if (f77_dc_ptr[c]) f77_sval[t] = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 0, NULL);
     return t;
 }
 
@@ -17253,6 +17258,17 @@ static int f77_dt_construct(int dt) {
         if (A.kw[k][0]) { f77_error("a keyword in a structure constructor is Fortran 2003's"); break; }
         caddr = f77_dc_off[c] ? hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, f77_dc_off[c], NULL) : tmp;
         t = f77_dt_temp_comp(c, caddr);
+        if (f77_dc_ptr[c]) {
+            /* a POINTER component: associated with its value, a target
+             * (F90 4.4.4), as => would */
+            int nerr0;
+            nerr0 = f77_nerr;
+            f77_scan_from(A.from[k]);
+            f77_ptr_assign_rhs(t);
+            if (f77_nerr == nerr0 && (lx_t == T_EOF ? lx_stmt_len : (int)(lx_rts - lx_stmt)) != A.to[k])
+                f77_error("a POINTER component's value in a structure constructor is a target");
+            continue;
+        }
         if (f77_dc_rank[c] == 0) {
             v = f77_expr_at(A.from[k], A.to[k]);
             if (!f77_dt_store(t, caddr, v, ex_ty, ex_hi, ex_len, ex_dt)) break;
@@ -17309,6 +17325,8 @@ static void f77_io_elem(int s, int addr);
 static void f77_io_derived(int addr, int dt) {
     int c;
     addr = f77_dcx_arg(addr);              /* an alias: a value's address may reach calls so */
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++)
+        if (f77_dc_ptr[c]) { f77_error("a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)"); return; }
     for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
         int caddr; int t; int n; int k;
         caddr = f77_dc_off[c] ? hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, f77_dc_off[c], NULL) : addr;
@@ -17543,8 +17561,9 @@ static int f77_is_ptrassign(void) {
  * a TARGET -- a variable, an element, a designator, an array or a
  * section of one (its descriptor; a whole array's lower bounds, a
  * section's 1). */
+
 static void f77_stmt_ptrassign(void) {
-    int ps; int t; int base; int k; int tgt;
+    int ps;
     f77_scan_from(0);
     ps = f77_ptr_object();
     if (ps < 0) { lx_t = T_EOF; return; }
@@ -17552,6 +17571,13 @@ static void f77_stmt_ptrassign(void) {
     f77_tok();
     if (lx_t != T_GT) { f77_error("expected =>"); lx_t = T_EOF; return; }
     f77_tok();
+    f77_ptr_assign_rhs(ps);
+}
+
+/* Pointer ps associated with the target at the scanner (=>'s right side,
+ * or a structure constructor's value for a POINTER component). */
+static void f77_ptr_assign_rhs(int ps) {
+    int t; int base; int k; int tgt;
     if (lx_t == T_NAME && strcmp(lex_name, "NULL") == 0 && lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find("NULL") < 0) {
         /* NULL() (Fortran 95): disassociated */
         f77_tok(); f77_tok();

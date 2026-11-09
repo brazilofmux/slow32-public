@@ -367,6 +367,8 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
     printf 'type pt\nreal, allocatable :: x(:)\nend type\nend\n' > "$W/dtptr.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nprint *, x\nend\n' > "$W/dtptrio.f90"
+    printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nx = t(3)\nend\n' > "$W/dtptrcons.f90"
     printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
     # defined operations: a module with OPERATOR(+) and ASSIGNMENT(=) on PT
     opm='module m\ntype pt\nreal :: x\nend type\ninterface operator(+)\nmodule procedure padd\nend interface\ninterface assignment(=)\nmodule procedure pfromi\nend interface\ncontains\nfunction padd(a, b)\ntype(pt), intent(in) :: a, b\ntype(pt) :: padd\npadd%%x = a%%x + b%%x\nend function\nsubroutine pfromi(a, i)\ntype(pt), intent(out) :: a\ninteger, intent(in) :: i\na%%x = i\nend subroutine\nend module\n'
@@ -479,6 +481,8 @@ if [ -x "$F77" ]; then
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
              "dtptr:line 2: an ALLOCATABLE component is not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "dtptrio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
+             "dtptrcons:line 6: a pointer's target is a variable" \
              "opaex:line 26: a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)" \
              "opasgarr:line 26: a value of another type for an array of structures" \
              "opren:line 24: an operator is named in a USE's ONLY list, not renamed" \
