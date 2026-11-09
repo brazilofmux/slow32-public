@@ -176,6 +176,7 @@ static void f77_collect_dummies(int skip, int unit) {
             f77_famd_unit[f77_nfamd] = unit;
             f77_famd_as[f77_nfamd] = 0;
             f77_famd_opt[f77_nfamd] = 0;
+            f77_famd_ptr[f77_nfamd] = 0;
             f77_famd_char[f77_nfamd] = 0;
             f77_nfamd = f77_nfamd + 1;
         }
@@ -289,10 +290,13 @@ static int f77_skip_parens(int i) {
     return i;
 }
 static void f77_scan_shapes(int u) {
-    int i; int skip; int dattr; int dc; int alloc; int opt; int isch;
-    if (f77_starts("OPTIONAL")) {
-        /* OPTIONAL [::] names: the dummies a caller may leave out */
-        i = 8;
+    int i; int skip; int dattr; int dc; int alloc; int opt; int isch; int ptr;
+    if (f77_starts("OPTIONAL") || f77_starts("POINTER")) {
+        /* OPTIONAL [::] names: the dummies a caller may leave out;
+         * POINTER [::] names: those whose slots it passes */
+        int isp;
+        isp = lx_stmt[0] == 'P';
+        i = isp ? 7 : 8;
         if (i + 1 < lx_stmt_len && lx_stmt[i] == ':' && lx_stmt[i + 1] == ':') i = i + 2;
         while (i < lx_stmt_len) {
             char nm[F77_MAX_NAME];
@@ -304,7 +308,12 @@ static void f77_scan_shapes(int u) {
             }
             nm[n] = 0;
             for (q = 0; q < f77_nfamd; q++)
-                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) { f77_famd_opt[q] = 1; f77_unosplice[u] = 1; }
+                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) {
+                    if (isp) f77_famd_ptr[q] = 1; else f77_famd_opt[q] = 1;
+                    f77_unosplice[u] = 1;
+                    if (isp && i < lx_stmt_len && lx_stmt[i] == '(') f77_famd_as[q] = f77_text_assumed_rank(i);
+                }
+            if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_skip_parens(i);
             i++;
         }
         return;
@@ -319,6 +328,7 @@ static void f77_scan_shapes(int u) {
     else return;
     alloc = f77_has_attr("ALLOCATABLE");
     opt = f77_has_attr("OPTIONAL");
+    ptr = f77_has_attr("POINTER");
     isch = f77_starts("CHARACTER") != 0;
     dattr = -1;
     i = skip;
@@ -358,6 +368,7 @@ static void f77_scan_shapes(int u) {
             if (f77_famd_unit[q] != u || strcmp(f77_famd_name[q], nm) != 0) continue;
             if (ra > 0) { f77_famd_as[q] = ra; f77_unosplice[u] = 1; }
             if (opt) { f77_famd_opt[q] = 1; f77_unosplice[u] = 1; }
+            if (ptr) { f77_famd_ptr[q] = 1; f77_unosplice[u] = 1; }
             if (isch) f77_famd_char[q] = 1;
         }
         if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_unit_rname(u)) == 0) {

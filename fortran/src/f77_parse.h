@@ -133,6 +133,13 @@ static int  f77_ssaved[F77_MAX_SYM];
  * be seen after the load, so loads are recorded and the flag is
  * RETRACTED at unit end for every symbol that got stored. */
 static int  f77_sopt[F77_MAX_SYM];       /* an OPTIONAL dummy argument */
+/* POINTER (Fortran 90 5.1.2.4): a scalar's slot holds its target's address,
+ * read at each reference (f77_ptr_deref); an array's is a descriptor --
+ * base, (extent, stride) per dimension as an assumed-shape array's, then
+ * the lower bounds -- read at each use, the symbol f77_sashape too.
+ * TARGET: what a pointer may point to. */
+static int  f77_sptr[F77_MAX_SYM];
+static int  f77_starg[F77_MAX_SYM];
 static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
 /* Host association of variables (Fortran 90).  A host of internal
  * procedures has, before it is compiled, the names its procedures' text
@@ -360,6 +367,7 @@ static int  f77_dc_rank[F77_MAX_DTC];
 static int  f77_dc_lo[F77_MAX_DTC][7];
 static int  f77_dc_ext[F77_MAX_DTC][7];
 static int  f77_dc_off[F77_MAX_DTC];
+static int  f77_dc_ptr[F77_MAX_DTC];                /* a POINTER component: a slot, or a descriptor */
 static int  f77_ndc;
 /* the types the unit being compiled sees, by name: its own, its host's,
  * its modules' */
@@ -392,6 +400,7 @@ static void f77_dt_see(int dt) {
 static int  ex_dt = -1;                            /* a TY_DERIVED expression's type */
 static int f77_desig_follows(void);
 static int f77_dt_desig(int s);
+static int f77_ptr_deref(int s);
 static int f77_dt_value(int s);
 static int f77_dt_construct(int dt);
 static void f77_io_derived(int addr, int dt);
@@ -729,6 +738,8 @@ static int f77_sym(char *nm) {
     f77_sme[f77_nsym] = -1;
     f77_sassoc[f77_nsym] = 0;
     f77_sopt[f77_nsym] = 0;
+    f77_sptr[f77_nsym] = 0;
+    f77_starg[f77_nsym] = 0;
     f77_shost[f77_nsym] = 0;
     f77_sdt[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
@@ -791,6 +802,8 @@ static int f77_sym_temp(int ty) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_sptr[s] = 0;
+    f77_starg[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -859,7 +872,8 @@ static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an a
 static int    f77_me_rrank[F77_MAX_MODENT];      /* an array-valued FUNCTION: its result's rank; a variable's */
 static int    f77_me_off[F77_MAX_MODENT];        /* a variable: its offset in the block */
 static int    f77_me_nar[F77_MAX_MODENT];        /* ... INTEGER*2, LOGICAL*1 (f77_snar) */
-static int    f77_me_alloc[F77_MAX_MODENT];      /* ... ALLOCATABLE */
+static int    f77_me_alloc[F77_MAX_MODENT];      /* ... ALLOCATABLE 1, POINTER 2; TARGET +4 */
+static int    f77_me_vdt[F77_MAX_MODENT];        /* ... a structure's type */
 static int    f77_me_lo[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];   /* HVAR: below 0, -(slot + 1): the call's */
 static int    f77_me_ashape[F77_MAX_MODENT];     /* HVAR: assumed-shape, its descriptor's address */
@@ -869,6 +883,7 @@ static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, n
 static char  *f77_me_dnames[F77_MAX_MODENT];     /* a procedure's dummies' names, space-separated */
 static int    f77_me_iface[F77_MAX_MODENT];      /* a procedure an interface body describes */
 #define F77_ARG_OPT 65536                        /* f77_me_argty: an OPTIONAL dummy */
+#define F77_ARG_PTR 131072                       /* ... a POINTER one */
 /* PUBLIC and PRIVATE (Fortran 90 5.2.3): the module being compiled says
  * them in its specification part (f77_vis_*); its snapshot keeps them per
  * module (f77_mvis_*) for its procedures, entered after it. */
@@ -931,6 +946,8 @@ static int  f77_famd_unit[F77_MAX_FAMD];
 static int  f77_famd_as[F77_MAX_FAMD];     /* its rank, when an assumed-shape array (the scan) */
 static int  f77_famd_opt[F77_MAX_FAMD];    /* OPTIONAL (the scan) */
 static int  f77_famd_char[F77_MAX_FAMD];   /* CHARACTER: a hidden length travels for it (the scan) */
+static int  f77_famd_ptr[F77_MAX_FAMD];    /* POINTER: its slot is passed (the scan) */
+static int  f77_act_pslot;                 /* an actual that is a POINTER: its slot, or -1 */
 static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
 static int  f77_hdr_clen_off;
@@ -968,6 +985,8 @@ static int f77_sym_param(char *nm, int index) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_sptr[s] = 0;
+    f77_starg[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -1005,6 +1024,7 @@ static int f77_sym_nelem(int s) {
 /* A symbol's storage: its elements, or an ALLOCATABLE's descriptor. */
 static int f77_sym_nelem(int s);
 static int f77_storage_bytes(int s) {
+    if (f77_sptr[s]) return f77_srank[s] == 0 ? 4 : 4 + 12 * f77_srank[s];
     if (f77_salloc[s]) return 4 + 8 * f77_srank[s];
     return f77_esize(s) * f77_sym_nelem(s);
 }
@@ -1188,7 +1208,7 @@ static int f77_actual_addr(void);
 static void f77_hoist_actuals(void);
 static int f77_naa;            /* array actuals recorded (f77_aa_*) */
 static int f77_act_aa;         /* the last f77_actual_addr's entry, or -1 */
-static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e);
+static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e, int *pss);
 static void f77_kw_take(char *kw);
 static void f77_kw_skip(char *kw);
 static int f77_hconst(int v, int *out);
@@ -1197,7 +1217,7 @@ static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt
 static int f77_me_find(int m, char *nm);
 static int f77_generic_all_afn(int g);
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
-                             char kws[][F77_MAX_NAME], int *pn);
+                             char kws[][F77_MAX_NAME], int *pn, int *pss);
 static int f77_tfree_mark(void);
 static int f77_implied_do(void (*items)(int, int));
 static int f77_is_inquiry(char *nm);
@@ -1717,7 +1737,8 @@ static int f77_elem_addr(int s, int *idxs, int n) {
         if (n != f77_srank[s]) f77_error("wrong number of subscripts");
         off = -1;
         for (k = 0; k < n && k < f77_srank[s]; k++) {
-            d = hi_emit(HI_ADDI, TY_INT, idxs[k], -1, 0 - f77_slo[s][k], NULL);
+            if (f77_sptr[s]) d = hi_emit(HI_SUB, TY_INT, idxs[k], f77_desc_load(s, 4 + 8 * f77_srank[s] + 4 * k), 0, NULL);
+            else d = hi_emit(HI_ADDI, TY_INT, idxs[k], -1, 0 - f77_slo[s][k], NULL);
             d = hi_emit(HI_MUL, TY_INT, d, f77_desc_load(s, 8 + 8 * k), 0, NULL);
             off = off < 0 ? d : hi_emit(HI_ADD, TY_INT, off, d, 0, NULL);
         }
@@ -2330,6 +2351,13 @@ static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
 static void f77_opt_note(int s);
+static int f77_ptr_note(int s);
+static int f77_is_ptrassign(void);
+static int f77_associated(void);
+static void f77_stmt_ptrassign(void);
+static int f77_ptr_object(void);
+static int f77_ptr_slot(int ps);
+static char f77_td_name[F77_MAX_NAME];
 static int f77_cintrinsic_int(void);
 static void f77_host_table(void);
 static int f77_host_extra(int v);
@@ -2705,6 +2733,8 @@ static int f77_primary(void) {
         int u;
         int in;
         strcpy(nm, lex_name);
+        if (strcmp(nm, "ASSOCIATED") == 0 && lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find(nm) < 0 && f77_find_func(nm) < 0)
+            return f77_associated();
         if (lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find(nm) < 0 && f77_dt_find(nm) >= 0) {
             /* a structure constructor (Fortran 90 4.4.4) */
             int dtc;
@@ -3378,6 +3408,7 @@ static int f77_primary(void) {
             int aas[64];
             int tys[64];
             char kws[64][F77_MAX_NAME];
+            int pss[64];
             int aamk;
             int ai;
             int mk;
@@ -3396,7 +3427,7 @@ static int f77_primary(void) {
                          * arguments with ours. */
                         if (nargs < 64) {
                             f77_kw_take(kws[nargs]);
-                            addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; tys[nargs] = f77_act_ty;
+                            addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot; tys[nargs] = f77_act_ty;
                         }
                         else f77_actual_addr();
                         nargs = nargs + 1;
@@ -3407,8 +3438,8 @@ static int f77_primary(void) {
                 if (lx_t != T_RP) f77_error("expected ) after arguments");
                 else f77_tok();
             }
-            if (!f77_actuals_order(u, -1, nm, addrs, lens, tys, aas, kws, &nargs)) { f77_tfree_to(mk); ex_ty = TY_INT; return f77_iconst(0); }
-            f77_actuals_final(addrs, aas, nargs, u, -1);
+            if (!f77_actuals_order(u, -1, nm, addrs, lens, tys, aas, kws, &nargs, pss)) { f77_tfree_to(mk); ex_ty = TY_INT; return f77_iconst(0); }
+            f77_actuals_final(addrs, aas, nargs, u, -1, pss);
             {
                 int hx;
                 hx = f77_host_extra(u);
@@ -3512,10 +3543,14 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
+        if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);
         if (f77_sty[s] == TY_DERIVED && !f77_sexternal[s] && f77_sme[s] < 0 &&
             !(lx_t == T_LP && f77_srank[s] == 0 && !f77_desig_follows())) {
             /* a structure variable (a FUNCTION of a derived type is called below) */
-            if (f77_desig_follows()) s = f77_dt_desig(s);
+            if (f77_desig_follows()) {
+                s = f77_dt_desig(s);
+                if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);    /* a POINTER component's target */
+            }
             else if (f77_srank[s] > 0 && f77_aex_k > 0) {
                 /* an array of structures in an array expression */
                 if (lx_t != T_LP) return f77_aex_elem(s, 1);
@@ -3574,6 +3609,7 @@ static int f77_primary(void) {
             int tys[64];
             int aas[64];
             char kws[64][F77_MAX_NAME];
+            int pss[64];
             int aamk;
             int me;
             char *cname;
@@ -3589,7 +3625,7 @@ static int f77_primary(void) {
                 for (;;) {
                     if (nargs < 64) {
                         f77_kw_take(kws[nargs]);
-                        addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa;
+                        addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
                     }
                     else f77_actual_addr();
                     nargs = nargs + 1;
@@ -3615,10 +3651,10 @@ static int f77_primary(void) {
                 if (e >= 0) { rty = f77_me_ty[e]; rlog = f77_me_log[e]; cname = f77_me_str[e]; }
                 me = e;
             } else if (f77_slink[s]) cname = f77_slink[s];
-            if (!f77_actuals_order(-1, fptr >= 0 ? -1 : me, nm, addrs, lens, tys, aas, kws, &nargs)) {
+            if (!f77_actuals_order(-1, fptr >= 0 ? -1 : me, nm, addrs, lens, tys, aas, kws, &nargs, pss)) {
                 f77_tfree_to(mk); ex_ty = rty; ex_hi = -1; return f77_iconst(0);
             }
-            f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me);
+            f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me, pss);
             f77_naa = aamk;
             if (me >= 0 && f77_me_rrank[me] > 0) {
                 if (f77_sme[s] >= 0 && f77_me_kind[f77_sme[s]] == F77_ME_GENERIC && f77_afn_desc < 0) {
@@ -4333,6 +4369,13 @@ static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
          * holds, as a constant */
         *lo = f77_iconst(1);
         *hi = f77_iconst(f77_shext[s][k] >= 0 ? f77_shext[s][k] : f77_shcount[s]);
+        return;
+    }
+    if (f77_sashape[s] && f77_sptr[s]) {
+        /* a pointer: its lower bound is its descriptor's too */
+        *lo = f77_desc_load(s, 4 + 8 * f77_srank[s] + 4 * k);
+        *hi = hi_emit(HI_ADD, TY_INT, *lo, f77_desc_load(s, 4 + 8 * k), 0, NULL);
+        *hi = hi_emit(HI_ADDI, TY_INT, *hi, -1, -1, NULL);
         return;
     }
     if (f77_sashape[s]) {
@@ -5915,12 +5958,14 @@ static void f77_stmt_assign(void) {
     s = f77_sym(lex_name);
     if (f77_sparam[s]) { f77_error("cannot assign to a PARAMETER"); return; }
     f77_tok();
+    if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);       /* its target */
     if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) {
         int nerr0;
         nerr0 = f77_nerr;
         f77_sstored[s] = 1;
         s = f77_dt_desig(s);
         if (f77_nerr > nerr0) { lx_t = T_EOF; return; }
+        if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);
     }
     if (f77_sty[s] == TY_DERIVED) {
         /* a structure, or an element of an array of them: its bytes */
@@ -7106,7 +7151,7 @@ static int f77_parse_deferred(int s) {
     rank = 0;
     f77_tok();
     for (;;) {
-        if (lx_t != T_COLON) { f77_error("an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE"); return 0; }
+        if (lx_t != T_COLON) { f77_error("an ALLOCATABLE or POINTER array's shape is (:), (:,:) ..., its bounds given by ALLOCATE or =>"); return 0; }
         f77_tok();
         if (rank >= F77_MAX_RANK) { f77_error("too many dimensions"); return 0; }
         rank = rank + 1;
@@ -7149,11 +7194,15 @@ static void f77_stmt_decl(int ty, int skip) {
     int a_alloc;
     int a_vis;              /* PUBLIC 1, PRIVATE 2 */
     int a_opt;
+    int a_ptr;
+    int a_tgt;
     int dim_off;
     clen = 1;
     a_alloc = 0;
     a_vis = 0;
     a_opt = 0;
+    a_ptr = 0;
+    a_tgt = 0;
     tnar = 0;
     dcolon = 0;
     a_param = 0; a_save = 0; a_ext = 0; a_intr = 0;
@@ -7183,7 +7232,8 @@ static void f77_stmt_decl(int ty, int skip) {
     } else if (lx_t == T_LP && ty == TY_DERIVED) {
         /* TYPE(name) (Fortran 90) */
         f77_tok();
-        if (lx_t != T_NAME || (f77_decl_dt = f77_dt_find(lex_name)) < 0) {
+        if (lx_t == T_NAME && f77_td_in && strcmp(lex_name, f77_td_name) == 0) f77_decl_dt = f77_ndt;  /* the type being defined: a POINTER to it */
+        else if (lx_t != T_NAME || (f77_decl_dt = f77_dt_find(lex_name)) < 0) {
             char m[F77_MAX_NAME + 40];
             sprintf(m, "no derived type %s here", lx_t == T_NAME ? lex_name : "");
             f77_error(m);
@@ -7236,11 +7286,10 @@ static void f77_stmt_decl(int ty, int skip) {
                 a_vis = at[1] == 'R' ? 2 : 1;
             } else if (strcmp(at, "OPTIONAL") == 0) {
                 a_opt = 1;
-            } else if (strcmp(at, "POINTER") == 0 || strcmp(at, "TARGET") == 0) {
-                char m[96];
-                sprintf(m, "the %s attribute is not supported yet", at);
-                f77_error(m);
-                return;
+            } else if (strcmp(at, "POINTER") == 0) {
+                a_ptr = 1;
+            } else if (strcmp(at, "TARGET") == 0) {
+                a_tgt = 1;
             } else {
                 char m[96];
                 sprintf(m, "%s is not an attribute", at);
@@ -7269,7 +7318,7 @@ static void f77_stmt_decl(int ty, int skip) {
         }
         f77_tok();
         /* name*len(dims) and name(dims)*len are both F77. */
-        if (lx_t == T_LP && a_alloc) { if (!f77_parse_deferred(s)) return; }
+        if (lx_t == T_LP && (a_alloc || a_ptr)) { if (!f77_parse_deferred(s)) return; }
         else if (lx_t == T_LP) f77_parse_dims(s);
         if (lx_t == T_STAR) {           /* REAL*8 X -- length specifier */
             int n;
@@ -7290,10 +7339,12 @@ static void f77_stmt_decl(int ty, int skip) {
                 pos = (int)(lx_rts - lx_stmt);
                 if (lx_t == T_EOF) pos = lx_stmt_len;
                 f77_scan_from(dim_off);
-                if (a_alloc) { if (!f77_parse_deferred(s)) return; }
+                if (a_alloc || a_ptr) { if (!f77_parse_deferred(s)) return; }
                 else f77_parse_dims(s);
                 f77_scan_from(pos);
             }
+            if (a_ptr && !f77_ptr_note(s)) return;
+            if (a_tgt) f77_starg[s] = 1;
             if (a_alloc) {
                 if (!f77_salloc[s]) { f77_error("an ALLOCATABLE array needs its rank, as (:) or (:,:)"); return; }
                 if (f77_sarg[s]) { f77_error("an ALLOCATABLE dummy argument is not supported"); return; }
@@ -8513,6 +8564,12 @@ static void f77_layout_static(void) {
     }
     for (s = f77_scope_base; s < f77_nsym; s++) {
         if (f77_salloc[s] && f77_scom[s] && !f77_ssaved[s]) { f77_error("an ALLOCATABLE array cannot be in COMMON"); return; }
+        if (f77_sptr[s] && !f77_ssaved[s] && !f77_sarg[s] && !f77_scom[s]) {
+            /* a frame POINTER starts disassociated (F90 leaves it
+             * undefined; ASSOCIATED of it then says no) */
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 0, NULL), f77_iconst(0), 0, NULL);
+            continue;
+        }
         if (!f77_salloc[s] || f77_ssaved[s] || f77_sarg[s]) continue;
         hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 0), f77_iconst(0), 0, NULL);
     }
@@ -8870,8 +8927,56 @@ static int f77_stat_target(void) {
  * writes the new bounds only where the storage was taken: one already
  * allocated, or out of memory, under STAT= keeps its old descriptor. */
 #define F77_MAX_ALLOBJ 32
+/* A pointer object at the scanner -- a POINTER variable, or a designator
+ * whose last component is a POINTER (N%NEXT) -- the scanner past it: a
+ * symbol whose slot (its value) is the pointer's, or -1 (said). */
+static int f77_ptr_object(void) {
+    int s;
+    if (lx_t != T_NAME) { f77_error("expected a POINTER"); return -1; }
+    s = f77_sym(lex_name);
+    f77_tok();
+    if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) {
+        if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);
+        s = f77_dt_desig(s);
+    }
+    if (!f77_sptr[s]) { f77_error("expected a POINTER"); return -1; }
+    f77_sstored[s] = 1;
+    return s;
+}
+
+/* The address of a POINTER's slot, or of its descriptor (an ADDI: what
+ * the descriptor guard lets a use be). */
+static int f77_ptr_slot(int ps) { return hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[ps], -1, 0, NULL); }
+
+/* Make array POINTER ps's descriptor describe base, extents ext[] with
+ * strides st[] (elements), lower bounds lo[]. */
+static void f77_ptr_desc_set(int ps, int base, int *ext, int *st, int *lo) {
+    int k; int r; int d;
+    r = f77_srank[ps];
+    d = f77_ptr_slot(ps);
+    hi_emit(HI_STORE, TY_INT, d, base, 0, NULL);
+    for (k = 0; k < r; k++) {
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 8 * k, NULL), ext[k], 0, NULL);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 8 + 8 * k, NULL), st[k], 0, NULL);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 8 * r + 4 * k, NULL), lo[k], 0, NULL);
+    }
+}
+
+/* Is a pointer of ps's kind able to point to symbol t's?  The type and
+ * kind, a CHARACTER length, a structure's type (F90 7.5.2). */
+static int f77_ptr_type_ok(int ps, int t) {
+    if (f77_sty[ps] != f77_sty[t] || f77_slog[ps] != f77_slog[t] || f77_snar[ps] != f77_snar[t] ||
+        (f77_sty[ps] == TY_DERIVED && f77_sdt[ps] != f77_sdt[t]) ||
+        (f77_sty[ps] == TY_CHAR && f77_slen[ps] >= 0 && f77_slen[t] >= 0 && f77_slen[ps] != f77_slen[t])) {
+        f77_error("a pointer's target is of its type and kind");
+        return 0;
+    }
+    return 1;
+}
+
 static void f77_stmt_allocate(int skip, int alloc) {
     int obj[F77_MAX_ALLOBJ];
+    int isptr[F77_MAX_ALLOBJ];
     int lo[F77_MAX_ALLOBJ][F77_MAX_RANK];
     int ext[F77_MAX_ALLOBJ][F77_MAX_RANK];
     int nobj;
@@ -8893,11 +8998,21 @@ static void f77_stmt_allocate(int skip, int alloc) {
             if (statp < 0) return;
         } else {
             s = f77_sym_find(lex_name);
-            if (s < 0 || !f77_salloc[s]) { f77_error("ALLOCATE and DEALLOCATE need ALLOCATABLE arrays"); return; }
             if (nobj >= F77_MAX_ALLOBJ) { f77_error("too many objects in one ALLOCATE"); return; }
+            isptr[nobj] = 0;
+            if (s >= 0 && (f77_sptr[s] || f77_sty[s] == TY_DERIVED)) {
+                /* a POINTER, or a designator's POINTER component (Fortran 90) */
+                s = f77_ptr_object();
+                if (s < 0) return;
+                isptr[nobj] = 1;
+            } else {
+                if (s < 0 || !f77_salloc[s]) { f77_error("ALLOCATE and DEALLOCATE need ALLOCATABLE arrays or POINTERs"); return; }
+                f77_tok();
+            }
             obj[nobj] = s;
-            f77_tok();
-            if (alloc) {
+            if (alloc && isptr[nobj] && f77_srank[s] == 0) {
+                if (lx_t == T_LP) { f77_error("a scalar POINTER is allocated without bounds"); return; }
+            } else if (alloc) {
                 if (lx_t != T_LP) { f77_error("ALLOCATE needs the array's bounds"); return; }
                 f77_tok();
                 for (k = 0; ; k++) {
@@ -8941,6 +9056,33 @@ static void f77_stmt_allocate(int skip, int alloc) {
         int r;
         s = obj[i];
         f77_sstored[s] = 1;
+        if (isptr[i]) {
+            /* a POINTER: new storage, whatever it pointed to; its
+             * DEALLOCATE frees its target and disassociates it */
+            int slot;
+            slot = f77_ptr_slot(s);
+            cur = hi_emit(HI_LOAD, TY_INT, slot, -1, 0, NULL);
+            if (alloc) {
+                int n; int st[F77_MAX_RANK];
+                n = f77_iconst(1);
+                for (k = 0; k < f77_srank[s]; k++) {
+                    st[k] = n;
+                    n = hi_emit(HI_MUL, TY_INT, n, ext[i][k], 0, NULL);
+                }
+                args[0] = f77_iconst(0);
+                args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
+                args[2] = statp >= 0 ? statp : f77_iconst(0);
+                r = f77_call_i("f77_allocate", 3, args);
+                if (f77_srank[s] == 0) hi_emit(HI_STORE, TY_INT, slot, r, 0, NULL);
+                else f77_ptr_desc_set(s, r, ext[i], st, lo[i]);
+            } else {
+                args[0] = cur;
+                args[1] = statp >= 0 ? statp : f77_iconst(0);
+                f77_call_i("f77_deallocate", 2, args);
+                hi_emit(HI_STORE, TY_INT, slot, f77_iconst(0), 0, NULL);
+            }
+            continue;
+        }
         cur = f77_desc_base(s);
         args[0] = cur;
         if (alloc) {
@@ -8998,7 +9140,7 @@ static void f77_desc_guard(void) {
     int i;
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int d;
-        if (!f77_salloc[s] && !f77_sashape[s]) continue;
+        if (!f77_salloc[s] && !f77_sashape[s] && !f77_sptr[s]) continue;     /* a scalar POINTER's slot too */
         if (f77_shidden[s]) continue;            /* its descriptor is built here */
         d = f77_sval[s];
         for (i = 0; i < h_ninst; i++) {
@@ -9712,6 +9854,18 @@ static void f77_hide_assoc(char *nm) {
     if (s >= 0 && f77_sassoc[s]) f77_sname[s][0] = '%';
 }
 
+/* s said POINTER (F90 5.1.2.4): its shape deferred, (:), if an array --
+ * its descriptor a pointer's, the symbol read through it. */
+static int f77_ptr_note(int s) {
+    if (f77_sparam[s]) { f77_error("a PARAMETER cannot be a POINTER"); return 0; }
+    if (f77_starg[s]) { f77_error("a POINTER cannot be a TARGET too"); return 0; }
+    f77_sptr[s] = 1;
+    if (f77_salloc[s]) { f77_salloc[s] = 0; f77_sashape[s] = 1; }
+    else if (f77_srank[s] > 0) { f77_error("a POINTER array's shape is deferred, (:)"); return 0; }
+    f77_realloc_sym(s);
+    return 1;
+}
+
 /* s said OPTIONAL: a dummy argument's (F90 5.1.2.6). */
 static void f77_opt_note(int s) {
     if (!f77_sarg[s] || s == f77_result_sym) { f77_error("OPTIONAL is a dummy argument's"); return; }
@@ -10375,10 +10529,10 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
  * OPTIONAL dummy given a null address (and a CHARACTER one a length of
  * 0 among the hidden ones), marked absent (aas -2).  0 on error, said. */
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
-                             char kws[][F77_MAX_NAME], int *pn) {
+                             char kws[][F77_MAX_NAME], int *pn, int *pss) {
     static char names[64][F77_MAX_NAME];
     int opt[64]; int isch[64]; int slot[64];
-    int na[64]; int nl[64]; int nt[64]; int nz[64];
+    int na[64]; int nl[64]; int nt[64]; int nz[64]; int np[64];
     int n; int nd; int i; int j; int anykw; int anyopt;
     char m[F77_MAX_NAME * 2 + 80];
     n = *pn > 64 ? 64 : *pn;
@@ -10411,7 +10565,7 @@ static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int 
     }
     for (j = 0; j < nd; j++) {
         if (slot[j] >= 0) {
-            na[j] = addrs[slot[j]]; nl[j] = lens[slot[j]]; nt[j] = tys[slot[j]]; nz[j] = aas[slot[j]];
+            na[j] = addrs[slot[j]]; nl[j] = lens[slot[j]]; nt[j] = tys[slot[j]]; nz[j] = aas[slot[j]]; np[j] = pss[slot[j]];
             continue;
         }
         if (!opt[j]) { sprintf(m, "no actual argument for %s, which is not OPTIONAL, of %s", names[j], nm); f77_error(m); return 0; }
@@ -10419,18 +10573,37 @@ static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int 
         nl[j] = isch[j] ? f77_iconst(0) : -1;
         nt[j] = -1;
         nz[j] = -2;
+        np[j] = -1;
     }
-    for (j = 0; j < nd; j++) { addrs[j] = na[j]; lens[j] = nl[j]; tys[j] = nt[j]; aas[j] = nz[j]; }
+    for (j = 0; j < nd; j++) { addrs[j] = na[j]; lens[j] = nl[j]; tys[j] = nt[j]; aas[j] = nz[j]; pss[j] = np[j]; }
     *pn = nd;
     return 1;
 }
 
-static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
+/* Is dummy i of unit u (or module procedure e) a POINTER? */
+static int f77_dummy_is_ptr(int u, int e, int i) {
+    int q; int n;
+    if (u >= 0) {
+        n = 0;
+        for (q = 0; q < f77_nfamd; q++)
+            if (f77_famd_unit[q] == u) { if (n == i) return f77_famd_ptr[q]; n = n + 1; }
+        return 0;
+    }
+    if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && i < 16) return (f77_me_argty[e][i] & F77_ARG_PTR) != 0;
+    return 0;
+}
+static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e, int *pss) {
     int i; int r;
     static char m[F77_MAX_NAME + 100];
     for (i = 0; i < nargs && i < 64; i++) {
         r = 0;
         if (aas[i] == -2) continue;                  /* an absent OPTIONAL one */
+        if (f77_dummy_is_ptr(u, e, i)) {
+            /* a POINTER dummy: the actual pointer's slot or descriptor */
+            if (pss[i] < 0) { f77_error("a POINTER dummy argument needs a POINTER actual"); continue; }
+            addrs[i] = pss[i];
+            continue;
+        }
         if (u >= 0) r = f77_unit_dummy_as(u, i);
         else if (e >= 0 && i < 16) r = (f77_me_argty[e][i] >> 8) & 15;
         if (r > 0 && u >= 0 && f77_uhost[u] < 0) {
@@ -12045,6 +12218,7 @@ static int f77_actual_addr(void) {
 
     f77_act_ty = -1;
     f77_act_aa = -1;
+    f77_act_pslot = -1;
 
     if (lx_t == T_NAME && strcmp(lex_name, "TRANSFER") == 0 && lx_rp < lx_rpe && *lx_rp == '(' &&
         f77_find_unit(lex_name) < 0) {
@@ -12109,12 +12283,18 @@ static int f77_actual_addr(void) {
          * its leftover alloca would hand the callee garbage; fall
          * through and evaluate into a temp, like N+0 already does. */
         named = 0;
-        if (f77_sty[s] == TY_DERIVED && !f77_sparam[s]) {
+        if ((f77_sty[s] == TY_DERIVED || f77_sptr[s]) && !f77_sparam[s]) {
             /* a structure, an element of one, or a designator: by address
-             * as any variable (the scanner past the name now) */
+             * as any variable (the scanner past the name now); a POINTER:
+             * its target, and its slot for a POINTER dummy */
             f77_tok();
             named = 1;
-            if (f77_desig_follows()) s = f77_dt_desig(s);
+            if (f77_sptr[s] && f77_srank[s] == 0 && f77_sty[s] == TY_DERIVED && f77_desig_follows()) s = f77_ptr_deref(s);
+            if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) s = f77_dt_desig(s);
+            if (f77_sptr[s]) {
+                if (lx_t == T_COMMA || lx_t == T_RP) { f77_act_pslot = f77_ptr_slot(s); f77_sstored[s] = 1; }
+                if (f77_srank[s] == 0) s = f77_ptr_deref(s);
+            }
         }
 
         if (f77_sty[s] == TY_CHAR) {
@@ -12297,6 +12477,8 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_sptr[s] = 0;
+    f77_starg[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -12531,6 +12713,7 @@ static void f77_stmt_call1(int skip) {
     int lens[64];
     int tys[64];
     char kws[64][F77_MAX_NAME];
+            int pss[64];
     int aas[64];
     int aamk;
     int fe;
@@ -12570,7 +12753,7 @@ static void f77_stmt_call1(int skip) {
                  * the note in the FUNCTION path. */
                 if (nargs < 64) {
                     f77_kw_take(kws[nargs]);
-                    addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa;
+                    addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
                 }
                 else f77_actual_addr();
                 nargs = nargs + 1;
@@ -12595,8 +12778,8 @@ static void f77_stmt_call1(int skip) {
                 if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick_kw(fe, tys, kws, nargs > 64 ? 64 : nargs);
             }
         }
-        if (!f77_actuals_order(fu, fe, nm, addrs, lens, tys, aas, kws, &nargs)) return;
-        f77_actuals_final(addrs, aas, nargs, fu, fe);
+        if (!f77_actuals_order(fu, fe, nm, addrs, lens, tys, aas, kws, &nargs, pss)) return;
+        f77_actuals_final(addrs, aas, nargs, fu, fe, pss);
         {
             int hx;
             hx = f77_host_extra(fu);
@@ -13003,7 +13186,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0; f77_me_vdt[e] = -1;
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -13109,7 +13292,8 @@ static void f77_mod_snapshot(int u) {
             f77_me_nar[e] = f77_snar[s];
             f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : 0;
             f77_me_rrank[e] = f77_srank[s];
-            f77_me_alloc[e] = f77_salloc[s];
+            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0);
+            f77_me_vdt[e] = f77_sdt[s];
             f77_me_off[e] = f77_sgoff[s];
             f77_me_str[e] = strdup(ps_gname[f77_sgidx[s]]);
             for (k = 0; k < f77_srank[s]; k++) { f77_me_lo[e][k] = f77_slo[s][k]; f77_me_ext[e][k] = f77_sext[s][k]; }
@@ -13194,7 +13378,7 @@ static void f77_mod_proc(int u) {
                 if (lx_t == T_NAME) {
                     s = f77_sym_find(lex_name);
                     if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0)
-                                    + 4096 * f77_srank[s] + (f77_sopt[s] ? F77_ARG_OPT : 0);
+                                    + 4096 * f77_srank[s] + (f77_sopt[s] ? F77_ARG_OPT : 0) + (f77_sptr[s] ? F77_ARG_PTR : 0);
                     if (n < 16) {
                         char *o;
                         int l;
@@ -13262,7 +13446,11 @@ static void f77_me_bind(int e, char *local) {
             f77_slov[s][k] = -1; f77_sextv[s][k] = -1; f77_sextsym[s][k] = -1;
         }
         f77_sassz[s] = 0;
-        f77_salloc[s] = f77_me_alloc[e];
+        f77_salloc[s] = (f77_me_alloc[e] & 3) == 1;
+        f77_sptr[s] = (f77_me_alloc[e] & 3) == 2;
+        f77_starg[s] = (f77_me_alloc[e] & 4) != 0;
+        if (f77_sptr[s] && f77_srank[s] > 0) f77_sashape[s] = 1;     /* a pointer array: its descriptor */
+        f77_sdt[s] = f77_me_vdt[e];
         if (strncmp(f77_me_str[e], "f77c_", 5) == 0) {
             b = f77_cblk_find(f77_me_str[e] + 5);       /* a module's block, or a COMMON block */
             g = f77_cblk_gidx[b];
@@ -13307,7 +13495,10 @@ static void f77_me_bind(int e, char *local) {
         }
         f77_srank[s] = f77_me_rrank[e];
         f77_sashape[s] = f77_me_ashape[e];
-        f77_salloc[s] = f77_me_alloc[e];
+        f77_salloc[s] = (f77_me_alloc[e] & 3) == 1;
+        f77_sptr[s] = (f77_me_alloc[e] & 3) == 2;
+        f77_starg[s] = (f77_me_alloc[e] & 4) != 0;
+        f77_sdt[s] = f77_me_vdt[e];
         f77_sassz[s] = 0;
         for (k = 0; k < f77_me_rrank[e]; k++) {
             int lo; int ex;
@@ -13405,7 +13596,8 @@ static void f77_host_save(int u) {
             f77_me_nar[e] = f77_snar[s];
             f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : 0;
             f77_me_rrank[e] = f77_srank[s];
-            f77_me_alloc[e] = f77_salloc[s];
+            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0);
+            f77_me_vdt[e] = f77_sdt[s];
             f77_me_ashape[e] = f77_sashape[s];
             f77_me_lenslot[e] = -1;
             if (f77_shost[s] == 2) {
@@ -13600,6 +13792,12 @@ static int f77_mod_read(char *nm) {
                     while (*q == ' ') q++;
                 }
             }
+        } else if (kind == 'W') {
+            char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
+            int pe;
+            sscanf(p + 2, "%*s %63s %63s", tn, tm);
+            pe = f77_me_find(m, name);
+            if (pe >= 0) f77_me_vdt[pe] = f77_dt_lookup(tn, strcmp(tm, "-") == 0 ? "" : tm);
         } else if (kind == 'D') {
             char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
             int pe;
@@ -13720,6 +13918,9 @@ static void f77_mod_write(void) {
                         f77_me_nar[e], f77_me_ival[e], f77_me_alloc[e], f77_me_off[e], f77_me_rrank[e]);
                 for (k = 0; k < f77_me_rrank[e]; k++) fprintf(f, " %d %d", f77_me_lo[e][k], f77_me_ext[e][k]);
                 fputc('\n', f);
+                if (f77_me_ty[e] == TY_DERIVED && f77_me_vdt[e] >= 0)        /* its type */
+                    fprintf(f, "W %s %s %s\n", f77_me_name[e], f77_dt_name[f77_me_vdt[e]],
+                            f77_dt_mod[f77_me_vdt[e]][0] ? f77_dt_mod[f77_me_vdt[e]] : "-");
             } else {
                 fprintf(f, "G %s %s\n", f77_me_name[e], f77_me_str[e]);
             }
@@ -13910,7 +14111,7 @@ static void f77_ib_end(void) {
         int d; int l; char *o;
         d = f77_sym_find(f77_ib_dn[k]);
         f77_me_argty[e][k] = f77_sty[d] + (f77_srank[d] > 0 ? 16 : 0) + (f77_sashape[d] ? 256 * f77_srank[d] : 0)
-                             + 4096 * f77_srank[d] + (f77_sopt[d] ? F77_ARG_OPT : 0);
+                             + 4096 * f77_srank[d] + (f77_sopt[d] ? F77_ARG_OPT : 0) + (f77_sptr[d] ? F77_ARG_PTR : 0);
         o = f77_me_dnames[e];
         l = o ? (int)strlen(o) : 0;
         f77_me_dnames[e] = (char *)realloc(o, (size_t)l + strlen(f77_ib_dn[k]) + 2);
@@ -14496,7 +14697,9 @@ static int f77_rd_target(int *tyo) {
     }
     f77_sstored[s] = 1;
     f77_tok();
+    if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);
     if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) s = f77_dt_desig(s);
+    if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);
     *tyo = f77_mty(s);
     if (f77_sty[s] == TY_DERIVED) {
         /* a structure: its components (f77_rd_item) */
@@ -16130,6 +16333,7 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("PRIVATE")) return 1;
     if (f77_starts("OPTIONAL")) return 1;
     if (f77_starts("TYPE")) return 1;                /* a definition, TYPE(name) a declaration */
+    if (f77_starts("POINTER") || f77_starts("TARGET")) return 1;
     if (f77_starts("ENDTYPE") || f77_starts("SEQUENCE")) return 1;
     return 0;
 }
@@ -16181,6 +16385,27 @@ static int f77_dt_temp_comp(int c, int addr) {
     f77_sexternal[t] = 0; f77_sauto[t] = 0; f77_slink[t] = NULL; f77_sme[t] = -1; f77_sassoc[t] = 0;
     f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
     f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
+    f77_sptr[t] = f77_dc_ptr[c]; f77_starg[t] = 0;
+    if (f77_dc_ptr[c] && f77_dc_rank[c] > 0) f77_sashape[t] = 1;     /* a pointer array: its descriptor */
+    return t;
+}
+
+/* A scalar pointer's target, at this reference: a temporary symbol of
+ * its type, by reference at the address its slot holds now. */
+static int f77_ptr_deref(int s) {
+    int t; int addr;
+    addr = hi_emit(HI_LOAD, HL_ADDR_TY, hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 0, NULL), -1, 0, NULL);
+    t = f77_dtt_get();
+    f77_sty[t] = f77_sty[s]; f77_slog[t] = f77_slog[s]; f77_snar[t] = f77_snar[s];
+    f77_slen[t] = f77_slen[s]; f77_slenv[t] = f77_slenv[s]; f77_sdt[t] = f77_sdt[s];
+    f77_srank[t] = 0;
+    f77_sarg[t] = 1;
+    f77_sval[t] = addr;
+    f77_shi[t] = -1; f77_scom[t] = 0; f77_ssaved[t] = 0; f77_sgidx[t] = -1; f77_sgoff[t] = 0;
+    f77_sparam[t] = 0; f77_styped[t] = 1; f77_sstored[t] = 1;
+    f77_sexternal[t] = 0; f77_sauto[t] = 0; f77_slink[t] = NULL; f77_sme[t] = -1; f77_sassoc[t] = 0;
+    f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
+    f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1; f77_sptr[t] = 0; f77_starg[t] = 0;
     return t;
 }
 
@@ -16228,7 +16453,14 @@ static int f77_dt_desig(int s) {
         f77_tok();
         if (f77_dc_off[c]) addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, f77_dc_off[c], NULL);
         if (f77_dc_dt[c] >= 0 && f77_desig_follows()) {
-            /* a structure on the way to another component */
+            /* a structure on the way to another component (a POINTER's
+             * target, followed) */
+            if (f77_dc_ptr[c] && f77_dc_rank[c] == 0) {
+                addr = hi_emit(HI_LOAD, HL_ADDR_TY, addr, -1, 0, NULL);
+                if (lx_t == T_LP) { f77_error("a scalar component has no subscripts"); return s; }
+                dt = f77_dc_dt[c];
+                continue;
+            }
             if (f77_dc_rank[c] > 0) {
                 int t;
                 if (lx_t != T_LP || f77_paren_has_colon()) {
@@ -16277,6 +16509,11 @@ static int f77_dt_array_desig(int s) {
         c = f77_dt_comp(dt, lex_name);
         if (c < 0) { lx_t = T_EOF; return s; }
         f77_tok();
+        if (f77_dc_ptr[c]) {
+            f77_error("a POINTER component of an array of structures, an array of pointers, is not supported");
+            lx_t = T_EOF;
+            return s;
+        }
         if (f77_dc_off[c]) base = hi_emit(HI_ADDI, HL_ADDR_TY, base, -1, f77_dc_off[c], NULL);
         t = f77_dt_temp_comp(c, base);
         if (f77_dc_rank[c] > 0) {
@@ -16532,7 +16769,7 @@ static void f77_td_end(void) {
         c = f77_ndc;
         ty = f77_sty[sy];
         if (f77_slen[sy] < 0 && ty == TY_CHAR) { f77_error("a CHARACTER component's length is a constant"); return; }
-        for (k = 0; k < f77_srank[sy]; k++)
+        for (k = 0; k < f77_srank[sy] && !f77_sptr[sy]; k++)
             if (f77_sextv[sy][k] >= 0 || f77_slov[sy][k] >= 0 || f77_salloc[sy] || f77_sassz[sy]) {
                 f77_error("a component's bounds are constants");
                 return;
@@ -16541,9 +16778,12 @@ static void f77_td_end(void) {
         f77_dc_ty[c] = ty; f77_dc_log[c] = f77_slog[sy]; f77_dc_nar[c] = f77_snar[sy];
         f77_dc_len[c] = f77_slen[sy]; f77_dc_dt[c] = ty == TY_DERIVED ? f77_sdt[sy] : -1;
         f77_dc_rank[c] = f77_srank[sy];
+        f77_dc_ptr[c] = f77_sptr[sy];
+        if (ty == TY_DERIVED && f77_sdt[sy] == dt && !f77_sptr[sy]) { f77_error("a component of its own type is a POINTER"); return; }
         for (k = 0; k < f77_srank[sy]; k++) { f77_dc_lo[c][k] = f77_slo[sy][k]; f77_dc_ext[c][k] = f77_sext[sy][k]; }
         /* its natural alignment */
-        if (ty == TY_DERIVED) a = f77_dt_align[f77_sdt[sy]];
+        if (f77_sptr[sy]) a = 4;                  /* a slot, or a descriptor */
+        else if (ty == TY_DERIVED) a = f77_dt_align[f77_sdt[sy]];
         else if (ty == TY_CHAR) a = 1;
         else if (ty == TY_DOUBLE || ty == TY_DCPLX) a = 8;
         else if (f77_snar[sy]) a = f77_snar[sy];
@@ -16590,8 +16830,8 @@ static int f77_td_stmt(int cls) {
             }
             for (k = 0; k < c; k++) {
                 if (lx_stmt[k] == '\'') return 0;
-                if (strncmp(lx_stmt + k, ",POINTER", 8) == 0 || strncmp(lx_stmt + k, ",ALLOCATABLE", 12) == 0) {
-                    f77_error("a POINTER or ALLOCATABLE component is not supported yet");
+                if (strncmp(lx_stmt + k, ",ALLOCATABLE", 12) == 0) {
+                    f77_error("an ALLOCATABLE component is not supported yet");
                     lx_t = T_EOF;
                     return 1;
                 }
@@ -16607,6 +16847,159 @@ static int f77_td_stmt(int cls) {
     f77_error("a derived type's definition holds component declarations only");
     lx_t = T_EOF;
     return 1;
+}
+
+/* ASSOCIATED(POINTER [, TARGET]) (F90 13.13.13): its slot (an array's
+ * base) not null -- or, with TARGET, the address it holds TARGET's (an
+ * array's base and extents its). */
+static int f77_associated(void) {
+    int ps; int v; int base;
+    f77_tok();                                   /* the name */
+    f77_tok();                                   /* ( */
+    ps = f77_ptr_object();
+    ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+    if (ps < 0) { lx_t = T_EOF; return f77_iconst(0); }
+    base = hi_emit(HI_LOAD, TY_INT, f77_ptr_slot(ps), -1, 0, NULL);
+    v = hi_emit(HI_SNE, TY_INT, base, f77_iconst(0), 0, NULL);
+    if (lx_t == T_COMMA) {
+        int t; int ta; int k;
+        f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "TARGET") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+        if (lx_t != T_NAME) { f77_error("ASSOCIATED's TARGET is a variable"); return f77_iconst(0); }
+        t = f77_sym(lex_name);
+        f77_tok();
+        if (f77_sty[t] == TY_DERIVED && f77_desig_follows()) {
+            if (f77_sptr[t] && f77_srank[t] == 0) t = f77_ptr_deref(t);
+            t = f77_dt_desig(t);
+        }
+        if (f77_sptr[t]) {
+            /* another pointer: the same target */
+            ta = hi_emit(HI_LOAD, TY_INT, f77_ptr_slot(t), -1, 0, NULL);
+            v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
+            for (k = 0; k < f77_srank[ps] && k < f77_srank[t]; k++) {
+                int e1; int e2;
+                e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 8 * k, NULL), -1, 0, NULL);
+                e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(t), -1, 4 + 8 * k, NULL), -1, 0, NULL);
+                v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
+            }
+        } else {
+            if (f77_srank[t] > 0 && lx_t == T_LP && !f77_paren_has_colon()) { f77_tok(); ta = f77_subscript_addr(t); }
+            else if (f77_srank[t] > 0 && lx_t == T_LP) { f77_error("ASSOCIATED with a section TARGET is not supported yet"); return f77_iconst(0); }
+            else ta = f77_salloc[t] ? f77_desc_base(t) : f77_sval[t];
+            v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
+            for (k = 0; k < f77_srank[ps] && k < f77_srank[t]; k++) {
+                int dl; int dh; int e1;
+                f77_dim_bounds(t, k, &dl, &dh);
+                e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 8 * k, NULL), -1, 0, NULL);
+                if (dh >= 0) v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, f77_extent(dl, dh, f77_iconst(1)), 0, NULL), 0, NULL);
+            }
+        }
+    }
+    if (lx_t == T_RP) f77_tok(); else f77_error("expected ) after ASSOCIATED's arguments");
+    ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+    return v;
+}
+
+/* Is the statement a pointer assignment -- an => at the top level? */
+static int f77_is_ptrassign(void) {
+    int i; int d;
+    d = 0;
+    for (i = 0; i + 1 < lx_stmt_len; i++) {
+        if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; continue; }
+        if (lx_stmt[i] == '(') d = d + 1;
+        else if (lx_stmt[i] == ')') d = d - 1;
+        else if (d == 0 && lx_stmt[i] == '=' && lx_stmt[i + 1] == '>') return 1;
+    }
+    return 0;
+}
+
+/* POINTER => target (F90 7.5.2): NULL(), another POINTER (its target), or
+ * a TARGET -- a variable, an element, a designator, an array or a
+ * section of one (its descriptor; a whole array's lower bounds, a
+ * section's 1). */
+static void f77_stmt_ptrassign(void) {
+    int ps; int t; int base; int k; int tgt;
+    f77_scan_from(0);
+    ps = f77_ptr_object();
+    if (ps < 0) { lx_t = T_EOF; return; }
+    if (lx_t != T_ASSIGN) { f77_error("expected =>"); lx_t = T_EOF; return; }
+    f77_tok();
+    if (lx_t != T_GT) { f77_error("expected =>"); lx_t = T_EOF; return; }
+    f77_tok();
+    if (lx_t == T_NAME && strcmp(lex_name, "NULL") == 0 && lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find("NULL") < 0) {
+        /* NULL() (Fortran 95): disassociated */
+        f77_tok(); f77_tok();
+        if (lx_t != T_RP) { f77_error("NULL takes no argument here"); return; }
+        f77_tok();
+        hi_emit(HI_STORE, TY_INT, f77_ptr_slot(ps), f77_iconst(0), 0, NULL);
+        return;
+    }
+    if (lx_t != T_NAME) { f77_error("a pointer's target is a variable"); lx_t = T_EOF; return; }
+    t = f77_sym(lex_name);
+    f77_tok();
+    tgt = f77_starg[t] || f77_sptr[t];
+    if (f77_sty[t] == TY_DERIVED && f77_desig_follows()) {
+        if (f77_sptr[t] && f77_srank[t] == 0) { t = f77_ptr_deref(t); tgt = 1; }
+        t = f77_dt_desig(t);
+        tgt = tgt || f77_sptr[t];
+    }
+    if (!tgt) {
+        char m[F77_MAX_NAME + 60];
+        sprintf(m, "a pointer's target has the TARGET or POINTER attribute");
+        f77_error(m);
+        lx_t = T_EOF;
+        return;
+    }
+    if (!f77_ptr_type_ok(ps, t)) { lx_t = T_EOF; return; }
+    f77_sstored[t] = 1;
+    if (f77_srank[ps] == 0) {
+        if (f77_sptr[t] && f77_srank[t] == 0) base = hi_emit(HI_LOAD, HL_ADDR_TY, f77_ptr_slot(t), -1, 0, NULL);
+        else if (f77_srank[t] > 0 && lx_t == T_LP && !f77_paren_has_colon()) { f77_tok(); base = f77_subscript_addr(t); }
+        else if (f77_srank[t] > 0) { f77_error("a scalar pointer's target is a scalar"); return; }
+        else {
+            if (f77_shi[t] >= 0) hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[t], -1, 0, NULL);   /* both halves escape */
+            base = f77_sval[t];
+        }
+        hi_emit(HI_STORE, TY_INT, f77_ptr_slot(ps), base, 0, NULL);
+        return;
+    }
+    {
+        int ext[F77_MAX_RANK]; int st[F77_MAX_RANK]; int lo[F77_MAX_RANK];
+        int aa; int nt; int d; int saved; int sec;
+        if (f77_sptr[t] && f77_sashape[t] && lx_t != T_LP) {
+            /* another pointer: its descriptor */
+            if (f77_srank[t] != f77_srank[ps]) { f77_error("a pointer's target is of its rank"); return; }
+            f77_copy_n(f77_ptr_slot(ps), f77_ptr_slot(t), f77_iconst(4 + 12 * f77_srank[ps]));
+            return;
+        }
+        if (f77_srank[t] == 0) { f77_error("an array pointer's target is an array"); return; }
+        saved = f77_naa;
+        sec = lx_t == T_LP;
+        if (sec) {
+            if (!f77_paren_has_colon()) { f77_error("an array pointer's target is an array or a section"); return; }
+            f77_tok();
+            f77_aa_section(t);
+            aa = f77_act_aa;
+        } else aa = f77_aa_new(t);
+        if (aa < 0) { f77_naa = saved; return; }
+        nt = 0;
+        for (k = 0; k < f77_srank[t]; k++) if (!f77_aa_sec[aa] || f77_aa_trip[aa][k]) nt = nt + 1;
+        if (nt != f77_srank[ps]) { f77_error("a pointer's target is of its rank"); f77_naa = saved; return; }
+        d = f77_aa_desc(aa, nt);
+        f77_naa = saved;
+        base = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
+        nt = 0;
+        for (k = 0; k < f77_srank[t]; k++) {
+            int dl; int dh;
+            if (f77_aa_sec[aa] && !f77_aa_trip[aa][k]) continue;
+            ext[nt] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 8 * nt, NULL), -1, 0, NULL);
+            st[nt] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 8 + 8 * nt, NULL), -1, 0, NULL);
+            if (sec) lo[nt] = f77_iconst(1);
+            else { f77_dim_bounds(t, k, &dl, &dh); lo[nt] = dl; }
+            nt = nt + 1;
+        }
+        f77_ptr_desc_set(ps, base, ext, st, lo);
+    }
 }
 
 /* Dispatch one statement.  Called once per assembled statement. */
@@ -16712,6 +17105,23 @@ static void f77_statement(void) {
         goto done;
     }
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
+    if (cls == S_KEYWORD && f77_is_ptrassign()) { f77_stmt_ptrassign(); goto done; }
+    if (cls == S_KEYWORD && (n = f77_starts("NULLIFY")) != 0 && lx_stmt[n] == '(') {
+        /* NULLIFY (pointers): disassociated */
+        f77_scan_from(n);
+        f77_tok();
+        for (;;) {
+            int ps;
+            ps = f77_ptr_object();
+            if (ps < 0) break;
+            hi_emit(HI_STORE, TY_INT, f77_ptr_slot(ps), f77_iconst(0), 0, NULL);
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        if (lx_t != T_RP) { f77_error("expected ) after NULLIFY's pointers"); goto done; }
+        f77_tok();
+        goto done;
+    }
     if (cls == S_DO)       { f77_open_do();     goto done; }
 
     if (cls == S_IF_LOGIC &&
@@ -16968,6 +17378,25 @@ static void f77_statement(void) {
     }
     if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
     if (cls == S_KEYWORD && (n = f77_starts("PUBLIC")) != 0) { f77_stmt_access(0, n); goto done; }
+    if (cls == S_KEYWORD && ((n = f77_starts("POINTER")) != 0 || (n = f77_starts("TARGET")) != 0)) {
+        /* POINTER [::] names, TARGET [::] names -- with shapes */
+        int ptr;
+        ptr = lx_stmt[0] == 'P';
+        if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;
+        else if (lx_stmt[n] == '(') { f77_error("a Cray pointer is not Fortran 90"); goto done; }
+        f77_scan_from(n);
+        while (lx_t == T_NAME) {
+            int ts;
+            ts = f77_sym_decl(lex_name);
+            f77_tok();
+            if (lx_t == T_LP) { if (ptr) { if (!f77_parse_deferred(ts)) goto done; } else f77_parse_dims(ts); }
+            if (ptr) { if (!f77_ptr_note(ts)) goto done; }
+            else { f77_starg[ts] = 1; f77_realloc_sym(ts); }
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        goto done;
+    }
     if (cls == S_KEYWORD && (n = f77_starts("OPTIONAL")) != 0) {
         /* OPTIONAL [::] dummies */
         if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;

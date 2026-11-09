@@ -353,13 +353,19 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf 'real :: x\nreal, pointer :: p\np => x\nend\n' > "$W/ptrtgt.f90"
+    printf 'real, target :: t2(2,2)\nreal, pointer :: pv(:)\npv => t2\nend\n' > "$W/ptrrank.f90"
+    printf 'integer, target :: i\nreal, pointer :: p\np => i\nend\n' > "$W/ptrtype.f90"
+    printf 'program q\nreal :: x\ncall s(x)\ncontains\nsubroutine s(a)\nreal, pointer :: a\nend subroutine\nend\n' > "$W/ptrdum.f90"
+    printf 'real, pointer :: p(5)\nend\n' > "$W/ptrshape.f90"
+    printf 'type n\ntype(n) :: next\nend type\nend\n' > "$W/dtself.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p, q\nq = pt(1.0, 2.0)\np = q\nif (p == q) stop\nend\n' > "$W/dtcmp.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\nx = p + 1.0\nend\n' > "$W/dtadd.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np%%z = 1.0\nend\n' > "$W/dtnocomp.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = 1.0\nend\n' > "$W/dtasgty.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
-    printf 'type pt\nreal, pointer :: x\nend type\nend\n' > "$W/dtptr.f90"
+    printf 'type pt\nreal, allocatable :: x(:)\nend type\nend\n' > "$W/dtptr.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
     printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
     printf 'program p\ninterface g\nreal function f(x)\nend function\nsubroutine s(i)\nend subroutine\nend interface\nend\n' > "$W/genmix.f90"
@@ -448,13 +454,19 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "ptrtgt:line 3: a pointer's target has the TARGET or POINTER attribute" \
+             "ptrrank:line 3: a pointer's target is of its rank" \
+             "ptrtype:line 3: a pointer's target is of its type and kind" \
+             "ptrdum:line 3: a POINTER dummy argument needs a POINTER actual" \
+             "ptrshape:line 1: an ALLOCATABLE or POINTER array's shape is (:), (:,:) ..., its bounds given by ALLOCATE or =>" \
+             "dtself:line 3: a component of its own type is a POINTER" \
              "dtcmp:line 7: a comparison of structures needs an operator defined for their type (not supported yet)" \
              "dtadd:line 5: an operator on a structure needs one defined for its type (not supported yet)" \
              "dtnocomp:line 5: the type PT has no component Z" \
              "dtasgty:line 5: a value of another type for a structure" \
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
-             "dtptr:line 2: a POINTER or ALLOCATABLE component is not supported yet" \
+             "dtptr:line 2: an ALLOCATABLE component is not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
              "dtcdiv:line 6: a component of an array of structures whose size does not divide the structure's is not supported yet" \
              "genmix:line 7: a generic's procedures are all FUNCTIONs or all SUBROUTINEs" \
@@ -478,7 +490,7 @@ if [ -x "$F77" ]; then
              "wholearr:line 2: a whole array in an expression is not supported yet" \
              "alloceq:line 4: an ALLOCATABLE array cannot be in an EQUIVALENCE" \
              "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \
-             "allocshape:line 1: an ALLOCATABLE array's shape is (:), (:,:) ..., its bounds given by ALLOCATE" \
+             "allocshape:line 1: an ALLOCATABLE or POINTER array's shape is (:), (:,:) ..., its bounds given by ALLOCATE or =>" \
              "aconshape:line 2: the array constructor has 2 values for 3 elements" \
              "xferexpr:line 2: TRANSFER is supported only as an actual argument" \
              "cppdef:line 1: only the preprocessor's conditionals are supported (#if, #ifdef, #ifndef, #elif, #else, #endif)" \
