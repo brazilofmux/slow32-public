@@ -4236,17 +4236,6 @@ static int f77_where_guard(int *cnt, int nt) {
  *   named in e -- A(I:J,K) = A(I,K)*C(1:N), whose first store changes
  *   A(I,K) -- the values go to a temporary first and are copied after. */
 static int f77_hoist(int from, int *to);
-/* A call's actuals, lx_t at their '(': array-valued intrinsics and
- * constructors among them evaluated first (f77_hoist) -- the temporaries
- * go on the f77_tfree list the call frees after it -- and lx_t at the '('
- * again. */
-static void f77_hoist_actuals(void) {
-    int open; int end;
-    if (lx_t != T_LP) return;
-    open = (int)(lx_rts - lx_stmt);
-    end = f77_match_paren(open) - 1;
-    if (f77_hoist(open + 1, &end)) f77_scan_from(open);
-}
 static void f77_array_assign1(int s, int whole);
 static void f77_array_assign(int s, int whole) {
     int mk;
@@ -4429,7 +4418,7 @@ static void f77_array_assign1(int s, int whole) {
  * ',' or ')' after it -- and its keyword ("" when positional); end is past
  * the ')'.  Text-level, so that each argument can be parsed where the
  * caller wants it: a reduction's ARRAY and MASK inside its loops. */
-#define F77_MAX_IARGS 8
+#define F77_MAX_IARGS 64   /* a call's actuals too (f77_hoist_actuals) */
 typedef struct {
     int n;
     int from[F77_MAX_IARGS];
@@ -4533,6 +4522,219 @@ static int f77_aex_shape(int sy, int at, int *ext) {
     return f77_srank[sy];
 }
 
+/* A reduction's accumulation (Fortran 90), apart from where its elements
+ * come from -- an array expression parsed in loops (f77_reduce), or a
+ * hidden array along one dimension (f77_av_reddim):
+ * f77_red_begin, then per element f77_red_count (its ordinal, from 1)
+ * and, when the mask holds for it, f77_red_take; then f77_red_end.
+ *
+ * SUM and PRODUCT: the first element taken is the accumulator, the next
+ * ones added (multiplied) to it -- the type is the element's, known only
+ * once it is parsed -- and 0 (1) of that type when none is.
+ * MAXVAL MINVAL MAXLOC MINLOC: libgfortran's order, so that NaNs go as
+ * gfortran has them: the location is that of the first element taken
+ * (with MASK, the first for which it holds), the first element that is
+ * not a NaN sets the extreme, and only a strictly greater (less) one moves
+ * it; MAXVAL of no elements is -HUGE-1 for INTEGER, -HUGE for REAL
+ * (MINVAL +HUGE), of NaNs alone a NaN.
+ * COUNT ANY ALL, and DOT_PRODUCT of LOGICAL arrays (ANY of the .AND.s). */
+typedef struct {
+    int in;
+    char *fname;
+    int acc; int found; int pos; int loc;
+    int ty; int rlog;
+} F77Red;
+
+static void f77_red_begin(F77Red *R, int in, char *fname) {
+    R->in = in;
+    R->fname = fname;
+    R->acc = f77_char_temp(16);
+    R->found = f77_int_temp(); R->pos = f77_int_temp(); R->loc = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, R->found, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, R->pos, f77_iconst(0), 0, NULL);
+    hi_emit(HI_STORE, TY_INT, R->loc, f77_iconst(0), 0, NULL);
+    if (in == IN_COUNT || in == IN_ANY || in == IN_ALL)
+        hi_emit(HI_STORE, TY_INT, R->acc, f77_iconst(in == IN_ALL ? 1 : 0), 0, NULL);
+    R->ty = -1;
+    R->rlog = 0;
+}
+
+/* The next element's ordinal, from 1, counted. */
+static int f77_red_count(F77Red *R) {
+    int p;
+    p = hi_emit(HI_LOAD, TY_INT, R->pos, -1, 0, NULL);
+    p = hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL);
+    hi_emit(HI_STORE, TY_INT, R->pos, p, 0, NULL);
+    return p;
+}
+
+/* Element x (xty, xhi, xlog) taken, its ordinal p.  It may branch: the
+ * caller goes on to its next element from the block left current, and
+ * b_next is where an element not taken goes. */
+static void f77_red_take(F77Red *R, int x, int xty, int xhi, int xlog, int p, int b_next) {
+    int in; int ismax; int isminmax; int ty;
+    static char m[160];
+    in = R->in;
+    ismax = in == IN_MAXLOC || in == IN_MAXVAL;
+    isminmax = in >= IN_MAXLOC && in <= IN_MINVAL;
+    if (xty == TY_CHAR) { sprintf(m, "%s of a CHARACTER array", R->fname); f77_error(m); xty = TY_INT; }
+    ty = xty;
+    R->ty = ty;
+    R->rlog = xlog;
+    if (in == IN_COUNT || in == IN_ANY || in == IN_ALL || (in == IN_DOTP && xlog)) {
+        int a0;
+        if (!xlog) { sprintf(m, "%s needs a LOGICAL array", R->fname); f77_error(m); }
+        a0 = hi_emit(HI_LOAD, TY_INT, R->acc, -1, 0, NULL);
+        if (in == IN_COUNT) a0 = hi_emit(HI_ADD, TY_INT, a0, hi_emit(HI_SNE, TY_INT, x, f77_iconst(0), 0, NULL), 0, NULL);
+        else if (in == IN_ALL) a0 = hi_emit(HI_AND, TY_INT, a0, x, 0, NULL);
+        else a0 = hi_emit(HI_OR, TY_INT, a0, x, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, R->acc, a0, 0, NULL);
+        return;
+    }
+    if (!isminmax) {
+        /* SUM, PRODUCT, numeric DOT_PRODUCT */
+        int b_first; int b_more; int fb;
+        if (xlog) { sprintf(m, "%s of a LOGICAL array", R->fname); f77_error(m); }
+        b_first = hir_new_block(); b_more = hir_new_block();
+        fb = hi_emit(HI_LOAD, TY_INT, R->found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_more, b_first, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_first);
+        f77_store_at(R->acc, ty, x, ty, xhi);
+        hi_emit(HI_STORE, TY_INT, R->found, f77_iconst(1), 0, NULL);
+        f77_goto_blk(b_next);
+        f77_begin_blk(b_more);
+        {
+            int a0; int a0hi;
+            a0 = f77_load_at(R->acc, ty);
+            a0hi = ex_hi;
+            a0 = f77_binop(in == IN_PRODUCT ? T_STAR : T_PLUS, a0, ty, a0hi, x, ty, xhi);
+            f77_store_at(R->acc, ty, a0, ty, ex_hi);
+        }
+        return;
+    }
+    {
+        int fb; int b_first; int b_more; int b_take; int c;
+        if (xlog || (ty != TY_INT && ty != TY_FLOAT && ty != TY_DOUBLE)) {
+            sprintf(m, "%s needs an INTEGER, REAL or DOUBLE PRECISION array", R->fname);
+            f77_error(m);
+            ty = TY_INT;
+            R->ty = ty;
+        }
+        /* the location is the first element's taken, for a non-empty array */
+        {
+            int b_one; int b_go; int l0;
+            b_one = hir_new_block(); b_go = hir_new_block();
+            l0 = hi_emit(HI_LOAD, TY_INT, R->loc, -1, 0, NULL);
+            hi_emit(HI_BRC, TY_VOID, hi_emit(HI_SEQ, TY_INT, l0, f77_iconst(0), 0, NULL), b_one, b_go, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_one);
+            hi_emit(HI_STORE, TY_INT, R->loc, p, 0, NULL);
+            f77_goto_blk(b_go);
+            f77_begin_blk(b_go);
+        }
+        b_first = hir_new_block(); b_more = hir_new_block(); b_take = hir_new_block();
+        fb = hi_emit(HI_LOAD, TY_INT, R->found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_more, b_first, NULL);
+        f77_cur_blk_live = 0;
+        /* not found yet: take x unless it is a NaN */
+        f77_begin_blk(b_first);
+        if (ty == TY_DOUBLE) c = f77_fp64_call2("__fp64_eq", x, xhi, x, xhi, NULL);
+        else if (ty == TY_FLOAT) c = hi_emit(HI_FEQ, TY_INT, x, x, 0, NULL);
+        else c = f77_iconst(1);
+        hi_emit(HI_BRC, TY_VOID, c, b_take, b_next, NULL);
+        f77_cur_blk_live = 0;
+        /* found: take x only past the extreme */
+        f77_begin_blk(b_more);
+        {
+            int mx; int mh;
+            mx = f77_load_at(R->acc, ty);
+            mh = ex_hi;
+            if (ty == TY_DOUBLE)
+                c = ismax ? f77_fp64_call2("__fp64_lt", mx, mh, x, xhi, NULL) : f77_fp64_call2("__fp64_lt", x, xhi, mx, mh, NULL);
+            else if (ty == TY_FLOAT)
+                c = ismax ? hi_emit(HI_FLT, TY_INT, mx, x, 0, NULL) : hi_emit(HI_FLT, TY_INT, x, mx, 0, NULL);
+            else
+                c = ismax ? hi_emit(HI_SLT, TY_INT, mx, x, 0, NULL) : hi_emit(HI_SLT, TY_INT, x, mx, 0, NULL);
+        }
+        hi_emit(HI_BRC, TY_VOID, c, b_take, b_next, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_take);
+        f77_store_at(R->acc, ty, x, ty, xhi);
+        hi_emit(HI_STORE, TY_INT, R->loc, p, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, R->found, f77_iconst(1), 0, NULL);
+    }
+}
+
+/* The reduction's value, after its elements: ex_ty, ex_hi, ex_log set.
+ * MAXLOC and MINLOC give the location, an ordinal from 1 (0: none). */
+static int f77_red_end(F77Red *R) {
+    int in; int ismax; int ty;
+    in = R->in;
+    ismax = in == IN_MAXLOC || in == IN_MAXVAL;
+    ty = R->ty < 0 ? TY_INT : R->ty;
+    ex_log = 0;
+    if (in == IN_COUNT || in == IN_ANY || in == IN_ALL || (in == IN_DOTP && R->rlog)) {
+        ex_ty = TY_INT; ex_hi = -1; ex_log = in != IN_COUNT;
+        return hi_emit(HI_LOAD, TY_INT, R->acc, -1, 0, NULL);
+    }
+    if (in == IN_MAXLOC || in == IN_MINLOC) {
+        ex_ty = TY_INT; ex_hi = -1;
+        return hi_emit(HI_LOAD, TY_INT, R->loc, -1, 0, NULL);
+    }
+    if (!(in >= IN_MAXLOC && in <= IN_MINVAL)) {
+        /* none taken: 0 (1) of the type */
+        int b_none; int b_done; int fb; int z; int zhi;
+        b_none = hir_new_block(); b_done = hir_new_block();
+        fb = hi_emit(HI_LOAD, TY_INT, R->found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_done, b_none, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_none);
+        zhi = -1;
+        z = f77_cvt(f77_iconst(in == IN_PRODUCT ? 1 : 0), &zhi, TY_INT, ty);
+        f77_store_at(R->acc, ty, z, ty, zhi);
+        f77_goto_blk(b_done);
+        f77_begin_blk(b_done);
+        return f77_load_at(R->acc, ty);
+    }
+    /* MAXVAL/MINVAL: nothing found -- no element taken (none, or none
+     * the mask holds for) has no location: -HUGE (+HUGE); else they were
+     * all NaNs: a NaN */
+    {
+        int b_none; int b_done; int fb; int p; int e;
+        b_none = hir_new_block(); b_done = hir_new_block();
+        fb = hi_emit(HI_LOAD, TY_INT, R->found, -1, 0, NULL);
+        hi_emit(HI_BRC, TY_VOID, fb, b_done, b_none, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_none);
+        p = hi_emit(HI_LOAD, TY_INT, R->loc, -1, 0, NULL);
+        e = hi_emit(HI_SEQ, TY_INT, p, f77_iconst(0), 0, NULL);
+        if (ty == TY_INT) {
+            /* F90 13.13.63: "the negative number of the largest magnitude",
+             * -HUGE-1 in two's complement (gfortran's); -HUGE was wrong */
+            hi_emit(HI_STORE, TY_INT, R->acc, f77_iconst(ismax ? (int)(-2147483647 - 1) : 2147483647), 0, NULL);
+        } else if (ty == TY_FLOAT) {
+            int big; int nan;
+            union { float f; int i; } u;
+            u.f = ismax ? -3.4028234663852886e38f : 3.4028234663852886e38f;
+            big = f77_iconst(u.i);
+            nan = f77_iconst(0x7FC00000);
+            hi_emit(HI_STORE, TY_INT, R->acc, f77_select(e, big, nan), 0, NULL);
+        } else {
+            int hlo; int hhi; int nlo; int nhi; int a4;
+            hlo = f77_dconst(ismax ? -1.7976931348623157e308 : 1.7976931348623157e308, &hhi);
+            nlo = f77_iconst(0);
+            nhi = f77_iconst(0x7FF80000);
+            hi_emit(HI_STORE, TY_INT, R->acc, f77_select(e, hlo, nlo), 0, NULL);
+            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, R->acc, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, a4, f77_select(e, hhi, nhi), 0, NULL);
+        }
+        f77_goto_blk(b_done);
+        f77_begin_blk(b_done);
+    }
+    return f77_load_at(R->acc, ty);
+}
+
 /* Fortran 90's reductions of an array expression (lx_t just past the '('):
  * SUM PRODUCT MAXVAL MINVAL ([ARRAY=]e [,MASK=m]), COUNT ANY ALL (mask),
  * MAXLOC MINLOC (e, [DIM=]1 [,MASK=m]), DOT_PRODUCT (a, b).  Loops over the
@@ -4573,17 +4775,13 @@ static int f77_reduce1(int in) {
     int ext[F77_MAX_RANK]; int ext2[F77_MAX_RANK];
     int nt;
     int k;
-    int ismax; int wantloc; int isminmax; int islog;
-    int acc; int found; int pos; int loc;
-    int ty;
-    int rlog;
+    int wantloc; int islog;
+    F77Red R;
     int saved_k; int saved_cnt[8];
     F77Loop lp[F77_MAX_RANK];
     char *fname;
     static char m[160];
-    ismax = in == IN_MAXLOC || in == IN_MAXVAL;
     wantloc = in == IN_MAXLOC || in == IN_MINLOC;
-    isminmax = in >= IN_MAXLOC && in <= IN_MINVAL;
     islog = in == IN_COUNT || in == IN_ANY || in == IN_ALL;
     fname = in == IN_MAXLOC ? "MAXLOC" : in == IN_MINLOC ? "MINLOC" : in == IN_MAXVAL ? "MAXVAL" :
             in == IN_MINVAL ? "MINVAL" : in == IN_SUM ? "SUM" : in == IN_PRODUCT ? "PRODUCT" :
@@ -4638,25 +4836,18 @@ static int f77_reduce1(int in) {
             return f77_iconst(0);
         }
         if (nt != 1) {
-            sprintf(m, "%s with DIM= of an array of rank above 1 gives an array, which is not supported yet", fname);
+            sprintf(m, "%s with DIM= of an array of rank above 1 gives an array, not a scalar", fname);
             f77_error(m);
             return f77_iconst(0);
         }
         if (h_val[d] != 1) { f77_error("a rank-1 array's DIM is the constant 1"); return f77_iconst(0); }
     } else if (wantloc) {
-        sprintf(m, "%s without DIM= gives an array, which is not supported yet", fname);
+        sprintf(m, "%s without DIM= gives an array, not a scalar", fname);
         f77_error(m);
         return f77_iconst(0);
     }
 
-    acc = f77_char_temp(16);
-    found = f77_int_temp(); pos = f77_int_temp(); loc = f77_int_temp();
-    hi_emit(HI_STORE, TY_INT, found, f77_iconst(0), 0, NULL);
-    hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
-    hi_emit(HI_STORE, TY_INT, loc, f77_iconst(0), 0, NULL);
-    if (islog) hi_emit(HI_STORE, TY_INT, acc, f77_iconst(in == IN_ALL ? 1 : 0), 0, NULL);
-    ty = -1;
-    rlog = 0;
+    f77_red_begin(&R, in, fname);
     for (k = nt - 1; k >= 0; k--)
         f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
     saved_k = f77_aex_k;
@@ -4664,13 +4855,9 @@ static int f77_reduce1(int in) {
     f77_aex_k = nt;
     for (k = 0; k < nt; k++) f77_aex_cnt[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
     {
-        int p;
-        int b_next;
-        int x; int xhi; int xty;
+        int p; int b_next; int x; int xhi; int xty; int xlog;
         b_next = hir_new_block();
-        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
-        p = hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL);
-        hi_emit(HI_STORE, TY_INT, pos, p, 0, NULL);
+        p = f77_red_count(&R);
         if (mask >= 0) {
             int c;
             int b_do;
@@ -4682,16 +4869,15 @@ static int f77_reduce1(int in) {
             f77_begin_blk(b_do);
         }
         x = f77_expr_at(A.from[arr], A.to[arr]);
-        xty = ex_ty; xhi = ex_hi;
+        xty = ex_ty; xhi = ex_hi; xlog = ex_log;
         if (in == IN_DOTP) {
-            int y; int yhi; int yty; int ylog; int xlog;
-            xlog = ex_log;
+            int y; int yhi; int yty; int ylog;
             y = f77_expr_at(A.from[arr2], A.to[arr2]);
             yty = ex_ty; yhi = ex_hi; ylog = ex_log;
-            if (xlog != ylog) { f77_error("DOT_PRODUCT of a LOGICAL and a numeric array"); }
+            if (xlog != ylog) f77_error("DOT_PRODUCT of a LOGICAL and a numeric array");
             else if (xlog) {
                 x = hi_emit(HI_AND, TY_INT, x, y, 0, NULL);
-                xty = TY_INT; ex_log = 1;
+                xty = TY_INT;
             } else {
                 if (xty == TY_CHAR || yty == TY_CHAR) f77_error("DOT_PRODUCT needs numeric or LOGICAL arrays");
                 if (xty == TY_CPLX) xhi = hi_emit(HI_FNEG, TY_FLOAT, xhi, -1, 0, NULL);
@@ -4703,91 +4889,10 @@ static int f77_reduce1(int in) {
                     x = f77_dcx_make(re, reh, im, imh);
                 }
                 x = f77_binop(T_STAR, x, xty, xhi, y, yty, yhi);
-                xty = ex_ty; xhi = ex_hi; ex_log = 0;
+                xty = ex_ty; xhi = ex_hi;
             }
         }
-        if (xty == TY_CHAR) { sprintf(m, "%s of a CHARACTER array", fname); f77_error(m); xty = TY_INT; }
-        ty = xty;
-        rlog = ex_log;
-        if (islog || (in == IN_DOTP && rlog)) {
-            int a0;
-            if (!rlog) { sprintf(m, "%s needs a LOGICAL array", fname); f77_error(m); }
-            a0 = hi_emit(HI_LOAD, TY_INT, acc, -1, 0, NULL);
-            if (in == IN_COUNT) a0 = hi_emit(HI_ADD, TY_INT, a0, hi_emit(HI_SNE, TY_INT, x, f77_iconst(0), 0, NULL), 0, NULL);
-            else if (in == IN_ALL) a0 = hi_emit(HI_AND, TY_INT, a0, x, 0, NULL);
-            else a0 = hi_emit(HI_OR, TY_INT, a0, x, 0, NULL);
-            hi_emit(HI_STORE, TY_INT, acc, a0, 0, NULL);
-        } else if (!isminmax) {
-            /* SUM, PRODUCT, numeric DOT_PRODUCT: the first element taken
-             * is the accumulator */
-            int b_first; int b_more; int fb;
-            if (rlog) { sprintf(m, "%s of a LOGICAL array", fname); f77_error(m); }
-            b_first = hir_new_block(); b_more = hir_new_block();
-            fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
-            hi_emit(HI_BRC, TY_VOID, fb, b_more, b_first, NULL);
-            f77_cur_blk_live = 0;
-            f77_begin_blk(b_first);
-            f77_store_at(acc, ty, x, ty, xhi);
-            hi_emit(HI_STORE, TY_INT, found, f77_iconst(1), 0, NULL);
-            f77_goto_blk(b_next);
-            f77_begin_blk(b_more);
-            {
-                int a0; int a0hi;
-                a0 = f77_load_at(acc, ty);
-                a0hi = ex_hi;
-                a0 = f77_binop(in == IN_PRODUCT ? T_STAR : T_PLUS, a0, ty, a0hi, x, ty, xhi);
-                f77_store_at(acc, ty, a0, ty, ex_hi);
-            }
-        } else {
-            int fb; int b_first; int b_more; int b_take; int c;
-            if (rlog || (ty != TY_INT && ty != TY_FLOAT && ty != TY_DOUBLE)) {
-                sprintf(m, "%s needs an INTEGER, REAL or DOUBLE PRECISION array", fname);
-                f77_error(m);
-                ty = TY_INT;
-            }
-            /* the location is the first element's taken, for a non-empty array */
-            {
-                int b_one; int b_go; int l0;
-                b_one = hir_new_block(); b_go = hir_new_block();
-                l0 = hi_emit(HI_LOAD, TY_INT, loc, -1, 0, NULL);
-                hi_emit(HI_BRC, TY_VOID, hi_emit(HI_SEQ, TY_INT, l0, f77_iconst(0), 0, NULL), b_one, b_go, NULL);
-                f77_cur_blk_live = 0;
-                f77_begin_blk(b_one);
-                hi_emit(HI_STORE, TY_INT, loc, p, 0, NULL);
-                f77_goto_blk(b_go);
-                f77_begin_blk(b_go);
-            }
-            b_first = hir_new_block(); b_more = hir_new_block(); b_take = hir_new_block();
-            fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
-            hi_emit(HI_BRC, TY_VOID, fb, b_more, b_first, NULL);
-            f77_cur_blk_live = 0;
-            /* not found yet: take x unless it is a NaN */
-            f77_begin_blk(b_first);
-            if (ty == TY_DOUBLE) c = f77_fp64_call2("__fp64_eq", x, xhi, x, xhi, NULL);
-            else if (ty == TY_FLOAT) c = hi_emit(HI_FEQ, TY_INT, x, x, 0, NULL);
-            else c = f77_iconst(1);
-            hi_emit(HI_BRC, TY_VOID, c, b_take, b_next, NULL);
-            f77_cur_blk_live = 0;
-            /* found: take x only past the extreme */
-            f77_begin_blk(b_more);
-            {
-                int mx; int mh;
-                mx = f77_load_at(acc, ty);
-                mh = ex_hi;
-                if (ty == TY_DOUBLE)
-                    c = ismax ? f77_fp64_call2("__fp64_lt", mx, mh, x, xhi, NULL) : f77_fp64_call2("__fp64_lt", x, xhi, mx, mh, NULL);
-                else if (ty == TY_FLOAT)
-                    c = ismax ? hi_emit(HI_FLT, TY_INT, mx, x, 0, NULL) : hi_emit(HI_FLT, TY_INT, x, mx, 0, NULL);
-                else
-                    c = ismax ? hi_emit(HI_SLT, TY_INT, mx, x, 0, NULL) : hi_emit(HI_SLT, TY_INT, x, mx, 0, NULL);
-            }
-            hi_emit(HI_BRC, TY_VOID, c, b_take, b_next, NULL);
-            f77_cur_blk_live = 0;
-            f77_begin_blk(b_take);
-            f77_store_at(acc, ty, x, ty, xhi);
-            hi_emit(HI_STORE, TY_INT, loc, p, 0, NULL);
-            hi_emit(HI_STORE, TY_INT, found, f77_iconst(1), 0, NULL);
-        }
+        f77_red_take(&R, x, xty, xhi, xlog, p, b_next);
         f77_goto_blk(b_next);
         f77_begin_blk(b_next);
     }
@@ -4795,67 +4900,7 @@ static int f77_reduce1(int in) {
     for (k = 0; k < 8; k++) f77_aex_cnt[k] = saved_cnt[k];
     for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
     f77_scan_from(A.end);                    /* the scanner past the ')' */
-    ex_log = 0;
-    if (islog || (in == IN_DOTP && rlog)) {
-        ex_ty = TY_INT; ex_hi = -1; ex_log = in != IN_COUNT;
-        return hi_emit(HI_LOAD, TY_INT, acc, -1, 0, NULL);
-    }
-    if (wantloc) {
-        ex_ty = TY_INT; ex_hi = -1;
-        return hi_emit(HI_LOAD, TY_INT, loc, -1, 0, NULL);
-    }
-    if (!isminmax) {
-        /* none taken: 0 (1) of the type */
-        int b_none; int b_done; int fb; int z; int zhi;
-        b_none = hir_new_block(); b_done = hir_new_block();
-        fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
-        hi_emit(HI_BRC, TY_VOID, fb, b_done, b_none, NULL);
-        f77_cur_blk_live = 0;
-        f77_begin_blk(b_none);
-        zhi = -1;
-        z = f77_cvt(f77_iconst(in == IN_PRODUCT ? 1 : 0), &zhi, TY_INT, ty);
-        f77_store_at(acc, ty, z, ty, zhi);
-        f77_goto_blk(b_done);
-        f77_begin_blk(b_done);
-        return f77_load_at(acc, ty);
-    }
-    /* MAXVAL/MINVAL: nothing found -- no elements: -HUGE (+HUGE); NaNs
-     * alone: a NaN */
-    {
-        int b_none; int b_done; int fb; int p; int e;
-        b_none = hir_new_block(); b_done = hir_new_block();
-        fb = hi_emit(HI_LOAD, TY_INT, found, -1, 0, NULL);
-        hi_emit(HI_BRC, TY_VOID, fb, b_done, b_none, NULL);
-        f77_cur_blk_live = 0;
-        f77_begin_blk(b_none);
-        /* no element taken (none, or none the mask holds for) has no
-         * location: -HUGE; else they were all NaNs */
-        p = hi_emit(HI_LOAD, TY_INT, loc, -1, 0, NULL);
-        e = hi_emit(HI_SEQ, TY_INT, p, f77_iconst(0), 0, NULL);
-        if (ty == TY_INT) {
-            /* F90 13.13.63: "the negative number of the largest magnitude",
-             * -HUGE-1 in two's complement (gfortran's); -HUGE was wrong */
-            hi_emit(HI_STORE, TY_INT, acc, f77_iconst(ismax ? (int)(-2147483647 - 1) : 2147483647), 0, NULL);
-        } else if (ty == TY_FLOAT) {
-            int big; int nan;
-            union { float f; int i; } u;
-            u.f = ismax ? -3.4028234663852886e38f : 3.4028234663852886e38f;
-            big = f77_iconst(u.i);
-            nan = f77_iconst(0x7FC00000);
-            hi_emit(HI_STORE, TY_INT, acc, f77_select(e, big, nan), 0, NULL);
-        } else {
-            int hlo; int hhi; int nlo; int nhi; int a4;
-            hlo = f77_dconst(ismax ? -1.7976931348623157e308 : 1.7976931348623157e308, &hhi);
-            nlo = f77_iconst(0);
-            nhi = f77_iconst(0x7FF80000);
-            hi_emit(HI_STORE, TY_INT, acc, f77_select(e, hlo, nlo), 0, NULL);
-            a4 = hi_emit(HI_ADDI, HL_ADDR_TY, acc, -1, 4, NULL);
-            hi_emit(HI_STORE, TY_INT, a4, f77_select(e, hhi, nhi), 0, NULL);
-        }
-        f77_goto_blk(b_done);
-        f77_begin_blk(b_done);
-    }
-    return f77_load_at(acc, ty);
+    return f77_red_end(&R);
 badarg:
     sprintf(m, "the arguments of %s are not ones it takes", fname);
     f77_error(m);
@@ -4934,7 +4979,7 @@ static int f77_arr_inquiry1(int in) {
     }
     if (dim < 0) {
         if (in != IN_SIZE) {
-            sprintf(m, "%s without DIM= gives an array, which is not supported yet", fname);
+            sprintf(m, "%s without DIM= gives an array, not a scalar", fname);
             f77_error(m);
             return f77_iconst(0);
         }
@@ -9039,6 +9084,11 @@ static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
 #define AV_LBOUND    6
 #define AV_UBOUND    7
 #define AV_ACON      8   /* (/ ... /) */
+#define AV_PACK      9
+#define AV_UNPACK   10
+#define AV_CSHIFT   11
+#define AV_EOSHIFT  12
+#define AV_REDDIM   13   /* a reduction with DIM of rank 2 or more; MAXLOC, MINLOC without DIM */
 
 static int f77_hid_count;
 
@@ -9120,6 +9170,435 @@ static int f77_hid_elem_p(int s, int p) {
     return f77_elem_addr(s, idx, f77_srank[s]);
 }
 
+static int f77_av_operand(int from, int to);
+static int f77_av_int(int from, int to, char *what);
+
+/* A hidden array's number of elements. */
+static int f77_hid_size(int s) {
+    int n; int k;
+    n = f77_iconst(1);
+    for (k = 0; k < f77_srank[s]; k++) n = hi_emit(HI_MUL, TY_INT, n, f77_hid_ext(s, k), 0, NULL);
+    return n;
+}
+
+/* A mask argument, the text [from, to): a LOGICAL array (*arr its hidden
+ * array) or a LOGICAL scalar (*val).  0 on error. */
+static int f77_av_mask(int from, int to, int *arr, int *val) {
+    int at;
+    *arr = -1;
+    *val = -1;
+    if (f77_aex_first(from, to, &at) >= 0) {
+        *arr = f77_av_operand(from, to);
+        if (*arr < 0) return 0;
+        if (!f77_slog[*arr]) { f77_error("a MASK is LOGICAL"); return 0; }
+        return 1;
+    }
+    *val = f77_expr_at(from, to);
+    if (ex_ty != TY_INT || !ex_log) { f77_error("a MASK is LOGICAL"); return 0; }
+    return 1;
+}
+
+/* Whether the mask holds for element p (from 0) of an array of its shape. */
+static int f77_av_mask_at(int arr, int val, int p) {
+    if (arr < 0) return val;
+    return hi_emit(HI_LOAD, TY_INT, f77_hid_elem_p(arr, p), -1, 0, NULL);
+}
+
+/* PACK(ARRAY, MASK [, VECTOR]) (F90 13.13.77): ARRAY's elements the mask
+ * holds for, in array element order -- then VECTOR's from there on, when
+ * it is given, the result VECTOR's size. */
+static int f77_av_pack(F77Args *A) {
+    int ia; int im; int iv; int k; int a; int marr; int mval; int v; int n; int cnt; int r; int j; int ext[1];
+    F77Loop lp;
+    ia = -1; im = -1; iv = -1;
+    for (k = 0; k < A->n; k++) {
+        if ((A->kw[k][0] == 0 && k == 0) || strcmp(A->kw[k], "ARRAY") == 0) ia = k;
+        else if ((A->kw[k][0] == 0 && k == 1) || strcmp(A->kw[k], "MASK") == 0) im = k;
+        else if ((A->kw[k][0] == 0 && k == 2) || strcmp(A->kw[k], "VECTOR") == 0) iv = k;
+        else return -2;
+    }
+    if (ia < 0 || im < 0) return -2;
+    a = f77_av_operand(A->from[ia], A->to[ia]);
+    if (a < 0) return -1;
+    if (!f77_av_mask(A->from[im], A->to[im], &marr, &mval)) return -1;
+    v = -1;
+    if (iv >= 0) {
+        v = f77_av_operand(A->from[iv], A->to[iv]);
+        if (v < 0) return -1;
+        if (f77_srank[v] != 1 || f77_sty[v] != f77_sty[a] || f77_slog[v] != f77_slog[a]) {
+            f77_error("PACK's VECTOR is an array of rank 1 of ARRAY's type");
+            return -1;
+        }
+    }
+    n = f77_hid_size(a);
+    cnt = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, cnt, f77_iconst(0), 0, NULL);
+    if (v >= 0) ext[0] = f77_hid_ext(v, 0);
+    else {
+        /* the count first */
+        f77_loop_begin(&lp, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, n, -1, -1, NULL), f77_iconst(1));
+        {
+            int p; int c;
+            p = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+            c = hi_emit(HI_SNE, TY_INT, f77_av_mask_at(marr, mval, p), f77_iconst(0), 0, NULL);
+            hi_emit(HI_STORE, TY_INT, cnt, hi_emit(HI_ADD, TY_INT, hi_emit(HI_LOAD, TY_INT, cnt, -1, 0, NULL), c, 0, NULL), 0, NULL);
+        }
+        f77_loop_end(&lp);
+        ext[0] = hi_emit(HI_LOAD, TY_INT, cnt, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, cnt, f77_iconst(0), 0, NULL);
+    }
+    r = f77_temp_array(f77_sty[a], f77_slog[a], f77_snar[a], f77_esize(a), 1, ext);
+    f77_loop_begin(&lp, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, n, -1, -1, NULL), f77_iconst(1));
+    {
+        int p; int b_t; int b_n;
+        p = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+        b_t = hir_new_block(); b_n = hir_new_block();
+        hi_emit(HI_BRC, TY_VOID, f77_av_mask_at(marr, mval, p), b_t, b_n, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_t);
+        j = hi_emit(HI_LOAD, TY_INT, cnt, -1, 0, NULL);
+        f77_copy_bytes(f77_hid_elem_p(r, j), f77_hid_elem_p(a, p), f77_esize(a));
+        hi_emit(HI_STORE, TY_INT, cnt, hi_emit(HI_ADDI, TY_INT, j, -1, 1, NULL), 0, NULL);
+        f77_goto_blk(b_n);
+        f77_begin_blk(b_n);
+    }
+    f77_loop_end(&lp);
+    if (v >= 0) {
+        /* the rest from VECTOR */
+        j = hi_emit(HI_LOAD, TY_INT, cnt, -1, 0, NULL);
+        f77_loop_begin(&lp, j, hi_emit(HI_ADDI, TY_INT, ext[0], -1, -1, NULL), f77_iconst(1));
+        {
+            int q;
+            q = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+            f77_copy_bytes(f77_hid_elem_p(r, q), f77_hid_elem_p(v, q), f77_esize(a));
+        }
+        f77_loop_end(&lp);
+    }
+    return r;
+}
+
+/* UNPACK(VECTOR, MASK, FIELD) (F90 13.13.110): MASK's shape; where it
+ * holds the next of VECTOR's elements, elsewhere FIELD's (a scalar, or an
+ * array of MASK's shape). */
+static int f77_av_unpack(F77Args *A) {
+    int iv; int im; int ifl; int k; int v; int msk; int fld; int fv; int fvhi; int r; int n; int cnt; int at;
+    int ext[F77_MAX_RANK];
+    F77Loop lp;
+    iv = -1; im = -1; ifl = -1;
+    for (k = 0; k < A->n; k++) {
+        if ((A->kw[k][0] == 0 && k == 0) || strcmp(A->kw[k], "VECTOR") == 0) iv = k;
+        else if ((A->kw[k][0] == 0 && k == 1) || strcmp(A->kw[k], "MASK") == 0) im = k;
+        else if ((A->kw[k][0] == 0 && k == 2) || strcmp(A->kw[k], "FIELD") == 0) ifl = k;
+        else return -2;
+    }
+    if (iv < 0 || im < 0 || ifl < 0) return -2;
+    v = f77_av_operand(A->from[iv], A->to[iv]);
+    if (v < 0) return -1;
+    if (f77_srank[v] != 1) { f77_error("UNPACK's VECTOR is an array of rank 1"); return -1; }
+    msk = f77_av_operand(A->from[im], A->to[im]);
+    if (msk < 0) return -1;
+    if (!f77_slog[msk]) { f77_error("a MASK is LOGICAL"); return -1; }
+    fld = -1; fv = -1; fvhi = -1;
+    if (f77_aex_first(A->from[ifl], A->to[ifl], &at) >= 0) {
+        fld = f77_av_operand(A->from[ifl], A->to[ifl]);
+        if (fld < 0) return -1;
+        if (f77_sty[fld] != f77_sty[v] || f77_slog[fld] != f77_slog[v]) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
+    } else {
+        fv = f77_expr_at(A->from[ifl], A->to[ifl]);
+        fvhi = ex_hi;
+        if (ex_ty != f77_sty[v] || ex_log != f77_slog[v]) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
+    }
+    for (k = 0; k < f77_srank[msk]; k++) ext[k] = f77_hid_ext(msk, k);
+    r = f77_temp_array(f77_sty[v], f77_slog[v], f77_snar[v], f77_esize(v), f77_srank[msk], ext);
+    n = f77_hid_size(msk);
+    cnt = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, cnt, f77_iconst(0), 0, NULL);
+    f77_loop_begin(&lp, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, n, -1, -1, NULL), f77_iconst(1));
+    {
+        int p; int dst; int b_t; int b_f; int b_j; int j;
+        p = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+        dst = f77_hid_elem_p(r, p);
+        b_t = hir_new_block(); b_f = hir_new_block(); b_j = hir_new_block();
+        hi_emit(HI_BRC, TY_VOID, f77_av_mask_at(msk, -1, p), b_t, b_f, NULL);
+        f77_cur_blk_live = 0;
+        f77_begin_blk(b_t);
+        j = hi_emit(HI_LOAD, TY_INT, cnt, -1, 0, NULL);
+        f77_copy_bytes(dst, f77_hid_elem_p(v, j), f77_esize(v));
+        hi_emit(HI_STORE, TY_INT, cnt, hi_emit(HI_ADDI, TY_INT, j, -1, 1, NULL), 0, NULL);
+        f77_goto_blk(b_j);
+        f77_begin_blk(b_f);
+        if (fld >= 0) f77_copy_bytes(dst, f77_hid_elem_p(fld, p), f77_esize(v));
+        else f77_store_at(dst, f77_mty(r), fv, f77_sty[v], fvhi);
+        f77_goto_blk(b_j);
+        f77_begin_blk(b_j);
+    }
+    f77_loop_end(&lp);
+    return r;
+}
+
+/* CSHIFT(ARRAY, SHIFT [, DIM]) and EOSHIFT(ARRAY, SHIFT [, BOUNDARY]
+ * [, DIM]) (F90 13.13.25, 13.13.32): element i along DIM is ARRAY's
+ * i+SHIFT -- circularly for CSHIFT, else BOUNDARY (0, .FALSE.) past
+ * either end.  SHIFT and BOUNDARY are scalars, DIM a constant. */
+static int f77_av_shift(F77Args *A, int eo) {
+    int ia; int is; int ib; int id; int k; int a; int sh; int d; int r; int rank; int n;
+    int bv; int bvhi;
+    int ext[F77_MAX_RANK]; int cur[F77_MAX_RANK]; int src[F77_MAX_RANK];
+    F77Loop lp[F77_MAX_RANK];
+    ia = -1; is = -1; ib = -1; id = -1;
+    for (k = 0; k < A->n; k++) {
+        if ((A->kw[k][0] == 0 && k == 0) || strcmp(A->kw[k], "ARRAY") == 0) ia = k;
+        else if ((A->kw[k][0] == 0 && k == 1) || strcmp(A->kw[k], "SHIFT") == 0) is = k;
+        else if (eo && ((A->kw[k][0] == 0 && k == 2) || strcmp(A->kw[k], "BOUNDARY") == 0)) ib = k;
+        else if ((A->kw[k][0] == 0 && k == (eo ? 3 : 2)) || strcmp(A->kw[k], "DIM") == 0) id = k;
+        else return -2;
+    }
+    if (ia < 0 || is < 0) return -2;
+    a = f77_av_operand(A->from[ia], A->to[ia]);
+    if (a < 0) return -1;
+    rank = f77_srank[a];
+    {
+        int at;
+        if (f77_aex_first(A->from[is], A->to[is], &at) >= 0) { f77_error("an array SHIFT is not supported yet"); return -1; }
+    }
+    sh = f77_av_int(A->from[is], A->to[is], "SHIFT");
+    d = 1;
+    if (id >= 0) {
+        d = f77_av_int(A->from[id], A->to[id], "DIM");
+        if (h_kind[d] != HI_ICONST) { f77_error("DIM of CSHIFT and EOSHIFT is supported only as a constant"); return -1; }
+        d = h_val[d];
+        if (d < 1 || d > rank) { f77_error("DIM of CSHIFT and EOSHIFT is outside the array's rank"); return -1; }
+    }
+    bv = -1; bvhi = -1;
+    if (eo) {
+        if (ib >= 0) {
+            int at;
+            if (f77_aex_first(A->from[ib], A->to[ib], &at) >= 0) { f77_error("an array BOUNDARY is not supported yet"); return -1; }
+            bv = f77_expr_at(A->from[ib], A->to[ib]);
+            bvhi = ex_hi;
+            if (ex_ty != f77_sty[a] || ex_log != f77_slog[a]) { f77_error("EOSHIFT's BOUNDARY differs in type from its ARRAY"); return -1; }
+        } else {
+            bvhi = -1;
+            bv = f77_cvt(f77_iconst(0), &bvhi, TY_INT, f77_sty[a]);
+        }
+    }
+    for (k = 0; k < rank; k++) ext[k] = f77_hid_ext(a, k);
+    r = f77_temp_array(f77_sty[a], f77_slog[a], f77_snar[a], f77_esize(a), rank, ext);
+    n = ext[d - 1];
+    for (k = rank - 1; k >= 0; k--) f77_loop_begin(&lp[k], f77_iconst(1), ext[k], f77_iconst(1));
+    for (k = 0; k < rank; k++) { cur[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL); src[k] = cur[k]; }
+    {
+        int j;
+        j = hi_emit(HI_ADD, TY_INT, cur[d - 1], sh, 0, NULL);          /* i + SHIFT */
+        if (!eo) {
+            /* MOD(i - 1 + SHIFT, n) in 0..n-1, then + 1 */
+            int q;
+            q = hi_emit(HI_REM, TY_INT, hi_emit(HI_ADDI, TY_INT, j, -1, -1, NULL), n, 0, NULL);
+            q = hi_emit(HI_ADD, TY_INT, q, f77_select(hi_emit(HI_SLT, TY_INT, q, f77_iconst(0), 0, NULL), n, f77_iconst(0)), 0, NULL);
+            src[d - 1] = hi_emit(HI_ADDI, TY_INT, q, -1, 1, NULL);
+            f77_copy_bytes(f77_elem_addr(r, cur, rank), f77_elem_addr(a, src, rank), f77_esize(a));
+        } else {
+            int in; int b_in; int b_out; int b_j; int dst;
+            in = hi_emit(HI_AND, TY_INT, hi_emit(HI_SGT, TY_INT, j, f77_iconst(0), 0, NULL),
+                         hi_emit(HI_SLE, TY_INT, j, n, 0, NULL), 0, NULL);
+            dst = f77_elem_addr(r, cur, rank);
+            b_in = hir_new_block(); b_out = hir_new_block(); b_j = hir_new_block();
+            hi_emit(HI_BRC, TY_VOID, in, b_in, b_out, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_in);
+            src[d - 1] = j;
+            f77_copy_bytes(dst, f77_elem_addr(a, src, rank), f77_esize(a));
+            f77_goto_blk(b_j);
+            f77_begin_blk(b_out);
+            f77_store_at(dst, f77_mty(r), bv, f77_sty[a], bvhi);
+            f77_goto_blk(b_j);
+            f77_begin_blk(b_j);
+        }
+    }
+    for (k = 0; k < rank; k++) f77_loop_end(&lp[k]);
+    return r;
+}
+
+/* The reductions' names and codes, for those that give arrays. */
+static int f77_red_in(char *nm) {
+    if (strcmp(nm, "SUM") == 0) return IN_SUM;
+    if (strcmp(nm, "PRODUCT") == 0) return IN_PRODUCT;
+    if (strcmp(nm, "MAXVAL") == 0) return IN_MAXVAL;
+    if (strcmp(nm, "MINVAL") == 0) return IN_MINVAL;
+    if (strcmp(nm, "MAXLOC") == 0) return IN_MAXLOC;
+    if (strcmp(nm, "MINLOC") == 0) return IN_MINLOC;
+    if (strcmp(nm, "COUNT") == 0) return IN_COUNT;
+    if (strcmp(nm, "ANY") == 0) return IN_ANY;
+    if (strcmp(nm, "ALL") == 0) return IN_ALL;
+    return IN_NONE;
+}
+
+/* A reduction's ARRAY (MASK for COUNT ANY ALL), DIM and MASK arguments,
+ * as f77_reduce takes them; -1 when not given.  0 when the arguments are
+ * not ones it takes. */
+static int f77_red_roles(int in, F77Args *A, int *arr, int *dim, int *mask) {
+    int k; int islog; int at;
+    islog = in == IN_COUNT || in == IN_ANY || in == IN_ALL;
+    *arr = -1; *dim = -1; *mask = -1;
+    for (k = 0; k < A->n; k++) {
+        char *kw;
+        kw = A->kw[k];
+        if ((kw[0] == 0 && k == 0) || strcmp(kw, islog ? "MASK" : "ARRAY") == 0) { if (*arr >= 0) return 0; *arr = k; }
+        else if (strcmp(kw, "DIM") == 0) { if (*dim >= 0) return 0; *dim = k; }
+        else if (!islog && strcmp(kw, "MASK") == 0) { if (*mask >= 0) return 0; *mask = k; }
+        else if (kw[0] == 0 && k == 1) {
+            if (!islog && f77_aex_first(A->from[k], A->to[k], &at) >= 0) *mask = k;
+            else *dim = k;
+        } else if (kw[0] == 0 && k == 2 && !islog) { if (*mask >= 0) return 0; *mask = k; }
+        else return 0;
+    }
+    return *arr >= 0;
+}
+
+/* The rank of the array expression the text [from, to) is: its first
+ * operand's (f77_aex_first), its triplets for a section.  Text-level. */
+static int f77_text_rank(int from, int to) {
+    int sy; int at; int i; int d; int r;
+    sy = f77_aex_first(from, to, &at);
+    if (sy < 0) return 0;
+    i = at + (int)strlen(f77_sname[sy]);
+    if (i >= to || lx_stmt[i] != '(') return f77_srank[sy];
+    d = 0; r = 0;
+    for (; i < to; i++) {
+        if (lx_stmt[i] == '(') d = d + 1;
+        else if (lx_stmt[i] == ')') { d = d - 1; if (d == 0) break; }
+        else if (lx_stmt[i] == ':' && d == 1) {
+            r = r + 1;
+            /* lo:hi:st is one triplet */
+            while (i + 1 < to && lx_stmt[i + 1] != ',' && lx_stmt[i + 1] != ')') {
+                i = i + 1;
+                if (lx_stmt[i] == '(') { int dd = 1; i = i + 1; while (i < to && dd > 0) { if (lx_stmt[i] == '(') dd++; else if (lx_stmt[i] == ')') dd--; if (dd > 0) i++; } }
+            }
+        }
+    }
+    return r;
+}
+
+/* A reduction with DIM of an array of rank 2 or more (F90 13.13.105 and
+ * kin): an array of rank one less, each element the reduction along DIM
+ * of the elements with the other subscripts its own -- MAXLOC and MINLOC
+ * the location along DIM.  MAXLOC or MINLOC without DIM: a rank-1 array
+ * of the location's subscripts (all 0 when no element is taken). */
+static int f77_av_reddim(int in, F77Args *A) {
+    int arr; int dim; int mask; int a; int m; int d; int rank; int k; int r;
+    int ext[F77_MAX_RANK]; int cur[F77_MAX_RANK]; int full[F77_MAX_RANK];
+    F77Loop lp[F77_MAX_RANK];
+    F77Loop ld;
+    char *fname;
+    fname = in == IN_SUM ? "SUM" : in == IN_PRODUCT ? "PRODUCT" : in == IN_MAXVAL ? "MAXVAL" :
+            in == IN_MINVAL ? "MINVAL" : in == IN_MAXLOC ? "MAXLOC" : in == IN_MINLOC ? "MINLOC" :
+            in == IN_COUNT ? "COUNT" : in == IN_ANY ? "ANY" : "ALL";
+    if (!f77_red_roles(in, A, &arr, &dim, &mask)) return -2;
+    a = f77_av_operand(A->from[arr], A->to[arr]);
+    if (a < 0) return -1;
+    rank = f77_srank[a];
+    m = -1;
+    if (mask >= 0) {
+        int mval;
+        if (!f77_av_mask(A->from[mask], A->to[mask], &m, &mval)) return -1;
+        if (m < 0) { f77_error("MASK= here is a LOGICAL array"); return -1; }
+    }
+    if (dim < 0) {
+        /* MAXLOC or MINLOC of the whole array: the location's subscripts */
+        F77Red R;
+        int n; int loc; int q;
+        F77Loop la;
+        n = f77_hid_size(a);
+        f77_red_begin(&R, in, fname);
+        f77_loop_begin(&la, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, n, -1, -1, NULL), f77_iconst(1));
+        {
+            int p0; int p; int b_next; int x;
+            p0 = hi_emit(HI_LOAD, TY_INT, la.idx, -1, 0, NULL);
+            b_next = hir_new_block();
+            p = f77_red_count(&R);
+            if (m >= 0) {
+                int b_do;
+                b_do = hir_new_block();
+                hi_emit(HI_BRC, TY_VOID, f77_av_mask_at(m, -1, p0), b_do, b_next, NULL);
+                f77_cur_blk_live = 0;
+                f77_begin_blk(b_do);
+            }
+            x = f77_load_at(f77_hid_elem_p(a, p0), f77_mty(a));
+            f77_red_take(&R, x, ex_ty, ex_hi, f77_slog[a], p, b_next);
+            f77_goto_blk(b_next);
+            f77_begin_blk(b_next);
+        }
+        f77_loop_end(&la);
+        loc = f77_red_end(&R);
+        ext[0] = f77_iconst(rank);
+        r = f77_temp_array(TY_INT, 0, 0, 4, 1, ext);
+        f77_shcount[r] = rank;
+        /* ordinal p (from 1; 0: none) to subscripts: q = p - 1 split by
+         * the extents, each + 1 -- all 0 for none */
+        q = hi_emit(HI_ADDI, TY_INT, loc, -1, -1, NULL);
+        for (k = 0; k < rank; k++) {
+            int e; int sub; int i1;
+            e = f77_hid_ext(a, k);
+            if (k + 1 < rank) sub = hi_emit(HI_REM, TY_INT, q, e, 0, NULL);
+            else sub = q;
+            sub = f77_select(hi_emit(HI_SEQ, TY_INT, loc, f77_iconst(0), 0, NULL), f77_iconst(-1), sub);
+            i1 = f77_iconst(k + 1);
+            hi_emit(HI_STORE, TY_INT, f77_elem_addr(r, &i1, 1), hi_emit(HI_ADDI, TY_INT, sub, -1, 1, NULL), 0, NULL);
+            if (k + 1 < rank) q = hi_emit(HI_DIV, TY_INT, q, e, 0, NULL);
+        }
+        return r;
+    }
+    d = f77_av_int(A->from[dim], A->to[dim], "DIM");
+    if (h_kind[d] != HI_ICONST) { f77_error("DIM= of a reduction of an array of rank above 1 is supported only as a constant"); return -1; }
+    d = h_val[d];
+    if (d < 1 || d > rank) { f77_error("DIM= of a reduction is outside the array's rank"); return -1; }
+    for (k = 0; k < rank; k++) if (k != d - 1) ext[k < d - 1 ? k : k - 1] = f77_hid_ext(a, k);
+    {
+        int rty; int rlog;
+        /* the result's type: the element's; LOGICAL for ANY ALL; INTEGER
+         * for COUNT MAXLOC MINLOC */
+        rty = f77_sty[a]; rlog = f77_slog[a];
+        if (in == IN_COUNT || in == IN_MAXLOC || in == IN_MINLOC) { rty = TY_INT; rlog = 0; }
+        if (in == IN_ANY || in == IN_ALL) { rty = TY_INT; rlog = 1; }
+        r = f77_temp_array(rty, rlog, 0, f77_tysize(rty), rank - 1, ext);
+    }
+    for (k = rank - 2; k >= 0; k--) f77_loop_begin(&lp[k], f77_iconst(1), ext[k], f77_iconst(1));
+    for (k = 0; k < rank - 1; k++) cur[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+    {
+        F77Red R;
+        int v; int vhi; int vty;
+        f77_red_begin(&R, in, fname);
+        f77_loop_begin(&ld, f77_iconst(1), f77_hid_ext(a, d - 1), f77_iconst(1));
+        {
+            int i; int p; int b_next; int x;
+            i = hi_emit(HI_LOAD, TY_INT, ld.idx, -1, 0, NULL);
+            for (k = 0; k < rank; k++) {
+                if (k == d - 1) full[k] = i;
+                else full[k] = cur[k < d - 1 ? k : k - 1];
+            }
+            b_next = hir_new_block();
+            p = f77_red_count(&R);
+            if (m >= 0) {
+                int b_do;
+                b_do = hir_new_block();
+                hi_emit(HI_BRC, TY_VOID, hi_emit(HI_LOAD, TY_INT, f77_elem_addr(m, full, rank), -1, 0, NULL), b_do, b_next, NULL);
+                f77_cur_blk_live = 0;
+                f77_begin_blk(b_do);
+            }
+            x = f77_load_at(f77_elem_addr(a, full, rank), f77_mty(a));
+            f77_red_take(&R, x, ex_ty, ex_hi, f77_slog[a], p, b_next);
+            f77_goto_blk(b_next);
+            f77_begin_blk(b_next);
+        }
+        f77_loop_end(&ld);
+        v = f77_red_end(&R);
+        vty = ex_ty; vhi = ex_hi;
+        f77_store_at(f77_elem_addr(r, cur, rank - 1), f77_mty(r), v, vty, vhi);
+    }
+    for (k = 0; k < rank - 1; k++) f77_loop_end(&lp[k]);
+    return r;
+}
+
 /* Is the reference whose name is the text [b, open), its '(' at open, an
  * array-valued intrinsic -- not shadowed by an array, a dummy, an
  * EXTERNAL, a procedure of the file or a module's? */
@@ -9139,6 +9618,19 @@ static int f77_av_kind(int b, int open) {
     if (strcmp(nm, "RESHAPE") == 0) return AV_RESHAPE;
     if (strcmp(nm, "SPREAD") == 0) return AV_SPREAD;
     if (strcmp(nm, "SHAPE") == 0) return AV_SHAPE;
+    if (strcmp(nm, "PACK") == 0) return AV_PACK;
+    if (strcmp(nm, "UNPACK") == 0) return AV_UNPACK;
+    if (strcmp(nm, "CSHIFT") == 0) return AV_CSHIFT;
+    if (strcmp(nm, "EOSHIFT") == 0) return AV_EOSHIFT;
+    if (f77_red_in(nm) != IN_NONE) {
+        F77Args a;
+        int in; int arr; int dim; int mask;
+        in = f77_red_in(nm);
+        if (!f77_args_at(open, &a) || !f77_red_roles(in, &a, &arr, &dim, &mask)) return AV_NONE;
+        if (dim >= 0 && f77_text_rank(a.from[arr], a.to[arr]) >= 2) return AV_REDDIM;
+        if (dim < 0 && (in == IN_MAXLOC || in == IN_MINLOC)) return AV_REDDIM;
+        return AV_NONE;
+    }
     if (strcmp(nm, "LBOUND") == 0 || strcmp(nm, "UBOUND") == 0) {
         F77Args a;
         if (!f77_args_at(open, &a)) return AV_NONE;
@@ -9676,7 +10168,18 @@ static int f77_av_eval(int av, int b, int close) {
         if (sb < 0) return -1;
         return f77_av_matmul(sa, sb);
     }
-    if (av == AV_SHAPE || av == AV_LBOUND || av == AV_UBOUND) r = f77_av_bounds(av, &A);
+    if (av == AV_REDDIM) {
+        char nm[F77_MAX_NAME];
+        int n;
+        n = open - b;
+        memcpy(nm, lx_stmt + b, (size_t)n);
+        nm[n] = 0;
+        r = f77_av_reddim(f77_red_in(nm), &A);
+    }
+    else if (av == AV_PACK) r = f77_av_pack(&A);
+    else if (av == AV_UNPACK) r = f77_av_unpack(&A);
+    else if (av == AV_CSHIFT || av == AV_EOSHIFT) r = f77_av_shift(&A, av == AV_EOSHIFT);
+    else if (av == AV_SHAPE || av == AV_LBOUND || av == AV_UBOUND) r = f77_av_bounds(av, &A);
     else if (av == AV_RESHAPE) r = f77_av_reshape(&A);
     else if (av == AV_SPREAD) r = f77_av_spread(&A);
     if (r != -2) return r;
@@ -9721,6 +10224,44 @@ static int f77_hoist(int from, int *to) {
         n = n + 1;
     }
     return n;
+}
+
+/* A call's actuals, lx_t at their '(': array-valued intrinsics and
+ * constructors among them evaluated first (f77_hoist) -- the temporaries
+ * go on the f77_tfree list the call frees after it -- and lx_t at the '('
+ * again.  An actual that is an array expression other than an array or a
+ * section is evaluated into a hidden array as well. */
+static void f77_hoist_actuals(void) {
+    int open; int end; int changed; int nerr0;
+    if (lx_t != T_LP) return;
+    open = (int)(lx_rts - lx_stmt);
+    end = f77_match_paren(open) - 1;
+    nerr0 = f77_nerr;
+    changed = f77_hoist(open + 1, &end);
+    /* an actual that is an array expression other than an array or a
+     * section (CALL S(A+1.0)) is evaluated into a hidden array, passed as
+     * one */
+    for (;;) {
+        F77Args A;
+        int k; int found;
+        if (f77_nerr > nerr0 || !f77_args_at(open, &A)) break;
+        found = 0;
+        for (k = 0; k < A.n; k++) {
+            int sy; int at; int h;
+            if (A.kw[k][0]) continue;
+            sy = f77_aex_first(A.from[k], A.to[k], &at);
+            if (sy < 0 || f77_sty[sy] == TY_CHAR) continue;
+            if (at == A.from[k] && f77_text_is_operand(sy, A.from[k], A.to[k])) continue;
+            h = f77_av_operand(A.from[k], A.to[k]);
+            if (h < 0) break;
+            f77_text_replace(A.from[k], A.to[k], h);
+            found = 1;
+            changed = 1;
+            break;
+        }
+        if (!found) break;
+    }
+    if (changed) f77_scan_from(open);
 }
 
 static int f77_actual_addr(void) {
