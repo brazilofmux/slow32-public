@@ -419,6 +419,15 @@ if [ -x "$F77" ]; then
     opm='module m\ntype pt\nreal :: x\nend type\ninterface operator(+)\nmodule procedure padd\nend interface\ninterface assignment(=)\nmodule procedure pfromi\nend interface\ncontains\nfunction padd(a, b)\ntype(pt), intent(in) :: a, b\ntype(pt) :: padd\npadd%%x = a%%x + b%%x\nend function\nsubroutine pfromi(a, i)\ntype(pt), intent(out) :: a\ninteger, intent(in) :: i\na%%x = i\nend subroutine\nend module\n'
     printf "${opm}program q\nuse m\ntype(pt) :: a(3), b(3)\na = b + b\nend\n" > "$W/opaex.f90"
     printf "${opm}program q\nuse m\ntype(pt) :: a(3)\na = 1\nend\n" > "$W/opasgarr.f90"
+    # Fortran 95's ELEMENTAL: what an array needs of a defined assignment, and where an elemental reference may stand
+    printf 'module m\ntype pt\nreal :: x\nend type\ninterface assignment(=)\nmodule procedure pa\nend interface\ncontains\nsubroutine pa(a, b)\ntype(pt), intent(out) :: a(:)\nreal, intent(in) :: b(:)\na%%x = b\nend subroutine\nend module\nprogram q\nuse m\ntype(pt) :: a(3)\nreal :: f(3)\na = f\nend\n' > "$W/asgarrproc.f90"
+    printf 'module m\ntype pt\nreal :: x\nend type\ninterface assignment(=)\nmodule procedure pa\nend interface\ncontains\nelemental subroutine pa(a, b)\ntype(pt), intent(out) :: a\ntype(pt), intent(in) :: b\na%%x = b%%x + 1.0\nend subroutine\nend module\nprogram q\nuse m\ntype(pt) :: a(3)\na = a(3:1:-1)\nend\n' > "$W/elemasgself.f90"
+    printf "program p\nreal :: x(3)\nx = 1.0\nif (cube(x) > 2.0) print *, 'no'\ncontains\nelemental real function cube(a)\nreal, intent(in) :: a\ncube = a * a * a\nend function\nend\n" > "$W/elemarg.f90"
+    # LOGICAL is not INTEGER to a generic or to an operator (F90 14.1.2.3)
+    glm='module m\ninterface show\nmodule procedure si\nend interface\ninterface operator(.x.)\nmodule procedure xi\nend interface\ncontains\nsubroutine si(k)\ninteger :: k\nend subroutine\ninteger function xi(a, b)\ninteger, intent(in) :: a, b\nxi = a + b\nend function\nend module\n'
+    printf "${glm}program q\nuse m\nlogical :: l\ncall show(l)\nend\n" > "$W/genlog.f90"
+    printf "${glm}program q\nuse m\ncall show(1 > 0)\nend\n" > "$W/genlogx.f90"
+    printf "${glm}program q\nuse m\nlogical :: l\nprint *, l .x. 1\nend\n" > "$W/oplog.f90"
     printf "${opm}program q\nuse m, operator(+) => operator(-)\nend\n" > "$W/opren.f90"
     printf "${opm}program q\nuse m, only: pt, operator(*)\nend\n" > "$W/opnone.f90"
     printf "${opm}program q\nuse m\ntype(pt) :: a\na = 1.5\nend\n" > "$W/opasgty.f90"
@@ -559,7 +568,13 @@ if [ -x "$F77" ]; then
              "alscal:line 3: an ALLOCATABLE array needs its rank, as (:) or (:,:)" \
              "dtptrio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
              "dtptrcons:line 6: a pointer's target is a variable" \
-             "opaex:line 26: a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)" \
+             "opaex:line 26: a defined operation in an array expression needs an ELEMENTAL procedure" \
+             "asgarrproc:line 19: a defined assignment whose procedure takes arrays is not supported" \
+             "elemasgself:line 18: an ELEMENTAL defined assignment whose value names its target is not supported" \
+             "elemarg:line 4: an ELEMENTAL procedure's array argument is not supported here" \
+             "genlog:line 20: no procedure of the generic SHOW takes these arguments" \
+             "genlogx:line 19: no procedure of the generic SHOW takes these arguments" \
+             "oplog:line 20: no OPERATOR(.X.) here for these operands" \
              "opasgarr:line 26: a value of another type for an array of structures" \
              "opren:line 24: an operator is named in a USE's ONLY list, not renamed" \
              "opnone:line 24: module M has no OPERATOR(*)" \
