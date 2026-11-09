@@ -288,7 +288,6 @@ if [ -x "$F77" ]; then
     printf 'integer(8) :: i8\nend\n' > "$W/kindi8.f90"
     printf 'x = 1.0_k\nend\n' > "$W/kindlit.f90"
     printf 'y = 2.0_16\nend\n' > "$W/kindlit16.f90"
-    printf 'module mv\nreal :: x\nend module mv\n' > "$W/modvar.f90"
     printf 'module mi\ninterface\nsubroutine s(x)\nend subroutine s\nend interface\nend module mi\n' > "$W/modibody.f90"
     printf 'use nosuch\nend\n' > "$W/usenone.f90"
     printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
@@ -349,6 +348,7 @@ if [ -x "$F77" ]; then
     printf 'integer m(2,2), s(2)\nm = 1\nn = 1\ns = sum(m, n)\nend\n' > "$W/rddim.f90"
     printf 'integer m(9)\nm = 0\nm(1:5) = (/ (/ 1, 2 /), 3 /)\nend\n' > "$W/aconshp.f90"
     printf 'print *, f(3)\nend\nfunction f(n) result(r)\nr = f(n - 1)\nend\n' > "$W/recnot.f90"
+    printf 'module m\ninteger :: x\nend module\nuse m\nreal :: x\nend\n' > "$W/modvredecl.f90"
     printf 'subroutine s\ncall s\nend\n' > "$W/recsub.f90"
     printf 'function f(n) result(f)\nf = n\nend\n' > "$W/resname.f90"
     printf 'implicit none\nimplicit integer (i)\nend\n' > "$W/impmix.f90"
@@ -416,6 +416,7 @@ if [ -x "$F77" ]; then
              "lenfn:line 1: G is REAL here but COMPLEX*16 where it is defined (line 3)" \
              "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT" \
              "recnot:line 4: F is not RECURSIVE: it cannot reference itself" \
+             "modvredecl:line 5: X is a module's, by USE: it cannot be declared again" \
              "recsub:line 2: S is not RECURSIVE: it cannot call itself" \
              "resname:line 1: a FUNCTION's RESULT has a name of its own" \
              "impmix:line 2: IMPLICIT NONE is the only IMPLICIT statement of its unit" \
@@ -433,7 +434,6 @@ if [ -x "$F77" ]; then
              "kindi8:line 1: kind 8 of this type is not supported" \
              "kindlit:line 1: the kind of a constant must be digits or an INTEGER named constant, not K" \
              "kindlit16:line 1: REAL kind 16 is not supported" \
-             "modvar:line 3: X: a module variable is not supported yet" \
              "modibody:line 2: an INTERFACE block of interface bodies is not supported yet" \
              "usenone:line 1: no module NOSUCH: neither in this file before the USE, nor a .mod file of it here" \
              "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
