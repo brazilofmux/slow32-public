@@ -1652,6 +1652,20 @@ void *f77_deallocate(void *cur, int *stat) {
  * (Fortran 95's rule; F90 left them undefined). */
 void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
 
+/* Structures as they start (Fortran 95's default initialization, and
+ * ALLOCATABLE components unallocated): count of them, size bytes each,
+ * at dst, each a copy of its type's image at tmpl -- zeros when tmpl is
+ * null.  Nothing when dst is null: an absent OPTIONAL dummy, an ALLOCATE
+ * that failed under STAT=. */
+void f77_dfl_fill(char *dst, const char *tmpl, int size, int count) {
+    int i;
+    if (!dst) return;
+    for (i = 0; i < count; i++) {
+        if (tmpl) memcpy(dst + i * size, tmpl, (size_t)size);
+        else memset(dst + i * size, 0, (size_t)size);
+    }
+}
+
 /* ALLOCATABLE components (the Fortran 95 TR's): each one's descriptor
  * [base, (extent, stride) per dimension, lower bounds], as a pointer
  * array's.  f77_dta_free frees the component at p in count structures

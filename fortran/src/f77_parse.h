@@ -370,6 +370,12 @@ static int  f77_dt_c0[F77_MAX_DT];
 static int  f77_dt_nc[F77_MAX_DT];
 static int  f77_dt_seq[F77_MAX_DT];
 static int  f77_dt_unit[F77_MAX_DT];                /* the unit that defined it, -1 if read */
+/* Default initialization (Fortran 95 4.4.1): the bytes a structure of the
+ * type starts with -- its components' = value and => NULL(), zero where
+ * none says -- or NULL for a type without; and the name of the static
+ * copy the compiled program fills from, made when first wanted. */
+static unsigned char *f77_dt_dfl[F77_MAX_DT];
+static char *f77_dt_dflg[F77_MAX_DT];
 static int  f77_ndt;
 static char f77_dc_name[F77_MAX_DTC][F77_MAX_NAME];
 static int  f77_dc_ty[F77_MAX_DTC];
@@ -468,6 +474,7 @@ static int f77_dt_value(int s);
 static int f77_dt_construct(int dt);
 static void f77_io_derived(int addr, int dt);
 static int f77_td_in;
+static int f77_td_base; static int f77_td_scope;
 static int f77_td_stmt(int cls);
 static int f77_is_typedef(void);
 static void f77_td_begin(void);
@@ -2489,6 +2496,7 @@ static int f77_minmax(int want_max, int a, int ahi, int b, int bhi,
 static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
+static int f77_csym_find(char *nm);
 static int f77_sym_decl(char *nm);
 static void f77_opt_note(int s);
 static int f77_ptr_note(int s);
@@ -7587,7 +7595,8 @@ static void f77_kind_lit(void) {
 
 /* An intrinsic in a constant expression (Fortran 90 initialization
  * expressions: elemental intrinsics of constants, and the inquiries):
- * HUGE TINY EPSILON, DCMPLX CMPLX, DBLE REAL INT NINT ABS, MAX MIN MOD.
+ * HUGE TINY EPSILON, DCMPLX CMPLX, DBLE REAL INT NINT ABS, MAX MIN MOD,
+ * LEN.
  * lx_t is the name, '(' next.  0 when the name is none of these (or is an
  * array of the unit): the caller goes on as before. */
 static int f77_cintrinsic(void);
@@ -7597,7 +7606,7 @@ static int f77_cintrinsic(void) {
     static const char *names[] = { "HUGE", "TINY", "EPSILON", "DCMPLX", "CMPLX", "DBLE", "REAL",
                                    "INT", "NINT", "ABS", "MAX", "MIN", "MOD", "KIND", "RADIX", "DIGITS",
                                    "MINEXPONENT", "MAXEXPONENT", "PRECISION", "RANGE", "SELECTED_REAL_KIND",
-                                   "SELECTED_INT_KIND", "SQRT", "CEILING", "FLOOR", 0 };
+                                   "SELECTED_INT_KIND", "SQRT", "CEILING", "FLOOR", "LEN", 0 };
     char nm[F77_MAX_NAME];
     int ty[8]; int iv[8]; double dv[8]; double d2[8];
     char kw[8][8];
@@ -7605,15 +7614,31 @@ static int f77_cintrinsic(void) {
     int k;
     int s;
     int rty;
+    if (strcmp(lex_name, "LEN") == 0 && f77_csym_find(lex_name) < 0 && !f77_scan_mode) {
+        /* of a CHARACTER variable whose length is a constant: the inquiry
+         * (F90 7.1.6.1), LEN(C) alone; a constant's is below */
+        int i; int a; char vn[F77_MAX_NAME];
+        i = (int)(lx_rp - lx_stmt) + 1;
+        a = 0;
+        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) { if (a < F77_MAX_NAME - 1) vn[a++] = lx_stmt[i]; i = i + 1; }
+        vn[a] = 0;
+        a = a > 0 && i < lx_stmt_len && lx_stmt[i] == ')' ? f77_csym_find(vn) : -1;
+        if (a >= 0 && f77_sty[a] == TY_CHAR && !f77_sparam[a] && !f77_sparr[a]) {
+            if (f77_slen[a] <= 0 || f77_slenv[a] >= 0) { f77_error("LEN in a constant expression needs a CHARACTER length that is a constant"); return 1; }
+            f77_tok(); f77_tok(); f77_tok(); f77_tok();
+            f77_cx_ty = TY_INT; f77_cx_i = f77_slen[a]; f77_cx_d = (double)f77_cx_i;
+            return 1;
+        }
+    }
     if ((strcmp(lex_name, "SIZE") == 0 || strcmp(lex_name, "LBOUND") == 0 || strcmp(lex_name, "UBOUND") == 0) &&
-        f77_sym_find(lex_name) < 0 && !f77_scan_mode) {
+        f77_csym_find(lex_name) < 0 && !f77_scan_mode) {
         /* an array of constant shape's (F90 7.1.6.1): SIZE, LBOUND and
          * UBOUND with DIM= or of rank 1 */
         int a; int d; int which;
         which = lex_name[0];
         f77_tok(); f77_tok();
         if (lx_t == T_NAME && strcmp(lex_name, "ARRAY") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
-        a = lx_t == T_NAME ? f77_sym_find(lex_name) : -1;
+        a = lx_t == T_NAME ? f77_csym_find(lex_name) : -1;
         if (a < 0 || f77_srank[a] == 0 || f77_adjustable(a) || f77_sassz[a] || f77_salloc[a] || f77_sashape[a] || f77_sptr[a]) {
             f77_error("SIZE, LBOUND or UBOUND in a constant expression needs an array of constant shape");
             f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
@@ -7641,7 +7666,7 @@ static int f77_cintrinsic(void) {
     }
     for (k = 0; names[k]; k++) if (strcmp(lex_name, names[k]) == 0) break;
     if (!names[k]) return 0;
-    s = f77_sym_find(lex_name);
+    s = f77_csym_find(lex_name);
     if (s >= 0 && (f77_srank[s] > 0 || f77_sparam[s])) return 0;
     strcpy(nm, lex_name);
     f77_tok();                                   /* the name */
@@ -7700,6 +7725,11 @@ static int f77_cintrinsic(void) {
         return 1;
     selbad:
         f77_error(isint ? "SELECTED_INT_KIND takes one argument, R" : "SELECTED_REAL_KIND takes P, R or both");
+        return 1;
+    }
+    if (strcmp(nm, "LEN") == 0) {
+        if (n != 1 || ty[0] != TY_CHAR) { f77_error("LEN in a constant expression takes a CHARACTER constant"); return 1; }
+        f77_cx_ty = TY_INT; f77_cx_i = iv[0]; f77_cx_d = (double)iv[0];
         return 1;
     }
     if (strcmp(nm, "SQRT") == 0) {
@@ -7869,7 +7899,13 @@ static void f77_cprimary(void) {
             f77_tok();
             return;
         }
-        s = f77_sym(lex_name);
+        s = f77_td_in ? f77_csym_find(lex_name) : f77_sym(lex_name);
+        if (s < 0) {
+            f77_error("only PARAMETER constants may appear in a constant expression");
+            f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
+            f77_tok();
+            return;
+        }
         if (f77_sparr[s]) {
             /* an element of a PARAMETER array, by constant subscripts */
             int elem; int stride; int d;
@@ -8036,7 +8072,7 @@ static void f77_cterm(void) {
     }
 }
 
-static void f77_cexpr(void) {
+static void f77_carith(void) {
     int ty; int iv; double dv; int add; double d2v;
     f77_cterm();
     for (;;) {
@@ -8063,6 +8099,55 @@ static void f77_cexpr(void) {
         f77_cx_round();
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
         else f77_cx_i = (int)f77_cx_d;
+    }
+}
+
+/* The logical constant expression (F77 6.7.2.2): a relation between two
+ * arithmetic ones, then .NOT., .AND., .OR., .EQV. and .NEQV. in their
+ * order.  A truth value is the INTEGER 0 or 1, as .TRUE. and .FALSE.
+ * are here. */
+static void f77_cx_truth(int v) { f77_cx_ty = TY_INT; f77_cx_i = v != 0; f77_cx_d = (double)f77_cx_i; }
+static void f77_crel(void) {
+    int op; int ty; int iv; double dv; int r;
+    f77_carith();
+    if (!(lx_t == T_EQ || lx_t == T_NE || lx_t == T_LT || lx_t == T_LE || lx_t == T_GT || lx_t == T_GE)) return;
+    op = lx_t; ty = f77_cx_ty; iv = f77_cx_i; dv = f77_cx_d;
+    f77_tok();
+    f77_carith();
+    if (ty == TY_CHAR || f77_cx_ty == TY_CHAR || f77_iscx(ty) || f77_iscx(f77_cx_ty)) {
+        f77_error("a CHARACTER or COMPLEX comparison in a constant expression is not supported");
+        f77_cx_truth(0);
+        return;
+    }
+    if (ty == TY_INT && f77_cx_ty == TY_INT) { dv = (double)iv; f77_cx_d = (double)f77_cx_i; }
+    r = op == T_EQ ? dv == f77_cx_d : op == T_NE ? dv != f77_cx_d : op == T_LT ? dv < f77_cx_d :
+        op == T_LE ? dv <= f77_cx_d : op == T_GT ? dv > f77_cx_d : dv >= f77_cx_d;
+    f77_cx_truth(r);
+}
+static void f77_cnot(void) {
+    if (lx_t != T_NOT) { f77_crel(); return; }
+    f77_tok();
+    f77_cnot();
+    f77_cx_truth(!f77_cx_i);
+}
+static void f77_cand(void) {
+    int a;
+    f77_cnot();
+    while (lx_t == T_AND) { a = f77_cx_i; f77_tok(); f77_cnot(); f77_cx_truth(a && f77_cx_i); }
+}
+static void f77_cor(void) {
+    int a;
+    f77_cand();
+    while (lx_t == T_OR) { a = f77_cx_i; f77_tok(); f77_cand(); f77_cx_truth(a || f77_cx_i); }
+}
+static void f77_cexpr(void) {
+    int a; int op;
+    f77_cor();
+    while (lx_t == T_EQV || lx_t == T_NEQV) {
+        a = f77_cx_i; op = lx_t;
+        f77_tok();
+        f77_cor();
+        f77_cx_truth(op == T_EQV ? !a == !f77_cx_i : !a != !f77_cx_i);
     }
 }
 
@@ -8099,7 +8184,7 @@ static int f77_bound(int *val) {
             if (j - i < F77_MAX_NAME) {
                 memcpy(nm, lx_stmt + i, j - i);
                 nm[j - i] = 0;
-                sf = f77_sym_find(nm);
+                sf = f77_csym_find(nm);
                 if (sf < 0 || !f77_sparam[sf]) runtime = 1;
             }
             i = j;
@@ -8107,6 +8192,7 @@ static int f77_bound(int *val) {
         }
         i = i + 1;
     }
+    if (f77_td_in) runtime = 0;          /* a component's bounds are constant expressions */
     if (runtime) {
         int v;
         v = f77_expr();
@@ -8355,6 +8441,8 @@ static int f77_parse_deferred(int s) {
  * with CHARACTER(LEN=n) or CHARACTER(n) for the length. */
 static int f77_decl_init(int s);
 static int f77_decl_init_eq(int s);
+static int f77_decl_null(int s);
+static int f77_null_here(void);
 static int f77_param_def(int s);
 static int f77_save_note(int s);
 static int f77_decl_dt;          /* TYPE(name): its type */
@@ -8434,6 +8522,12 @@ static void f77_stmt_decl(int ty, int skip) {
             if (lx_t != T_NAME) { f77_error("expected an attribute"); return; }
             strcpy(at, lex_name);
             f77_tok();
+            if (f77_td_in && strcmp(at, "DIMENSION") != 0 && strcmp(at, "POINTER") != 0 && strcmp(at, "ALLOCATABLE") != 0) {
+                char m[F77_MAX_NAME + 80];
+                sprintf(m, "%s is no attribute of a component: POINTER, DIMENSION or ALLOCATABLE", at);
+                f77_error(m);
+                return;
+            }
             if (strcmp(at, "PARAMETER") == 0) a_param = 1;
             else if (strcmp(at, "SAVE") == 0) a_save = 1;
             else if (strcmp(at, "EXTERNAL") == 0) a_ext = 1;
@@ -8546,7 +8640,9 @@ static void f77_stmt_decl(int ty, int skip) {
             f77_urpend[f77_cur_unit] = 0;
         }
         if (lx_t == T_SLASH && ty >= 0 && !dcolon && !f77_decl_init(s)) return;
-        if (dcolon && a_param) {
+        if (dcolon && lx_t == T_ASSIGN && lx_rp < lx_rpe && *lx_rp == '>') {
+            if (!f77_decl_null(s)) return;
+        } else if (dcolon && a_param) {
             if (lx_t != T_ASSIGN) { f77_error("a PARAMETER needs = value"); return; }
             if (!f77_param_def(s)) return;
         } else if (dcolon && lx_t == T_ASSIGN) {
@@ -8761,6 +8857,16 @@ static int f77_save_note(int s) {
     f77_sv_sym[f77_sv_n] = s;
     f77_sv_n = f77_sv_n + 1;
     return 1;
+}
+
+/* Does the program SAVE s itself: a blanket SAVE, the statement or the
+ * attribute naming it, DATA or an initial value (which set f77_ssaved as
+ * they are read)? */
+static int f77_save_said(int s) {
+    int i;
+    if (f77_save_all || f77_ssaved[s]) return 1;
+    for (i = 0; i < f77_sv_n; i++) if (f77_sv_sym[i] == s) return 1;
+    return 0;
 }
 
 static void f77_stmt_save(int skip) {
@@ -9226,7 +9332,13 @@ static int f77_dt_cinit(int s, int dt, int boff) {
             if (lx_t != T_COMMA) { f77_error("too few values in a structure constructor"); return 0; }
             f77_tok();
         }
-        if (f77_dc_ptr[c]) { f77_error("a POINTER or ALLOCATABLE component in an initial value is not supported"); return 0; }
+        if (f77_dc_ptr[c] == 1 && f77_null_here()) {
+            /* a POINTER component: NULL() (Fortran 95), the one constant it has */
+            f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0;
+            if (!f77_di_add_at(s, off, TY_INT, 0, 0)) return 0;
+            continue;
+        }
+        if (f77_dc_ptr[c]) { f77_error("a POINTER component's initial value is NULL(); an ALLOCATABLE one has none"); return 0; }
         if (f77_dc_ty[c] == TY_DERIVED) {
             int ne; int k;
             ne = 1;
@@ -9601,6 +9713,7 @@ static int f77_data_values(void) {
 static int f77_decl_init_eq(int s) {
     int k;
     int n;
+    if (f77_sptr[s]) { f77_error("a POINTER's initial value is => NULL()"); return 0; }
     if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
     if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }
     f77_tok();
@@ -9634,7 +9747,32 @@ static int f77_decl_init_eq(int s) {
     return 1;
 }
 
+/* NULL() at lx_t (Fortran 95 13.14.79), read: 1, or 0 with nothing read. */
+static int f77_null_here(void) {
+    if (lx_t != T_NAME || strcmp(lex_name, "NULL") != 0 || !(lx_rp + 1 < lx_rpe && lx_rp[0] == '(' && lx_rp[1] == ')')) return 0;
+    f77_tok(); f77_tok(); f77_tok();
+    return 1;
+}
+
+/* name => NULL() in a declaration (Fortran 95 5.1): the POINTER starts
+ * disassociated.  A component's is its type's default initialization; a
+ * variable's is an initial value, so static storage -- which is zero.
+ * lx_t at the '='.  Returns 0 on error. */
+static int f77_decl_null(int s) {
+    f77_tok(); f77_tok();
+    if (!f77_null_here()) { f77_error("a POINTER's initial value is => NULL()"); return 0; }
+    if (!f77_sptr[s]) { f77_error("=> NULL() is a POINTER's initial value"); return 0; }
+    if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
+    if (f77_td_in) {
+        f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0;
+        return f77_di_add_at(s, 0, TY_INT, 0, 0);
+    }
+    if (!f77_scom[s]) f77_ssaved[s] = 1;
+    return 1;
+}
+
 static int f77_decl_init(int s) {
+    if (f77_td_in) { f77_error("a component's default initialization is written = value"); return 0; }
     if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
     if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }
     f77_dt_n = 1;
@@ -9839,6 +9977,177 @@ static void f77_bind_static(int s, char *name, int off) {
     }
 }
 
+/* A static object's image, for its initial values: reserved and zeroed
+ * in the init pool when first asked for, the object moving from .bss to
+ * .data whole.  0 when the pool is full (said). */
+static int f77_g_image(int g) {
+    int k;
+    if (ps_ginit_start[g] >= 0) return 1;
+    if (ps_ginit_pool_len + ps_gsize[g] > PS_MAX_INIT_POOL) {
+        f77_error("DATA initializer pool overflow");
+        return 0;
+    }
+    ps_ginit_start[g] = ps_ginit_pool_len;
+    ps_ginit_count[g] = ps_gsize[g];
+    for (k = 0; k < ps_gsize[g]; k++)
+        ps_ginit_pool[ps_ginit_pool_len + k] = 0;
+    ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
+    return 1;
+}
+
+/* Where DATA triple i's value goes in its symbol's storage, and as
+ * what: the byte offset (*off), the item's type and INTEGER*2 or
+ * LOGICAL*1 width (*sty, *snar), and -- returned -- its bytes. */
+static int f77_di_place(int i, int *off, int *sty, int *snar) {
+    int s; int esz;
+    s = f77_di_sym[i];
+    esz = f77_esize(s);
+    *sty = f77_sty[s]; *snar = f77_snar[s];
+    *off = f77_di_elem[i] * esz;
+    if (f77_di_sub[i] > 0) { *off = f77_di_elem[i]; esz = f77_di_sub[i]; }
+    if (f77_di_boff[i] >= 0) {
+        /* a structure's component (f77_di_add_at) */
+        *off = f77_di_boff[i];
+        *sty = f77_di_sty[i]; *snar = f77_di_snar[i];
+        esz = *sty == TY_CHAR ? f77_di_slen[i] : *snar ? *snar : f77_tysize(*sty);
+    }
+    return esz;
+}
+
+/* DATA triple i's constant as the bytes at p of an item of type sty
+ * (snar, esz bytes).  0 when it cannot be that item's (said). */
+static int f77_di_encode(int i, unsigned char *p, int sty, int snar, int esz) {
+    int k;
+    if (f77_di_ty[i] == TY_CHAR) {
+        /* A character constant: into a CHARACTER item padded or
+         * truncated to its length; into a numeric item (Hollerith
+         * data) left-justified, blank-filled. */
+        int n;
+        n = f77_di_i[i];
+        for (k = 0; k < esz; k++)
+            p[k] = (k < n) ?
+                (unsigned char)lex_strpool[lex_str_off[f77_di_sidx[i]] + k] : ' ';
+    } else if (sty == TY_CHAR) {
+        f77_error("a CHARACTER item needs a character constant in DATA");
+        return 0;
+    } else if (f77_di_ty[i] == TY_HEXC) {
+        /* the constant's bits, right-justified in the item: zeros
+         * on the left of one too short, the leftmost bits of one
+         * too long lost (MIL-STD-1753 2.8) */
+        if (sty == TY_CPLX || sty == TY_DCPLX) {
+            f77_error("a hexadecimal or octal constant cannot initialize a COMPLEX item");
+            return 0;
+        }
+        for (k = 0; k < esz; k++)
+            p[k] = k < 8 ? (unsigned char)((f77_di_u[i] >> (k * 8)) & 255) : 0;
+    } else if (sty == TY_CPLX) {
+        union { float f; unsigned char b[4]; } u;
+        u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
+        for (k = 0; k < 4; k++) p[k] = u.b[k];
+        u.f = f77_iscx(f77_di_ty[i]) ? (float)f77_di_d2[i] : 0.0f;
+        for (k = 0; k < 4; k++) p[4 + k] = u.b[k];
+    } else if (sty == TY_DCPLX) {
+        /* each part as its constant's type makes it (f77_cx_part) */
+        union { double d; unsigned char b[8]; } u;
+        u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_cx_part(f77_di_d[i], f77_di_ty[i]);
+        for (k = 0; k < 8; k++) p[k] = u.b[k];
+        u.d = f77_iscx(f77_di_ty[i]) ? f77_di_d2[i] : 0.0;
+        for (k = 0; k < 8; k++) p[8 + k] = u.b[k];
+    } else if (sty == TY_DOUBLE) {
+        union { double d; unsigned char b[8]; } u;
+        u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
+        for (k = 0; k < 8; k++) p[k] = u.b[k];
+    } else if (sty == TY_FLOAT) {
+        union { float f; unsigned char b[4]; } u;
+        u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
+        for (k = 0; k < 4; k++) p[k] = u.b[k];
+    } else {
+        int v;
+        v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : (int)f77_di_d[i];
+        /* an INTEGER*2 or LOGICAL*1 image is its width: the low bytes,
+         * which come first (fort370 issue 10) */
+        for (k = 0; k < (snar ? snar : 4); k++)
+            p[k] = (unsigned char)((v >> (k * 8)) & 255);
+    }
+    return 1;
+}
+
+/* Does a structure of type dt come into being as something: its
+ * ALLOCATABLE components unallocated, its components of default
+ * initialization (Fortran 95 4.4.1) what the type says? */
+static int f77_dt_starts(int dt) {
+    return dt >= 0 && (f77_dt_dfl[dt] != NULL || f77_dt_nalloc(dt) != 0);
+}
+
+/* Is s a structure, or an array of them, of a type with default
+ * initialization? */
+static int f77_dfl_has(int s) {
+    return f77_sty[s] == TY_DERIVED && f77_sdt[s] >= 0 && f77_dt_dfl[f77_sdt[s]] != NULL;
+}
+
+/* The address of type dt's default image, for f77_dfl_fill: a static
+ * object of this file, made when first asked for.  0 when the type has
+ * none or it is all zeros, which f77_dfl_fill takes for zeros. */
+static int f77_dfl_tmpl(int dt) {
+    if (f77_dt_dfl[dt] && !f77_dt_dflg[dt]) {
+        int k; int g; char num[16];
+        f77_dt_dflg[dt] = "";
+        for (k = 0; k < f77_dt_size[dt] && f77_dt_dfl[dt][k] == 0; k++) ;
+        if (k < f77_dt_size[dt]) {
+            sprintf(num, "%d", dt);
+            g = f77_g_add(f77_gpool_name("f77d_", f77_dt_name[dt], "_", num), f77_dt_size[dt]);
+            if (f77_g_image(g)) {
+                memcpy(ps_ginit_pool + ps_ginit_start[g], f77_dt_dfl[dt], (size_t)f77_dt_size[dt]);
+                f77_dt_dflg[dt] = ps_gname[g];
+            }
+        }
+    }
+    if (!f77_dt_dfl[dt] || !f77_dt_dflg[dt][0]) return f77_iconst(0);
+    return hi_emit(HI_GADDR, HL_ADDR_TY, -1, -1, 0, f77_dt_dflg[dt]);
+}
+
+/* The count structures of type dt at addr (count a value) made what
+ * they start as.  Nothing where addr is null when the program runs: an
+ * absent OPTIONAL dummy, an ALLOCATE that failed under STAT=. */
+static void f77_dfl_fill(int addr, int dt, int count) {
+    int args[4];
+    args[0] = addr; args[1] = f77_dfl_tmpl(dt); args[2] = f77_iconst(f77_dt_size[dt]); args[3] = count;
+    f77_call_i("f77_dfl_fill", 4, args);
+}
+
+/* A static structure's default initialization: its type's image in each
+ * element of the object's own, which DATA and a declaration's value then
+ * pour over.  One static only for the unit's internal procedures
+ * (f77_shost 1) is each call's, and filled at entry.  0: no room (said). */
+static int f77_dfl_static(int s) {
+    int dt; int k; int n; int g;
+    dt = f77_sdt[s];
+    g = f77_sgidx[s];
+    if (!f77_dfl_has(s) || g < 0 || f77_shost[s] == 1 || f77_sptr[s] || f77_salloc[s]) return 1;
+    for (k = 0; k < f77_dt_size[dt] && f77_dt_dfl[dt][k] == 0; k++) ;
+    if (k == f77_dt_size[dt]) return 1;
+    if (!f77_g_image(g)) return 0;
+    n = f77_sym_nelem(s);
+    for (k = 0; k < n; k++)
+        memcpy(ps_ginit_pool + ps_ginit_start[g] + f77_sgoff[s] + k * f77_dt_size[dt], f77_dt_dfl[dt], (size_t)f77_dt_size[dt]);
+    return 1;
+}
+
+/* The elements of an explicit-shape array, counted when the program
+ * runs: the product of its extents, none taken for less than 0. */
+static int f77_nelem_v(int s) {
+    int n; int k;
+    if (!f77_adjustable(s)) return f77_iconst(f77_sym_nelem(s));
+    n = f77_iconst(1);
+    for (k = 0; k < f77_srank[s]; k++) {
+        int e;
+        e = f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]);
+        e = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
+        n = hi_emit(HI_MUL, TY_INT, n, e, 0, NULL);
+    }
+    return n;
+}
+
 /* Run once per unit when the declaration part closes: lay out this
  * unit's COMMON members and convert SAVEd locals to statics. */
 static void f77_layout_static(void) {
@@ -9896,6 +10205,20 @@ static void f77_layout_static(void) {
         if (nh > 0) f77_assign_params(f77_unit_nparams + nh);
     }
 
+    /* Fortran 95 5.5.2: no structure of a type with default initialization
+     * is in COMMON (which unit's image would the block be?), 5.5.1: nor
+     * in an EQUIVALENCE. */
+    for (i = 0; i < f77_cm_n; i++)
+        if (f77_dfl_has(f77_cm_sym[i])) {
+            f77_error("a structure of a type with default initialization cannot be in COMMON");
+            return;
+        }
+    for (i = 0; i < f77_eq_n; i++)
+        if (f77_dfl_has(f77_eq_sa[i]) || f77_dfl_has(f77_eq_sb[i])) {
+            f77_error("a structure of a type with default initialization cannot be in an EQUIVALENCE");
+            return;
+        }
+
     /* A module's variables (Fortran 90) are a block of their own, laid
      * out as COMMON's, its initial values DATA's; the snapshot tells its
      * users where each is (f77_mod_snapshot, f77_me_bind). */
@@ -9922,7 +10245,10 @@ static void f77_layout_static(void) {
     /* A host of internal procedures: its locals they name are static
      * (f77_shost 1) unless their storage or extents are the call's (an
      * automatic array) or it is the FUNCTION's result; those, and its
-     * dummies they name, go through its table (2, f77_host_table). */
+     * dummies they name, go through its table (2, f77_host_table).  One
+     * the program SAVEs is static by that and no f77_shost 1, which says
+     * "static, but each call's own": a SAVEd ALLOCATABLE array marked so
+     * was deallocated at every RETURN. */
     if (f77_hc_host == f77_cur_unit && f77_inline_depth == 0) {
         for (s = f77_scope_base; s < f77_nsym; s++) {
             if (!f77_hc_has(f77_sname[s]) || f77_sparam[s] || f77_sexternal[s] || f77_sintrinsic[s] ||
@@ -9931,6 +10257,7 @@ static void f77_layout_static(void) {
             /* a RECURSIVE host's local is each call's own: through the
              * table too (a SAVEd one's storage is static all the same) */
             if (f77_urecur[f77_cur_unit]) { f77_shost[s] = 2; continue; }
+            if (f77_save_said(s)) continue;
             f77_shost[s] = 1;
             f77_ssaved[s] = 1;
         }
@@ -10103,7 +10430,6 @@ static void f77_layout_static(void) {
     /* automatic arrays: their storage, by the extents just computed */
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int n;
-        int k;
         int args[3];
         if (!f77_sauto[s]) continue;
         if (f77_sarg[s] || f77_salloc[s]) { f77_sauto[s] = 0; continue; }
@@ -10112,16 +10438,18 @@ static void f77_layout_static(void) {
             return;
         }
         if (f77_inline_depth > 0) { f77_error("an automatic array in a spliced unit (an f77 defect)"); return; }
-        n = f77_iconst(f77_esize(s));
-        for (k = 0; k < f77_srank[s]; k++) {
-            int e;
-            e = f77_sextv[s][k] >= 0 ? f77_sextv[s][k] : f77_iconst(f77_sext[s][k]);
-            e = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
-            n = hi_emit(HI_MUL, TY_INT, n, e, 0, NULL);
-        }
+        n = hi_emit(HI_MUL, TY_INT, f77_iconst(f77_esize(s)), f77_nelem_v(s), 0, NULL);
         args[0] = f77_iconst(0); args[1] = n; args[2] = f77_iconst(0);
         f77_sval[s] = f77_call_i("f77_allocate", 3, args);
     }
+
+    /* default initialization first, under them: the unit's own statics,
+     * a module's variables (its users' names for them are in f77_scom
+     * too, and none of theirs to fill) */
+    for (s = f77_scope_base; s < f77_nsym; s++)
+        if (!f77_scom[s] && !f77_sarg[s] && s != f77_result_sym && !f77_dfl_static(s)) return;
+    if (f77_ukind[f77_cur_unit] == F77_UNIT_MODULE && f77_inline_depth == 0)
+        for (i = 0; i < f77_cm_n; i++) if (!f77_dfl_static(f77_cm_sym[i])) return;
 
     /* Pour DATA values into the init pool, now that every DATA'd
      * variable is a static object of known size.  A touched object
@@ -10135,81 +10463,9 @@ static void f77_layout_static(void) {
         s = f77_di_sym[i];
         g = f77_sgidx[s];
         if (g < 0) continue;            /* parse already errored */
-        if (ps_ginit_start[g] < 0) {
-            if (ps_ginit_pool_len + ps_gsize[g] > PS_MAX_INIT_POOL) {
-                f77_error("DATA initializer pool overflow");
-                return;
-            }
-            ps_ginit_start[g] = ps_ginit_pool_len;
-            ps_ginit_count[g] = ps_gsize[g];
-            for (k = 0; k < ps_gsize[g]; k++)
-                ps_ginit_pool[ps_ginit_pool_len + k] = 0;
-            ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
-        }
-        esz = f77_esize(s);
-        sty = f77_sty[s]; snar = f77_snar[s];
-        off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i] * esz;
-        if (f77_di_sub[i] > 0) {
-            off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i];
-            esz = f77_di_sub[i];
-        }
-        if (f77_di_boff[i] >= 0) {
-            /* a structure's component (f77_di_add_at) */
-            off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_boff[i];
-            sty = f77_di_sty[i]; snar = f77_di_snar[i];
-            esz = sty == TY_CHAR ? f77_di_slen[i] : 0;
-        }
-        if (f77_di_ty[i] == TY_CHAR) {
-            /* A character constant: into a CHARACTER item padded or
-             * truncated to its length; into a numeric item (Hollerith
-             * data) left-justified, blank-filled. */
-            int n;
-            n = f77_di_i[i];
-            for (k = 0; k < esz; k++)
-                ps_ginit_pool[off + k] = (k < n) ?
-                    (unsigned char)lex_strpool[lex_str_off[f77_di_sidx[i]] + k] : ' ';
-        } else if (sty == TY_CHAR) {
-            f77_error("a CHARACTER item needs a character constant in DATA");
-            return;
-        } else if (f77_di_ty[i] == TY_HEXC) {
-            /* the constant's bits, right-justified in the item: zeros
-             * on the left of one too short, the leftmost bits of one
-             * too long lost (MIL-STD-1753 2.8) */
-            if (sty == TY_CPLX || sty == TY_DCPLX) {
-                f77_error("a hexadecimal or octal constant cannot initialize a COMPLEX item");
-                return;
-            }
-            for (k = 0; k < esz; k++)
-                ps_ginit_pool[off + k] = k < 8 ? (unsigned char)((f77_di_u[i] >> (k * 8)) & 255) : 0;
-        } else if (sty == TY_CPLX) {
-            union { float f; unsigned char b[4]; } u;
-            u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
-            for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
-            u.f = f77_iscx(f77_di_ty[i]) ? (float)f77_di_d2[i] : 0.0f;
-            for (k = 0; k < 4; k++) ps_ginit_pool[off + 4 + k] = u.b[k];
-        } else if (sty == TY_DCPLX) {
-            /* each part as its constant's type makes it (f77_cx_part) */
-            union { double d; unsigned char b[8]; } u;
-            u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_cx_part(f77_di_d[i], f77_di_ty[i]);
-            for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
-            u.d = f77_iscx(f77_di_ty[i]) ? f77_di_d2[i] : 0.0;
-            for (k = 0; k < 8; k++) ps_ginit_pool[off + 8 + k] = u.b[k];
-        } else if (sty == TY_DOUBLE) {
-            union { double d; unsigned char b[8]; } u;
-            u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
-            for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
-        } else if (sty == TY_FLOAT) {
-            union { float f; unsigned char b[4]; } u;
-            u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
-            for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
-        } else {
-            int v;
-            v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : (int)f77_di_d[i];
-            /* an INTEGER*2 or LOGICAL*1 image is its width: the low bytes,
-             * which come first (fort370 issue 10) */
-            for (k = 0; k < (snar ? snar : 4); k++)
-                ps_ginit_pool[off + k] = (unsigned char)((v >> (k * 8)) & 255);
-        }
+        if (!f77_g_image(g)) return;
+        esz = f77_di_place(i, &off, &sty, &snar);
+        if (!f77_di_encode(i, ps_ginit_pool + ps_ginit_start[g] + f77_sgoff[s] + off, sty, snar, esz)) return;
     }
 }
 
@@ -10511,6 +10767,14 @@ static int f77_ptr_type_ok(int ps, int t) {
     return 1;
 }
 
+/* What ALLOCATE made of object s, count structures at r, starts as its
+ * type says (f77_dt_starts). */
+static void f77_alloc_starts(int s, int r, int count) {
+    if (f77_sty[s] == TY_DERIVED && f77_dt_starts(f77_sdt[s])) f77_dfl_fill(r, f77_sdt[s], count);
+}
+static int f77_alloc_count(int s);
+static void f77_dta_free_at(int addr, int dt, int count);
+
 static void f77_stmt_allocate(int skip, int alloc) {
     int obj[F77_MAX_ALLOBJ];
     int isptr[F77_MAX_ALLOBJ];
@@ -10625,6 +10889,8 @@ static void f77_stmt_allocate(int skip, int alloc) {
                 args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
                 args[2] = statp >= 0 ? statp : f77_iconst(0);
                 r = f77_call_i("f77_allocate", 3, args);
+                if (f77_scalc[s]) n = hi_emit(HI_MUL, TY_INT, n, hi_emit(HI_SNE, TY_INT, r, cur, 0, NULL), 0, NULL);
+                f77_alloc_starts(s, r, n);
                 if (f77_srank[s] == 0) hi_emit(HI_STORE, TY_INT, slot, r, 0, NULL);
                 else if (f77_scalc[s]) {
                     int changed; int e2[F77_MAX_RANK]; int s2[F77_MAX_RANK]; int l2[F77_MAX_RANK]; int r2;
@@ -10638,6 +10904,14 @@ static void f77_stmt_allocate(int skip, int alloc) {
                     f77_ptr_desc_set(s, r, e2, s2, l2);
                 } else f77_ptr_desc_set(s, r, ext[i], st, lo[i]);
             } else {
+                if (f77_sty[s] == TY_DERIVED && f77_dt_nalloc(f77_sdt[s]) > 0) {
+                    /* its elements' ALLOCATABLE components go with it */
+                    int n;
+                    n = hi_emit(HI_SNE, TY_INT, cur, f77_iconst(0), 0, NULL);
+                    for (k = 0; k < f77_srank[s]; k++)
+                        n = hi_emit(HI_MUL, TY_INT, n, hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, slot, -1, 4 + 8 * k, NULL), -1, 0, NULL), 0, NULL);
+                    f77_dta_free_at(cur, f77_sdt[s], n);
+                }
                 args[0] = cur;
                 args[1] = statp >= 0 ? statp : f77_iconst(0);
                 f77_call_i("f77_deallocate", 2, args);
@@ -10656,6 +10930,7 @@ static void f77_stmt_allocate(int skip, int alloc) {
             args[2] = statp >= 0 ? statp : f77_iconst(0);
             r = f77_call_i("f77_allocate", 3, args);
             changed = hi_emit(HI_SNE, TY_INT, r, cur, 0, NULL);
+            f77_alloc_starts(s, r, hi_emit(HI_MUL, TY_INT, n, changed, 0, NULL));
             for (k = 0; k < f77_srank[s]; k++) {
                 int ol;
                 int oe;
@@ -10665,6 +10940,7 @@ static void f77_stmt_allocate(int skip, int alloc) {
                 hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 8 + 8 * k), f77_select(changed, ext[i][k], oe), 0, NULL);
             }
         } else {
+            if (f77_sty[s] == TY_DERIVED) f77_dta_free_at(cur, f77_sdt[s], f77_alloc_count(s));
             args[1] = statp >= 0 ? statp : f77_iconst(0);
             r = f77_call_i("f77_deallocate", 2, args);
         }
@@ -10672,12 +10948,15 @@ static void f77_stmt_allocate(int skip, int alloc) {
     }
 }
 
-/* ALLOCATABLE components (the Fortran 95 TR's).  A structure that has
- * them (f77_dt_nalloc) starts with them unallocated -- a local's zeroed
- * at the end of the declaration part, a FUNCTION's result too; static
- * storage is zero already -- and a RETURN frees a local's (an unSAVEd
- * one's), an INTENT(OUT) dummy's on entry.  f77_dta_free_at frees those
- * of count structures from addr. */
+/* ALLOCATABLE components (the Fortran 95 TR's) and default
+ * initialization (Fortran 95).  A structure of a type with either
+ * (f77_dt_starts) starts as its type says, the ALLOCATABLE components
+ * unallocated -- a local at the end of the declaration part, a FUNCTION's
+ * result too, an INTENT(OUT) dummy; a static one in its image (f77_dfl_static;
+ * zero is unallocated); one ALLOCATEd, then -- and a RETURN frees a local's
+ * ALLOCATABLE components (an unSAVEd one's), an INTENT(OUT) dummy's on
+ * entry, DEALLOCATE its object's.  f77_dta_free_at frees those of count
+ * structures (a value) from addr. */
 static void f77_dta_free_at(int addr, int dt, int count);
 static void f77_dtf_after(int r) {
     int q; int b; int k;
@@ -10703,7 +10982,7 @@ static void f77_dtf_flush(void) {
     n = f77_dtp_n;
     f77_dtp_n = 0;
     if (!f77_cur_blk_live) return;          /* after a GO TO or RETURN: left (a leak, not a fault) */
-    for (k = 0; k < n; k++) f77_dta_free_at(f77_dtp_v[k], f77_dtp_dt[k], 1);
+    for (k = 0; k < n; k++) f77_dta_free_at(f77_dtp_v[k], f77_dtp_dt[k], f77_iconst(1));
 }
 static void f77_dta_free_at(int addr, int dt, int count) {
     int offs[F77_MAX_DTA]; int rk[F77_MAX_DTA]; int esz[F77_MAX_DTA]; int n; int i;
@@ -10711,42 +10990,59 @@ static void f77_dta_free_at(int addr, int dt, int count) {
     for (i = 0; i < n; i++) {
         int args[3];
         args[0] = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, offs[i], NULL);
-        args[1] = f77_iconst(count);
+        args[1] = count;
         args[2] = f77_iconst(f77_dt_size[dt]);
         f77_call_i("f77_dta_free", 3, args);
     }
 }
 /* Is s a structure (or array of them) of this unit's own storage --
- * not a dummy, a module's or COMMON's -- with ALLOCATABLE components? */
+ * not a dummy, a module's or COMMON's, nor an ALLOCATABLE array's or a
+ * POINTER's, which ALLOCATE makes -- of a type that starts as something? */
 static int f77_dta_local(int s) {
-    return f77_sty[s] == TY_DERIVED && !f77_sarg[s] && !f77_scom[s] && !f77_sassoc[s] && !f77_sptr[s] &&
-           s != f77_result_sym && f77_sname[s][0] != '%' && !f77_shidden[s] && f77_dt_nalloc(f77_sdt[s]) != 0;
+    return f77_sty[s] == TY_DERIVED && !f77_sarg[s] && !f77_scom[s] && !f77_sassoc[s] && !f77_sptr[s] && !f77_salloc[s] &&
+           s != f77_result_sym && f77_sname[s][0] != '%' && !f77_shidden[s] && f77_dt_starts(f77_sdt[s]);
 }
+/* The end of the declaration part: the unit's own structures that are
+ * each call's -- in its frame, or static only for its internal
+ * procedures -- its result and its INTENT(OUT) dummies start. */
 static void f77_dta_entry(void) {
     int s;
     for (s = f77_scope_base; s < f77_nsym; s++) {
-        int args[3];
-        if (f77_sty[s] != TY_DERIVED || f77_sdt[s] < 0) continue;
-        if (f77_dt_nalloc(f77_sdt[s]) < 0) {
+        int dt;
+        dt = f77_sdt[s];
+        if (f77_sty[s] != TY_DERIVED || dt < 0 || f77_sptr[s] || f77_salloc[s]) continue;
+        if (f77_dt_nalloc(dt) < 0) {
             char m[F77_MAX_NAME + 80];
             sprintf(m, "%s: a type with more ALLOCATABLE components than f77 follows (%d)", f77_sname[s], F77_MAX_DTA);
             f77_error(m);
             continue;
         }
-        if (f77_dt_nalloc(f77_sdt[s]) == 0) continue;
-        if (s == f77_result_sym || (f77_dta_local(s) && f77_sgidx[s] < 0)) {
-            if (f77_sauto[s] || f77_sassz[s] || f77_adjustable(s)) {
-                f77_error("an array of no constant size of a type with ALLOCATABLE components is not supported");
+        if (!f77_dt_starts(dt)) continue;
+        if (s == f77_result_sym || (f77_dta_local(s) && (f77_sgidx[s] < 0 || f77_shost[s] == 1))) {
+            f77_sstored[s] = 1;
+            f77_dfl_fill(f77_sval[s], dt, f77_nelem_v(s));
+        } else if (f77_sarg[s] && f77_sintout[s]) {
+            int n;
+            if (f77_sassz[s] || f77_sashape[s]) {
+                /* Fortran 95 5.1.2.4.4 has no such assumed-size dummy; an
+                 * assumed-shape one's elements are where its strides say */
+                f77_error("an INTENT(OUT) assumed-shape or assumed-size array of a type with default initialization or ALLOCATABLE components is not supported");
                 continue;
             }
-            f77_sstored[s] = 1;
-            args[0] = f77_sval[s]; args[1] = f77_iconst(0); args[2] = f77_iconst(f77_esize(s) * f77_sym_nelem(s));
-            f77_call_i("memset", 3, args);
-        } else if (f77_sarg[s] && f77_sintout[s]) {
-            if (f77_srank[s] > 0) { f77_error("an INTENT(OUT) array of a type with ALLOCATABLE components is not supported"); continue; }
-            f77_dta_free_at(f77_sval[s], f77_sdt[s], 1);
+            n = f77_nelem_v(s);
+            if (f77_sopt[s]) n = f77_select(hi_emit(HI_SNE, TY_INT, f77_sval[s], f77_iconst(0), 0, NULL), n, f77_iconst(0));
+            f77_dta_free_at(f77_sval[s], dt, n);
+            f77_dfl_fill(f77_sval[s], dt, n);
         }
     }
+}
+
+/* The elements ALLOCATABLE array s has, as a value: 0 unallocated. */
+static int f77_alloc_count(int s) {
+    int n; int k;
+    n = hi_emit(HI_SNE, TY_INT, f77_desc_base(s), f77_iconst(0), 0, NULL);
+    for (k = 0; k < f77_srank[s]; k++) n = hi_emit(HI_MUL, TY_INT, n, f77_desc_load(s, 8 + 8 * k), 0, NULL);
+    return n;
 }
 
 /* A structure of type dt assigned (intrinsic assignment) at addr from
@@ -10789,7 +11085,7 @@ static void f77_alloc_free_all(void) {
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int args[1];
         if (f77_dta_local(s) && (!f77_ssaved[s] || f77_shost[s] == 1) && f77_ukind[f77_cur_unit] != F77_UNIT_PROGRAM)
-            f77_dta_free_at(f77_sval[s], f77_sdt[s], f77_sym_nelem(s));
+            f77_dta_free_at(f77_sval[s], f77_sdt[s], f77_nelem_v(s));
         if (f77_sauto[s] && !f77_decls_open) {
             args[0] = f77_sval[s];
             f77_call_i("f77_dealloc_auto", 1, args);
@@ -10797,6 +11093,7 @@ static void f77_alloc_free_all(void) {
         }
         if (!f77_salloc[s] || f77_sarg[s]) continue;
         if (f77_ssaved[s] && f77_shost[s] != 1) continue;
+        if (f77_sty[s] == TY_DERIVED) f77_dta_free_at(f77_desc_base(s), f77_sdt[s], f77_alloc_count(s));
         args[0] = f77_desc_base(s);
         f77_call_i("f77_dealloc_auto", 1, args);
         /* static for its internal procedures, but not SAVEd: unallocated
@@ -11536,6 +11833,19 @@ static char *f77_intrinsic_proc(char *nm) {
 static int f77_sym_find(char *nm) {
     int i;
     for (i = f77_scope_base; i < f77_nsym; i++)
+        if (strcmp(f77_sname[i], nm) == 0) return i;
+    return -1;
+}
+
+/* The symbol a name in a constant expression means, or -1.  Inside a
+ * derived type's definition that is the enclosing unit's: a type's
+ * components are no scope an expression's names are looked up in (F90
+ * 14.1.2.5), so REAL(DP) :: X and CHARACTER(K) :: C(K) there name the
+ * unit's DP and K, a component called K or not. */
+static int f77_csym_find(char *nm) {
+    int i;
+    if (!f77_td_in) return f77_sym_find(nm);
+    for (i = f77_td_scope; i < f77_td_base; i++)
         if (strcmp(f77_sname[i], nm) == 0) return i;
     return -1;
 }
@@ -13914,6 +14224,7 @@ static int f77_desig_hoist(int from, int *to) {
                 int ext[F77_MAX_RANK];
                 f77_scan_from(b);
                 f77_tok();
+                if (f77_sptr[sy] && f77_srank[sy] == 0) sy = f77_ptr_deref(sy);     /* a POINTER's target */
                 t = f77_dt_desig(sy);
                 if (f77_nerr > nerr0) return n;
                 end = lx_t == T_EOF ? lx_stmt_len : (int)(lx_rts - lx_stmt);
@@ -14842,7 +15153,7 @@ static void f77_host_late(int t) {
     f77_bind_static(t, on, 0);
     f77_sgoff[t] = 0;
     f77_ssaved[t] = 1;
-    f77_shost[t] = 1;
+    f77_shost[t] = !f77_save_all;
 }
 
 /* A host's table for its internal procedures (f77_shost 2): per entity,
@@ -14970,7 +15281,11 @@ static void f77_emit_copyin(void) {
     if (f77_result_sym >= 0 && f77_inline_depth == 0) {
         int rr;
         rr = f77_urrank[f77_cur_unit];
-        if (f77_srank[f77_result_sym] > 0 && rr == 0)
+        /* a scalar POINTER result was taken for the value: its slot's
+         * address went back as the structure's (found 2026-11-09) */
+        if (f77_srank[f77_result_sym] == 0 && (f77_sptr[f77_result_sym] || f77_salloc[f77_result_sym]))
+            f77_error("an ALLOCATABLE or POINTER FUNCTION result is not supported");
+        else if (f77_srank[f77_result_sym] > 0 && rr == 0)
             f77_error("an array-valued FUNCTION is not supported yet");
         else if (rr > 0 && (f77_salloc[f77_result_sym] || f77_sashape[f77_result_sym]))
             f77_error("an ALLOCATABLE or POINTER FUNCTION result is not supported");
@@ -15727,6 +16042,11 @@ static char f77_mod_dir_buf[1024];
 
 /* NAME.mod (lower case, as gfortran names it) from the current
  * directory: the table a compilation of the module left. */
+static int f77_hexval(int ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    return -1;
+}
 static int f77_mod_read(char *nm) {
     char path[F77_MAX_NAME + 8];
     char *buf;
@@ -15742,13 +16062,20 @@ static int f77_mod_read(char *nm) {
     strcpy(path + k, ".mod");
     fd = open(path, 0);
     if (fd < 0) return -1;
-    cap = 1 << 20;
+    /* the whole file, however long (a type's default image is a line) */
+    cap = 1 << 16;
     buf = (char *)malloc((size_t)cap + 1);
-    n = (int)read(fd, buf, (size_t)cap);
+    n = 0;
+    for (;;) {
+        int got;
+        if (n == cap) { cap = cap * 2; buf = (char *)realloc(buf, (size_t)cap + 1); }
+        got = (int)read(fd, buf + n, (size_t)(cap - n));
+        if (got <= 0) break;
+        n = n + got;
+    }
     close(fd);
-    if (n < 0) n = 0;
     buf[n] = 0;
-    if (strncmp(buf, "F77MOD 4 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
+    if (strncmp(buf, "F77MOD 5 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
     m = f77_mod_new(nm, -1);
     if (m < 0) { free(buf); return -2; }
     p = strchr(buf, '\n');
@@ -15818,6 +16145,7 @@ static int f77_mod_read(char *nm) {
                 strcpy(f77_dt_name[dt], name); strcpy(f77_dt_mod[dt], tm);
                 f77_dt_size[dt] = sz; f77_dt_align[dt] = al; f77_dt_seq[dt] = sq; f77_dt_nc[dt] = nc;
                 f77_dt_c0[dt] = f77_ndc; f77_dt_unit[dt] = -1;
+                f77_dt_dfl[dt] = NULL; f77_dt_dflg[dt] = NULL;
                 q = p + 2;
                 for (a = 0; a < 6; a++) { while (*q && *q != ' ' && *q != '\n') q++; while (*q == ' ') q++; }
                 for (k = 0; k < nc; k++) {
@@ -15836,6 +16164,13 @@ static int f77_mod_read(char *nm) {
                         f77_dc_ext[c][r] = (int)strtol(q, &q, 10);
                     }
                     while (*q == ' ') q++;
+                }
+                if (k == nc && *q == '=') {
+                    /* its default initialization: the image's bytes, those
+                     * after the last written all zero */
+                    f77_dt_dfl[dt] = (unsigned char *)calloc((size_t)(sz > 0 ? sz : 1), 1);
+                    for (k = 0, q++; k < sz && f77_hexval(q[0]) >= 0 && f77_hexval(q[1]) >= 0; k++, q += 2)
+                        f77_dt_dfl[dt][k] = (unsigned char)(f77_hexval(q[0]) * 16 + f77_hexval(q[1]));
                 }
             }
         } else if (kind == 'A') {
@@ -15946,7 +16281,7 @@ static void f77_mod_write(void) {
         strcpy(path + k, ".mod");
         f = fopen(path, "w");
         if (!f) { f77_error("cannot write a .mod file"); return; }
-        fprintf(f, "F77MOD 4 %s\n", f77_mod_name[m]);
+        fprintf(f, "F77MOD 5 %s\n", f77_mod_name[m]);
         {
             /* its derived types, each after those its components are of
              * (definition order), by name and defining module */
@@ -15966,6 +16301,15 @@ static void f77_mod_write(void) {
                             f77_dc_dt[c] >= 0 && f77_dt_mod[f77_dc_dt[c]][0] ? f77_dt_mod[f77_dc_dt[c]] : "-",
                             f77_dc_off[c], f77_dc_rank[c], f77_dc_ptr[c]);
                     for (q = 0; q < f77_dc_rank[c]; q++) fprintf(f, " %d %d", f77_dc_lo[c][q], f77_dc_ext[c][q]);
+                }
+                if (f77_dt_dfl[dt]) {
+                    /* its default initialization (Fortran 95): = and the
+                     * image in hexadecimal, as far as its last byte not 0 */
+                    int k; int last;
+                    last = f77_dt_size[dt];
+                    while (last > 0 && f77_dt_dfl[dt][last - 1] == 0) last = last - 1;
+                    fprintf(f, " =");
+                    for (k = 0; k < last; k++) fprintf(f, "%02x", f77_dt_dfl[dt][k]);
                 }
                 fputc('\n', f);
             }
@@ -19071,6 +19415,7 @@ static void f77_io_derived(int addr, int dt) {
  * at its natural alignment -- and the scope dropped. */
 static int f77_td_in;
 static int f77_td_base; static int f77_td_scope; static int f77_td_frame; static int f77_td_seq;
+static int f77_td_di0;          /* f77_di_n at TYPE: the components' initial values come after */
 static char f77_td_name[F77_MAX_NAME];
 
 /* Is the statement a derived type's definition's first: TYPE name, TYPE
@@ -19105,10 +19450,40 @@ static void f77_td_begin(void) {
     f77_td_base = f77_nsym;
     f77_td_scope = f77_scope_base;
     f77_td_frame = f77_frame;
+    f77_td_di0 = f77_di_n;
     f77_scope_base = f77_nsym;
 }
 
-static void f77_td_end(void) {
+/* The default initialization of type dt (Fortran 95 4.4.1), as END TYPE
+ * finds it: the images of its components that are structures of types
+ * with one, then its own components' = value and => NULL() over them --
+ * the DATA triples read since TYPE, each of a component's temporary
+ * symbol.  f77_dt_dfl[dt] stays NULL when no component says anything. */
+static void f77_td_image(int dt) {
+    unsigned char *im;
+    int c; int i; int k;
+    im = NULL;
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
+        int cd; int ne;
+        cd = f77_dc_dt[c];
+        if (f77_dc_ty[c] != TY_DERIVED || f77_dc_ptr[c] || cd < 0 || !f77_dt_dfl[cd]) continue;
+        if (!im) im = (unsigned char *)calloc((size_t)f77_dt_size[dt], 1);
+        ne = 1;
+        for (k = 0; k < f77_dc_rank[c]; k++) ne = ne * f77_dc_ext[c][k];
+        for (k = 0; k < ne; k++)
+            memcpy(im + f77_dc_off[c] + k * f77_dt_size[cd], f77_dt_dfl[cd], (size_t)f77_dt_size[cd]);
+    }
+    for (i = f77_td_di0; i < f77_di_n; i++) {
+        int off; int sty; int snar; int esz;
+        if (!im) im = (unsigned char *)calloc((size_t)f77_dt_size[dt], 1);
+        esz = f77_di_place(i, &off, &sty, &snar);
+        c = f77_dt_c0[dt] + (f77_di_sym[i] - f77_td_base);
+        if (!f77_di_encode(i, im + f77_dc_off[c] + off, sty, snar, esz)) break;
+    }
+    f77_dt_dfl[dt] = im;
+}
+
+static void f77_td_close(void) {
     int dt; int sy; int off; int al;
     char *nm;
     nm = f77_name_tail(7);
@@ -19166,12 +19541,21 @@ static void f77_td_end(void) {
     f77_dt_align[dt] = al;
     f77_dt_size[dt] = (off + al - 1) & ~(al - 1);
     if (f77_dt_size[dt] == 0) f77_dt_size[dt] = al;
+    f77_dt_dfl[dt] = NULL; f77_dt_dflg[dt] = NULL;
+    f77_td_image(dt);
     f77_ndt = f77_ndt + 1;
     /* the scope dropped, the unit's own back */
     f77_nsym = f77_td_base;
     f77_scope_base = f77_td_scope;
     f77_frame = f77_td_frame;
     f77_dt_see(dt);
+}
+
+/* END TYPE: the type made, and its components' initial values -- the
+ * type's now, no variable's DATA -- dropped. */
+static void f77_td_end(void) {
+    f77_td_close();
+    f77_di_n = f77_td_di0;
 }
 
 /* A statement inside a type's definition: 1 when it was handled here,
@@ -19183,25 +19567,7 @@ static int f77_td_stmt(int cls) {
     if (cls == S_KEYWORD && (f77_starts("INTEGER") || f77_starts("REAL") || f77_starts("DOUBLEPRECISION") ||
                              f77_starts("DOUBLECOMPLEX") || f77_starts("COMPLEX") || f77_starts("LOGICAL") ||
                              f77_starts("CHARACTER") || f77_starts("TYPE("))) {
-        int c;
-        c = f77_toplevel(':', 0);
-        if (c >= 0 && c + 1 < lx_stmt_len && lx_stmt[c + 1] == ':') {
-            int k;
-            int eq;
-            eq = f77_toplevel('=', c + 2);
-            while (eq >= 0 && !f77_eq_is_assign(eq)) eq = f77_toplevel('=', eq + 1);
-            if (eq >= 0) {
-                f77_error("a component's default initialization is Fortran 95's, not supported yet");
-                lx_t = T_EOF;
-                return 1;
-            }
-        }
         return 0;
-    }
-    if (cls == S_ASSIGN) {
-        f77_error("a component's default initialization is Fortran 95's, not supported yet");
-        lx_t = T_EOF;
-        return 1;
     }
     f77_error("a derived type's definition holds component declarations only");
     lx_t = T_EOF;
@@ -19295,6 +19661,7 @@ static int f77_is_ptrassign(void) {
         if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; continue; }
         if (lx_stmt[i] == '(') d = d + 1;
         else if (lx_stmt[i] == ')') d = d - 1;
+        else if (d == 0 && lx_stmt[i] == ':' && lx_stmt[i + 1] == ':') return 0;    /* a declaration's => NULL() */
         else if (d == 0 && lx_stmt[i] == '=' && lx_stmt[i + 1] == '>') return 1;
     }
     return 0;

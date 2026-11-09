@@ -372,7 +372,15 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np%%z = 1.0\nend\n' > "$W/dtnocomp.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = 1.0\nend\n' > "$W/dtasgty.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
-    printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
+    printf 'program p\ntype t\ninteger, save :: n = 5\nend type\nend\n' > "$W/dtattr.f90"
+    printf 'program p\ntype t\nsequence\ninteger :: n = 5\nend type\ntype(t) :: x\ncommon /c/ x\nend\n' > "$W/dfltcom.f90"
+    printf 'program p\ntype t\nsequence\ninteger :: n = 5\nend type\ntype(t) :: x\ninteger :: k\nequivalence (x, k)\nend\n' > "$W/dflteqv.f90"
+    printf 'subroutine s(x)\ntype t\nsequence\ninteger :: n = 5\nend type\ntype(t), intent(out) :: x(:)\nend\n' > "$W/dfltout.f90"
+    printf 'integer :: j => null()\nend\n' > "$W/nullnoptr.f90"
+    printf 'integer, pointer :: n = 5\nend\n' > "$W/ptrinit.f90"
+    printf 'subroutine s(x)\ninteger, pointer :: x => null()\nend\n' > "$W/nulldum.f90"
+    printf 'function pf(k)\ntype t\nsequence\ninteger :: n\nend type\ntype(t), pointer :: pf\nallocate(pf)\nend\n' > "$W/ptrfn.f90"
+    printf "logical, parameter :: l = 'a' < 'b'\nend\n" > "$W/cxchar.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
     printf "character(len=4) :: c\nwrite (c, '(A)', advance='no') 'x'\nend\n" > "$W/advint.f90"
     printf "integer :: k\nread (*, '(I3)', size=k) k\nend\n" > "$W/advsize.f90"
@@ -399,7 +407,6 @@ if [ -x "$F77" ]; then
     printf "${alt}type(t) :: x\nprint *, associated(x%%a)\nend\n" > "$W/alassoc.f90"
     printf "${alt}type(t) :: x\nprint *, x\nend\n" > "$W/alio.f90"
     printf "${alt}type u\ntype(t), allocatable :: b(:)\nend type\nend\n" > "$W/alnest.f90"
-    printf "${alt}call s(3)\ncontains\nsubroutine s(n)\ninteger n\ntype(t) :: w(n)\nend subroutine\nend\n" > "$W/alauto.f90"
     printf "program p\ntype t\nreal, allocatable :: a\nend type\nend\n" > "$W/alscal.f90"
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nprint *, x\nend\n' > "$W/dtptrio.f90"
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nx = t(3)\nend\n' > "$W/dtptrcons.f90"
@@ -516,7 +523,15 @@ if [ -x "$F77" ]; then
              "dtnocomp:line 5: the type PT has no component Z" \
              "dtasgty:line 5: a value of another type for a structure" \
              "dtcons:line 5: the structure constructor PT needs 2 values" \
-             "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
+             "dtattr:line 3: SAVE is no attribute of a component: POINTER, DIMENSION or ALLOCATABLE" \
+             "dfltcom:line 8: a structure of a type with default initialization cannot be in COMMON" \
+             "dflteqv:line 9: a structure of a type with default initialization cannot be in an EQUIVALENCE" \
+             "dfltout:line 7: an INTENT(OUT) assumed-shape or assumed-size array of a type with default initialization or ALLOCATABLE components is not supported" \
+             "nullnoptr:line 1: => NULL() is a POINTER's initial value" \
+             "ptrinit:line 1: a POINTER's initial value is => NULL()" \
+             "nulldum:line 2: a dummy argument cannot be given an initial value" \
+             "ptrfn:line 7: an ALLOCATABLE or POINTER FUNCTION result is not supported" \
+             "cxchar:line 1: a CHARACTER or COMPLEX comparison in a constant expression is not supported" \
              "dtnone:line 1: no derived type NOPE here" \
              "advint:line 2: ADVANCE= is for an external file and an explicit format" \
              "advsize:line 2: SIZE= and EOR= are a READ's with ADVANCE=" \
@@ -541,7 +556,6 @@ if [ -x "$F77" ]; then
              "alassoc:line 6: an ALLOCATABLE component is no POINTER" \
              "alio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
              "alnest:line 7: an ALLOCATABLE component of a type with ALLOCATABLE components is not supported" \
-             "alauto:line 10: an array of no constant size of a type with ALLOCATABLE components is not supported" \
              "alscal:line 3: an ALLOCATABLE array needs its rank, as (:) or (:,:)" \
              "dtptrio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
              "dtptrcons:line 6: a pointer's target is a variable" \
