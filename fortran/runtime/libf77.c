@@ -1632,30 +1632,43 @@ void *f77_as_pack(const int *d, int rank, int esz) {
 }
 
 /* An array constructor's values (Fortran 90) as the compiler evaluates
- * them, one 16-byte slot each, since their number can be known only by
- * running the implied-DOs: f77_vec_take hands over the slots (freed with
- * f77_dealloc_auto) and frees the rest. */
-typedef struct { char *p; int n; int cap; } f77_vec;
+ * them, since their number can be known only by running the implied-DOs:
+ * one 16-byte slot each (f77_vec_push), or for CHARACTER values the
+ * first value's length each (f77_vec_pushn; F90 gives them one length).
+ * f77_vec_take hands over the slots (freed with f77_dealloc_auto) and
+ * frees the rest. */
+typedef struct { char *p; int n; int cap; int esz; } f77_vec;
+
+static void f77_vec_oom(void) { fprintf(stderr, "f77: out of memory for an array constructor\n"); exit(2); }
 
 void *f77_vec_new(void) {
     f77_vec *v = malloc(sizeof *v);
-    if (!v || !(v->p = malloc(16 * 16))) { fprintf(stderr, "f77: out of memory for an array constructor\n"); exit(2); }
+    if (!v || !(v->p = malloc(16 * 16))) f77_vec_oom();
     v->n = 0;
     v->cap = 16;
+    v->esz = 16;
     return v;
 }
 
-void f77_vec_push(void *h, const void *val) {
+void f77_vec_pushn(void *h, const void *val, int len) {
     f77_vec *v = h;
+    if (v->n == 0 && len != v->esz) {
+        char *q = realloc(v->p, (size_t)v->cap * (size_t)(len > 0 ? len : 1));
+        if (!q) f77_vec_oom();
+        v->p = q;
+        v->esz = len;
+    }
     if (v->n == v->cap) {
-        char *q = realloc(v->p, (size_t)v->cap * 2 * 16);
-        if (!q) { fprintf(stderr, "f77: out of memory for an array constructor\n"); exit(2); }
+        char *q = realloc(v->p, (size_t)v->cap * 2 * (size_t)(v->esz > 0 ? v->esz : 1));
+        if (!q) f77_vec_oom();
         v->p = q;
         v->cap *= 2;
     }
-    memcpy(v->p + (long)v->n * 16, val, 16);
+    memcpy(v->p + (long)v->n * v->esz, val, (size_t)v->esz);
     v->n++;
 }
+
+void f77_vec_push(void *h, const void *val) { f77_vec_pushn(h, val, 16); }
 
 int f77_vec_count(void *h) { return ((f77_vec *)h)->n; }
 
