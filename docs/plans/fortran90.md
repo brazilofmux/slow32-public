@@ -102,8 +102,9 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
      (selfhost ISSUES-116 and 117).  117 is reachable from C, so stage08
      had it too.
 
-   Left out until a ruling: the DMD routines and their four suites, which
-   USE ISO_FORTRAN_ENV (Fortran 2003, REAL64 from F2008).
+   Left out: the DMD routines and their four suites, which USE
+   ISO_FORTRAN_ENV (Fortran 2003, REAL64 from F2008).  The user's ruling,
+   2026-11-08: "DMD is out for now".
 
    Open: the opt-in copy-in mode (`F77_COPYIN=1`, off by default and in no
    gate) faults on LAPACK's DTRSYL3.
