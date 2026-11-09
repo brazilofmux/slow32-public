@@ -902,6 +902,8 @@ static int  f77_urnar[F77_MAX_UNIT];   /* INTEGER*2 or LOGICAL*1 FUNCTION: f77_s
 static int  f77_urrank[F77_MAX_UNIT];  /* an array-valued FUNCTION: its result's rank (the scan's) */
 static int  f77_urecur[F77_MAX_UNIT];  /* RECURSIVE (Fortran 90) */
 static char f77_uresult[F77_MAX_UNIT][F77_MAX_NAME];   /* a FUNCTION's RESULT name, or "" */
+static char f77_urtn[F77_MAX_UNIT][F77_MAX_NAME];      /* a FUNCTION of a derived type: the type's name */
+static char f77_hdr_tname[F77_MAX_NAME];               /* TYPE(name) FUNCTION: the name */
 /* The name of FUNCTION u's result variable: its RESULT's, else its own. */
 static char *f77_unit_rname(int u) { return f77_uresult[u][0] ? f77_uresult[u] : f77_uname[u]; }
 /* ENTRY: a secondary entry into a subprogram is compiled as a unit of
@@ -2542,6 +2544,35 @@ static int f77_afn_call(char *name, int rank, int rty, int rlog, int rlen, int *
     return f77_iconst(0);
 }
 
+/* A call to a FUNCTION whose result is a structure of type dt (tname
+ * its name, for a refusal): its temporary as hidden argument 0, as a
+ * COMPLEX*16 FUNCTION's is (f77_dcx_fcall). */
+static int f77_dt_fcall(char *name, int fptr, int *addrs, int *lens, int nargs, int dt, char *tname) {
+    int out; int cb; int nc; int ai; int r;
+    if (dt < 0) {
+        char m[F77_MAX_NAME + 60];
+        sprintf(m, "no derived type %s here, the result's of %s", tname, name);
+        f77_error(m);
+        ex_ty = TY_INT; ex_hi = -1;
+        return f77_iconst(0);
+    }
+    out = f77_char_temp(f77_dt_size[dt]);
+    cb = h_ncarg;
+    f77_carg(out, 0);
+    nc = 1;
+    for (ai = 0; ai < nargs; ai++) { f77_carg(addrs[ai], 0); nc = nc + 1; }
+    for (ai = 0; ai < nargs; ai++) {
+        if (lens[ai] < 0) continue;
+        f77_carg(lens[ai], 0);
+        nc = nc + 1;
+    }
+    if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
+    else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
+    h_cbase[r] = cb;
+    ex_ty = TY_DERIVED; ex_dt = dt; ex_hi = -1; ex_log = 0;
+    return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, out, -1, 0, NULL));
+}
+
 static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs) {
     int tmp;
     int cb;
@@ -3440,6 +3471,11 @@ static int f77_primary(void) {
                 f77_tfree_to(mk);
                 return r;
             }
+            if (rty == TY_DERIVED) {
+                r = f77_dt_fcall(f77_ulink[u], -1, addrs, lens, nargs, f77_dt_find(f77_urtn[u]), f77_urtn[u]);
+                f77_tfree_to(mk);
+                return r;
+            }
             if (f77_can_inline(u)) {
                 /* Splice the body, then read its result variable. */
                 int rs;
@@ -3476,7 +3512,9 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
-        if (f77_sty[s] == TY_DERIVED) {
+        if (f77_sty[s] == TY_DERIVED && !f77_sexternal[s] && f77_sme[s] < 0 &&
+            !(lx_t == T_LP && f77_srank[s] == 0 && !f77_desig_follows())) {
+            /* a structure variable (a FUNCTION of a derived type is called below) */
             if (f77_desig_follows()) s = f77_dt_desig(s);
             else if (f77_srank[s] > 0 && f77_aex_k > 0) {
                 /* an array of structures in an array expression */
@@ -3590,6 +3628,11 @@ static int f77_primary(void) {
                     return f77_iconst(0);
                 }
                 r = f77_afn_call(cname, f77_me_rrank[me], rty, rlog, 1, addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
+            }
+            if (rty == TY_DERIVED) {
+                r = f77_dt_fcall(cname, fptr, addrs, lens, nargs, me >= 0 ? f77_me_ival[me] : f77_sdt[s], f77_sname[s]);
                 f77_tfree_to(mk);
                 return r;
             }
@@ -9387,7 +9430,17 @@ static int f77_function_kw_end(int *ty_out) {
     f77_hdr_log = 0;
     f77_hdr_len = 0;
     n = f77_type_before_function("DOUBLEPRECISION");
-    if (n > 0) { off = n; ty = TY_DOUBLE; }
+    if (lx_stmt_len > 5 && strncmp(lx_stmt, "TYPE(", 5) == 0) {
+        /* TYPE(name) FUNCTION (Fortran 90) */
+        int e;
+        e = f77_match_paren(4);                  /* past its ) */
+        if (e - 6 <= 0 || e - 6 >= F77_MAX_NAME || e + 8 > lx_stmt_len || strncmp(lx_stmt + e, "FUNCTION", 8) != 0) return -1;
+        memcpy(f77_hdr_tname, lx_stmt + 5, (size_t)(e - 6));
+        f77_hdr_tname[e - 6] = 0;
+        off = e;
+        ty = TY_DERIVED;
+    }
+    else if (n > 0) { off = n; ty = TY_DOUBLE; }
     else if ((n = f77_type_before_function("DOUBLECOMPLEX")) > 0) { off = n; ty = TY_DCPLX; }
     else if ((n = f77_type_before_function("CHARACTER")) > 0) {
         off = n;
@@ -9559,7 +9612,7 @@ static void f77_emit_return(void) {
         return;
     }
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0 &&
-        f77_sty[f77_result_sym] == TY_DCPLX) {
+        (f77_sty[f77_result_sym] == TY_DCPLX || f77_sty[f77_result_sym] == TY_DERIVED)) {
         /* the result is in the caller's temporary already (hidden arg 0) */
         hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
         f77_cur_blk_live = 0;
@@ -12201,7 +12254,7 @@ static int f77_can_inline(int u) {
     if (u < 0) return 0;
     if (f77_ukind[u] == F77_UNIT_PROGRAM) return 0;
     if (f77_urty[u] == TY_CHAR) return 0;
-    if (f77_urty[u] == TY_DCPLX) return 0;     /* its result is the caller's temporary */
+    if (f77_urty[u] == TY_DCPLX || f77_urty[u] == TY_DERIVED) return 0;     /* its result is the caller's temporary */
     if (f77_inline_depth >= F77_MAX_INLINE_DEPTH) return 0;
     if (f77_ustmts[u] > f77_inline_max) return 0;
     if (f77_unosplice[u]) return 0;
@@ -12787,6 +12840,15 @@ static void f77_emit_copyin(void) {
     int i;
     /* The declaration part is closing: every member's type and shape
      * is final, so COMMON blocks and SAVEd locals can be laid out. */
+    if (f77_result_sym >= 0 && f77_sty[f77_result_sym] == TY_DERIVED && f77_sdt[f77_result_sym] < 0) {
+        /* a TYPE(name) FUNCTION whose type its USEs gave */
+        f77_sdt[f77_result_sym] = f77_dt_find(f77_urtn[f77_cur_unit]);
+        if (f77_sdt[f77_result_sym] < 0) {
+            char m[F77_MAX_NAME + 40];
+            sprintf(m, "no derived type %s here", f77_urtn[f77_cur_unit]);
+            f77_error(m);
+        }
+    }
     f77_layout_static();
     f77_host_table();
     /* An array-valued FUNCTION: callers took its value for a scalar and
@@ -13110,6 +13172,8 @@ static void f77_mod_proc(int u) {
     f77_me_log[e] = f77_urlog[u];
     f77_me_rrank[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urrank[u] : 0;
     f77_me_private[e] = f77_mod_private(m, f77_uname[u]);
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DERIVED)
+        f77_me_ival[e] = f77_result_sym >= 0 ? f77_sdt[f77_result_sym] : -1;    /* the result's type */
     if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
         /* its callers pass the result's buffer, of the length it has */
         if (f77_urlen[u] < 0) { f77_error("a module FUNCTION of assumed CHARACTER length is not supported"); return; }
@@ -13536,6 +13600,12 @@ static int f77_mod_read(char *nm) {
                     while (*q == ' ') q++;
                 }
             }
+        } else if (kind == 'D') {
+            char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
+            int pe;
+            sscanf(p + 2, "%*s %63s %63s", tn, tm);
+            pe = f77_me_find(m, name);
+            if (pe >= 0) f77_me_ival[pe] = f77_dt_lookup(tn, strcmp(tm, "-") == 0 ? "" : tm);
         } else if (kind == 'Y') {
             char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
             sscanf(p + 2, "%*s %63s %63s", tn, tm);
@@ -13637,6 +13707,9 @@ static void f77_mod_write(void) {
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
                 if (f77_me_dnames[e]) fprintf(f, " = %s", f77_me_dnames[e]);
                 fputc('\n', f);
+                if (f77_me_ty[e] == TY_DERIVED && f77_me_ival[e] >= 0)        /* its result's type */
+                    fprintf(f, "D %s %s %s\n", f77_me_name[e], f77_dt_name[f77_me_ival[e]],
+                            f77_dt_mod[f77_me_ival[e]][0] ? f77_dt_mod[f77_me_ival[e]] : "-");
             } else if (f77_me_kind[e] == F77_ME_TYPE) {
                 int dt;
                 dt = f77_me_ival[e];
@@ -13752,6 +13825,7 @@ static int f77_ib_base; static int f77_ib_frame; static int f77_ib_scope;
 static int f77_ib_kind; static int f77_ib_rty; static int f77_ib_rlog; static int f77_ib_rlen;
 static char f77_ib_name[F77_MAX_NAME];
 static char f77_ib_rname[F77_MAX_NAME];
+static char f77_ib_tname[F77_MAX_NAME];
 static char f77_ib_dn[16][F77_MAX_NAME];
 static int f77_ib_nd;
 static int f77_ib_imap[26]; static int f77_ib_ilen[26]; static int f77_ib_ilog[26]; static int f77_ib_inar[26];
@@ -13784,6 +13858,7 @@ static void f77_ib_begin(void) {
     f77_ib_rlen = ty == TY_CHAR ? f77_hdr_clen : 1;
     if (ty == TY_CHAR && f77_hdr_clen == -2) { f77_scan_from(f77_hdr_clen_off); f77_ib_rlen = f77_char_len(); }
     strcpy(f77_ib_rname, lx_stmt_result);
+    if (ty == TY_DERIVED) strcpy(f77_ib_tname, f77_hdr_tname);
     f77_scan_from(skip);
     if (lx_t != T_NAME) { f77_error("an interface body needs a name"); return; }
     strcpy(f77_ib_name, lex_name);
@@ -13850,6 +13925,7 @@ static void f77_ib_end(void) {
         f77_me_log[e] = f77_ib_rty >= 0 ? f77_ib_rlog : f77_slog[rs];
         f77_me_rrank[e] = f77_srank[rs];
         f77_me_ival[e] = f77_me_ty[e] == TY_CHAR ? (f77_ib_rty >= 0 ? f77_ib_rlen : f77_slen[rs]) : 0;
+        if (f77_me_ty[e] == TY_DERIVED) f77_me_ival[e] = f77_ib_rty >= 0 ? f77_dt_find(f77_ib_tname) : f77_sdt[rs];
         if (f77_me_ty[e] == TY_CHAR && f77_me_ival[e] < 0) f77_error("an interface body of assumed CHARACTER length is not supported");
         if (f77_snar[rs]) f77_error("an INTEGER*2 or LOGICAL*1 FUNCTION's interface body is not supported");
     } else f77_me_ty[e] = TY_INT;
@@ -14134,7 +14210,7 @@ static void f77_bind_unit(int u) {
     /* A CHARACTER FUNCTION takes its result buffer and length as two
      * hidden leading arguments; the dummies follow. */
     if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) nparam = 2;
-    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) nparam = 1;
+    if (f77_ukind[u] == F77_UNIT_FUNC && (f77_urty[u] == TY_DCPLX || f77_urty[u] == TY_DERIVED)) nparam = 1;
     if (f77_ukind[u] == F77_UNIT_FUNC &&
         (f77_urrank[u] > 0 || (f77_uentry_parent[u] >= 0 && f77_urrank[f77_uentry_parent[u]] > 0))) {
         int e;
@@ -14211,6 +14287,15 @@ static void f77_bind_unit(int u) {
         f77_styped[f77_result_sym] = 1;
         f77_slen[f77_result_sym] = f77_urlen[u];
         f77_slenv[f77_result_sym] = hi_emit(HI_PARAM, TY_INT, -1, -1, 1, NULL);
+    } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DERIVED) {
+        /* a structure: in the caller's temporary, hidden param 0
+         * (f77_dt_fcall), its type known once the unit's declarations
+         * and USEs are (f77_emit_copyin) */
+        f77_hide_assoc(f77_unit_rname(u));
+        f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
+        f77_sty[f77_result_sym] = TY_DERIVED;
+        f77_sdt[f77_result_sym] = f77_dt_find(f77_urtn[u]);
+        f77_styped[f77_result_sym] = 1;
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) {
         /* The result is the caller's 16-byte temporary, hidden param 0
          * (f77_dcx_fcall): a by-reference COMPLEX*16 dummy in all but name. */

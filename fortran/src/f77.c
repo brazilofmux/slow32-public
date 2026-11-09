@@ -645,6 +645,7 @@ static void f77_scan_units(void) {
                 else
                     f77_urty[f77_nunit] = rty;
                 f77_urlog[f77_nunit] = f77_hdr_log;
+                if (rty == TY_DERIVED) strcpy(f77_urtn[f77_nunit], f77_hdr_tname);
                 f77_urnar[f77_nunit] = f77_starts("FUNCTION") ? 0 : f77_lennar(rty, f77_hdr_len, f77_hdr_log);
                 if (rty == TY_CHAR && f77_hdr_clen == -2) {
                     f77_scan_from(f77_hdr_clen_off);
@@ -682,6 +683,32 @@ static void f77_scan_units(void) {
             else if (f77_starts("REAL")) { ty = TY_FLOAT; skip = 4; }
             else if (f77_starts("CHARACTER")) { ty = TY_CHAR; skip = 9; }
             else if (f77_starts("COMPLEX")) { ty = TY_CPLX; skip = 7; }
+            else if (f77_starts("TYPE(")) {
+                /* TYPE(name) :: F -- a derived type's result: its name,
+                 * for callers to find the type by */
+                int e; int i; int dc;
+                char tn[F77_MAX_NAME];
+                e = f77_match_paren(4);                  /* past its ) */
+                if (e - 6 > 0 && e - 6 < F77_MAX_NAME) {
+                    memcpy(tn, lx_stmt + 5, (size_t)(e - 6));
+                    tn[e - 6] = 0;
+                    dc = f77_toplevel(':', 0);
+                    i = (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') ? dc + 2 : e;
+                    while (i < lx_stmt_len) {
+                        char nm[F77_MAX_NAME];
+                        int n;
+                        n = 0;
+                        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) { if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i]; i++; }
+                        nm[n] = 0;
+                        if (n && strcmp(nm, f77_unit_rname(f77_nunit - 1)) == 0) {
+                            f77_urty[f77_nunit - 1] = TY_DERIVED;
+                            strcpy(f77_urtn[f77_nunit - 1], tn);
+                        }
+                        while (i < lx_stmt_len && lx_stmt[i] != ',') { if (lx_stmt[i] == '(') { i = f77_match_paren(i); continue; } i++; }
+                        i++;
+                    }
+                }
+            }
             if (ty >= 0) {
                 int dc;
                 int iparam;
