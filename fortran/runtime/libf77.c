@@ -1853,6 +1853,67 @@ char *f77_cat(const char *a, int la, const char *b, int lb) {
     return r;
 }
 
+/* A result of n bytes in the scratch ring (as f77_cat's). */
+static char *f77_ring(int n) {
+    char *r;
+    if (n > FIO_CATRING) {
+        fprintf(stderr, "f77: a CHARACTER result of %d bytes is too long\n", n);
+        exit(2);
+    }
+    if (fio_catpos + n > FIO_CATRING) fio_catpos = 0;
+    r = fio_catring + fio_catpos;
+    fio_catpos += (n + 3) & ~3;
+    return r;
+}
+
+/* REPEAT (Fortran 90): n copies of s, in the ring. */
+char *f77_repeat(const char *s, int ls, int n) {
+    char *r;
+    int i;
+    if (n < 0) { fprintf(stderr, "f77: REPEAT with NCOPIES %d, less than 0\n", n); exit(2); }
+    if (ls < 0) ls = 0;
+    r = f77_ring(ls * n);
+    for (i = 0; i < n; i++) memmove(r + i * ls, s, (size_t)ls);
+    return r;
+}
+
+/* ADJUSTL and ADJUSTR (Fortran 90): s with its leading (trailing)
+ * blanks moved to the other end, in the ring. */
+char *f77_adjust(const char *s, int n, int right) {
+    char *r;
+    int a; int b;
+    r = f77_ring(n);
+    a = 0;
+    b = n;
+    if (right) { while (b > 0 && s[b - 1] == ' ') b--; memset(r, ' ', (size_t)(n - b)); memmove(r + n - b, s, (size_t)b); }
+    else { while (a < n && s[a] == ' ') a++; memmove(r, s + a, (size_t)(n - a)); memset(r + n - a, ' ', (size_t)a); }
+    return r;
+}
+
+/* SCAN and VERIFY (Fortran 90): the position, from 1, of the first (with
+ * back, the last) character of s that is in set (VERIFY: is not); 0 when
+ * there is none. */
+int f77_scanset(const char *s, int ls, const char *set, int lset, int back, int verify) {
+    int i; int k;
+    for (k = 0; k < ls; k++) {
+        int in;
+        i = back ? ls - 1 - k : k;
+        in = lset > 0 && memchr(set, s[i], (size_t)lset) != NULL;
+        if (in != verify) return i + 1;
+    }
+    return 0;
+}
+
+/* INDEX with BACK (Fortran 90): the last position of b in a; with b of
+ * no characters, LEN(a) + 1. */
+int f77_index_back(const char *a, int la, const char *b, int lb) {
+    int i;
+    if (lb <= 0) return (la > 0 ? la : 0) + 1;
+    for (i = la - lb; i >= 0; i--)
+        if (memcmp(a + i, b, (size_t)lb) == 0) return i + 1;
+    return 0;
+}
+
 /* INDEX: first position of b in a, 1-based; 0 when absent. */
 int f77_index(const char *a, int la, const char *b, int lb) {
     int i;

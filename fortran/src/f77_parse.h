@@ -1110,6 +1110,8 @@ static int f77_naa;            /* array actuals recorded (f77_aa_*) */
 static int f77_act_aa;         /* the last f77_actual_addr's entry, or -1 */
 static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e);
 static void f77_kw_take(char *kw);
+static void f77_kw_skip(char *kw);
+static int f77_hconst(int v, int *out);
 static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n);
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
                              char kws[][F77_MAX_NAME], int *pn);
@@ -1958,6 +1960,11 @@ static int f77_select(int cond, int a, int b) {
 #define IN_UBOUND   75
 #define IN_MERGE    76    /* Fortran 90, elemental */
 #define IN_PRESENT  77    /* Fortran 90: an OPTIONAL dummy's actual is there */
+#define IN_ADJUSTL  78    /* Fortran 90 CHARACTER, elemental */
+#define IN_ADJUSTR  79
+#define IN_SCAN     80
+#define IN_VERIFY   81
+#define IN_REPEAT   82    /* Fortran 90 CHARACTER, its arguments scalars */
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -2138,8 +2145,13 @@ static int f77_intrinsic(char *nm) {
         strcmp(nm, "DDIM") == 0) return IN_DIM;
     if (strcmp(nm, "DPROD") == 0) return IN_DPROD;
     if (strcmp(nm, "LEN") == 0) return IN_LEN;
-    if (strcmp(nm, "ICHAR") == 0) return IN_ICHAR;
-    if (strcmp(nm, "CHAR") == 0) return IN_CHAR;
+    if (strcmp(nm, "ICHAR") == 0 || strcmp(nm, "IACHAR") == 0) return IN_ICHAR;    /* ASCII, as these are */
+    if (strcmp(nm, "CHAR") == 0 || strcmp(nm, "ACHAR") == 0) return IN_CHAR;
+    if (strcmp(nm, "ADJUSTL") == 0) return IN_ADJUSTL;
+    if (strcmp(nm, "ADJUSTR") == 0) return IN_ADJUSTR;
+    if (strcmp(nm, "SCAN") == 0) return IN_SCAN;
+    if (strcmp(nm, "VERIFY") == 0) return IN_VERIFY;
+    if (strcmp(nm, "REPEAT") == 0) return IN_REPEAT;
     if (strcmp(nm, "INDEX") == 0) return IN_INDEX;
     if (strcmp(nm, "LGE") == 0) return IN_LGE;
     if (strcmp(nm, "LGT") == 0) return IN_LGT;
@@ -2715,13 +2727,13 @@ static int f77_primary(void) {
                 /* LEN is an inquiry: a whole CHARACTER array is its
                  * argument as well as an element is */
                 int saved;
-                if (in == IN_TRIM) {
-                    /* not elemental: its STRING is a scalar (gfortran
-                     * refuses an array; it had been trimmed elementwise) */
+                if (in == IN_TRIM || in == IN_REPEAT) {
+                    /* not elemental: its arguments are scalars (gfortran
+                     * refuses an array; TRIM had trimmed elementwise) */
                     int at; int open;
                     open = (int)(lx_rts - lx_stmt) - 1;
                     if (f77_aex_first(open + 1, f77_match_paren(open) - 1, &at) >= 0) {
-                        f77_error("TRIM's argument is a scalar");
+                        f77_error(in == IN_TRIM ? "TRIM's argument is a scalar" : "REPEAT's arguments are scalars");
                         return f77_iconst(0);
                     }
                 }
@@ -2729,6 +2741,51 @@ static int f77_primary(void) {
                 if (in == IN_LEN) f77_char_whole_ok = 1;
                 a = f77_expr(); aty = ex_ty; ahi = ex_hi;
                 f77_char_whole_ok = saved;
+            }
+
+            if (in == IN_ADJUSTL || in == IN_ADJUSTR || in == IN_REPEAT || in == IN_SCAN || in == IN_VERIFY) {
+                /* Fortran 90's CHARACTER intrinsics, in libf77: a result
+                 * in its scratch ring (as // of an assumed length's) */
+                int alen; int aclen; int args[6]; int r;
+                alen = ex_len; aclen = ex_clen;
+                if (aty != TY_CHAR) { f77_error("this intrinsic needs a CHARACTER argument"); return f77_iconst(0); }
+                if (in == IN_ADJUSTL || in == IN_ADJUSTR) {
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    args[0] = a; args[1] = alen; args[2] = f77_iconst(in == IN_ADJUSTR);
+                    r = f77_call_i("f77_adjust", 3, args);
+                    ex_ty = TY_CHAR; ex_hi = -1; ex_log = 0; ex_len = alen; ex_clen = aclen;
+                    return r;
+                }
+                if (lx_t != T_COMMA) { f77_error("this intrinsic needs two arguments"); return f77_iconst(0); }
+                f77_tok();
+                f77_kw_skip(in == IN_REPEAT ? "NCOPIES" : "SET");
+                b = f77_expr(); bty = ex_ty;
+                if (in == IN_REPEAT) {
+                    int c;
+                    if (bty != TY_INT || ex_log) { f77_error("REPEAT's NCOPIES is an INTEGER"); return f77_iconst(0); }
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    if (f77_hconst(b, &c) && c < 0) { f77_error("REPEAT's NCOPIES is less than 0"); return f77_iconst(0); }
+                    args[0] = a; args[1] = alen; args[2] = b;
+                    r = f77_call_i("f77_repeat", 3, args);
+                    ex_ty = TY_CHAR; ex_hi = -1; ex_log = 0;
+                    ex_len = hi_emit(HI_MUL, TY_INT, alen, b, 0, NULL);
+                    ex_clen = aclen >= 0 && f77_hconst(b, &c) ? aclen * c : -1;
+                    if (ex_clen >= 0) ex_len = f77_iconst(ex_clen);
+                    return r;
+                }
+                if (bty != TY_CHAR) { f77_error("this intrinsic needs CHARACTER arguments"); return f77_iconst(0); }
+                args[0] = a; args[1] = alen; args[2] = b; args[3] = ex_len; args[4] = f77_iconst(0);
+                args[5] = f77_iconst(in == IN_VERIFY);
+                if (lx_t == T_COMMA) {
+                    f77_tok();
+                    f77_kw_skip("BACK");
+                    args[4] = f77_expr();
+                    if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
+                    args[4] = hi_emit(HI_SNE, TY_INT, args[4], f77_iconst(0), 0, NULL);
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return f77_call_i("f77_scanset", 6, args);
             }
 
             if (in >= IN_IAND && in <= IN_IBCLR) {
@@ -2924,10 +2981,28 @@ static int f77_primary(void) {
                 /* INDEX and the lexical comparisons: two CHARACTER args */
                 if (lx_t != T_COMMA) { f77_error("this intrinsic needs two arguments"); return f77_iconst(0); }
                 f77_tok();
+                if (in == IN_INDEX) f77_kw_skip("SUBSTRING");
                 b = f77_expr(); bty = ex_ty;
                 if (bty != TY_CHAR) { f77_error("this intrinsic needs CHARACTER arguments"); return f77_iconst(0); }
-                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 args[0] = a; args[1] = alen; args[2] = b; args[3] = ex_len;
+                if (in == IN_INDEX && lx_t == T_COMMA) {
+                    /* Fortran 90's BACK: the last occurrence */
+                    int bk; int c;
+                    f77_tok();
+                    f77_kw_skip("BACK");
+                    bk = f77_expr();
+                    if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                    if (f77_hconst(bk, &c)) return f77_call_i(c ? "f77_index_back" : "f77_index", 4, args);
+                    {
+                        int f; int l;
+                        f = f77_call_i("f77_index", 4, args);
+                        l = f77_call_i("f77_index_back", 4, args);
+                        return f77_select(hi_emit(HI_SNE, TY_INT, bk, f77_iconst(0), 0, NULL), l, f);
+                    }
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 ex_ty = TY_INT; ex_hi = -1;
                 if (in == IN_INDEX) return f77_call_i("f77_index", 4, args);
                 a = f77_call_i("f77_strcmp", 4, args);
@@ -4185,7 +4260,7 @@ static int f77_nonelem_intrinsic(char *nm) {
     static const char *ne[] = { "SUM", "PRODUCT", "MAXVAL", "MINVAL", "MAXLOC", "MINLOC", "COUNT",
                                 "ANY", "ALL", "DOT_PRODUCT", "SIZE", "LBOUND", "UBOUND", "SHAPE",
                                 "MATMUL", "TRANSPOSE", "RESHAPE", "SPREAD", "PACK", "UNPACK",
-                                "CSHIFT", "EOSHIFT", "TRANSFER", "ALLOCATED", "PRESENT", "LEN", 0 };
+                                "CSHIFT", "EOSHIFT", "TRANSFER", "ALLOCATED", "PRESENT", "LEN", "REPEAT", 0 };
     int i;
     for (i = 0; ne[i]; i++) if (strcmp(ne[i], nm) == 0) return 1;
     return f77_is_inquiry(nm);
@@ -9927,6 +10002,14 @@ static int f77_unit_dummy_as(int u, int k) {
  * interface (F90 12.3.1.1), so a unit of this file that is no module or
  * internal procedure is refused one. */
 static int f77_run_desc(int base, int r, int *ext, int step);
+
+/* An intrinsic's argument keyword kw= at the scanner: passed over. */
+static void f77_kw_skip(char *kw) {
+    if (lx_t == T_NAME && strcmp(lex_name, kw) == 0 && lx_rp < lx_rpe && *lx_rp == '=' && !(lx_rp + 1 < lx_rpe && lx_rp[1] == '=')) {
+        f77_tok();
+        f77_tok();
+    }
+}
 
 /* An actual's keyword (Fortran 90 12.4.1), NAME= before it: taken into kw,
  * the scanner past the =; "" when there is none. */

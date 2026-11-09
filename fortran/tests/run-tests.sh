@@ -353,6 +353,8 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf "character*2 c(2)\nc = 'ab'\nprint *, repeat(c, 2)\nend\n" > "$W/reparr.f90"
+    printf "print *, repeat('ab', -1)\nend\n" > "$W/repneg.f90"
     printf 'integer, parameter :: k = selected_real_kind()\nend\n' > "$W/selknone.f90"
     printf 'print *, selected_int_kind(p=3)\nend\n' > "$W/selkp.f90"
     printf 'module m\ncontains\nfunction f()\ncharacter(len=*) :: f\nf = "a"\nend function\nend module\n' > "$W/modclen.f90"
@@ -434,6 +436,8 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "reparr:line 3: REPEAT's arguments are scalars" \
+             "repneg:line 1: REPEAT's NCOPIES is less than 0" \
              "selknone:line 1: SELECTED_REAL_KIND takes P, R or both" \
              "selkp:line 1: SELECTED_INT_KIND takes one argument, R" \
              "modclen:line 6: a module FUNCTION of assumed CHARACTER length is not supported" \
