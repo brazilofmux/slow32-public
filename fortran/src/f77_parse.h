@@ -976,6 +976,7 @@ static int f77_find_format(int label) {
 #define F77_CTL_DO 1
 #define F77_CTL_IF 2
 #define F77_CTL_WHERE 3   /* a WHERE construct: its mask is f77_where_* */
+#define F77_CTL_SELECT 4  /* SELECT CASE: f77_stmt_select */
 #define F77_MAX_CTL 64
 
 static int ctl_kind[F77_MAX_CTL];
@@ -991,6 +992,14 @@ static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_cont[F77_MAX_CTL];    /* DO: the step, made by the first CYCLE (-1: none) */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
 static char ctl_name[F77_MAX_CTL][64]; /* DO/IF: its construct name, or "" */
+/* SELECT CASE: the selector (ctl_var its value, ctl_stephi a CHARACTER
+ * one's length), its kind (0 INTEGER, 1 LOGICAL, 2 CHARACTER), the
+ * pending test (ctl_else), CASE DEFAULT's block, whether a CASE's body
+ * is being compiled, and where its case values start among f77_cs_*. */
+static int ctl_skind[F77_MAX_CTL];
+static int ctl_sdef[F77_MAX_CTL];
+static int ctl_sbody[F77_MAX_CTL];
+static int ctl_cs0[F77_MAX_CTL];
 static int ctl_n;
 
 /* The unit's construct names (Fortran 90): each names one construct and
@@ -4304,6 +4313,11 @@ static int f77_hconst(int v, int *out) {
     if (h_kind[v] == HI_ADDI) {
         if (!f77_hconst(h_src1[v], &a)) return 0;
         *out = a + h_val[v];
+        return 1;
+    }
+    if (h_kind[v] == HI_NEG) {
+        if (!f77_hconst(h_src1[v], &a)) return 0;
+        *out = -a;
         return 1;
     }
     if (h_kind[v] == HI_ADD || h_kind[v] == HI_SUB || h_kind[v] == HI_MUL) {
@@ -8254,6 +8268,7 @@ static void f77_close_top_do(void) {
 /* Close every DO whose terminal label is the one just executed. */
 static char *f77_name_tail(int off);
 static void f77_cname_match(int k, char *nm, char *what);
+static void f77_cname_match_opt(int k, char *nm, char *what);
 static void f77_close_do(int lab) {
     while (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
            ctl_label[ctl_n - 1] == lab) {
@@ -8479,6 +8494,199 @@ static void f77_desc_guard(void) {
     }
 }
 
+/* SELECT CASE (Fortran 90 8.1.3).  The selector, INTEGER, LOGICAL or
+ * CHARACTER, is evaluated once; each CASE then tests it in turn against
+ * its values -- v, lo:, :hi, lo:hi, constants of its type -- and runs its
+ * block or goes on to the next CASE's test; CASE DEFAULT, wherever it
+ * is, gets what no test took.  One pass: each CASE's test is emitted
+ * where the CASE is, the chain of tests ending at END SELECT.  No value
+ * may be in two CASEs (checked here, as gfortran checks it). */
+#define F77_MAX_CS 1024
+static int f77_cs_haslo[F77_MAX_CS]; static int f77_cs_hashi[F77_MAX_CS];
+static int f77_cs_lo[F77_MAX_CS];    static int f77_cs_hi[F77_MAX_CS];    /* values; CHARACTER: string indexes */
+static int f77_ncs;
+
+static void f77_stmt_select(void) {
+    int v; int b_test; int kind;
+    f77_scan_from(10);
+    f77_tok();                                   /* ( */
+    v = f77_expr();
+    if (ex_ty == TY_CHAR) kind = 2;
+    else if (ex_ty == TY_INT) kind = ex_log ? 1 : 0;
+    else {
+        /* said, and the construct opened all the same: its CASEs and END
+         * SELECT are not then refused as strays */
+        f77_error("SELECT CASE needs an INTEGER, LOGICAL or CHARACTER expression");
+        kind = 0;
+        v = f77_iconst(0);
+    }
+    if (lx_t == T_RP) f77_tok();
+    else { f77_error("expected ) after SELECT CASE's expression"); lx_t = T_EOF; }
+    if (ctl_n >= F77_MAX_CTL) { f77_error("control nesting too deep"); return; }
+    b_test = hir_new_block();
+    ctl_kind[ctl_n] = F77_CTL_SELECT;
+    ctl_var[ctl_n] = kind == 1 ? hi_emit(HI_SNE, TY_INT, v, f77_iconst(0), 0, NULL) : v;
+    ctl_stephi[ctl_n] = kind == 2 ? ex_len : -1;
+    ctl_skind[ctl_n] = kind;
+    ctl_else[ctl_n] = b_test;
+    ctl_exit[ctl_n] = hir_new_block();
+    ctl_sdef[ctl_n] = -1;
+    ctl_sbody[ctl_n] = 0;
+    ctl_cs0[ctl_n] = f77_ncs;
+    ctl_label[ctl_n] = -2;
+    ctl_n = ctl_n + 1;
+    f77_goto_blk(b_test);
+}
+
+/* Do two CHARACTER constants compare as a <= b, blank-padded (F90 7.2.3)?
+ * Their order: <0, 0, >0. */
+static int f77_cs_strcmp(int a, int b) {
+    int la; int lb; int n; int i;
+    la = lex_str_len[a]; lb = lex_str_len[b];
+    n = la > lb ? la : lb;
+    for (i = 0; i < n; i++) {
+        int ca; int cb;
+        ca = i < la ? (unsigned char)lex_strpool[lex_str_off[a] + i] : ' ';
+        cb = i < lb ? (unsigned char)lex_strpool[lex_str_off[b] + i] : ' ';
+        if (ca != cb) return ca - cb;
+    }
+    return 0;
+}
+
+/* One case value, a constant of the selector's kind: its value, or for
+ * a CHARACTER one its string's index.  -1 (and said) when it is not. */
+static int f77_cs_const(int kind, int *val) {
+    int v;
+    v = f77_expr();
+    if (kind == 2) {
+        if (ex_ty != TY_CHAR) { f77_error("a CASE value has the type of SELECT CASE's expression"); return -1; }
+        if (h_kind[v] != HI_SADDR || ex_clen < 0) { f77_error("a CASE value is a constant"); return -1; }
+        *val = h_val[v];
+        return 0;
+    }
+    if (ex_ty != TY_INT || ex_log != (kind == 1)) { f77_error("a CASE value has the type of SELECT CASE's expression"); return -1; }
+    if (!f77_hconst(v, val)) { f77_error("a CASE value is a constant"); return -1; }
+    if (kind == 1) *val = *val != 0;
+    return 0;
+}
+
+/* The order of two case values of a SELECT of this kind: <0, 0, >0. */
+static int f77_cs_order(int kind, int x, int y) {
+    if (kind == 2) return f77_cs_strcmp(x, y);
+    return x < y ? -1 : x > y;
+}
+
+/* Do case values a and b (of one SELECT) share a value?  They do unless
+ * one is empty (lo > hi) or ends below where the other starts. */
+static int f77_cs_meet(int kind, int a, int b) {
+    if (f77_cs_haslo[a] && f77_cs_hashi[a] && f77_cs_order(kind, f77_cs_lo[a], f77_cs_hi[a]) > 0) return 0;
+    if (f77_cs_haslo[b] && f77_cs_hashi[b] && f77_cs_order(kind, f77_cs_lo[b], f77_cs_hi[b]) > 0) return 0;
+    if (f77_cs_hashi[a] && f77_cs_haslo[b] && f77_cs_order(kind, f77_cs_hi[a], f77_cs_lo[b]) < 0) return 0;
+    if (f77_cs_hashi[b] && f77_cs_haslo[a] && f77_cs_order(kind, f77_cs_hi[b], f77_cs_lo[a]) < 0) return 0;
+    return 1;
+}
+
+static void f77_stmt_case(void) {
+    int k; int kind; int dflt; int c; int nm_off;
+    char *nm;
+    k = ctl_n - 1;
+    if (k < f77_ctl_base || ctl_kind[k] != F77_CTL_SELECT) { f77_error("CASE without SELECT CASE"); return; }
+    kind = ctl_skind[k];
+    dflt = f77_starts("CASEDEFAULT") != 0;
+    nm_off = dflt ? 11 : f77_match_paren(4);
+    nm = f77_name_tail(nm_off);
+    if (!nm) { f77_error("unexpected text after CASE"); return; }
+    f77_cname_match_opt(k, nm, "CASE");
+    if (ctl_sbody[k]) f77_goto_blk(ctl_exit[k]);                /* the CASE before ends */
+    ctl_sbody[k] = 1;
+    if (dflt) {
+        if (ctl_sdef[k] >= 0) { f77_error("a second CASE DEFAULT in one SELECT CASE"); return; }
+        ctl_sdef[k] = hir_new_block();
+        f77_begin_blk(ctl_sdef[k]);
+        return;
+    }
+    f77_begin_blk(ctl_else[k]);
+    f77_scan_from(5);
+    c = -1;
+    for (;;) {
+        int haslo; int hashi; int lo; int hi; int t; int q;
+        haslo = 0; hashi = 0; lo = 0; hi = 0;
+        if (lx_t != T_COLON) {
+            if (f77_cs_const(kind, &lo) < 0) { lx_t = T_EOF; return; }
+            haslo = 1;
+        }
+        if (lx_t == T_COLON) {
+            if (kind == 1) { f77_error("a LOGICAL CASE value is no range"); lx_t = T_EOF; return; }
+            f77_tok();
+            if (lx_t != T_COMMA && lx_t != T_RP) {
+                if (f77_cs_const(kind, &hi) < 0) { lx_t = T_EOF; return; }
+                hashi = 1;
+            }
+            if (!haslo && !hashi) { f77_error("a CASE range needs a bound"); lx_t = T_EOF; return; }
+        } else { hi = lo; hashi = 1; }
+        /* recorded, and checked against the SELECT's other values */
+        if (f77_ncs >= F77_MAX_CS) { f77_error("too many CASE values"); lx_t = T_EOF; return; }
+        f77_cs_haslo[f77_ncs] = haslo; f77_cs_hashi[f77_ncs] = hashi;
+        f77_cs_lo[f77_ncs] = lo; f77_cs_hi[f77_ncs] = hi;
+        for (q = ctl_cs0[k]; q < f77_ncs; q++)
+            if (f77_cs_meet(kind, q, f77_ncs)) { f77_error("a value is in two CASEs of one SELECT CASE"); lx_t = T_EOF; return; }
+        f77_ncs = f77_ncs + 1;
+        /* the test */
+        if (kind == 2) {
+            int args[4]; int cmp; int tl; int th;
+            tl = -1; th = -1;
+            if (haslo) {
+                args[0] = ctl_var[k]; args[1] = ctl_stephi[k];
+                args[2] = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lo, NULL); args[3] = f77_iconst(lex_str_len[lo]);
+                cmp = f77_call_i("f77_strcmp", 4, args);
+                tl = hi_emit(haslo && hashi && lo == hi ? HI_SEQ : HI_SGE, TY_INT, cmp, f77_iconst(0), 0, NULL);
+            }
+            if (hashi && !(haslo && lo == hi)) {
+                args[0] = ctl_var[k]; args[1] = ctl_stephi[k];
+                args[2] = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, hi, NULL); args[3] = f77_iconst(lex_str_len[hi]);
+                cmp = f77_call_i("f77_strcmp", 4, args);
+                th = hi_emit(HI_SLE, TY_INT, cmp, f77_iconst(0), 0, NULL);
+            }
+            t = tl < 0 ? th : th < 0 ? tl : hi_emit(HI_AND, TY_INT, tl, th, 0, NULL);
+        } else if (haslo && hashi && lo == hi) {
+            t = hi_emit(HI_SEQ, TY_INT, ctl_var[k], f77_iconst(lo), 0, NULL);
+        } else {
+            int tl; int th;
+            tl = haslo ? hi_emit(HI_SGE, TY_INT, ctl_var[k], f77_iconst(lo), 0, NULL) : -1;
+            th = hashi ? hi_emit(HI_SLE, TY_INT, ctl_var[k], f77_iconst(hi), 0, NULL) : -1;
+            t = tl < 0 ? th : th < 0 ? tl : hi_emit(HI_AND, TY_INT, tl, th, 0, NULL);
+        }
+        c = c < 0 ? t : hi_emit(HI_OR, TY_INT, c, t, 0, NULL);
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after CASE values"); lx_t = T_EOF; return; }
+    lx_t = T_EOF;                                /* [name]: checked above */
+    {
+        int b_body; int b_next;
+        b_body = hir_new_block();
+        b_next = hir_new_block();
+        hi_emit(HI_BRC, TY_VOID, c, b_body, b_next, NULL);
+        f77_cur_blk_live = 0;
+        ctl_else[k] = b_next;
+        f77_begin_blk(b_body);
+    }
+}
+
+static void f77_stmt_endselect(void) {
+    int k;
+    k = ctl_n - 1;
+    if (k < f77_ctl_base || ctl_kind[k] != F77_CTL_SELECT) { f77_error("END SELECT without SELECT CASE"); return; }
+    f77_cname_match(k, f77_name_tail(9), "END SELECT");
+    if (ctl_sbody[k]) f77_goto_blk(ctl_exit[k]);
+    /* what no CASE took */
+    f77_begin_blk(ctl_else[k]);
+    f77_goto_blk(ctl_sdef[k] >= 0 ? ctl_sdef[k] : ctl_exit[k]);
+    f77_begin_blk(ctl_exit[k]);
+    f77_ncs = ctl_cs0[k];
+    ctl_n = k;
+}
+
 /* EXIT and CYCLE (Fortran 90), of the innermost DO or of the DO the
  * construct name names: EXIT to the block after it, CYCLE to its step (a
  * counted DO; made here the first time, f77_close_top_do runs the step in
@@ -8499,8 +8707,9 @@ static void f77_stmt_exit_cycle(int cycle) {
             return;
         }
         if (ctl_kind[k] != F77_CTL_DO) {
-            sprintf(m, "%s names %s, an IF construct, not a DO%s", cycle ? "CYCLE" : "EXIT", nm,
-                    cycle ? "" : " (EXIT from an IF is Fortran 2008)");
+            sprintf(m, "%s names %s, %s construct, not a DO%s", cycle ? "CYCLE" : "EXIT", nm,
+                    ctl_kind[k] == F77_CTL_SELECT ? "a SELECT CASE" : "an IF",
+                    cycle ? "" : ctl_kind[k] == F77_CTL_SELECT ? " (EXIT from it is Fortran 2008)" : " (EXIT from an IF is Fortran 2008)");
             f77_error(m);
             return;
         }
@@ -8556,6 +8765,13 @@ static void f77_cname_match(int k, char *nm, char *what) {
     else if (!nm[0]) sprintf(m, "%s needs the construct name %s", what, ctl_name[k]);
     else sprintf(m, "%s names %s; the construct is %s", what, nm, ctl_name[k]);
     f77_error(m);
+}
+
+/* The same, for a statement inside construct k that may leave its name
+ * off -- ELSE, ELSE IF, CASE (F90 8.1.2.1, 8.1.3.1): only the END needs
+ * it.  (ELSE and ELSE IF without it had been refused.) */
+static void f77_cname_match_opt(int k, char *nm, char *what) {
+    if (nm[0]) f77_cname_match(k, nm, what);
 }
 
 /* A construct name on the statement now starting a construct: one per
@@ -14354,8 +14570,9 @@ static void f77_statement(void) {
     ctl_n0 = ctl_n;
     if (cname[0]) {
         if (cls == S_IF_LOGIC) { f77_error("a construct name is on a block IF, not a logical IF"); goto done; }
-        if (!(cls == S_DO || cls == S_IF_BLOCK || f77_is_dowhile() || f77_is_doforever())) {
-            f77_error("a construct name is on DO or IF (...) THEN only");
+        if (!(cls == S_DO || cls == S_IF_BLOCK || f77_is_dowhile() || f77_is_doforever() ||
+              (cls == S_KEYWORD && f77_starts("SELECTCASE(")))) {
+            f77_error("a construct name is on DO, IF (...) THEN or SELECT CASE only");
             goto done;
         }
         f77_cname_define(cname);
@@ -14413,6 +14630,14 @@ static void f77_statement(void) {
     if (!f77_cur_blk_live && !f77_stmt_is_declaration(cls))
         f77_begin_blk(hir_new_block());
 
+    /* SELECT CASE (Fortran 90) */
+    if (cls == S_KEYWORD && f77_starts("SELECTCASE(")) { f77_stmt_select(); goto done; }
+    if (cls == S_KEYWORD && (f77_starts("CASE(") || f77_starts("CASEDEFAULT"))) { f77_stmt_case(); goto done; }
+    if (cls == S_KEYWORD && f77_starts("ENDSELECT") && f77_name_tail(9)) { f77_stmt_endselect(); goto done; }
+    if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_SELECT && !ctl_sbody[ctl_n - 1]) {
+        f77_error("only a CASE statement may follow SELECT CASE");
+        goto done;
+    }
     if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE && cls != S_ASSIGN &&
         !f77_starts("ELSEWHERE") && !f77_starts("ENDWHERE") && !f77_starts("WHERE(")) {
         f77_error("a WHERE construct holds array assignments only");
@@ -14712,7 +14937,7 @@ static void f77_statement(void) {
             if (after + 4 <= lx_stmt_len && strncmp(lx_stmt + after, "THEN", 4) == 0)
                 nm = f77_name_tail(after + 4);
             if (!nm) { f77_error("ELSE IF (e) needs THEN, and nothing after it but a construct name"); goto done; }
-            f77_cname_match(ctl_n - 1, nm, "ELSE IF");
+            f77_cname_match_opt(ctl_n - 1, nm, "ELSE IF");
         }
         f77_goto_blk(ctl_exit[ctl_n - 1]);
         f77_begin_blk(ctl_else[ctl_n - 1]);
@@ -14737,7 +14962,7 @@ static void f77_statement(void) {
         }
         if ((nm = f77_name_tail(4)) == 0) { f77_error("unexpected text after ELSE"); goto done; }
         if (ctl_else[ctl_n - 1] < 0) { f77_error("a second ELSE in one IF construct"); goto done; }
-        f77_cname_match(ctl_n - 1, nm, "ELSE");
+        f77_cname_match_opt(ctl_n - 1, nm, "ELSE");
         f77_goto_blk(ctl_exit[ctl_n - 1]);
         f77_begin_blk(ctl_else[ctl_n - 1]);
         ctl_else[ctl_n - 1] = -1;

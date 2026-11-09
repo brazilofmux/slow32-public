@@ -258,10 +258,14 @@ fi
 # Fortran 95's; its body is array assignments; its mask is a LOGICAL array
 # of the assignments' rank (where*).
 # Construct names (Fortran 90; cn*): each names one construct and no
-# variable; END DO, END IF, ELSE and ELSE IF carry the construct's name or
-# none, as it has one or not; EXIT and CYCLE name a DO around them (EXIT
+# variable; END DO and END IF carry the construct's name or none, as it
+# has one or not, ELSE and ELSE IF the construct's or none; EXIT and CYCLE name a DO around them (EXIT
 # from an IF is Fortran 2008's).  Two ELSEs, ELSE IF after ELSE, and text
 # after END IF were taken silently before (else2, elseelif, endifjunk).
+# SELECT CASE (Fortran 90; sel*): no value in two CASEs, values constants
+# of the selector's type, one CASE DEFAULT, only CASEs right after the
+# SELECT, no LOGICAL range, the construct name on END SELECT, an INTEGER,
+# LOGICAL or CHARACTER selector; EXIT from it is Fortran 2008's.
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -344,6 +348,19 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\na = merge(1.0, 2, .true.)\nend\n' > "$W/mrgty.f90"
     printf 'integer m(2,2), s(2)\nm = 1\nn = 1\ns = sum(m, n)\nend\n' > "$W/rddim.f90"
     printf 'integer m(9)\nm = 0\nm(1:5) = (/ (/ 1, 2 /), 3 /)\nend\n' > "$W/aconshp.f90"
+    printf 'i = 1\nselect case (i)\ncase (1:5)\ncase (5)\nend select\nend\n' > "$W/selovl.f90"
+    printf "character c\nc = 'a'\nselect case (c)\ncase ('a':'m')\ncase ('k')\nend select\nend\n" > "$W/selcovl.f90"
+    printf "i = 1\nselect case (i)\ncase ('a')\nend select\nend\n" > "$W/selty.f90"
+    printf 'i = 1\nj = 1\nselect case (i)\ncase (j)\nend select\nend\n' > "$W/selconst.f90"
+    printf 'i = 1\nselect case (i)\ncase default\ncase default\nend select\nend\n' > "$W/seldef2.f90"
+    printf 'i = 1\nselect case (i)\nj = 1\ncase (1)\nend select\nend\n' > "$W/selstmt.f90"
+    printf 'i = 1\ncase (1)\nend\n' > "$W/selstray.f90"
+    printf 'i = 1\nend select\nend\n' > "$W/selend.f90"
+    printf 'i = 1\nselect case (i)\ncase (1)\nend\n' > "$W/selopen.f90"
+    printf 'logical l\nl = .true.\nselect case (l)\ncase (.true.:)\nend select\nend\n' > "$W/sellogr.f90"
+    printf 'i = 1\ns: select case (i)\ncase (1)\nend select\nend\n' > "$W/selname.f90"
+    printf 'x = 1.0\nselect case (x)\nend select\nend\n' > "$W/selreal.f90"
+    printf 'i = 1\ndo\ns: select case (i)\ncase (1)\nexit s\nend select s\nend do\nend\n' > "$W/selexit.f90"
     printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1,3/))\nend\n' > "$W/rshord.f90"
     printf 'integer k(3), s(3)\nk = 1\ns = 1\nk = cshift(k, s)\nend\n' > "$W/csharr.f90"
     printf 'integer m(2,3), s(2)\nm = 1\ns = 1\nm = cshift(m, s)\nend\n' > "$W/cshshp.f90"
@@ -426,7 +443,7 @@ if [ -x "$F77" ]; then
              "cncycif:line 3: CYCLE names A, an IF construct, not a DO" \
              "cnexitno:line 2: EXIT names Q, which is no construct around it" \
              "cnlogif:line 1: a construct name is on a block IF, not a logical IF" \
-             "cndecl:line 1: a construct name is on DO or IF (...) THEN only" \
+             "cndecl:line 1: a construct name is on DO, IF (...) THEN or SELECT CASE only" \
              "else2:line 3: a second ELSE in one IF construct" \
              "elseelif:line 3: ELSE IF after ELSE" \
              "endifjunk:line 2: unexpected text after END IF" \
@@ -468,6 +485,19 @@ if [ -x "$F77" ]; then
              "mrgty:line 2: MERGE's TSOURCE and FSOURCE differ in type" \
              "rddim:line 4: DIM= of a reduction of an array of rank above 1 is supported only as a constant" \
              "aconshp:line 3: the shapes in an array expression do not conform" \
+             "selovl:line 4: a value is in two CASEs of one SELECT CASE" \
+             "selcovl:line 5: a value is in two CASEs of one SELECT CASE" \
+             "selty:line 3: a CASE value has the type of SELECT CASE's expression" \
+             "selconst:line 4: a CASE value is a constant" \
+             "seldef2:line 4: a second CASE DEFAULT in one SELECT CASE" \
+             "selstmt:line 3: only a CASE statement may follow SELECT CASE" \
+             "selstray:line 2: CASE without SELECT CASE" \
+             "selend:line 2: END SELECT without SELECT CASE" \
+             "selopen:SELECT CASE without END SELECT" \
+             "sellogr:line 4: a LOGICAL CASE value is no range" \
+             "selname:line 4: END SELECT needs the construct name S" \
+             "selreal:line 2: SELECT CASE needs an INTEGER, LOGICAL or CHARACTER expression" \
+             "selexit:line 5: EXIT names S, a SELECT CASE construct, not a DO (EXIT from it is Fortran 2008)" \
              "rshord:line 3: RESHAPE's ORDER has a value for each dimension of the result" \
              "csharr:line 4: SHIFT is a scalar, or an array of rank one less than the array's" \
              "cshshp:line 4: SHIFT's shape is not the array's without dimension DIM" \
