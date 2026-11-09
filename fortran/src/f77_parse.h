@@ -245,7 +245,26 @@ static int f77_where_depth;
 static int f77_where_nt;
 static int f77_where_ext[8];
 static int f77_aex_cnt[8];
+static int f77_aex_first(int from, int to, int *at);
+static int f77_match_paren(int i);
+static int f77_aex_ext[8];          /* the loops' extents (HIR values), for the conformance check */
 static int f77_aex_elem(int s, int whole);
+/* Entering the loops of an array expression of rank nt, counts cnt[] and
+ * extents ext[], and leaving them: the context saved and restored, as a
+ * consumer's loops may sit inside another's (a reduction in an assignment). */
+typedef struct { int k; int cnt[8]; int ext[8]; } F77AexSave;
+static void f77_aex_enter(F77AexSave *sv, int nt, int *cnt, int *ext) {
+    int j;
+    sv->k = f77_aex_k;
+    for (j = 0; j < 8; j++) { sv->cnt[j] = f77_aex_cnt[j]; sv->ext[j] = f77_aex_ext[j]; }
+    f77_aex_k = nt;
+    for (j = 0; j < nt && j < 8; j++) { f77_aex_cnt[j] = cnt[j]; f77_aex_ext[j] = ext[j]; }
+}
+static void f77_aex_leave(F77AexSave *sv) {
+    int j;
+    f77_aex_k = sv->k;
+    for (j = 0; j < 8; j++) { f77_aex_cnt[j] = sv->cnt[j]; f77_aex_ext[j] = sv->ext[j]; }
+}
 static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
 static void f77_assign_params(int n);
 
@@ -2149,7 +2168,17 @@ static void f77_char_assign(int dst, int dlen, int src, int slen) {
 /* Substring (e1:e2) of a value at `base` with length `lenv` (constant
  * `clen`, or -1).  The scanner is on the opening parenthesis.  Sets
  * ex_len/ex_clen. */
+static int f77_substr_off(int lenv, int clen);
 static int f77_substring(int base, int lenv, int clen) {
+    int t;
+    t = f77_substr_off(lenv, clen);
+    if (t < 0) return base;
+    return hi_emit(HI_ADD, HL_ADDR_TY, base, t, 0, NULL);
+}
+
+/* The substring's offset from its string, e1 - 1, the scanner on its
+ * '(' (f77_substring's parse); ex_len/ex_clen as there.  -1 on error. */
+static int f77_substr_off(int lenv, int clen) {
     int e1; int e2; int c1; int c2; int k1; int k2; int t;
     f77_tok();
     e1 = -1; e2 = -1; c1 = 1; c2 = clen; k1 = 1; k2 = clen >= 0;
@@ -2158,14 +2187,14 @@ static int f77_substring(int base, int lenv, int clen) {
         k1 = h_kind[e1] == HI_ICONST;
         c1 = k1 ? h_val[e1] : -2;
     }
-    if (lx_t != T_COLON) { f77_error("expected : in substring"); return base; }
+    if (lx_t != T_COLON) { f77_error("expected : in substring"); return -1; }
     f77_tok();
     if (lx_t != T_RP) {
         e2 = f77_expr(); e2 = f77_cvt(e2, &ex_hi, ex_ty, TY_INT);
         k2 = h_kind[e2] == HI_ICONST;
         c2 = k2 ? h_val[e2] : -2;
     }
-    if (lx_t != T_RP) { f77_error("expected ) after substring"); return base; }
+    if (lx_t != T_RP) { f77_error("expected ) after substring"); return -1; }
     f77_tok();
     /* (e1:e2) needs 1 <= e1 <= e2 <= the length (F77 5.7.1); bounds
      * that are constants are checked here, the rest are not checked. */
@@ -2177,15 +2206,17 @@ static int f77_substring(int base, int lenv, int clen) {
     }
     if (e1 < 0) e1 = f77_iconst(1);
     if (e2 < 0) e2 = lenv;
-    t = hi_emit(HI_ADDI, TY_INT, e1, -1, -1, NULL);
-    base = hi_emit(HI_ADD, HL_ADDR_TY, base, t, 0, NULL);
-    t = hi_emit(HI_SUB, TY_INT, e2, e1, 0, NULL);
-    ex_len = hi_emit(HI_ADDI, TY_INT, t, -1, 1, NULL);
-    ex_clen = (c1 >= 0 && c2 >= 0) ? c2 - c1 + 1 : -1;
-    if (ex_clen >= 0) ex_len = f77_iconst(ex_clen);
-    ex_ty = TY_CHAR;
-    ex_hi = -1;
-    return base;
+    {
+        int off;
+        off = hi_emit(HI_ADDI, TY_INT, e1, -1, -1, NULL);
+        t = hi_emit(HI_SUB, TY_INT, e2, e1, 0, NULL);
+        ex_len = hi_emit(HI_ADDI, TY_INT, t, -1, 1, NULL);
+        ex_clen = (c1 >= 0 && c2 >= 0) ? c2 - c1 + 1 : -1;
+        if (ex_clen >= 0) ex_len = f77_iconst(ex_clen);
+        ex_ty = TY_CHAR;
+        ex_hi = -1;
+        return off;
+    }
 }
 
 /* Does the parenthesised group the scanner is on contain a top-level
@@ -2215,16 +2246,22 @@ static int f77_paren_has_colon_at(int i) {
  * actual argument passes (f77_char_whole_ok), and nothing else -- D = C
  * assigned C(1) to D(1) and stopped (found 2026-11-08). */
 static int f77_char_whole_ok;
+/* The length of CHARACTER symbol s: its value, *clen the constant or -1. */
+static int f77_char_lenv(int s, int *clen) {
+    *clen = f77_slen[s];
+    if (*clen >= 0) return f77_iconst(*clen);
+    if (f77_slenv[s] >= 0) return f77_slenv[s];
+    f77_error("CHARACTER length is not known here");
+    *clen = 1;
+    return f77_iconst(1);
+}
 static int f77_char_ref(int s) {
     int addr;
     int lenv;
     int clen;
     if (f77_srank[s] > 0 && lx_t != T_LP && !f77_char_whole_ok)
-        f77_error("a whole CHARACTER array is supported only as an actual argument or in an I/O list");
-    clen = f77_slen[s];
-    if (clen >= 0) lenv = f77_iconst(clen);
-    else if (f77_slenv[s] >= 0) lenv = f77_slenv[s];
-    else { f77_error("CHARACTER length is not known here"); lenv = f77_iconst(1); clen = 1; }
+        f77_error("a whole CHARACTER array in an expression is not supported yet");
+    lenv = f77_char_lenv(s, &clen);
     if (f77_sparam[s]) addr = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, f77_spstr[s], NULL);
     else addr = f77_sval[s];
     if (lx_t == T_LP && f77_srank[s] > 0) {
@@ -2496,7 +2533,25 @@ static int f77_primary(void) {
                 ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
                 return hi_emit(HI_SNE, TY_INT, f77_desc_base(as), f77_iconst(0), 0, NULL);
             }
-            a = f77_expr(); aty = ex_ty; ahi = ex_hi;
+            {
+                /* LEN is an inquiry: a whole CHARACTER array is its
+                 * argument as well as an element is */
+                int saved;
+                if (in == IN_TRIM) {
+                    /* not elemental: its STRING is a scalar (gfortran
+                     * refuses an array; it had been trimmed elementwise) */
+                    int at; int open;
+                    open = (int)(lx_rts - lx_stmt) - 1;
+                    if (f77_aex_first(open + 1, f77_match_paren(open) - 1, &at) >= 0) {
+                        f77_error("TRIM's argument is a scalar");
+                        return f77_iconst(0);
+                    }
+                }
+                saved = f77_char_whole_ok;
+                if (in == IN_LEN) f77_char_whole_ok = 1;
+                a = f77_expr(); aty = ex_ty; ahi = ex_hi;
+                f77_char_whole_ok = saved;
+            }
 
             if (in >= IN_IAND && in <= IN_IBCLR) {
                 int v[3];
@@ -3052,6 +3107,10 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
+        if (f77_sty[s] == TY_CHAR && f77_srank[s] > 0 && f77_aex_k > 0 && !f77_sparam[s]) {
+            if (lx_t != T_LP) return f77_aex_elem(s, 1);            /* a whole array's element */
+            if (f77_paren_has_colon()) return f77_aex_elem(s, 0);   /* a section's element */
+        }
         if (f77_sty[s] == TY_CHAR &&
             !(lx_t == T_LP && f77_srank[s] == 0 && !f77_paren_has_colon()))
             return f77_char_ref(s);
@@ -3901,8 +3960,8 @@ static int f77_nonelem_intrinsic(char *nm) {
 }
 
 /* The first operand of an array expression in the text [from, to): an
- * array named whole, or a section (a non-CHARACTER array subscripted with
- * a ':' at its own level) -- in an element's subscripts too, a vector
+ * array named whole, or a section (an array subscripted with a ':' at
+ * its own level; a CHARACTER one's substring follows its subscripts) -- in an element's subscripts too, a vector
  * subscript, whose shape is the element's.  Not in the arguments of a
  * function other than an elemental intrinsic: those
  * are the function's, and its value is one scalar.  The array's symbol,
@@ -3936,7 +3995,7 @@ static int f77_aex_first(int from, int to, int *at) {
             sy = f77_sym_find(nm);
             if (sy >= 0 && f77_srank[sy] > 0 && !f77_sparam[sy]) {
                 if (!paren) { *at = b; return sy; }            /* a whole array */
-                if (f77_sty[sy] != TY_CHAR) {
+                {
                     int d;
                     int j;
                     d = 0;
@@ -3999,6 +4058,19 @@ static int f77_text_names(int from, char *nm) {
  * (f77_aex_cnt): a section (lx_t at its '('), its t-th triplet at lo +
  * count[t]*stride, or a whole array (whole), dimension d at its lower bound
  * + count[d].  Its rank must be the expression's. */
+static int f77_hconst(int v, int *out);
+static int f77_extent(int lo, int hi, int st);
+/* Does an operand's extent e along the loops' dimension j agree with the
+ * loops'?  Checked when both are constants, as gfortran checks them. */
+static int f77_aex_conforms(int j, int e) {
+    int a; int b;
+    if (j < 8 && f77_aex_ext[j] >= 0 && f77_hconst(e, &a) && f77_hconst(f77_aex_ext[j], &b) && a != b) {
+        f77_error("the shapes in an array expression do not conform");
+        return 0;
+    }
+    return 1;
+}
+
 static int f77_aex_elem(int s, int whole) {
     int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
     int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
@@ -4013,6 +4085,7 @@ static int f77_aex_elem(int s, int whole) {
             int dlo;
             int dhi;
             f77_dim_bounds(s, k, &dlo, &dhi);
+            if (dhi >= 0 && !f77_aex_conforms(k, f77_extent(dlo, dhi, f77_iconst(1)))) return f77_iconst(0);
             cur[k] = hi_emit(HI_ADD, TY_INT, dlo, f77_aex_cnt[k], 0, NULL);
         }
     } else {
@@ -4020,6 +4093,9 @@ static int f77_aex_elem(int s, int whole) {
         nt = f77_section_subs(s, idx, trip, lo, hi, st);
         if (nt < 0) return f77_iconst(0);
         if (nt != f77_aex_k) { f77_error("the shapes in an array expression do not conform"); return f77_iconst(0); }
+        t = 0;
+        for (k = 0; k < f77_srank[s]; k++)
+            if (trip[k] && !f77_aex_conforms(t++, f77_extent(lo[k], hi[k], st[k]))) return f77_iconst(0);
         t = 0;
         for (k = 0; k < f77_srank[s]; k++) {
             if (trip[k]) {
@@ -4032,9 +4108,67 @@ static int f77_aex_elem(int s, int whole) {
             }
         }
     }
+    if (f77_sty[s] == TY_CHAR) {
+        /* a CHARACTER element is its address, and a substring of it may
+         * follow: C(:)(2:3) */
+        int lenv; int clen;
+        v = f77_elem_addr(s, cur, f77_srank[s]);
+        lenv = f77_char_lenv(s, &clen);
+        ex_log = 0;
+        if (lx_t == T_LP) return f77_substring(v, lenv, clen);
+        ex_ty = TY_CHAR; ex_hi = -1; ex_len = lenv; ex_clen = clen;
+        return v;
+    }
     v = f77_load_at(f77_elem_addr(s, cur, f77_srank[s]), f77_mty(s));
     ex_log = f77_slog[s];
     return v;
+}
+
+static int f77_extent(int lo, int hi, int st);
+
+/* An array assignment's value has the target's kind: CHARACTER for a
+ * CHARACTER array, numeric or LOGICAL for the rest. */
+static int f77_aa_value_ok(int isch, int vty) {
+    if (isch && vty != TY_CHAR) { f77_error("a CHARACTER array needs a CHARACTER value"); return 0; }
+    if (!isch && vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return 0; }
+    return 1;
+}
+
+/* The byte offset in an array assignment's temporary of the element the
+ * counts reach, count[0] fastest, each element esz bytes (an HIR value). */
+static int f77_aa_tmp_off(int *cnt, int *ext, int nt, int esz) {
+    int off;
+    int j;
+    off = cnt[nt - 1];
+    for (j = nt - 2; j >= 0; j--) {
+        off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
+        off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
+    }
+    return hi_emit(HI_MUL, TY_INT, off, esz, 0, NULL);
+}
+
+/* The address of the target element the counts reach: dimension tdim[j]
+ * at lo + cnt[j]*st, the others at their scalar subscripts. */
+static int f77_aa_target(int s, int *idx, int *tdim, int *lo, int *st, int *cnt, int nt) {
+    int cur[F77_MAX_RANK];
+    int k;
+    int j;
+    for (k = 0; k < f77_srank[s]; k++) cur[k] = idx[k];
+    for (j = 0; j < nt; j++)
+        cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]], hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
+    return f77_elem_addr(s, cur, f77_srank[s]);
+}
+
+/* Store v to the target element at addr.  A CHARACTER array's: v is an
+ * address, vty its length, copied blank-padded into dlen bytes doff in
+ * (doff -1: from the start). */
+static void f77_aa_store(int s, int addr, int doff, int dlen, int v, int vty, int vhi) {
+    if (f77_sty[s] == TY_CHAR) {
+        if (doff >= 0) addr = hi_emit(HI_ADD, HL_ADDR_TY, addr, doff, 0, NULL);
+        f77_char_assign(addr, dlen, v, vty);
+        return;
+    }
+    f77_store_at(addr, f77_mty(s), v, vty, vhi);
 }
 
 /* An array constructor (/ v, v, ... /) as the whole right side of an
@@ -4056,6 +4190,9 @@ static int f77_acon_pos;
 static int f77_acon_tmp;
 static int f77_acon_ty0;
 static int f77_acon_n;        /* values parsed; -1 once an implied-DO makes it dynamic */
+static int f77_acon_dlen;     /* a CHARACTER target: its elements' length (HIR) */
+static int f77_acon_doff;     /* and the target substring's offset, or -1 */
+static int f77_acon_clen0;    /* the first value's constant length, -1 unknown, -2 none yet */
 
 static void f77_acon_item(void);
 
@@ -4099,29 +4236,46 @@ static void f77_acon_item(void) {
     s = f77_acon_s;
     v = f77_expr();
     vty = ex_ty; vhi = ex_hi;
-    if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
+    if (!f77_aa_value_ok(f77_sty[s] == TY_CHAR, vty)) return;
     if (f77_acon_ty0 < 0) f77_acon_ty0 = vty;
     else if (vty != f77_acon_ty0) { f77_error("the values of an array constructor differ in type"); return; }
+    if (vty == TY_CHAR) {
+        /* F90 4.5: the same length too (gfortran checks the constant ones) */
+        if (f77_acon_clen0 == -2) f77_acon_clen0 = ex_clen;
+        else if (f77_acon_clen0 >= 0 && ex_clen >= 0 && ex_clen != f77_acon_clen0) {
+            f77_error("the values of an array constructor differ in length");
+            f77_acon_clen0 = -1;                 /* said once */
+            return;
+        }
+        vhi = ex_len;
+    }
     p = hi_emit(HI_LOAD, TY_INT, f77_acon_pos, -1, 0, NULL);
     if (f77_acon_tmp >= 0) {
-        addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_acon_tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(f77_esize(s)), 0, NULL), 0, NULL);
+        int esz;
+        esz = vty == TY_CHAR ? f77_acon_dlen : f77_iconst(f77_esize(s));
+        addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_acon_tmp, hi_emit(HI_MUL, TY_INT, p, esz, 0, NULL), 0, NULL);
+        if (vty == TY_CHAR) f77_char_assign(addr, f77_acon_dlen, v, vhi);
+        else f77_store_at(addr, f77_mty(s), v, vty, vhi);
     } else {
         int cur[F77_MAX_RANK];
         int k;
         for (k = 0; k < f77_acon_rank; k++) cur[k] = f77_acon_idx[k];
         cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, f77_acon_lo, hi_emit(HI_MUL, TY_INT, p, f77_acon_st, 0, NULL), 0, NULL);
         addr = f77_elem_addr(s, cur, f77_acon_rank);
+        f77_aa_store(s, addr, f77_acon_doff, f77_acon_dlen, v, vty == TY_CHAR ? vhi : vty, vhi);
     }
-    f77_store_at(addr, f77_mty(s), v, vty, vhi);
     hi_emit(HI_STORE, TY_INT, f77_acon_pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
 }
 
-static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *st, int nt) {
+static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *st, int nt, int doff, int dlen) {
     int k;
     int ext;
     int esz;
     int mty;
     if (nt != 1) { f77_error("an array constructor is rank 1; the target is not"); return; }
+    f77_acon_doff = doff;
+    f77_acon_dlen = dlen;
+    f77_acon_clen0 = -2;
     f77_acon_s = s;
     f77_acon_rank = f77_srank[s];
     for (k = 0; k < f77_acon_rank; k++) {
@@ -4133,17 +4287,14 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
     f77_acon_st = st[k];
     f77_acon_ty0 = -1;
     f77_acon_n = 0;
-    esz = f77_esize(s);
+    esz = f77_sty[s] == TY_CHAR ? dlen : f77_iconst(f77_esize(s));
     mty = f77_mty(s);
-    ext = hi_emit(HI_SUB, TY_INT, hi[k], lo[k], 0, NULL);
-    ext = hi_emit(HI_ADD, TY_INT, ext, st[k], 0, NULL);
-    ext = hi_emit(HI_DIV, TY_INT, ext, st[k], 0, NULL);
-    ext = f77_select(hi_emit(HI_SGT, TY_INT, ext, f77_iconst(0), 0, NULL), ext, f77_iconst(0));
+    ext = f77_extent(lo[k], hi[k], st[k]);
     f77_acon_tmp = -1;
     if (f77_text_names((int)(lx_rts - lx_stmt), f77_sname[s])) {
         int args[3];
         args[0] = f77_iconst(0);
-        args[1] = hi_emit(HI_MUL, TY_INT, ext, f77_iconst(esz), 0, NULL);
+        args[1] = hi_emit(HI_MUL, TY_INT, ext, esz, 0, NULL);
         args[2] = f77_iconst(0);
         f77_acon_tmp = f77_call_i("f77_allocate", 3, args);
     }
@@ -4186,11 +4337,12 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
         tmp = f77_acon_tmp;
         f77_loop_begin(&cl, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext, -1, -1, NULL), f77_iconst(1));
         c = hi_emit(HI_LOAD, TY_INT, cl.idx, -1, 0, NULL);
-        v = f77_load_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, c, f77_iconst(esz), 0, NULL), 0, NULL), mty);
+        v = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, c, esz, 0, NULL), 0, NULL);
+        if (f77_sty[s] != TY_CHAR) v = f77_load_at(v, mty);
         for (k = 0; k < f77_acon_rank; k++) cur[k] = idx[k];
         cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, lo[f77_acon_tdim], hi_emit(HI_MUL, TY_INT, c, st[f77_acon_tdim], 0, NULL), 0, NULL);
-        f77_store_at(f77_elem_addr(s, cur, f77_acon_rank), mty, v,
-                     mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : f77_sty[s], ex_hi);
+        f77_aa_store(s, f77_elem_addr(s, cur, f77_acon_rank), doff, dlen, v,
+                     f77_sty[s] == TY_CHAR ? dlen : mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : f77_sty[s], ex_hi);
         f77_loop_end(&cl);
         args[0] = tmp;
         f77_call_i("f77_dealloc_auto", 1, args);
@@ -4206,9 +4358,16 @@ static int f77_where_on(void) {
  * past the element unless the mask holds for it (ELSEWHERE: unless it
  * does not), leaving the element's block current.  The block to go on
  * in, which the caller enters after the element. */
-static int f77_where_guard(int *cnt, int nt) {
+static int f77_where_guard(int *cnt, int *ext, int nt) {
     int off; int c; int j; int b_do; int b_skip;
     if (nt != f77_where_nt) { f77_error("the shapes of a WHERE's mask and its assignment do not conform"); return -1; }
+    for (j = 0; j < nt; j++) {
+        int a; int b;
+        if (f77_hconst(ext[j], &a) && f77_hconst(f77_where_ext[j], &b) && a != b) {
+            f77_error("the shapes of a WHERE's mask and its assignment do not conform");
+            return -1;
+        }
+    }
     off = cnt[nt - 1];
     for (j = nt - 2; j >= 0; j--) {
         off = hi_emit(HI_MUL, TY_INT, off, f77_where_ext[j], 0, NULL);
@@ -4249,15 +4408,21 @@ static void f77_array_assign1(int s, int whole) {
     int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
     int ext[F77_MAX_RANK]; int tdim[F77_MAX_RANK];
     F77Loop lp[F77_MAX_RANK];
-    int v; int vty; int vhi;
+    int v; int vty; int vhi; int vlen;
     int k;
     int nt;
     int rank;
     int ty;
     int mty;
+    int isch;     /* a CHARACTER array: elements are addresses, stored by f77_char_assign */
+    int dlen;     /* its elements' length (the target substring's, if any) */
+    int doff;     /* the target substring's offset in each element, or -1 */
     rank = f77_srank[s];
     ty = f77_sty[s];
     mty = f77_mty(s);
+    isch = ty == TY_CHAR;
+    dlen = -1;
+    doff = -1;
     for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
     if (whole) {
         for (k = 0; k < rank; k++) {
@@ -4271,12 +4436,21 @@ static void f77_array_assign1(int s, int whole) {
         nt = f77_section_subs(s, idx, trip, lo, hi, st);
         if (nt < 0) return;
     }
+    if (isch) {
+        int clen;
+        dlen = f77_char_lenv(s, &clen);
+        if (lx_t == T_LP) {                     /* C(:)(2:3) = ... */
+            doff = f77_substr_off(dlen, clen);
+            if (doff < 0) return;
+            dlen = ex_len;
+        }
+    }
     if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
     f77_tok();
     f77_sstored[s] = 1;
     if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/' && f77_match_paren((int)(lx_rts - lx_stmt)) >= lx_stmt_len) {
         if (f77_where_on()) { f77_error("an array constructor in a WHERE is not supported yet"); return; }
-        f77_acon_assign(s, idx, trip, lo, hi, st, nt);
+        f77_acon_assign(s, idx, trip, lo, hi, st, nt, doff, dlen);
         return;
     }
     {
@@ -4294,16 +4468,16 @@ static void f77_array_assign1(int s, int whole) {
     if (!f77_text_has_array_expr((int)(lx_rts - lx_stmt)) && !f77_where_on()) {
         /* a scalar to every element */
         v = f77_expr();
-        vty = ex_ty; vhi = ex_hi;
-        if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
-        v = f77_cvt(v, &vhi, vty, ty);
+        vty = ex_ty; vhi = ex_hi; vlen = ex_len;
+        if (!f77_aa_value_ok(isch, vty)) return;
+        if (!isch) v = f77_cvt(v, &vhi, vty, ty);
         for (k = rank - 1; k >= 0; k--)
             if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
         {
             int cur[F77_MAX_RANK];
             for (k = 0; k < rank; k++)
                 cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
-            f77_store_at(f77_elem_addr(s, cur, rank), mty, v, ty, vhi);
+            f77_aa_store(s, f77_elem_addr(s, cur, rank), doff, dlen, v, isch ? vlen : ty, vhi);
         }
         for (k = 0; k < rank; k++)
             if (trip[k]) f77_loop_end(&lp[k]);
@@ -4314,9 +4488,9 @@ static void f77_array_assign1(int s, int whole) {
         int j;
         int overlap;
         int tmp;
-        int esz;
-        int saved_k;
-        int saved_cnt[F77_MAX_RANK];
+        int esz;      /* an element's bytes in the temporary: an HIR value */
+        F77AexSave asv;
+        int nerr0;
         int b_wskip;
         F77Loop cl[F77_MAX_RANK];
         int cnt[F77_MAX_RANK];
@@ -4324,18 +4498,11 @@ static void f77_array_assign1(int s, int whole) {
         j = 0;
         for (k = 0; k < rank; k++) {
             if (!trip[k]) continue;
-            /* the extent, MAX((hi - lo + st)/st, 0) */
-            {
-                int e;
-                e = hi_emit(HI_SUB, TY_INT, hi[k], lo[k], 0, NULL);
-                e = hi_emit(HI_ADD, TY_INT, e, st[k], 0, NULL);
-                e = hi_emit(HI_DIV, TY_INT, e, st[k], 0, NULL);
-                ext[j] = f77_select(hi_emit(HI_SGT, TY_INT, e, f77_iconst(0), 0, NULL), e, f77_iconst(0));
-            }
+            ext[j] = f77_extent(lo[k], hi[k], st[k]);
             tdim[j] = k;
             j = j + 1;
         }
-        esz = f77_esize(s);
+        esz = isch ? dlen : f77_iconst(f77_esize(s));
         overlap = f77_text_names((int)(lx_rts - lx_stmt), f77_sname[s]);
         tmp = -1;
         if (overlap) {
@@ -4344,40 +4511,28 @@ static void f77_array_assign1(int s, int whole) {
             n = ext[0];
             for (j = 1; j < nt; j++) n = hi_emit(HI_MUL, TY_INT, n, ext[j], 0, NULL);
             args[0] = f77_iconst(0);
-            args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(esz), 0, NULL);
+            args[1] = hi_emit(HI_MUL, TY_INT, n, esz, 0, NULL);
             args[2] = f77_iconst(0);
             tmp = f77_call_i("f77_allocate", 3, args);
         }
         for (j = nt - 1; j >= 0; j--)
             f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
         for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
-        b_wskip = f77_where_on() ? f77_where_guard(cnt, nt) : -1;
-        saved_k = f77_aex_k;
-        for (j = 0; j < 8 && j < F77_MAX_RANK; j++) saved_cnt[j] = f77_aex_cnt[j];
-        f77_aex_k = nt;
-        for (j = 0; j < nt; j++) f77_aex_cnt[j] = cnt[j];
+        b_wskip = f77_where_on() ? f77_where_guard(cnt, ext, nt) : -1;
+        nerr0 = f77_nerr;
+        f77_aex_enter(&asv, nt, cnt, ext);
         v = f77_expr();
-        vty = ex_ty; vhi = ex_hi;
-        f77_aex_k = saved_k;
-        for (j = 0; j < 8 && j < F77_MAX_RANK; j++) f77_aex_cnt[j] = saved_cnt[j];
-        if (vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return; }
+        vty = ex_ty; vhi = ex_hi; vlen = ex_len;
+        f77_aex_leave(&asv);
+        if (f77_nerr > nerr0 || !f77_aa_value_ok(isch, vty)) return;
         if (overlap) {
             /* the temporary, in the loops' order: count[0] fastest */
-            int off;
-            off = cnt[nt - 1];
-            for (j = nt - 2; j >= 0; j--) {
-                off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
-                off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
-            }
-            off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(esz), 0, NULL);
-            f77_store_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, off, 0, NULL), mty, v, vty, vhi);
+            int at;
+            at = hi_emit(HI_ADD, HL_ADDR_TY, tmp, f77_aa_tmp_off(cnt, ext, nt, esz), 0, NULL);
+            if (isch) f77_char_assign(at, dlen, v, vlen);
+            else f77_store_at(at, mty, v, vty, vhi);
         } else {
-            int cur[F77_MAX_RANK];
-            for (k = 0; k < rank; k++) cur[k] = idx[k];
-            for (j = 0; j < nt; j++)
-                cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]],
-                                       hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
-            f77_store_at(f77_elem_addr(s, cur, rank), mty, v, vty, vhi);
+            f77_aa_store(s, f77_aa_target(s, idx, tdim, lo, st, cnt, nt), doff, dlen, v, isch ? vlen : vty, vhi);
         }
         if (b_wskip >= 0) { f77_goto_blk(b_wskip); f77_begin_blk(b_wskip); }
         for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
@@ -4387,23 +4542,19 @@ static void f77_array_assign1(int s, int whole) {
             for (j = nt - 1; j >= 0; j--)
                 f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
             {
-                int cur[F77_MAX_RANK];
-                int off;
+                int at;
                 for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
-                b_wskip = f77_where_on() ? f77_where_guard(cnt, nt) : -1;
-                off = cnt[nt - 1];
-                for (j = nt - 2; j >= 0; j--) {
-                    off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
-                    off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
+                b_wskip = f77_where_on() ? f77_where_guard(cnt, ext, nt) : -1;
+                at = hi_emit(HI_ADD, HL_ADDR_TY, tmp, f77_aa_tmp_off(cnt, ext, nt, esz), 0, NULL);
+                if (isch) {
+                    v = at;
+                    vty = dlen;
+                } else {
+                    v = f77_load_at(at, mty);
+                    vty = mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : ty;
                 }
-                off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(esz), 0, NULL);
-                v = f77_load_at(hi_emit(HI_ADD, HL_ADDR_TY, tmp, off, 0, NULL), mty);
                 vhi = ex_hi;
-                for (k = 0; k < rank; k++) cur[k] = idx[k];
-                for (j = 0; j < nt; j++)
-                    cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]],
-                                           hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
-                f77_store_at(f77_elem_addr(s, cur, rank), mty, v, mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : ty, vhi);
+                f77_aa_store(s, f77_aa_target(s, idx, tdim, lo, st, cnt, nt), doff, dlen, v, vty, vhi);
                 if (b_wskip >= 0) { f77_goto_blk(b_wskip); f77_begin_blk(b_wskip); }
             }
             for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
@@ -4488,6 +4639,12 @@ static int f77_expr_at(int from, int to) {
 /* MAX((hi - lo + st)/st, 0): the number of elements a triplet reaches. */
 static int f77_extent(int lo, int hi, int st) {
     int e;
+    int cl; int ch; int cs;
+    /* constant bounds, a constant extent: what the conformance check reads */
+    if (f77_hconst(lo, &cl) && f77_hconst(hi, &ch) && f77_hconst(st, &cs) && cs != 0) {
+        e = (ch - cl + cs) / cs;
+        return f77_iconst(e > 0 ? e : 0);
+    }
     e = hi_emit(HI_SUB, TY_INT, hi, lo, 0, NULL);
     e = hi_emit(HI_ADD, TY_INT, e, st, 0, NULL);
     e = hi_emit(HI_DIV, TY_INT, e, st, 0, NULL);
@@ -4777,7 +4934,7 @@ static int f77_reduce1(int in) {
     int k;
     int wantloc; int islog;
     F77Red R;
-    int saved_k; int saved_cnt[8];
+    F77AexSave asv;
     F77Loop lp[F77_MAX_RANK];
     char *fname;
     static char m[160];
@@ -4850,10 +5007,11 @@ static int f77_reduce1(int in) {
     f77_red_begin(&R, in, fname);
     for (k = nt - 1; k >= 0; k--)
         f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
-    saved_k = f77_aex_k;
-    for (k = 0; k < 8; k++) saved_cnt[k] = f77_aex_cnt[k];
-    f77_aex_k = nt;
-    for (k = 0; k < nt; k++) f77_aex_cnt[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+    {
+        int c[8];
+        for (k = 0; k < nt; k++) c[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+        f77_aex_enter(&asv, nt, c, ext);
+    }
     {
         int p; int b_next; int x; int xhi; int xty; int xlog;
         b_next = hir_new_block();
@@ -4896,8 +5054,7 @@ static int f77_reduce1(int in) {
         f77_goto_blk(b_next);
         f77_begin_blk(b_next);
     }
-    f77_aex_k = saved_k;
-    for (k = 0; k < 8; k++) f77_aex_cnt[k] = saved_cnt[k];
+    f77_aex_leave(&asv);
     for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
     f77_scan_from(A.end);                    /* the scanner past the ')' */
     return f77_red_end(&R);
@@ -5065,7 +5222,7 @@ static int f77_merge(void) {
 static void f77_where_begin(int from, int to) {
     int sy; int at; int nt; int k; int n; int tmp; int pos;
     int ext[F77_MAX_RANK];
-    int saved_k; int saved_cnt[8];
+    F77AexSave asv;
     int args[3];
     F77Loop lp[F77_MAX_RANK];
     sy = f77_aex_first(from, to, &at);
@@ -5083,10 +5240,11 @@ static void f77_where_begin(int from, int to) {
     hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
     for (k = nt - 1; k >= 0; k--)
         f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
-    saved_k = f77_aex_k;
-    for (k = 0; k < 8; k++) saved_cnt[k] = f77_aex_cnt[k];
-    f77_aex_k = nt;
-    for (k = 0; k < nt; k++) f77_aex_cnt[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+    {
+        int c[8];
+        for (k = 0; k < nt; k++) c[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+        f77_aex_enter(&asv, nt, c, ext);
+    }
     {
         int v; int p;
         v = f77_expr_at(from, to);
@@ -5096,8 +5254,7 @@ static void f77_where_begin(int from, int to) {
                 hi_emit(HI_SNE, TY_INT, v, f77_iconst(0), 0, NULL), 0, NULL);
         hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
     }
-    f77_aex_k = saved_k;
-    for (k = 0; k < 8; k++) f77_aex_cnt[k] = saved_cnt[k];
+    f77_aex_leave(&asv);
     for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
     f77_where_tmp = tmp;
     f77_where_neg = 0;
@@ -5164,11 +5321,9 @@ static void f77_stmt_assign(void) {
     f77_tok();
     if (f77_sty[s] == TY_CHAR) {
         int dlen;
-        if (f77_where_on()) { f77_error("a CHARACTER assignment in a WHERE is not supported"); return; }
-        if (f77_srank[s] > 0 && lx_t != T_LP) {
-            f77_error("a whole CHARACTER array is supported only as an actual argument or in an I/O list");
-            return;
-        }
+        if (f77_srank[s] > 0 && lx_t != T_LP) { f77_array_assign(s, 1); return; }
+        if (f77_srank[s] > 0 && f77_paren_has_colon()) { f77_tok(); f77_array_assign(s, 0); return; }
+        if (f77_where_on()) { f77_error("a WHERE assigns to arrays, not to a scalar or an element"); return; }
         addr = f77_char_ref(s);
         dlen = ex_len;
         if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
@@ -9726,7 +9881,7 @@ static int f77_av_operand(int from, int to) {
     }
     {
         int n; int base; int pos; int args[3];
-        int saved_k; int saved_cnt[8];
+        F77AexSave asv;
         int ty; int log; int esz;
         F77Loop lp[F77_MAX_RANK];
         nt = f77_aex_shape(sy, at, ext);
@@ -9742,10 +9897,11 @@ static int f77_av_operand(int from, int to) {
         hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
         for (k = nt - 1; k >= 0; k--)
             f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
-        saved_k = f77_aex_k;
-        for (k = 0; k < 8; k++) saved_cnt[k] = f77_aex_cnt[k];
-        f77_aex_k = nt;
-        for (k = 0; k < nt; k++) f77_aex_cnt[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+        {
+            int c[8];
+            for (k = 0; k < nt; k++) c[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+            f77_aex_enter(&asv, nt, c, ext);
+        }
         {
             int v; int vhi; int p;
             v = f77_expr_at(from, to);
@@ -9756,8 +9912,7 @@ static int f77_av_operand(int from, int to) {
                          ty, v, ty, vhi);
             hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
         }
-        f77_aex_k = saved_k;
-        for (k = 0; k < 8; k++) f77_aex_cnt[k] = saved_cnt[k];
+        f77_aex_leave(&asv);
         for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
         esz = f77_tysize(ty);
         return f77_hidden_array(ty, log, 0, nt, f77_run_desc(base, nt, ext, 16 / esz));
@@ -10954,6 +11109,10 @@ static void f77_emit_copyin(void) {
     /* The declaration part is closing: every member's type and shape
      * is final, so COMMON blocks and SAVEd locals can be laid out. */
     f77_layout_static();
+    /* An array-valued FUNCTION: callers took its value for a scalar and
+     * stored it to every element of the target (found 2026-11-09). */
+    if (f77_result_sym >= 0 && f77_srank[f77_result_sym] > 0)
+        f77_error("an array-valued FUNCTION is not supported yet");
     if (f77_copyin_on < 0) f77_copyin_on = getenv("F77_COPYIN") ? 1 : 0;
     if (!f77_copyin_on) { f77_decls_open = 0; f77_ci_n = 0; return; }
     int s;
@@ -12028,6 +12187,14 @@ static int f77_implied_do_spans(int open, int *close_off, int *eq_off,
 
 /* One element of array s in an I/O list, at addr: read or written by its
  * type and the statement's kind. */
+static void f77_io_chars(int addr, int len) {
+    int args[2];
+    args[0] = addr;
+    args[1] = len;
+    if (f77_io_unf) f77_call_i(f77_io_rd ? "f77_ru" : "f77_wu", 2, args);
+    else f77_call_i(f77_io_rd ? "f77_rd_s" : "f77_wr_a", 2, args);
+}
+
 static void f77_io_elem(int s, int addr) {
     int v;
     int vhi;
@@ -12068,12 +12235,24 @@ static void f77_io_section(int s) {
     F77Loop lp[F77_MAX_RANK];
     int cur[F77_MAX_RANK];
     int k;
+    int soff; int slen;
     if (f77_section_subs(s, idx, trip, lo, hi, st) < 0) return;
+    soff = -1; slen = -1;
+    if (f77_sty[s] == TY_CHAR && lx_t == T_LP) {     /* C(:)(2:3): a substring of each */
+        int clen;
+        slen = f77_char_lenv(s, &clen);
+        soff = f77_substr_off(slen, clen);
+        if (soff < 0) return;
+        slen = ex_len;
+    }
     for (k = f77_srank[s] - 1; k >= 0; k--)
         if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
     for (k = 0; k < f77_srank[s]; k++)
         cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
-    f77_io_elem(s, f77_elem_addr(s, cur, f77_srank[s]));
+    if (soff >= 0)
+        f77_io_chars(hi_emit(HI_ADD, HL_ADDR_TY, f77_elem_addr(s, cur, f77_srank[s]), soff, 0, NULL), slen);
+    else
+        f77_io_elem(s, f77_elem_addr(s, cur, f77_srank[s]));
     for (k = 0; k < f77_srank[s]; k++)
         if (trip[k]) f77_loop_end(&lp[k]);
 }
@@ -12299,6 +12478,7 @@ static void f77_io_ido_items(int items_off, int ctl_off) {
  * or an implied-DO `(items, VAR = e1, e2 [, e3])`, which becomes a real
  * loop around the item calls. */
 static void f77_wr_list(void);
+static void f77_wr_value(int v);
 
 static void f77_wr_one(void) {
     int v;
@@ -12325,15 +12505,17 @@ static void f77_wr_one(void) {
             f77_wr_whole_array(s);
             return;
         }
-        if (f77_srank[s] > 0 && f77_sty[s] != TY_CHAR) {
+        if (f77_srank[s] > 0) {
             int off;
             off = (int)(lx_rts - lx_stmt);
             f77_tok();
             if (lx_t == T_LP && f77_paren_has_colon()) {
-                /* a section: unless more follows it (A(1:3)+1 is an
-                 * array expression, milestone 3) */
+                /* a section, a CHARACTER one's substring after it:
+                 * unless more follows (A(1:3)+1 is an array expression) */
                 int end;
                 end = f77_match_paren((int)(lx_rts - lx_stmt));
+                if (f77_sty[s] == TY_CHAR && end < lx_stmt_len && lx_stmt[end] == '(' && f77_paren_has_colon_at(end))
+                    end = f77_match_paren(end);
                 if (end >= lx_stmt_len || lx_stmt[end] == ',' || lx_stmt[end] == ')') {
                     f77_tok();
                     f77_io_section(s);
@@ -12354,6 +12536,11 @@ static void f77_wr_one(void) {
         return;
     }
     v = f77_expr();
+    f77_wr_value(v);
+}
+
+/* Write the value f77_expr just left (ex_ty, ex_hi, ex_len, ex_log). */
+static void f77_wr_value(int v) {
     if (f77_io_unf) {
         /* raw bytes: a character value is an address already; anything
          * else goes through a temporary */
@@ -12390,6 +12577,40 @@ static void f77_wr_one(void) {
 
 static int f77_av_operand(int from, int to);
 static int f77_text_replace(int b, int e, int s);
+static int f77_text_is_operand(int sy, int from, int to);
+
+/* Is the text [from, to) CHARACTER array sy itself: whole, an element or
+ * a section, a substring of either after it? */
+static int f77_text_is_char_operand(int sy, int from, int to) {
+    int i;
+    i = from + (int)strlen(f77_sname[sy]);
+    if (i == to || f77_text_is_operand(sy, from, to)) return 1;
+    if (i >= to || lx_stmt[i] != '(') return 0;
+    i = f77_match_paren(i);
+    return i < to && lx_stmt[i] == '(' && f77_match_paren(i) == to;
+}
+
+/* A write-list item [b, e) that is an array expression over CHARACTER
+ * array sy (its name at at): loops over its shape, the item parsed in
+ * them, each element written as it is reached. */
+static void f77_wr_aex(int b, int e, int sy, int at) {
+    int ext[F77_MAX_RANK];
+    int cnt[F77_MAX_RANK];
+    F77AexSave asv;
+    F77Loop cl[F77_MAX_RANK];
+    int nt; int j; int v;
+    nt = f77_aex_shape(sy, at, ext);
+    if (nt < 0) return;
+    for (j = nt - 1; j >= 0; j--)
+        f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
+    for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
+    f77_aex_enter(&asv, nt, cnt, ext);
+    v = f77_expr_at(b, e);
+    f77_aex_leave(&asv);
+    f77_wr_value(v);
+    for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
+}
+
 static void f77_wr_list(void) {
     int mk; int from; int end;
     if (lx_t == T_EOF) return;
@@ -12413,6 +12634,19 @@ static void f77_wr_list(void) {
                 else if (lx_stmt[e] == ',' && d == 0) break;
             }
             sy = f77_aex_first(b, e, &at);
+            if (sy >= 0 && f77_sty[sy] == TY_CHAR && !(at == b && f77_text_is_char_operand(sy, b, e))) {
+                /* one with a CHARACTER array in it: written element by
+                 * element, in array element order */
+                int nerr0;
+                nerr0 = f77_nerr;
+                if (f77_io_rd) { f77_error("a READ list item is a variable, not an expression"); break; }
+                f77_wr_aex(b, e, sy, at);
+                if (f77_nerr > nerr0) break;
+                f77_scan_from(e);
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+                continue;
+            }
             if (sy >= 0 && f77_sty[sy] != TY_CHAR && !(at == b && f77_text_is_operand(sy, b, e))) {
                 int h; int nerr0;
                 nerr0 = f77_nerr;

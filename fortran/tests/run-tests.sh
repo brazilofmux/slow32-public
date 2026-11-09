@@ -242,7 +242,12 @@ fi
 # assumed-size actual are refused.
 # A whole CHARACTER array was its first element wherever it was not an
 # actual argument or I/O's: D = C assigned C(1) to D(1) and stopped
-# (charwhole).  The array-valued intrinsics' limits: RESHAPE's ORDER and a
+# (charwhole; CHARACTER array assignment since, a scalar's place still
+# refused).  TRIM's argument is a scalar (it was trimmed elementwise);
+# a constructor's values have one length; the shapes in an array
+# expression conform where gfortran can tell they do not (shp*: N =
+# N(1:2) compiled, reading past the section); an array-valued FUNCTION
+# was stored to every element as if a scalar (arrfunc).  The array-valued intrinsics' limits: RESHAPE's ORDER and a
 # SHAPE of no constant size, MATMUL's and TRANSPOSE's ranks, SPREAD's DIM,
 # an array inside a constructor, MERGE's sources of two types.
 # WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
@@ -319,7 +324,13 @@ if [ -x "$F77" ]; then
     printf 'subroutine s\nreal x(:)\nend\n' > "$W/aslocal.f90"
     printf 'module m\ncontains\nsubroutine s(c)\ncharacter*4 c(:)\nend subroutine\nend module\n' > "$W/aschar.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nsubroutine t(y)\nuse m\nreal y(*)\ncall s(y)\nend\n' > "$W/asasz.f90"
-    printf "character*2 c(2), d(2)\nc(1) = 'ab'\nc(2) = 'cd'\nd = c\nend\n" > "$W/charwhole.f90"
+    printf "character*2 c(2), s\nc(1) = 'ab'\nc(2) = 'cd'\ns = c\nend\n" > "$W/charwhole.f90"
+    printf "character*2 c(2)\nc = 'ab'\nc = trim(c)\nend\n" > "$W/trimarr.f90"
+    printf "character*2 c(3)\nc = (/ 'a', 'bb', 'cc' /)\nend\n" > "$W/aconlen.f90"
+    printf 'integer n(3)\nn = 1\nn = n(1:2)\nend\n' > "$W/shpasg.f90"
+    printf 'integer n(3)\nn = 1\nprint *, sum(n(1:2) + n)\nend\n' > "$W/shpop.f90"
+    printf 'integer n(3)\nn = 1\nwhere (n(1:2) > 0) n = 2\nend\n' > "$W/shpwhere.f90"
+    printf 'function f()\ninteger f(3)\nf = 1\nend\n' > "$W/arrfunc.f90"
     printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1/))\nend\n' > "$W/rshord.f90"
     printf 'integer n(2)\nreal a(4), b(2,2)\nn = 2\na = 1.0\nb = reshape(a, n(1:2))\nend\n' > "$W/rshdyn.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = 1.0\nprint *, matmul(a, b)\nend\n' > "$W/mmrank.f90"
@@ -434,7 +445,13 @@ if [ -x "$F77" ]; then
              "aslocal:line 2: a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's" \
              "aschar:line 4: a CHARACTER assumed-shape array is not supported yet" \
              "asasz:line 10: an assumed-size array cannot be the actual of an assumed-shape dummy" \
-             "charwhole:line 4: a whole CHARACTER array is supported only as an actual argument or in an I/O list" \
+             "charwhole:line 4: a whole CHARACTER array in an expression is not supported yet" \
+             "trimarr:line 3: TRIM's argument is a scalar" \
+             "aconlen:line 2: the values of an array constructor differ in length" \
+             "shpasg:line 3: the shapes in an array expression do not conform" \
+             "shpop:line 3: the shapes in an array expression do not conform" \
+             "shpwhere:line 3: the shapes of a WHERE's mask and its assignment do not conform" \
+             "arrfunc:line 3: an array-valued FUNCTION is not supported yet" \
              "rshord:line 3: ORDER= of RESHAPE is not supported yet" \
              "rshdyn:line 5: RESHAPE's SHAPE must be an array of constant size, 1 to 7" \
              "mmrank:line 4: MATMUL needs a matrix and a matrix, or a matrix and a vector" \
