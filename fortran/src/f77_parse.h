@@ -2234,6 +2234,7 @@ static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
 static void f77_opt_note(int s);
+static int f77_cintrinsic_int(void);
 static void f77_host_table(void);
 static int f77_host_extra(int v);
 /* Is nm a variable this unit has by host association? */
@@ -2580,6 +2581,17 @@ static int f77_primary(void) {
         int in;
         strcpy(nm, lex_name);
         u = f77_find_func(nm);
+        if (u < 0 && (strcmp(nm, "SELECTED_REAL_KIND") == 0 || strcmp(nm, "SELECTED_INT_KIND") == 0) &&
+            lx_rp < lx_rpe && *lx_rp == '(' && f77_find_unit(nm) < 0) {
+            /* a constant of its constant arguments, wherever it is */
+            int ss;
+            ss = f77_sym_find(nm);
+            if (!(ss >= 0 && (f77_sexternal[ss] || f77_srank[ss] > 0 || f77_sarg[ss]))) {
+                v = f77_cintrinsic_int();
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return f77_iconst(v);
+            }
+        }
         /* a host's variable an internal procedure has by host association
          * -- its host FUNCTION's result among them -- is no reference to
          * a procedure of the name (it had been called, with no actuals) */
@@ -6172,6 +6184,9 @@ static void f77_kind_lit(void) {
  * HUGE TINY EPSILON, DCMPLX CMPLX, DBLE REAL INT NINT ABS, MAX MIN MOD.
  * lx_t is the name, '(' next.  0 when the name is none of these (or is an
  * array of the unit): the caller goes on as before. */
+static int f77_cintrinsic(void);
+/* An INTEGER intrinsic of constants, as an executable reference sees it. */
+static int f77_cintrinsic_int(void) { f77_cintrinsic(); return f77_cx_i; }
 static int f77_cintrinsic(void) {
     static const char *names[] = { "HUGE", "TINY", "EPSILON", "DCMPLX", "CMPLX", "DBLE", "REAL",
                                    "INT", "NINT", "ABS", "MAX", "MIN", "MOD", "KIND", "RADIX", "DIGITS",
@@ -6179,6 +6194,7 @@ static int f77_cintrinsic(void) {
                                    "SELECTED_INT_KIND", "SQRT", "CEILING", "FLOOR", 0 };
     char nm[F77_MAX_NAME];
     int ty[8]; int iv[8]; double dv[8]; double d2[8];
+    char kw[8][8];
     int n;
     int k;
     int s;
@@ -6191,7 +6207,14 @@ static int f77_cintrinsic(void) {
     f77_tok();                                   /* the name */
     f77_tok();                                   /* ( */
     n = 0;
-    for (;;) {
+    while (lx_t != T_RP) {
+        /* KEYWORD= (SELECTED_REAL_KIND's P= and R=) */
+        if (n < 8) kw[n][0] = 0;
+        if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '=' && !(lx_rp + 1 < lx_rpe && lx_rp[1] == '=')) {
+            if (n < 8 && strlen(lex_name) < 8) strcpy(kw[n], lex_name);
+            f77_tok();
+            f77_tok();
+        }
         f77_cexpr();
         if (n < 8) {
             ty[n] = f77_cx_ty; iv[n] = f77_cx_i; dv[n] = f77_cx_d;
@@ -6216,21 +6239,27 @@ static int f77_cintrinsic(void) {
     }
     if (strcmp(nm, "SELECTED_REAL_KIND") == 0 || strcmp(nm, "SELECTED_INT_KIND") == 0) {
         /* the kinds this compiler has: -1 when none will do (for REAL, -1
-         * past the precision, -2 past the range, -3 past both) */
-        int k;
-        for (k = 0; k < n; k++)
+         * past the precision, -2 past the range, -3 past both); the
+         * arguments by position or by keyword, P= and R= */
+        int k; int p; int r; int hp; int hr; int isint;
+        isint = nm[9] == 'I';
+        p = 0; r = 0; hp = 0; hr = 0;
+        for (k = 0; k < n; k++) {
             if (ty[k] != TY_INT) { f77_error("SELECTED_REAL_KIND and SELECTED_INT_KIND take INTEGER arguments"); return 1; }
-        f77_cx_ty = TY_INT;
-        if (nm[9] == 'I') f77_cx_i = iv[0] <= 9 ? 4 : -1;
-        else {
-            int p; int r;
-            p = n > 0 ? iv[0] : 0;
-            r = n > 1 ? iv[1] : 0;
-            if (p <= 6 && r <= 37) f77_cx_i = 4;
-            else if (p <= 15 && r <= 307) f77_cx_i = 8;
-            else f77_cx_i = (p > 15 ? -1 : 0) + (r > 307 ? -2 : 0);
+            if ((!kw[k][0] && k == 0 && !isint) || strcmp(kw[k], "P") == 0) { if (isint || hp) goto selbad; p = iv[k]; hp = 1; }
+            else if ((!kw[k][0] && ((k == 1 && !isint) || (k == 0 && isint))) || strcmp(kw[k], "R") == 0) { if (hr) goto selbad; r = iv[k]; hr = 1; }
+            else goto selbad;
         }
+        if (isint ? !hr : !(hp || hr)) goto selbad;
+        f77_cx_ty = TY_INT;
+        if (isint) f77_cx_i = r <= 9 ? 4 : -1;
+        else if (p <= 6 && r <= 37) f77_cx_i = 4;
+        else if (p <= 15 && r <= 307) f77_cx_i = 8;
+        else f77_cx_i = (p > 15 ? -1 : 0) + (r > 307 ? -2 : 0);
         f77_cx_d = (double)f77_cx_i;
+        return 1;
+    selbad:
+        f77_error(isint ? "SELECTED_INT_KIND takes one argument, R" : "SELECTED_REAL_KIND takes P, R or both");
         return 1;
     }
     if (strcmp(nm, "SQRT") == 0) {
