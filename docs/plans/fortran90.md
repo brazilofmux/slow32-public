@@ -185,8 +185,8 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    generic interfaces, operator and assignment overloading, internal
    procedures, SELECT CASE, RESULT, KIND and SELECTED_*_KIND.
 
-   **Status 2026-11-09: done but for operator and assignment
-   overloading**, which waits for milestone 5's derived types:
+   **Status 2026-11-09: done** (operator and assignment overloading
+   landed with milestone 5's derived types, adfddbc6):
    - SELECT CASE; RESULT and RECURSIVE;
    - module variables, through a block of the module's own, laid out as
      COMMON's; PUBLIC and PRIVATE;
@@ -211,6 +211,21 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
 5. **Derived types and pointers**: TYPE, components, structure constructors,
    POINTER and TARGET, ALLOCATABLE components (as in F95's TR), NULLIFY and
    ASSOCIATED, pointers to arrays.
+
+   **Status 2026-11-09: in progress.**  Done: derived types (a8c334cd),
+   functions of a derived type (531c403e), POINTER and TARGET with
+   NULLIFY, ASSOCIATED, pointer arrays and pointer dummies (7cf3b5fe),
+   defined operators and ASSIGNMENT(=) (adfddbc6) -- INTERFACE
+   OPERATOR(op), .NAME. operators binary and unary, through USE ONLY and
+   PUBLIC/PRIVATE.  Left: ALLOCATABLE components (refused by name).
+   Refused by name: a defined operation in an array expression (F95's
+   ELEMENTAL), an operator's array-valued function.
+
+   Found on the way, pre-existing: a generic whose specifics differed
+   only in a derived type called the first (silent); a module procedure
+   could not reach a later sibling or itself through a generic; two
+   USEs' generics of one name were not merged; a module re-exported
+   neither the procedures nor the generics it had by USE.
 6. **Fortran 95**: PURE, ELEMENTAL, FORALL, NULL(), default initialization,
    CPU_TIME, and the F95 deletions noted as warnings, not removals.
 
