@@ -122,25 +122,41 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    TRANSPOSE, RESHAPE, SPREAD, SHAPE, SIZE, LBOUND, UBOUND, ANY, ALL, COUNT,
    PACK, UNPACK, CSHIFT, EOSHIFT, MERGE).
 
-   **Status 2026-11-08:**
-   - Done:
-     - reductions of any array expression: SUM, PRODUCT, MAXVAL,
-       MINVAL, COUNT, ANY, ALL, DOT_PRODUCT, MAXLOC and MINLOC (rank 1),
-       with MASK;
-     - SIZE, LBOUND and UBOUND with DIM;
-     - WHERE, the statement and the construct;
-     - sections as actual arguments (copied in and out unless plainly
-       contiguous);
-     - assumed-shape dummies, through the descriptor above.  The scan
-       and the `.mod` file tell a caller which dummies take one;
-       anything else gets the array's storage, packed if needed.
-   - Found on the way: MAXVAL of no INTEGER elements was -HUGE, not
-     -HUGE-1.
-   - Left: the array-valued intrinsics (MATMUL, TRANSPOSE, RESHAPE,
-     SPREAD, PACK, UNPACK, CSHIFT, EOSHIFT, MERGE, SHAPE; LBOUND and
-     UBOUND without DIM; reductions with DIM on rank 2 and above), array
-     expressions in I/O lists and as actual arguments, and constructors
-     inside expressions.
+   **Status 2026-11-08: done but for CHARACTER arrays.**
+   - Reductions of any array expression, with MASK, and with DIM on any
+     rank.
+   - SIZE, LBOUND, UBOUND and SHAPE.
+   - WHERE, the statement and the construct.
+   - Sections as actual arguments, copied in and out unless plainly
+     contiguous.
+   - Assumed-shape dummies, through the descriptor above.  The scan and
+     the `.mod` file tell a caller which dummies take one; anything else
+     gets the array's storage, packed if needed.
+   - The array-valued intrinsics: MATMUL, TRANSPOSE, RESHAPE, SPREAD,
+     PACK, UNPACK, CSHIFT, EOSHIFT, MERGE, and MAXLOC and MINLOC without
+     DIM.
+   - Constructors anywhere an array may be; array expressions as actual
+     arguments and I/O items.
+
+   How the array-valued ones fit one pass: before a consumer's loops
+   (an assignment's right side, a reduction's arguments, a WHERE mask, a
+   call's actuals, an I/O list), each array-valued reference in its text
+   is evaluated whole into a heap temporary.  The text is then rewritten
+   to name a hidden assumed-shape array that holds it (`f77_hoist`), and
+   the temporaries are freed after the consumer.  Still nothing new in
+   the HIR backend.
+
+   Found on the way, all pre-existing:
+   - MAXVAL of no INTEGER elements was -HUGE, not -HUGE-1;
+   - a whole LOGICAL array in list-directed output printed 1 and 0;
+   - a whole CHARACTER array was its first element: D = C assigned C(1)
+     to D(1) and stopped (now refused);
+   - two ELSEs in one IF, ELSE IF after ELSE, and text after END IF were
+     taken silently.
+
+   Left: CHARACTER array assignment and expressions; RESHAPE's ORDER; an
+   array SHIFT or BOUNDARY; an array inside a constructor.  All are
+   refused by name.
 4. **Procedures and modules**: modules and USE (ONLY, renames,
    PUBLIC/PRIVATE), explicit interfaces, OPTIONAL and keyword arguments,
    generic interfaces, operator and assignment overloading, internal
