@@ -366,6 +366,13 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    printf 'integer, parameter :: v(3) = (/ 1, 2, 3 /)\nv(2) = 5\nend\n' > "$W/parrasg.f90"
+    printf 'integer :: v(3) = (/ 1, 2 /)\nend\n' > "$W/initcnt.f90"
+    printf 'integer :: k = (/ 1, 2 /)\nend\n' > "$W/initscal.f90"
+    printf 'integer, parameter :: v(3) = (/ 1, 2, 3 /)\ninteger, parameter :: k = v\nend\n' > "$W/parrwhole.f90"
+    printf 'integer, parameter :: v(3) = (/ 1, 2, 3 /)\ninteger, parameter :: k = v(4)\nend\n' > "$W/parrsub.f90"
+    printf 'type t\ninteger :: a, b\nend type\ntype(t) :: x = t(1)\nend\n' > "$W/dtinitfew.f90"
+    printf 'integer :: w(2,2) = reshape((/ 1, 2, 3 /), (/ 2, 2 /))\nend\n' > "$W/initresh.f90"
     # ALLOCATABLE components: what is refused
     alt='program p\ntype t\nreal, allocatable :: a(:)\nend type\n'
     printf "${alt}type(t) :: x\nx = t(1.0)\nend\n" > "$W/alcons.f90"
@@ -490,6 +497,13 @@ if [ -x "$F77" ]; then
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "parrasg:line 2: cannot assign to a PARAMETER" \
+             "initcnt:line 1: an initial value with another number of elements than the array" \
+             "initscal:line 1: an array value for a scalar" \
+             "parrwhole:line 2: a PARAMETER array where a scalar constant is wanted" \
+             "parrsub:line 2: a PARAMETER array's subscript is an INTEGER constant within its bounds" \
+             "dtinitfew:line 4: too few values in a structure constructor" \
+             "initresh:line 1: RESHAPE's SOURCE has another number of elements than its SHAPE" \
              "alcons:line 6: a structure constructor of T, a type with ALLOCATABLE components, is not supported" \
              "alarr:line 6: an array assignment of structures with ALLOCATABLE components is not supported" \
              "alnull:line 6: an ALLOCATABLE component is no POINTER" \

@@ -140,6 +140,9 @@ static int  f77_sopt[F77_MAX_SYM];       /* an OPTIONAL dummy argument */
  * TARGET: what a pointer may point to. */
 static int  f77_sptr[F77_MAX_SYM];
 static int  f77_starg[F77_MAX_SYM];
+static int  f77_sparr[F77_MAX_SYM];      /* a PARAMETER array: static, read-only; its values from f77_sparr_at (-1: not here) */
+static int  f77_sparr_at[F77_MAX_SYM];
+static int  f77_sparr_cnt[F77_MAX_SYM];  /* a structure PARAMETER's: how many component values */
 static int  f77_scalc[F77_MAX_SYM];      /* an ALLOCATABLE component's temporary (f77_sptr too: its descriptor) */
 static int  f77_sintout[F77_MAX_SYM];    /* a dummy said INTENT(OUT) */
 static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
@@ -790,7 +793,7 @@ static int f77_sym(char *nm) {
     f77_sopt[f77_nsym] = 0;
     f77_sptr[f77_nsym] = 0;
     f77_starg[f77_nsym] = 0;
-    f77_scalc[f77_nsym] = 0; f77_sintout[f77_nsym] = 0;
+    f77_scalc[f77_nsym] = 0; f77_sintout[f77_nsym] = 0; f77_sparr[f77_nsym] = 0;
     f77_shost[f77_nsym] = 0;
     f77_sdt[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
@@ -855,7 +858,7 @@ static int f77_sym_temp(int ty) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -926,6 +929,8 @@ static int    f77_me_off[F77_MAX_MODENT];        /* a variable: its offset in th
 static int    f77_me_nar[F77_MAX_MODENT];        /* ... INTEGER*2, LOGICAL*1 (f77_snar) */
 static int    f77_me_alloc[F77_MAX_MODENT];      /* ... ALLOCATABLE 1, POINTER 2; TARGET +4 */
 static int    f77_me_vdt[F77_MAX_MODENT];        /* ... a structure's type */
+static int    f77_me_pa[F77_MAX_MODENT];         /* ... a PARAMETER array's values (f77_cxp; me_alloc +8), or -1 */
+static int    f77_me_pan[F77_MAX_MODENT];        /* ... how many (a structure PARAMETER's component values) */
 static int    f77_me_lo[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];   /* HVAR: below 0, -(slot + 1): the call's */
 static int    f77_me_ashape[F77_MAX_MODENT];     /* HVAR: assumed-shape, its descriptor's address */
@@ -1042,7 +1047,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -6425,7 +6430,7 @@ static void f77_stmt_assign(void) {
     f77_scan_from(0);
     if (lx_t != T_NAME) { f77_error("expected variable on the left of ="); return; }
     s = f77_sym(lex_name);
-    if (f77_sparam[s]) { f77_error("cannot assign to a PARAMETER"); return; }
+    if (f77_sparam[s] || f77_sparr[s]) { f77_error("cannot assign to a PARAMETER"); return; }
     f77_tok();
     if (f77_sptr[s] && f77_srank[s] == 0) s = f77_ptr_deref(s);       /* its target */
     if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) {
@@ -6818,6 +6823,23 @@ static char f77_cxb_name[F77_MAX_CXB][F77_MAX_NAME];
 static int  f77_cxb_val[F77_MAX_CXB];
 static int  f77_cxb_n;
 
+/* Constant values in a list: an array constructor's, a PARAMETER
+ * array's (f77_sparr_at indexes the pool). */
+typedef struct { int ty; int i; int sidx; double d; double d2; unsigned long long u;
+                 int boff; int sty; int snar; int slen; } F77Cx;      /* boff..: a structure PARAMETER's component */
+static F77Cx *f77_cxp; static int f77_cxp_n; static int f77_cxp_cap;
+static void f77_cx_save(F77Cx *c) { c->ty = f77_cx_ty; c->i = f77_cx_i; c->sidx = f77_cx_sidx; c->d = f77_cx_d; c->d2 = f77_cx_d2; c->u = f77_cx_u; }
+static void f77_cx_load(F77Cx *c) { f77_cx_ty = c->ty; f77_cx_i = c->i; f77_cx_sidx = c->sidx; f77_cx_d = c->d; f77_cx_d2 = c->d2; f77_cx_u = c->u; }
+static int f77_cxp_push(void) {
+    if (f77_cxp_n >= f77_cxp_cap) {
+        f77_cxp_cap = f77_cxp_cap ? f77_cxp_cap * 2 : 1024;
+        f77_cxp = (F77Cx *)realloc(f77_cxp, (size_t)f77_cxp_cap * sizeof(F77Cx));
+        if (!f77_cxp) { fdputs("f77: out of memory\n", 2); exit(1); }
+    }
+    f77_cx_save(&f77_cxp[f77_cxp_n]);
+    return f77_cxp_n++;
+}
+
 static void f77_cexpr(void);
 
 /* A complex type: COMPLEX or COMPLEX*16.  The imaginary part is f77_cx_d2. */
@@ -7027,6 +7049,40 @@ static int f77_cintrinsic(void) {
     int k;
     int s;
     int rty;
+    if ((strcmp(lex_name, "SIZE") == 0 || strcmp(lex_name, "LBOUND") == 0 || strcmp(lex_name, "UBOUND") == 0) &&
+        f77_sym_find(lex_name) < 0 && !f77_scan_mode) {
+        /* an array of constant shape's (F90 7.1.6.1): SIZE, LBOUND and
+         * UBOUND with DIM= or of rank 1 */
+        int a; int d; int which;
+        which = lex_name[0];
+        f77_tok(); f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "ARRAY") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+        a = lx_t == T_NAME ? f77_sym_find(lex_name) : -1;
+        if (a < 0 || f77_srank[a] == 0 || f77_adjustable(a) || f77_sassz[a] || f77_salloc[a] || f77_sashape[a] || f77_sptr[a]) {
+            f77_error("SIZE, LBOUND or UBOUND in a constant expression needs an array of constant shape");
+            f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0;
+            return 1;
+        }
+        f77_tok();
+        d = -1;
+        if (lx_t == T_COMMA) {
+            f77_tok();
+            if (lx_t == T_NAME && strcmp(lex_name, "DIM") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+            f77_cexpr();
+            d = f77_cx_i - 1;
+            if (d < 0 || d >= f77_srank[a]) { f77_error("DIM= is outside the array's rank"); d = 0; }
+        }
+        if (lx_t != T_RP) f77_error("expected ) after an intrinsic's arguments"); else f77_tok();
+        if (d < 0 && which != 'S' && f77_srank[a] != 1) { f77_error("LBOUND or UBOUND of an array without DIM= is an array"); d = 0; }
+        if (d < 0 && which != 'S') d = 0;
+        f77_cx_ty = TY_INT;
+        if (which == 'S') {
+            if (d < 0) f77_cx_i = f77_sym_nelem(a);
+            else f77_cx_i = f77_sext[a][d];
+        } else f77_cx_i = which == 'L' ? f77_slo[a][d] : f77_slo[a][d] + f77_sext[a][d] - 1;
+        f77_cx_d = (double)f77_cx_i;
+        return 1;
+    }
     for (k = 0; names[k]; k++) if (strcmp(lex_name, names[k]) == 0) break;
     if (!names[k]) return 0;
     s = f77_sym_find(lex_name);
@@ -7258,6 +7314,30 @@ static void f77_cprimary(void) {
             return;
         }
         s = f77_sym(lex_name);
+        if (f77_sparr[s]) {
+            /* an element of a PARAMETER array, by constant subscripts */
+            int elem; int stride; int d;
+            f77_tok();
+            if (lx_t != T_LP) { f77_error("a PARAMETER array where a scalar constant is wanted"); f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; return; }
+            if (f77_sty[s] == TY_DERIVED) f77_error("a structure PARAMETER in a constant expression is not supported");
+            else if (f77_sparr_at[s] < 0) { f77_error("an element of a module's PARAMETER array in a constant expression is not supported"); }
+            f77_tok();
+            elem = 0; stride = 1;
+            for (d = 0; d < f77_srank[s]; d++) {
+                f77_cexpr();
+                if (f77_cx_ty != TY_INT || f77_cx_i < f77_slo[s][d] || f77_cx_i >= f77_slo[s][d] + f77_sext[s][d]) {
+                    f77_error("a PARAMETER array's subscript is an INTEGER constant within its bounds");
+                    f77_cx_i = f77_slo[s][d];
+                }
+                elem = elem + (f77_cx_i - f77_slo[s][d]) * stride;
+                stride = stride * f77_sext[s][d];
+                if (d + 1 < f77_srank[s]) { if (lx_t != T_COMMA) { f77_error("expected , in a subscript"); break; } f77_tok(); }
+            }
+            if (lx_t != T_RP) f77_error("expected ) after a subscript"); else f77_tok();
+            if (f77_sparr_at[s] >= 0) f77_cx_load(&f77_cxp[f77_sparr_at[s] + elem]);
+            else { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; }
+            return;
+        }
         if (f77_sparam[s] && f77_sty[s] == TY_CHAR) {
             f77_cx_ty = TY_CHAR; f77_cx_sidx = f77_spstr[s]; f77_cx_i = f77_slen[s]; f77_cx_d = 0.0;
             f77_tok();
@@ -7353,7 +7433,7 @@ static void f77_cterm(void) {
     f77_cpower();
     for (;;) {
         if (lx_t == T_STAR) mul = 1;
-        else if (lx_t == T_SLASH) mul = 0;
+        else if (lx_t == T_SLASH && !(lx_rp < lx_rpe && *lx_rp == ')')) mul = 0;   /* / ) closes a constructor */
         else return;
         ty = f77_cx_ty; iv = f77_cx_i; dv = f77_cx_d;
         d2v = f77_iscx(ty) ? f77_cx_d2 : 0.0;
@@ -8217,9 +8297,17 @@ static void f77_stmt_implicit(int skip) {
 /* A PARAMETER's value: lx_t at the '=' after its name.  The PARAMETER
  * statement and the PARAMETER attribute (INTEGER, PARAMETER :: N = 3)
  * both come here.  0 on error. */
+static int f77_param_array(int s);
+static int f77_dt_init(int s);
+static int f77_param_struct(int s);
 static int f77_param_def(int s) {
         if (lx_t != T_ASSIGN) { f77_error("expected = in PARAMETER"); return 0; }
         f77_tok();
+        if (f77_sty[s] == TY_DERIVED) {
+            /* a structure PARAMETER: its static image, read-only */
+            return f77_param_struct(s);
+        }
+        if (f77_srank[s] > 0) return f77_param_array(s);
         f77_cexpr();
         f77_sparam[s] = 1;
         if (f77_sty[s] == TY_CHAR) {
@@ -8272,7 +8360,7 @@ static void f77_stmt_parameter(int skip) {
     for (;;) {
         if (lx_t != T_NAME) { f77_error("PARAMETER needs a name"); return; }
         s = f77_sym(lex_name);
-        if (f77_sarg[s] || f77_scom[s] || f77_srank[s] > 0) {
+        if (f77_sarg[s] || f77_scom[s]) {
             f77_error("this name cannot be a PARAMETER");
             return;
         }
@@ -8304,7 +8392,353 @@ static int    f77_di_sidx[F77_MAX_DINIT];
 static double f77_di_d2[F77_MAX_DINIT];
 static unsigned long long f77_di_u[F77_MAX_DINIT];   /* TY_HEXC */
 static int    f77_di_sub[F77_MAX_DINIT];   /* substring target: byte length, elem is a byte offset */
+static int    f77_di_boff[F77_MAX_DINIT];  /* a structure's component: its byte offset in the symbol, else -1 */
+static int    f77_di_sty[F77_MAX_DINIT];   /* ... its type, INTEGER*2 width, CHARACTER length */
+static int    f77_di_snar[F77_MAX_DINIT];
+static int    f77_di_slen[F77_MAX_DINIT];
 static int    f77_di_n;
+
+/* A DATA triple: symbol s's element elem (or, sub > 0, its bytes from
+ * byte elem) takes the constant in f77_cx_*.  0 when the pool is full
+ * (said). */
+static int f77_di_add(int s, int elem, int sub) {
+    if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return 0; }
+    f77_di_sym[f77_di_n] = s; f77_di_elem[f77_di_n] = elem; f77_di_sub[f77_di_n] = sub;
+    f77_di_ty[f77_di_n] = f77_cx_ty; f77_di_i[f77_di_n] = f77_cx_i; f77_di_d[f77_di_n] = f77_cx_d;
+    f77_di_sidx[f77_di_n] = f77_cx_sidx; f77_di_d2[f77_di_n] = f77_cx_d2; f77_di_u[f77_di_n] = f77_cx_u;
+    f77_di_boff[f77_di_n] = -1;
+    f77_di_n = f77_di_n + 1;
+    return 1;
+}
+/* ... a component of type ty (nar, len) at byte boff of symbol s. */
+static int f77_di_add_at(int s, int boff, int ty, int nar, int len) {
+    if (!f77_di_add(s, 0, 0)) return 0;
+    f77_di_boff[f77_di_n - 1] = boff; f77_di_sty[f77_di_n - 1] = ty;
+    f77_di_snar[f77_di_n - 1] = nar; f77_di_slen[f77_di_n - 1] = len;
+    return 1;
+}
+
+static int f77_implied_do_spans(int open, int *close_off, int *eq_off, int *items_off, int *ctl_off);
+/* A constant value converted to type ty (a CHARACTER one to length len,
+ * padded or cut). */
+static void f77_cx_conv(int ty, int len) {
+    if (ty == TY_CHAR) {
+        if (f77_cx_ty != TY_CHAR) { f77_error("a numeric value for a CHARACTER constant"); return; }
+        if (len >= 0 && f77_cx_i != len) {
+            char buf[F77_MAX_STMT]; int k;
+            for (k = 0; k < len && k < F77_MAX_STMT - 1; k++)
+                buf[k] = k < f77_cx_i ? lex_strpool[lex_str_off[f77_cx_sidx] + k] : ' ';
+            f77_cx_sidx = f77_intern_str(buf, k);
+            f77_cx_i = k;
+        }
+        return;
+    }
+    if (f77_cx_ty == TY_CHAR) { f77_error("a character value for a numeric constant"); return; }
+    if (f77_cx_ty == TY_HEXC) return;
+    if (ty == TY_INT) { if (f77_cx_ty != TY_INT) f77_cx_i = (int)f77_cx_d; f77_cx_d = (double)f77_cx_i; }
+    else if (ty == TY_FLOAT || ty == TY_DOUBLE) {
+        if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
+        if (ty == TY_FLOAT) f77_cx_d = (double)(float)f77_cx_d;
+        f77_cx_i = (int)f77_cx_d;
+    } else if (ty == TY_CPLX || ty == TY_DCPLX) {
+        if (!f77_iscx(f77_cx_ty)) { f77_cx_d = f77_cx_ty == TY_INT ? (double)f77_cx_i : f77_cx_d; f77_cx_d2 = 0.0; }
+        if (ty == TY_CPLX) { f77_cx_d = (double)(float)f77_cx_d; f77_cx_d2 = (double)(float)f77_cx_d2; }
+    }
+    f77_cx_ty = ty;
+}
+
+/* An initialization expression that may be an array (F90 7.1.6.1), at
+ * the scanner: an array constructor (/ ... /) -- its values constants,
+ * implied DOs, constructors, PARAMETER arrays -- RESHAPE of one, a
+ * PARAMETER array, or a scalar constant expression.  Its values are
+ * pushed on the pool in array element order; their count, -1 on error.
+ * *scalar is set when it was a scalar. */
+static int f77_cx_list(int *scalar);
+static int f77_cx_items(int stop) {
+    /* ac-values up to text offset stop (exclusive), comma separated */
+    int n; int m; int sc;
+    n = 0;
+    for (;;) {
+        if ((int)(lx_rts - lx_stmt) > stop || lx_t == T_EOF) break;
+        if (lx_t == T_LP && !(lx_rp < lx_rpe && *lx_rp == '/')) {
+            int open; int close; int eq; int items; int ctl;
+            open = (int)(lx_rts - lx_stmt);
+            if (f77_implied_do_spans(open, &close, &eq, &items, &ctl)) {
+                /* (values, i = c1, c2 [, c3]) */
+                int bi; int c1; int c2; int c3; int v;
+                f77_scan_from(ctl);
+                if (lx_t != T_NAME) { f77_error("an implied DO needs a variable"); return -1; }
+                if (f77_cxb_n >= F77_MAX_CXB) { f77_error("implied DOs nested too deep"); return -1; }
+                bi = f77_cxb_n;
+                strcpy(f77_cxb_name[bi], lex_name);
+                f77_tok();
+                if (lx_t != T_ASSIGN) { f77_error("expected = in an implied DO"); return -1; }
+                f77_tok();
+                f77_cexpr(); c1 = f77_cx_i;
+                if (lx_t != T_COMMA) { f77_error("expected , in an implied DO"); return -1; }
+                f77_tok();
+                f77_cexpr(); c2 = f77_cx_i;
+                c3 = 1;
+                if (lx_t == T_COMMA) { f77_tok(); f77_cexpr(); c3 = f77_cx_i; }
+                if (c3 == 0) { f77_error("zero step in an implied DO"); return -1; }
+                f77_cxb_n = bi + 1;
+                for (v = c1; c3 > 0 ? v <= c2 : v >= c2; v = v + c3) {
+                    f77_cxb_val[bi] = v;
+                    f77_scan_from(items);
+                    m = f77_cx_items(ctl - 2);
+                    if (m < 0) { f77_cxb_n = bi; return -1; }
+                    n = n + m;
+                }
+                f77_cxb_n = bi;
+                f77_scan_from(close);
+                goto next;
+            }
+        }
+        m = f77_cx_list(&sc);
+        if (m < 0) return -1;
+        n = n + m;
+    next:
+        if (lx_t != T_COMMA || (int)(lx_rts - lx_stmt) > stop) break;
+        f77_tok();
+    }
+    return n;
+}
+static int f77_cx_list(int *scalar) {
+    int n;
+    *scalar = 0;
+    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
+        int open; int close;
+        open = (int)(lx_rts - lx_stmt);
+        close = f77_match_paren(open);             /* past the ) of / ) */
+        f77_tok(); f77_tok();
+        if (lx_t == T_SLASH) n = 0;                /* (/ /): no values */
+        else n = f77_cx_items(close - 3);
+        if (n < 0) return -1;
+        if (lx_t != T_SLASH) { f77_error("expected / ) to close an array constructor"); return -1; }
+        f77_tok();
+        if (lx_t != T_RP) { f77_error("expected / ) to close an array constructor"); return -1; }
+        f77_tok();
+        return n;
+    }
+    if (lx_t == T_NAME && strcmp(lex_name, "RESHAPE") == 0 && lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find("RESHAPE") < 0) {
+        int base; int ns; int sc; int k; int want;
+        f77_tok(); f77_tok();
+        base = f77_cxp_n;
+        n = f77_cx_list(&sc);
+        if (n < 0) return -1;
+        if (lx_t != T_COMMA) { f77_error("RESHAPE needs a SOURCE and a SHAPE"); return -1; }
+        f77_tok();
+        if (lx_t == T_NAME && strcmp(lex_name, "SHAPE") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+        ns = f77_cx_list(&sc);
+        if (ns < 0) return -1;
+        want = 1;
+        for (k = 0; k < ns; k++) want = want * f77_cxp[base + n + k].i;
+        f77_cxp_n = base + n;                      /* the shape's values dropped */
+        if (lx_t != T_RP) { f77_error("RESHAPE's PAD and ORDER in an initialization are not supported"); return -1; }
+        f77_tok();
+        if (want != n) { f77_error("RESHAPE's SOURCE has another number of elements than its SHAPE"); return -1; }
+        return n;
+    }
+    if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find(lex_name) >= 0 && f77_sparr[f77_sym_find(lex_name)] &&
+        f77_paren_has_colon_at((int)(lx_rp - lx_stmt))) {
+        /* a section of a rank-1 PARAMETER array, lo:hi[:stride] */
+        int s; int lo; int hi; int st; int v;
+        s = f77_sym_find(lex_name);
+        if (f77_srank[s] != 1 || f77_sparr_at[s] < 0) { f77_error("a section of a PARAMETER array in an initialization is of a rank-1 one of this unit"); return -1; }
+        f77_tok(); f77_tok();
+        lo = f77_slo[s][0]; hi = f77_slo[s][0] + f77_sext[s][0] - 1; st = 1;
+        if (lx_t != T_COLON) { f77_cexpr(); lo = f77_cx_i; }
+        if (lx_t != T_COLON) { f77_error("expected : in a section"); return -1; }
+        f77_tok();
+        if (lx_t != T_COLON && lx_t != T_RP) { f77_cexpr(); hi = f77_cx_i; }
+        if (lx_t == T_COLON) { f77_tok(); f77_cexpr(); st = f77_cx_i; }
+        if (lx_t != T_RP || st == 0) { f77_error("bad section of a PARAMETER array"); return -1; }
+        f77_tok();
+        n = 0;
+        for (v = lo; st > 0 ? v <= hi : v >= hi; v = v + st) {
+            if (v < f77_slo[s][0] || v >= f77_slo[s][0] + f77_sext[s][0]) { f77_error("a section outside its PARAMETER array"); return -1; }
+            f77_cx_load(&f77_cxp[f77_sparr_at[s] + v - f77_slo[s][0]]);
+            f77_cxp_push();
+            n = n + 1;
+        }
+        return n;
+    }
+    if (lx_t == T_NAME && !(lx_rp < lx_rpe && *lx_rp == '(')) {
+        int s;
+        s = f77_sym_find(lex_name);
+        if (s >= 0 && f77_sparr[s]) {
+            int k; int ne;
+            if (f77_sparr_at[s] < 0) { f77_error("a module's PARAMETER array in an initialization is not supported"); return -1; }
+            ne = f77_sym_nelem(s);
+            for (k = 0; k < ne; k++) { f77_cx_load(&f77_cxp[f77_sparr_at[s] + k]); f77_cxp_push(); }
+            f77_tok();
+            return ne;
+        }
+    }
+    f77_cexpr();
+    if (lx_t == T_STAR || lx_t == T_SLASH && !(lx_rp < lx_rpe && *lx_rp == ')')) { f77_error("bad constant expression"); return -1; }
+    f77_cxp_push();
+    *scalar = 1;
+    return 1;
+}
+
+/* A structure constructor of type dt as an initial value (F90 7.1.6.1),
+ * at the scanner: each component's value into symbol s's static image
+ * from byte boff -- nested constructors, array components' values (a
+ * scalar for all its elements).  0 on error (said). */
+static int f77_dt_cinit(int s, int dt, int boff) {
+    int c;
+    if (lx_t == T_NAME && !(lx_rp < lx_rpe && *lx_rp == '(')) {
+        /* a structure PARAMETER of this unit: its values again */
+        int p; int i; int n0;
+        p = f77_sym_find(lex_name);
+        if (p >= 0 && f77_sparr[p] && f77_sty[p] == TY_DERIVED) {
+            int got;
+            if (f77_sdt[p] != dt || f77_srank[p] != 0) { f77_error("a structure PARAMETER of another type or shape"); return 0; }
+            n0 = 0;
+            got = f77_sparr_at[p] >= 0;
+            if (!got) { f77_error("a structure PARAMETER whose value is not here"); return 0; }
+            for (i = 0; i < f77_sparr_cnt[p]; i++) {
+                F77Cx *c;
+                c = &f77_cxp[f77_sparr_at[p] + i];
+                f77_cx_load(c);
+                if (!f77_di_add_at(s, boff + c->boff, c->sty, c->snar, c->slen)) return 0;
+            }
+            (void)n0;
+            f77_tok();
+            return 1;
+        }
+    }
+    if (lx_t != T_NAME || f77_dt_find(lex_name) != dt || !(lx_rp < lx_rpe && *lx_rp == '(')) {
+        char m[F77_MAX_NAME + 60];
+        sprintf(m, "the initial value of a TYPE(%s) is its structure constructor", f77_dt_name[dt]);
+        f77_error(m);
+        return 0;
+    }
+    f77_tok(); f77_tok();
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
+        int off;
+        off = boff + f77_dc_off[c];
+        if (c > f77_dt_c0[dt]) {
+            if (lx_t != T_COMMA) { f77_error("too few values in a structure constructor"); return 0; }
+            f77_tok();
+        }
+        if (f77_dc_ptr[c]) { f77_error("a POINTER or ALLOCATABLE component in an initial value is not supported"); return 0; }
+        if (f77_dc_ty[c] == TY_DERIVED) {
+            int ne; int k;
+            ne = 1;
+            for (k = 0; k < f77_dc_rank[c]; k++) ne = ne * f77_dc_ext[c][k];
+            if (f77_dc_rank[c] > 0) { f77_error("an array component of structures in an initial value is not supported"); return 0; }
+            if (!f77_dt_cinit(s, f77_dc_dt[c], off)) return 0;
+            continue;
+        }
+        {
+            int base; int n; int sc; int k; int ne; int esz;
+            ne = 1;
+            for (k = 0; k < f77_dc_rank[c]; k++) ne = ne * f77_dc_ext[c][k];
+            base = f77_cxp_n;
+            n = f77_cx_list(&sc);
+            if (n < 0) return 0;
+            if (!sc && n != ne) { f77_error("a component's value has another number of elements"); f77_cxp_n = base; return 0; }
+            if (!sc && f77_dc_rank[c] == 0) { f77_error("an array value for a scalar component"); f77_cxp_n = base; return 0; }
+            esz = f77_dc_ty[c] == TY_CHAR ? f77_dc_len[c] : f77_dc_nar[c] ? f77_dc_nar[c] :
+                  f77_dc_ty[c] == TY_CPLX ? 8 : f77_dc_ty[c] == TY_DCPLX ? 16 : ty_size(f77_dc_ty[c]);
+            for (k = 0; k < ne; k++) {
+                f77_cx_load(&f77_cxp[base + (sc ? 0 : k)]);
+                if ((f77_cx_ty == TY_CHAR) != (f77_dc_ty[c] == TY_CHAR)) { f77_error("a component's value is of another type"); f77_cxp_n = base; return 0; }
+                if (!f77_di_add_at(s, off + k * esz, f77_dc_ty[c], f77_dc_nar[c], f77_dc_len[c])) { f77_cxp_n = base; return 0; }
+            }
+            f77_cxp_n = base;
+        }
+    }
+    if (lx_t != T_RP) { f77_error("too many values in a structure constructor"); return 0; }
+    f77_tok();
+    return 1;
+}
+
+/* The initial value of a structure, or an array of them, s: a
+ * constructor (every element's), or (/ constructors /). */
+static int f77_dt_init(int s) {
+    int ne; int k; int dt;
+    dt = f77_sdt[s];
+    ne = f77_srank[s] > 0 ? f77_sym_nelem(s) : 1;
+    if (dt < 0) { f77_error("an initial value of a structure of no type here"); return 0; }
+    if (f77_dt_nalloc(dt) != 0) { f77_error("an initial value of a type with ALLOCATABLE components is not supported"); return 0; }
+    if (!f77_scom[s]) f77_ssaved[s] = 1;
+    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
+        if (f77_srank[s] == 0) { f77_error("an array value for a scalar"); return 0; }
+        f77_tok(); f77_tok();
+        for (k = 0; k < ne; k++) {
+            if (k > 0) { if (lx_t != T_COMMA) { f77_error("too few values in the array constructor"); return 0; } f77_tok(); }
+            if (!f77_dt_cinit(s, dt, k * f77_dt_size[dt])) return 0;
+        }
+        if (lx_t != T_SLASH) { f77_error("too many values in the array constructor"); return 0; }
+        f77_tok();
+        if (lx_t != T_RP) { f77_error("expected / ) to close an array constructor"); return 0; }
+        f77_tok();
+        return 1;
+    }
+    {
+        /* one constructor: parsed once per element, from its text */
+        int at;
+        at = (int)(lx_rts - lx_stmt);
+        for (k = 0; k < ne; k++) {
+            f77_scan_from(at);
+            if (!f77_dt_cinit(s, dt, k * f77_dt_size[dt])) return 0;
+        }
+    }
+    return 1;
+}
+
+/* A structure PARAMETER: its static image, read-only, and its component
+ * values kept (f77_sparr_at, f77_sparr_cnt) for initial values and USE. */
+static int f77_param_struct(int s) {
+    int i0; int i;
+    i0 = f77_di_n;
+    if (!f77_dt_init(s)) return 0;
+    f77_sparr[s] = 1;
+    f77_sparr_at[s] = f77_cxp_n;
+    f77_sparr_cnt[s] = 0;
+    for (i = i0; i < f77_di_n; i++) {
+        int q;
+        f77_cx_ty = f77_di_ty[i]; f77_cx_i = f77_di_i[i]; f77_cx_d = f77_di_d[i];
+        f77_cx_sidx = f77_di_sidx[i]; f77_cx_d2 = f77_di_d2[i]; f77_cx_u = f77_di_u[i];
+        q = f77_cxp_push();
+        f77_cxp[q].boff = f77_di_boff[i]; f77_cxp[q].sty = f77_di_sty[i];
+        f77_cxp[q].snar = f77_di_snar[i]; f77_cxp[q].slen = f77_di_slen[i];
+        f77_sparr_cnt[s] = f77_sparr_cnt[s] + 1;
+    }
+    return 1;
+}
+
+/* name = value of a PARAMETER array (F90 5.1.2.1): its values, each of
+ * its type, kept for constant expressions (f77_sparr_at) and given to
+ * its static storage as DATA would. */
+static int f77_param_array(int s) {
+    int base; int n; int sc; int k; int ne;
+    if (f77_adjustable(s) || f77_sassz[s] || f77_salloc[s]) { f77_error("a PARAMETER array's shape is constant"); return 0; }
+    base = f77_cxp_n;
+    f77_cxb_n = 0;
+    n = f77_cx_list(&sc);
+    if (n < 0) return 0;
+    ne = f77_sym_nelem(s);
+    if (sc) {
+        for (k = 1; k < ne; k++) { f77_cx_load(&f77_cxp[base]); f77_cxp_push(); }
+        n = ne;
+    }
+    if (n != ne) { f77_error("a PARAMETER array's value has another number of elements"); return 0; }
+    for (k = 0; k < ne; k++) {
+        f77_cx_load(&f77_cxp[base + k]);
+        f77_cx_conv(f77_sty[s], f77_sty[s] == TY_CHAR ? f77_slen[s] : -1);
+        f77_cx_save(&f77_cxp[base + k]);
+        if (!f77_di_add(s, k, 0)) return 0;
+    }
+    f77_sparr[s] = 1;
+    f77_sparr_at[s] = base;
+    if (!f77_scom[s]) f77_ssaved[s] = 1;
+    return 1;
+}
+
 
 /* Z'1F' or O'17' (MIL-STD-1753): digits of base 16 or 8 into
  * f77_cx_u.  Digits past 64 bits push the leftmost out, as the item
@@ -8541,17 +8975,7 @@ static int f77_data_values(void) {
         while (rep > 0) {
             while (ti < f77_dt_n && te >= f77_dt_count[ti]) { ti = ti + 1; te = 0; }
             if (ti >= f77_dt_n) { f77_error("more DATA values than variables"); return 0; }
-            if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return 0; }
-            f77_di_sym[f77_di_n] = f77_dt_sym[ti];
-            f77_di_elem[f77_di_n] = f77_dt_sublen[ti] ? f77_dt_start[ti] : f77_dt_start[ti] + te;
-            f77_di_ty[f77_di_n] = f77_cx_ty;
-            f77_di_i[f77_di_n] = f77_cx_i;
-            f77_di_d[f77_di_n] = f77_cx_d;
-            f77_di_sidx[f77_di_n] = f77_cx_sidx;
-            f77_di_d2[f77_di_n] = f77_cx_d2;
-            f77_di_u[f77_di_n] = f77_cx_u;
-            f77_di_sub[f77_di_n] = f77_dt_sublen[ti];
-            f77_di_n = f77_di_n + 1;
+            if (!f77_di_add(f77_dt_sym[ti], f77_dt_sublen[ti] ? f77_dt_start[ti] : f77_dt_start[ti] + te, f77_dt_sublen[ti])) return 0;
             te = te + 1;
             rep = rep - 1;
         }
@@ -8577,26 +9001,32 @@ static int f77_decl_init_eq(int s) {
     if (f77_sarg[s]) { f77_error("a dummy argument cannot be given an initial value"); return 0; }
     if (f77_srank[s] > 0 && f77_adjustable(s)) { f77_error("adjustable array given an initial value"); return 0; }
     f77_tok();
-    if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/') {
-        f77_error("an array constructor (/ ... /) is not supported yet");
-        return 0;
-    }
     f77_cxb_n = 0;
-    f77_cexpr();
+    if (f77_sty[s] == TY_DERIVED) return f77_dt_init(s);
+    {
+        /* the value: a scalar, every element's; or an array's values in
+         * array element order (a constructor, RESHAPE, a PARAMETER array) */
+        int base; int m; int sc;
+        base = f77_cxp_n;
+        m = f77_cx_list(&sc);
+        if (m < 0) return 0;
+        f77_cxp_n = base;
+        if (!sc) {
+            if (f77_srank[s] == 0) { f77_error("an array value for a scalar"); return 0; }
+            if (m != f77_sym_nelem(s)) { f77_error("an initial value with another number of elements than the array"); return 0; }
+            if (!f77_scom[s]) f77_ssaved[s] = 1;
+            for (k = 0; k < m; k++) {
+                f77_cx_load(&f77_cxp[base + k]);
+                if (!f77_di_add(s, k, 0)) return 0;
+            }
+            return 1;
+        }
+        f77_cx_load(&f77_cxp[base]);
+    }
     if (!f77_scom[s]) f77_ssaved[s] = 1;   /* an initial value implies SAVE (F90 5.1) */
     n = f77_srank[s] > 0 ? f77_sym_nelem(s) : 1;
     for (k = 0; k < n; k++) {
-        if (f77_di_n >= F77_MAX_DINIT) { f77_error("too many DATA initializers"); return 0; }
-        f77_di_sym[f77_di_n] = s;
-        f77_di_elem[f77_di_n] = k;
-        f77_di_ty[f77_di_n] = f77_cx_ty;
-        f77_di_i[f77_di_n] = f77_cx_i;
-        f77_di_d[f77_di_n] = f77_cx_d;
-        f77_di_sidx[f77_di_n] = f77_cx_sidx;
-        f77_di_d2[f77_di_n] = f77_cx_d2;
-        f77_di_u[f77_di_n] = f77_cx_u;
-        f77_di_sub[f77_di_n] = 0;
-        f77_di_n = f77_di_n + 1;
+        if (!f77_di_add(s, k, 0)) return 0;
     }
     return 1;
 }
@@ -9101,6 +9531,7 @@ static void f77_layout_static(void) {
         int g;
         int esz;
         int off;
+        int sty; int snar;
         s = f77_di_sym[i];
         g = f77_sgidx[s];
         if (g < 0) continue;            /* parse already errored */
@@ -9116,10 +9547,17 @@ static void f77_layout_static(void) {
             ps_ginit_pool_len = ps_ginit_pool_len + ps_gsize[g];
         }
         esz = f77_esize(s);
+        sty = f77_sty[s]; snar = f77_snar[s];
         off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i] * esz;
         if (f77_di_sub[i] > 0) {
             off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_elem[i];
             esz = f77_di_sub[i];
+        }
+        if (f77_di_boff[i] >= 0) {
+            /* a structure's component (f77_di_add_at) */
+            off = ps_ginit_start[g] + f77_sgoff[s] + f77_di_boff[i];
+            sty = f77_di_sty[i]; snar = f77_di_snar[i];
+            esz = sty == TY_CHAR ? f77_di_slen[i] : 0;
         }
         if (f77_di_ty[i] == TY_CHAR) {
             /* A character constant: into a CHARACTER item padded or
@@ -9130,37 +9568,37 @@ static void f77_layout_static(void) {
             for (k = 0; k < esz; k++)
                 ps_ginit_pool[off + k] = (k < n) ?
                     (unsigned char)lex_strpool[lex_str_off[f77_di_sidx[i]] + k] : ' ';
-        } else if (f77_sty[s] == TY_CHAR) {
+        } else if (sty == TY_CHAR) {
             f77_error("a CHARACTER item needs a character constant in DATA");
             return;
         } else if (f77_di_ty[i] == TY_HEXC) {
             /* the constant's bits, right-justified in the item: zeros
              * on the left of one too short, the leftmost bits of one
              * too long lost (MIL-STD-1753 2.8) */
-            if (f77_sty[s] == TY_CPLX || f77_sty[s] == TY_DCPLX) {
+            if (sty == TY_CPLX || sty == TY_DCPLX) {
                 f77_error("a hexadecimal or octal constant cannot initialize a COMPLEX item");
                 return;
             }
             for (k = 0; k < esz; k++)
                 ps_ginit_pool[off + k] = k < 8 ? (unsigned char)((f77_di_u[i] >> (k * 8)) & 255) : 0;
-        } else if (f77_sty[s] == TY_CPLX) {
+        } else if (sty == TY_CPLX) {
             union { float f; unsigned char b[4]; } u;
             u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
             for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
             u.f = f77_iscx(f77_di_ty[i]) ? (float)f77_di_d2[i] : 0.0f;
             for (k = 0; k < 4; k++) ps_ginit_pool[off + 4 + k] = u.b[k];
-        } else if (f77_sty[s] == TY_DCPLX) {
+        } else if (sty == TY_DCPLX) {
             /* each part as its constant's type makes it (f77_cx_part) */
             union { double d; unsigned char b[8]; } u;
             u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_cx_part(f77_di_d[i], f77_di_ty[i]);
             for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
             u.d = f77_iscx(f77_di_ty[i]) ? f77_di_d2[i] : 0.0;
             for (k = 0; k < 8; k++) ps_ginit_pool[off + 8 + k] = u.b[k];
-        } else if (f77_sty[s] == TY_DOUBLE) {
+        } else if (sty == TY_DOUBLE) {
             union { double d; unsigned char b[8]; } u;
             u.d = (f77_di_ty[i] == TY_INT) ? (double)f77_di_i[i] : f77_di_d[i];
             for (k = 0; k < 8; k++) ps_ginit_pool[off + k] = u.b[k];
-        } else if (f77_sty[s] == TY_FLOAT) {
+        } else if (sty == TY_FLOAT) {
             union { float f; unsigned char b[4]; } u;
             u.f = (f77_di_ty[i] == TY_INT) ? (float)f77_di_i[i] : (float)f77_di_d[i];
             for (k = 0; k < 4; k++) ps_ginit_pool[off + k] = u.b[k];
@@ -9169,7 +9607,7 @@ static void f77_layout_static(void) {
             v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : (int)f77_di_d[i];
             /* an INTEGER*2 or LOGICAL*1 image is its width: the low bytes,
              * which come first (fort370 issue 10) */
-            for (k = 0; k < (f77_snar[s] ? f77_snar[s] : 4); k++)
+            for (k = 0; k < (snar ? snar : 4); k++)
                 ps_ginit_pool[off + k] = (unsigned char)((v >> (k * 8)) & 255);
         }
     }
@@ -13124,7 +13562,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -13835,7 +14273,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0; f77_me_vdt[e] = -1;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0; f77_me_vdt[e] = -1; f77_me_pa[e] = -1; f77_me_pan[e] = -1;
     { int q; for (q = 0; q < 16; q++) f77_me_argdt[e][q] = -1; }
     return e;
 }
@@ -14005,7 +14443,9 @@ static void f77_mod_snapshot(int u) {
             f77_me_nar[e] = f77_snar[s];
             f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : 0;
             f77_me_rrank[e] = f77_srank[s];
-            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0);
+            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0) | (f77_sparr[s] ? 8 : 0);
+            f77_me_pa[e] = f77_sparr[s] ? f77_sparr_at[s] : -1;
+            f77_me_pan[e] = f77_sparr[s] && f77_sty[s] == TY_DERIVED ? f77_sparr_cnt[s] : -1;
             f77_me_vdt[e] = f77_sdt[s];
             f77_me_off[e] = f77_sgoff[s];
             f77_me_str[e] = strdup(ps_gname[f77_sgidx[s]]);
@@ -14164,6 +14604,9 @@ static void f77_me_bind(int e, char *local) {
         f77_salloc[s] = (f77_me_alloc[e] & 3) == 1;
         f77_sptr[s] = (f77_me_alloc[e] & 3) == 2;
         f77_starg[s] = (f77_me_alloc[e] & 4) != 0;
+        f77_sparr[s] = (f77_me_alloc[e] & 8) != 0;           /* a PARAMETER array, read-only */
+        f77_sparr_at[s] = f77_me_pa[e];
+        f77_sparr_cnt[s] = f77_me_pan[e];
         if (f77_sptr[s] && f77_srank[s] > 0) f77_sashape[s] = 1;     /* a pointer array: its descriptor */
         f77_sdt[s] = f77_me_vdt[e];
         if (strncmp(f77_me_str[e], "f77c_", 5) == 0) {
@@ -14354,7 +14797,9 @@ static void f77_host_save(int u) {
             f77_me_nar[e] = f77_snar[s];
             f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : 0;
             f77_me_rrank[e] = f77_srank[s];
-            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0);
+            f77_me_alloc[e] = (f77_salloc[s] ? 1 : f77_sptr[s] ? 2 : 0) | (f77_starg[s] ? 4 : 0) | (f77_sparr[s] ? 8 : 0);
+            f77_me_pa[e] = f77_sparr[s] ? f77_sparr_at[s] : -1;
+            f77_me_pan[e] = f77_sparr[s] && f77_sty[s] == TY_DERIVED ? f77_sparr_cnt[s] : -1;
             f77_me_vdt[e] = f77_sdt[s];
             f77_me_ashape[e] = f77_sashape[s];
             f77_me_lenslot[e] = -1;
@@ -14599,6 +15044,28 @@ static int f77_mod_read(char *nm) {
                 f77_me_lo[e][k] = (int)strtol(q, &q, 10);
                 f77_me_ext[e][k] = (int)strtol(q, &q, 10);
             }
+        } else if (kind == 'K') {
+            int pe; int ne; int q; char *qq; int used;
+            pe = f77_me_find(m, name);
+            qq = p + 2 + strlen(name);
+            ne = 0; used = 0;
+            sscanf(qq, " %d%n", &ne, &used);
+            qq = qq + used;
+            if (pe >= 0) { f77_me_pa[pe] = f77_cxp_n; f77_me_pan[pe] = ne; }
+            for (q = 0; q < ne; q++) {
+                char d1[64]; char d2[64]; char hx[F77_MAX_STMT * 2 + 2]; int bo; int st; int sn; int sl; int at;
+                used = 0;
+                if (sscanf(qq, " %d %d %d %d %d %d %63s %63s %s%n", &f77_cx_ty, &f77_cx_i, &bo, &st, &sn, &sl, d1, d2, hx, &used) != 9) break;
+                qq = qq + used;
+                f77_cx_d = strtod(d1, NULL); f77_cx_d2 = strtod(d2, NULL); f77_cx_u = 0;
+                if (f77_cx_ty == TY_CHAR) {
+                    char buf[F77_MAX_STMT]; int b; unsigned int x;
+                    for (b = 0; b < f77_cx_i && b < F77_MAX_STMT; b++) { sscanf(hx + 2 * b, "%2x", &x); buf[b] = (char)x; }
+                    f77_cx_sidx = f77_intern_str(buf, b);
+                }
+                at = f77_cxp_push();
+                f77_cxp[at].boff = bo; f77_cxp[at].sty = st; f77_cxp[at].snar = sn; f77_cxp[at].slen = sl;
+            }
         } else if (kind == 'G') {
             char *q;
             char *eol;
@@ -14707,6 +15174,23 @@ static void f77_mod_write(void) {
                 if (f77_me_ty[e] == TY_DERIVED && f77_me_vdt[e] >= 0)        /* its type */
                     fprintf(f, "W %s %s %s\n", f77_me_name[e], f77_dt_name[f77_me_vdt[e]],
                             f77_dt_mod[f77_me_vdt[e]][0] ? f77_dt_mod[f77_me_vdt[e]] : "-");
+                if (f77_me_pa[e] >= 0) {
+                    /* a PARAMETER array's values: type, ival, dval, dval2,
+                     * and a CHARACTER one's bytes in hex */
+                    int ne; int q;
+                    ne = 1;
+                    for (k = 0; k < f77_me_rrank[e]; k++) ne = ne * f77_me_ext[e][k];
+                    if (f77_me_ty[e] == TY_DERIVED) ne = f77_me_pan[e];
+                    fprintf(f, "K %s %d", f77_me_name[e], ne);
+                    for (q = 0; q < ne; q++) {
+                        F77Cx *c; int b;
+                        c = &f77_cxp[f77_me_pa[e] + q];
+                        fprintf(f, " %d %d %d %d %d %d %a %a ", c->ty, c->i, c->boff, c->sty, c->snar, c->slen, c->d, c->d2);
+                        if (c->ty == TY_CHAR) for (b = 0; b < c->i; b++) fprintf(f, "%02x", (unsigned char)lex_strpool[lex_str_off[c->sidx] + b]);
+                        else fputc('-', f);
+                    }
+                    fputc('\n', f);
+                }
             } else {
                 fprintf(f, "G %s %s\n", f77_me_name[e], f77_me_str[e]);
             }
@@ -17221,7 +17705,7 @@ static int f77_dt_temp_comp(int c, int addr) {
     f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
     f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
     f77_sptr[t] = f77_dc_ptr[c] != 0; f77_starg[t] = 0;
-    f77_scalc[t] = f77_dc_ptr[c] == 2; f77_sintout[t] = 0;
+    f77_scalc[t] = f77_dc_ptr[c] == 2; f77_sintout[t] = 0; f77_sparr[t] = 0;
     if (f77_dc_ptr[c] && f77_dc_rank[c] > 0) f77_sashape[t] = 1;     /* a pointer array: its descriptor */
     /* a slot or descriptor of its own address, even at offset 0: the
      * guard (f77_desc_guard) reads every use of it, and the structure's
