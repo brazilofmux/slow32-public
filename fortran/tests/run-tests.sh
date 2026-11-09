@@ -308,6 +308,7 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nend\n' > "$W/whereopen.f90"
     printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
     printf 'real a(2), m(2,2)\na = 1.0\nm = 1.0\nwhere (m > 0.0) a = 2.0\nend\n' > "$W/whereshape.f90"
+    printf "character*4 c(3)\ncall s(c(1:3:2))\nend\n" > "$W/charsec.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -407,6 +408,7 @@ if [ -x "$F77" ]; then
              "whereopen:WHERE without END WHERE" \
              "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \
              "whereshape:line 4: the shapes of a WHERE's mask and its assignment do not conform" \
+             "charsec:line 2: a CHARACTER section as an actual argument is not supported yet" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

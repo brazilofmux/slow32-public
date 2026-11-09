@@ -3772,6 +3772,7 @@ static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
 /* The subscripts of a section, lx_t just past its '(' and the ')' eaten:
  * per dimension a scalar (trip[k] 0, idx[k] its value) or a triplet
  * (trip[k] 1, lo/hi/st[k]).  Returns the number of triplets, -1 on error. */
+static int f77_sec_full[F77_MAX_RANK];  /* per dimension: the triplet was a bare ':' */
 static int f77_section_subs(int s, int *idx, int *trip, int *lo, int *hi, int *st) {
     int k;
     int nt;
@@ -3780,6 +3781,7 @@ static int f77_section_subs(int s, int *idx, int *trip, int *lo, int *hi, int *s
         if (k >= f77_srank[s]) { f77_error("wrong number of subscripts"); return -1; }
         trip[k] = 0;
         idx[k] = -1;
+        f77_sec_full[k] = lx_t == T_COLON;
         if (lx_t != T_COLON) {
             idx[k] = f77_expr();
             idx[k] = f77_cvt(idx[k], &ex_hi, ex_ty, TY_INT);
@@ -3792,6 +3794,7 @@ static int f77_section_subs(int s, int *idx, int *trip, int *lo, int *hi, int *s
             f77_dim_bounds(s, k, &dlo, &dhi);
             lo[k] = idx[k] >= 0 ? idx[k] : dlo;   /* [lo]: */
             f77_tok();                          /* : */
+            if (lx_t != T_COMMA && lx_t != T_RP) f77_sec_full[k] = 0;
             if (lx_t != T_COLON && lx_t != T_COMMA && lx_t != T_RP) {
                 hi[k] = f77_expr();
                 hi[k] = f77_cvt(hi[k], &ex_hi, ex_ty, TY_INT);
@@ -8315,17 +8318,32 @@ static int f77_actual_is_call(char *nm) {
     return 1;
 }
 
-/* Heap temporaries an actual argument made (TRANSFER), freed after the
- * call that received them: f77_tfree_mark() before the actuals,
- * f77_tfree_to(mark) after the call. */
-static int f77_tfree_list[64];
+/* Heap temporaries an actual argument made, freed after the call that
+ * received them: f77_tfree_mark() before the actuals, f77_tfree_to(mark)
+ * after the call.  TRANSFER's are freed; a section's (f77_section_actual)
+ * is copied back to the section first, through the subscripts evaluated
+ * before the call -- the call may change what they were made of. */
+#define F77_MAX_TFREE 64
+static int f77_tfree_list[F77_MAX_TFREE];
+static int f77_tfree_sym[F77_MAX_TFREE];       /* a section's array, or -1 */
+static int f77_tfree_idx[F77_MAX_TFREE][F77_MAX_RANK];
+static int f77_tfree_trip[F77_MAX_TFREE][F77_MAX_RANK];
+static int f77_tfree_lo[F77_MAX_TFREE][F77_MAX_RANK];
+static int f77_tfree_st[F77_MAX_TFREE][F77_MAX_RANK];
+static int f77_tfree_ext[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_ntfree;
 static int f77_tfree_mark(void) { return f77_ntfree; }
+static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out);
 static void f77_tfree_to(int mark) {
     int args[1];
+    int e;
     while (f77_ntfree > mark) {
         f77_ntfree = f77_ntfree - 1;
-        args[0] = f77_tfree_list[f77_ntfree];
+        e = f77_ntfree;
+        if (f77_tfree_sym[e] >= 0)
+            f77_section_copy(f77_tfree_sym[e], f77_tfree_list[e], f77_tfree_idx[e], f77_tfree_trip[e],
+                             f77_tfree_lo[e], f77_tfree_st[e], f77_tfree_ext[e], 1);
+        args[0] = f77_tfree_list[e];
         f77_call_i("f77_dealloc_auto", 1, args);
     }
 }
@@ -8520,10 +8538,88 @@ static int f77_transfer_actual(void) {
                 if (trip[k]) f77_loop_end(&lp[k]);
         }
     }
-    if (f77_ntfree >= 64) { f77_error("too many TRANSFER arguments in one statement"); return tmp; }
+    if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many TRANSFER arguments in one statement"); return tmp; }
     f77_tfree_list[f77_ntfree] = tmp;
+    f77_tfree_sym[f77_ntfree] = -1;
     f77_ntfree = f77_ntfree + 1;
     f77_act_len = -1;
+    return tmp;
+}
+
+/* Copy between a section and a contiguous temporary of its elements in
+ * array element order (out: temporary to section), through subscripts
+ * evaluated once: per dimension a scalar idx, or a triplet from lo by st
+ * over ext elements. */
+static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out) {
+    F77Loop lp[F77_MAX_RANK];
+    int k; int rank; int esz; int pos; int p; int ea; int ta;
+    int cur[F77_MAX_RANK];
+    rank = f77_srank[s];
+    esz = f77_esize(s);
+    pos = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
+    for (k = rank - 1; k >= 0; k--)
+        if (trip[k]) f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
+    for (k = 0; k < rank; k++)
+        cur[k] = trip[k] ? hi_emit(HI_ADD, TY_INT, lo[k],
+                                   hi_emit(HI_MUL, TY_INT, hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL), st[k], 0, NULL), 0, NULL)
+                         : idx[k];
+    ea = f77_elem_addr(s, cur, rank);
+    p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+    ta = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(esz), 0, NULL), 0, NULL);
+    if (out) f77_copy_bytes(ea, ta, esz);
+    else f77_copy_bytes(ta, ea, esz);
+    hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
+    for (k = 0; k < rank; k++)
+        if (trip[k]) f77_loop_end(&lp[k]);
+}
+
+/* A section as an actual argument (Fortran 90), lx_t past its '(': what
+ * the callee receives, an array's storage.  A section that is plainly
+ * contiguous -- its triplets the leading dimensions, all but the last a
+ * bare ':', the last of stride 1: A(I:N), M(:,J), M(:,J:K) -- passes its
+ * first element's address.  Any other goes through a heap temporary,
+ * copied in before the call and back out after it (f77_tfree_to): the
+ * sequence association F90 12.4.1.4 gives an array element sequence. */
+static int f77_section_actual(int s) {
+    int idx[F77_MAX_RANK]; int trip[F77_MAX_RANK];
+    int lo[F77_MAX_RANK]; int hi[F77_MAX_RANK]; int st[F77_MAX_RANK];
+    int ext[F77_MAX_RANK];
+    int k; int nt; int last; int contig; int n; int tmp; int e;
+    int first[F77_MAX_RANK];
+    int args[3];
+    nt = f77_section_subs(s, idx, trip, lo, hi, st);
+    if (nt < 0) return f77_iconst(0);
+    last = -1;
+    for (k = 0; k < f77_srank[s]; k++) {
+        if (trip[k]) { ext[k] = f77_extent(lo[k], hi[k], st[k]); last = k; }
+        first[k] = trip[k] ? lo[k] : idx[k];
+    }
+    contig = 1;
+    for (k = 0; k < last; k++)
+        if (!trip[k] || !f77_sec_full[k]) contig = 0;
+    if (last >= 0 && !(h_kind[st[last]] == HI_ICONST && h_val[st[last]] == 1)) contig = 0;
+    if (contig) return f77_elem_addr(s, first, f77_srank[s]);
+    if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many array temporaries in one statement"); return f77_iconst(0); }
+    n = f77_iconst(1);
+    for (k = 0; k < f77_srank[s]; k++)
+        if (trip[k]) n = hi_emit(HI_MUL, TY_INT, n, ext[k], 0, NULL);
+    args[0] = f77_iconst(0);
+    args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
+    args[2] = f77_iconst(0);
+    tmp = f77_call_i("f77_allocate", 3, args);
+    f77_section_copy(s, tmp, idx, trip, lo, st, ext, 0);
+    e = f77_ntfree;
+    f77_tfree_list[e] = tmp;
+    f77_tfree_sym[e] = s;
+    for (k = 0; k < f77_srank[s]; k++) {
+        f77_tfree_idx[e][k] = idx[k];
+        f77_tfree_trip[e][k] = trip[k];
+        f77_tfree_lo[e][k] = lo[k];
+        f77_tfree_st[e][k] = st[k];
+        f77_tfree_ext[e][k] = trip[k] ? ext[k] : 0;
+    }
+    f77_ntfree = e + 1;
     return tmp;
 }
 
@@ -8601,6 +8697,10 @@ static int f77_actual_addr(void) {
 
         if (f77_sty[s] == TY_CHAR) {
             f77_tok();
+            if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
+                f77_error("a CHARACTER section as an actual argument is not supported yet");
+                return f77_iconst(0);
+            }
             v = f77_char_ref(s);
             f77_act_len = ex_len;
             f77_act_ty = TY_CHAR;
@@ -8610,6 +8710,11 @@ static int f77_actual_addr(void) {
         f77_act_len = -1;
         if (!f77_sparam[s]) {
             f77_tok();
+            if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
+                f77_tok();
+                f77_act_ty = f77_sty[s] + 16;
+                return f77_section_actual(s);
+            }
             if (lx_t == T_LP && f77_srank[s] > 0) {
                 f77_tok();
                 f77_act_ty = f77_sty[s];
