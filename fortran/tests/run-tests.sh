@@ -291,7 +291,6 @@ if [ -x "$F77" ]; then
     printf 'program p\ninterface\nreal function f(x)\nend function\nend interface\nreal :: f\nend\n' > "$W/ibredecl.f90"
     printf 'use nosuch\nend\n' > "$W/usenone.f90"
     printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
-    printf 'recursive subroutine r(n)\ninteger :: n, t\nt = n\ncall q()\ncontains\nsubroutine q()\nprint *, t\nend subroutine\nend\n' > "$W/hostrec.f90"
     printf 'module mg\ninterface g\nmodule procedure a\nend interface\ncontains\nsubroutine a(x)\nreal x\nend subroutine a\nend module mg\nuse mg\ncall g(1)\nend\n' > "$W/genmiss.f90"
     printf 'a: do i=1,2\nend do a\na: do i=1,2\nend do a\nend\n' > "$W/cndup.f90"
     printf 'integer a\na=1\na: do i=1,2\nend do a\nend\n' > "$W/cnvar.f90"
@@ -395,6 +394,10 @@ if [ -x "$F77" ]; then
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nprint *, x\nend\n' > "$W/dtptrio.f90"
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nx = t(3)\nend\n' > "$W/dtptrcons.f90"
     printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
+    printf 'type pt\ninteger :: i\nend type\ntype(pt) :: a(3)\na = eoshift(a, 1)\nend\n' > "$W/dteosh.f90"
+    printf 'type pt\ninteger :: i\nend type\ntype(pt) :: b(3)\nb = (/ 1, 2, 3 /)\nend\n' > "$W/dtacon.f90"
+    # a RECURSIVE host's local its internal procedure names, first seen in the host's executable text
+    printf 'program p\ncall r(2)\nend\nrecursive subroutine r(n)\nimplicit integer (a-z)\nk = n\ncall in\ncontains\nsubroutine in\nprint *, k\nend subroutine\nend\n' > "$W/rechostimp.f90"
     # defined operations: a module with OPERATOR(+) and ASSIGNMENT(=) on PT
     opm='module m\ntype pt\nreal :: x\nend type\ninterface operator(+)\nmodule procedure padd\nend interface\ninterface assignment(=)\nmodule procedure pfromi\nend interface\ncontains\nfunction padd(a, b)\ntype(pt), intent(in) :: a, b\ntype(pt) :: padd\npadd%%x = a%%x + b%%x\nend function\nsubroutine pfromi(a, i)\ntype(pt), intent(out) :: a\ninteger, intent(in) :: i\na%%x = i\nend subroutine\nend module\n'
     printf "${opm}program q\nuse m\ntype(pt) :: a(3), b(3)\na = b + b\nend\n" > "$W/opaex.f90"
@@ -541,6 +544,9 @@ if [ -x "$F77" ]; then
              "opasgfn:line 17: an ASSIGNMENT(=)'s procedure is a SUBROUTINE" \
              "opempty:line 3: a generic interface with no procedure" \
              "opasgplus:line 2: ASSIGNMENT(=) is the only assignment" \
+             "dteosh:line 5: EOSHIFT of structures needs a BOUNDARY" \
+             "dtacon:line 5: a value of another type for an array of structures" \
+             "rechostimp:line 6: K: a RECURSIVE procedure's local in its internal procedures is not supported yet" \
              "dtcdiv:line 6: a component of an array of structures whose size does not divide the structure's is not supported yet" \
              "genmix:line 7: a generic's procedures are all FUNCTIONs or all SUBROUTINEs" \
              "genmodp:line 3: MODULE PROCEDURE is in a module's generic interface (F90 12.3.2.1)" \
@@ -577,7 +583,6 @@ if [ -x "$F77" ]; then
              "ibredecl:line 6: F has an interface body: it is not declared again" \
              "usenone:line 1: no module NOSUCH: neither in this file before the USE, nor a .mod file of it here" \
              "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
-             "hostrec:line 3: T: a RECURSIVE procedure's local in its internal procedures is not supported yet" \
              "genmiss:line 11: no procedure of the generic G takes these arguments" \
              "cndup:line 3: the construct name A is used twice" \
              "cnvar:line 3: A is a variable; it cannot name a construct" \

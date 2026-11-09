@@ -983,6 +983,16 @@ static void hl_func(Node *fn) {
 
     if (f77_cur_blk_live) f77_emit_return();
 
+    /* No block is current once the unit is lowered.  hir_opt mints the
+     * constants of its strength reductions with hi_emit, which grows the
+     * current block: left on the last one, a shift count landed after
+     * the unit's RET, and the CFG a late scalar replacement rebuilds
+     * stopped at it -- in a unit with nothing for the first SSA pass to
+     * promote, which is the one case hir_ssa_construct does not detach
+     * the block itself (ASSOCIATED(P, X(::2)) in a subroutine with no
+     * local: "instructions after a block's terminator"). */
+    hl_cur_blk = -1;
+
     /* The HIR is complete: retract the read-only-load assertion for
      * every dummy this unit turned out to store (see f77_ldro_note). */
     f77_ldro_finalize();

@@ -377,12 +377,14 @@ static int  f77_dc_off[F77_MAX_DTC];
 static int  f77_dc_ptr[F77_MAX_DTC];                /* 1 a POINTER component: a slot, or a descriptor; 2 an ALLOCATABLE one, a descriptor */
 static int  f77_ndc;
 /* the types the unit being compiled sees, by name: its own, its host's,
- * its modules' */
+ * its modules' -- each by the name it has here, which a USE may have
+ * given it (USE M, POINT => PT) */
 static int  f77_dtv[F77_MAX_DT];
+static char f77_dtv_name[F77_MAX_DT][F77_MAX_NAME];
 static int  f77_ndtv;
 static int  f77_dt_find(char *nm) {
     int k;
-    for (k = f77_ndtv - 1; k >= 0; k--) if (strcmp(f77_dt_name[f77_dtv[k]], nm) == 0) return f77_dtv[k];
+    for (k = f77_ndtv - 1; k >= 0; k--) if (strcmp(f77_dtv_name[k], nm) == 0) return f77_dtv[k];
     return -1;
 }
 /* The type of name nm defined in module mod ("" a unit's), or -1. */
@@ -399,11 +401,12 @@ static int f77_dt_reaches(int a, int b) {
         if (f77_dc_dt[c] >= 0 && f77_dc_dt[c] != a && f77_dt_reaches(f77_dc_dt[c], b)) return 1;
     return 0;
 }
-static void f77_dt_see(int dt) {
+static void f77_dt_see_as(int dt, char *nm) {
     int k;
-    for (k = 0; k < f77_ndtv; k++) if (f77_dtv[k] == dt) return;
-    if (f77_ndtv < F77_MAX_DT) f77_dtv[f77_ndtv++] = dt;
+    for (k = 0; k < f77_ndtv; k++) if (f77_dtv[k] == dt && strcmp(f77_dtv_name[k], nm) == 0) return;
+    if (f77_ndtv < F77_MAX_DT) { f77_dtv[f77_ndtv] = dt; strcpy(f77_dtv_name[f77_ndtv], nm); f77_ndtv = f77_ndtv + 1; }
 }
+static void f77_dt_see(int dt) { f77_dt_see_as(dt, f77_dt_name[dt]); }
 static int  ex_dt = -1;                            /* a TY_DERIVED expression's type */
 static int  f77_dt_fresh = -1;                     /* a derived FUNCTION's result just made (f77_dt_fcall) */
 static void f77_dt_assign(int addr, int v, int dt);
@@ -621,6 +624,7 @@ static void f77_esc_scan(int unit) {
     int j;
     int k;
     int depth;
+    int isread;
     /* READ list items: after the control list, or after `fmt,` */
     if (strncmp(lx_stmt, "READ", 4) == 0) {
         i = 4;
@@ -674,17 +678,35 @@ static void f77_esc_scan(int unit) {
         }
         return;
     }
-    /* IDENT( item, item ) anywhere: a call or a subscript */
+    /* IDENT( item, item ) anywhere: a call or a subscript -- an item
+     * KEYWORD=name its name (Fortran 90) -- and in a READ any
+     * parenthesised list, an implied DO's items being read into.  A
+     * pointer assignment's target, P => name, likewise. */
+    isread = strncmp(lx_stmt, "READ", 4) == 0;
     i = 0;
     while (i < lx_stmt_len) {
         if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; i = i + 1; continue; }
-        if (lx_stmt[i] == '(' && i > 0 && (lx_isalpha(lx_stmt[i - 1]) || lx_isdigit(lx_stmt[i - 1]))) {
+        if (lx_stmt[i] == '=' && i + 1 < lx_stmt_len && lx_stmt[i + 1] == '>') {
+            j = i + 2;
+            k = j;
+            while (k < lx_stmt_len && (lx_isalpha(lx_stmt[k]) || lx_isdigit(lx_stmt[k]) || lx_stmt[k] == '_')) k = k + 1;
+            if (k > j && k == lx_stmt_len) f77_esc_add(unit, lx_stmt + j, k - j);
+        }
+        if (lx_stmt[i] == '(' && i > 0 && (isread || lx_isalpha(lx_stmt[i - 1]) || lx_isdigit(lx_stmt[i - 1]) || lx_stmt[i - 1] == '_')) {
             j = i + 1;
             for (;;) {
                 k = j;
                 if (k < lx_stmt_len && lx_isalpha(lx_stmt[k])) {
-                    while (k < lx_stmt_len && (lx_isalpha(lx_stmt[k]) || lx_isdigit(lx_stmt[k]))) k = k + 1;
-                    if (k < lx_stmt_len && (lx_stmt[k] == ',' || lx_stmt[k] == ')'))
+                    while (k < lx_stmt_len && (lx_isalpha(lx_stmt[k]) || lx_isdigit(lx_stmt[k]) || lx_stmt[k] == '_')) k = k + 1;
+                    if (k + 1 < lx_stmt_len && lx_stmt[k] == '=' && lx_isalpha(lx_stmt[k + 1])) {
+                        /* KEYWORD=name */
+                        int k0;
+                        k0 = k + 1;
+                        k = k0;
+                        while (k < lx_stmt_len && (lx_isalpha(lx_stmt[k]) || lx_isdigit(lx_stmt[k]) || lx_stmt[k] == '_')) k = k + 1;
+                        if (k < lx_stmt_len && (lx_stmt[k] == ',' || lx_stmt[k] == ')'))
+                            f77_esc_add(unit, lx_stmt + k0, k - k0);
+                    } else if (k < lx_stmt_len && (lx_stmt[k] == ',' || lx_stmt[k] == ')'))
                         f77_esc_add(unit, lx_stmt + j, k - j);
                 }
                 /* advance to the next top-level comma or the close */
@@ -976,6 +998,8 @@ static int  f77_urrank[F77_MAX_UNIT];  /* an array-valued FUNCTION: its result's
 static int  f77_urecur[F77_MAX_UNIT];  /* RECURSIVE (Fortran 90) */
 static char f77_uresult[F77_MAX_UNIT][F77_MAX_NAME];   /* a FUNCTION's RESULT name, or "" */
 static char f77_urtn[F77_MAX_UNIT][F77_MAX_NAME];      /* a FUNCTION of a derived type: the type's name */
+static int  f77_urdt[F77_MAX_UNIT];                    /* ... and 1 + the type, once the unit is compiled: its caller
+                                                        * may know the type by another name (USE M, POINT => PT) */
 static char f77_hdr_tname[F77_MAX_NAME];               /* TYPE(name) FUNCTION: the name */
 /* The name of FUNCTION u's result variable: its RESULT's, else its own. */
 static char *f77_unit_rname(int u) { return f77_uresult[u][0] ? f77_uresult[u] : f77_uname[u]; }
@@ -1117,7 +1141,8 @@ static void f77_realloc_sym(int s) {
     /* Scalar double or complex: give the hi word its own promotable slot. */
     if (f77_split_on < 0) f77_split_on = getenv("F77_NO_SPLIT") ? 0 : 1;
     if (f77_split_on && f77_srank[s] == 0 && f77_ispair(f77_sty[s]) &&
-        !f77_name_escapes(f77_text_unit(), f77_sname[s])) {
+        !f77_name_escapes(f77_text_unit(), f77_sname[s]) &&
+        !(f77_hc_host == f77_cur_unit && f77_inline_depth == 0 && f77_hc_has(f77_sname[s]))) {   /* its internal procedures' too: whole */
         int wty;
         wty = f77_sty[s] == TY_CPLX ? TY_FLOAT : TY_INT;
         h_ty[f77_sval[s]] = wty;                    /* lo word only */
@@ -3729,7 +3754,8 @@ static int f77_primary(void) {
                 return r;
             }
             if (rty == TY_DERIVED) {
-                r = f77_dt_fcall(f77_ulink[u], -1, addrs, lens, nargs, f77_dt_find(f77_urtn[u]), f77_urtn[u]);
+                r = f77_dt_fcall(f77_ulink[u], -1, addrs, lens, nargs,
+                                 f77_urdt[u] ? f77_urdt[u] - 1 : f77_dt_find(f77_urtn[u]), f77_urtn[u]);
                 f77_tfree_to(mk);
                 return r;
             }
@@ -5385,6 +5411,7 @@ static int f77_acon_st;
 static int f77_acon_pos;
 static int f77_acon_tmp;
 static int f77_acon_ty0;
+static int f77_acon_nerr;     /* the errors there were before the constructor: one refused value is enough */
 static int f77_acon_n;        /* values parsed; -1 once an implied-DO makes it dynamic */
 static int f77_acon_dlen;     /* a CHARACTER target: its elements' length (HIR) */
 static int f77_acon_doff;     /* and the target substring's offset, or -1 */
@@ -5417,13 +5444,15 @@ static int f77_hconst(int v, int *out) {
 }
 
 static void f77_acon_items(int items_off, int ctl_off) {
+    int tail;
+    tail = lx_stmt_len - ctl_off;        /* an item's own implied DO may move the text */
     f77_scan_from(items_off);
     for (;;) {
         f77_acon_item();
         if (lx_t != T_COMMA) break;
-        if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail - 1) break;
         f77_tok();
-        if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail) break;
     }
 }
 
@@ -5496,7 +5525,9 @@ static void f77_acon_value(int v) {
     int addr;
     s = f77_acon_s;
     vty = ex_ty; vhi = ex_hi;
+    if (f77_nerr > f77_acon_nerr) return;
     if (!f77_aa_value_ok(f77_sty[s] == TY_CHAR, vty)) return;
+    if (!f77_aa_dt_ok(s, vty, ex_dt)) return;
     if (f77_acon_ty0 < 0) f77_acon_ty0 = vty;
     else if (vty != f77_acon_ty0) { f77_error("the values of an array constructor differ in type"); return; }
     if (vty == TY_CHAR) {
@@ -5515,6 +5546,7 @@ static void f77_acon_value(int v) {
         esz = vty == TY_CHAR ? f77_acon_dlen : f77_iconst(f77_esize(s));
         addr = hi_emit(HI_ADD, HL_ADDR_TY, f77_acon_tmp, hi_emit(HI_MUL, TY_INT, p, esz, 0, NULL), 0, NULL);
         if (vty == TY_CHAR) f77_char_assign(addr, f77_acon_dlen, v, vhi);
+        else if (vty == TY_DERIVED) f77_copy_n(addr, f77_dcx_arg(v), esz);
         else f77_store_at(addr, f77_mty(s), v, vty, vhi);
     } else {
         int cur[F77_MAX_RANK];
@@ -5546,6 +5578,7 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
     f77_acon_lo = lo[k];
     f77_acon_st = st[k];
     f77_acon_ty0 = -1;
+    f77_acon_nerr = f77_nerr;
     f77_acon_n = 0;
     esz = f77_sty[s] == TY_CHAR ? dlen : f77_iconst(f77_esize(s));
     mty = f77_mty(s);
@@ -5598,7 +5631,7 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
         f77_loop_begin(&cl, f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext, -1, -1, NULL), f77_iconst(1));
         c = hi_emit(HI_LOAD, TY_INT, cl.idx, -1, 0, NULL);
         v = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, c, esz, 0, NULL), 0, NULL);
-        if (f77_sty[s] != TY_CHAR) v = f77_load_at(v, mty);
+        if (f77_sty[s] != TY_CHAR && f77_sty[s] != TY_DERIVED) v = f77_load_at(v, mty);
         for (k = 0; k < f77_acon_rank; k++) cur[k] = idx[k];
         cur[f77_acon_tdim] = f77_sec_at(lo[f77_acon_tdim], st[f77_acon_tdim], c);
         f77_aa_store(s, f77_elem_addr(s, cur, f77_acon_rank), doff, dlen, v,
@@ -5720,11 +5753,12 @@ static void f77_array_assign1(int s, int whole) {
     f77_tok();
     f77_sstored[s] = 1;
     if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/' && f77_match_paren((int)(lx_rts - lx_stmt)) >= lx_stmt_len &&
-        !f77_av_inside((int)(lx_rts - lx_stmt) + 2, lx_stmt_len - 2)) {
+        !f77_av_inside((int)(lx_rts - lx_stmt) + 2, lx_stmt_len - 2) && !f77_where_on()) {
         /* a constructor as the whole right side, stored as its values are
          * parsed -- unless it holds a constructor or an array-valued
-         * reference, which the hoist below evaluates first */
-        if (f77_where_on()) { f77_error("an array constructor in a WHERE is not supported yet"); return; }
+         * reference, which the hoist below evaluates first, as it does
+         * every constructor under a WHERE (the mask picks among the
+         * elements, not among the values) */
         f77_acon_assign(s, idx, trip, lo, hi, st, nt, doff, dlen);
         return;
     }
@@ -6456,7 +6490,7 @@ static int f77_merge(void) {
     F77Args A;
     int it; int iff; int im; int k;
     int t; int thi; int tty; int tlog; int f; int fhi; int fty; int c; int slot; int b_t; int b_f; int b_j;
-    int tlen; int tclen; int flen; int fclen;
+    int tlen; int tclen; int flen; int fclen; int tdt;
     ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
     if (!f77_intr_args(&A)) return f77_iconst(0);
     it = -1; iff = -1; im = -1;
@@ -6468,10 +6502,15 @@ static int f77_merge(void) {
     }
     if (it < 0 || iff < 0 || im < 0) { f77_error("the arguments of MERGE are not ones it takes"); return f77_iconst(0); }
     t = f77_expr_at(A.from[it], A.to[it]);
-    tty = ex_ty; thi = ex_hi; tlog = ex_log; tlen = ex_len; tclen = ex_clen;
+    tty = ex_ty; thi = ex_hi; tlog = ex_log; tlen = ex_len; tclen = ex_clen; tdt = ex_dt;
+    if (tty == TY_DERIVED) t = f77_dcx_arg(t);
     f = f77_expr_at(A.from[iff], A.to[iff]);
     fty = ex_ty; fhi = ex_hi; flen = ex_len; fclen = ex_clen;
-    if (tty != fty || tlog != ex_log) { f77_error("MERGE's TSOURCE and FSOURCE differ in type"); return f77_iconst(0); }
+    if (tty != fty || tlog != ex_log || (tty == TY_DERIVED && tdt != ex_dt)) {
+        f77_error("MERGE's TSOURCE and FSOURCE differ in type");
+        return f77_iconst(0);
+    }
+    if (tty == TY_DERIVED) f = f77_dcx_arg(f);
     if (tty == TY_CHAR && tclen >= 0 && fclen >= 0 && tclen != fclen) {
         f77_error("MERGE's TSOURCE and FSOURCE differ in length");
         return f77_iconst(0);
@@ -6479,17 +6518,17 @@ static int f77_merge(void) {
     c = f77_expr_at(A.from[im], A.to[im]);
     if (ex_ty != TY_INT || !ex_log) { f77_error("MERGE's MASK is LOGICAL"); return f77_iconst(0); }
     /* one of the two, through a slot: a CHARACTER one's address (the two
-     * of one length, F90 13.13.70) */
+     * of one length, F90 13.13.70), and a structure's */
     slot = f77_char_temp(16);
     b_t = hir_new_block(); b_f = hir_new_block(); b_j = hir_new_block();
     hi_emit(HI_BRC, TY_VOID, c, b_t, b_f, NULL);
     f77_cur_blk_live = 0;
     f77_begin_blk(b_t);
-    if (tty == TY_CHAR) hi_emit(HI_STORE, TY_INT, slot, t, 0, NULL);
+    if (tty == TY_CHAR || tty == TY_DERIVED) hi_emit(HI_STORE, TY_INT, slot, t, 0, NULL);
     else f77_store_at(slot, tty, t, tty, thi);
     f77_goto_blk(b_j);
     f77_begin_blk(b_f);
-    if (tty == TY_CHAR) hi_emit(HI_STORE, TY_INT, slot, f, 0, NULL);
+    if (tty == TY_CHAR || tty == TY_DERIVED) hi_emit(HI_STORE, TY_INT, slot, f, 0, NULL);
     else f77_store_at(slot, tty, f, tty, fhi);
     f77_goto_blk(b_j);
     f77_begin_blk(b_j);
@@ -6499,6 +6538,10 @@ static int f77_merge(void) {
         ex_len = tclen >= 0 ? tlen : f77_select(c, tlen, flen);
         ex_clen = tclen;
         return hi_emit(HI_LOAD, HL_ADDR_TY, slot, -1, 0, NULL);
+    }
+    if (tty == TY_DERIVED) {
+        ex_ty = TY_DERIVED; ex_dt = tdt; ex_hi = -1; ex_log = 0;
+        return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, hi_emit(HI_LOAD, HL_ADDR_TY, slot, -1, 0, NULL), -1, 0, NULL));
     }
     t = f77_load_at(slot, tty);
     ex_log = tlog;
@@ -9509,12 +9552,9 @@ static void f77_layout_static(void) {
             if (!f77_hc_has(f77_sname[s]) || f77_sparam[s] || f77_sexternal[s] || f77_sintrinsic[s] ||
                 f77_sme[s] >= 0 || f77_slink[s] || f77_scom[s] || f77_sassoc[s]) continue;
             if (f77_sarg[s] || s == f77_result_sym || f77_sauto[s] || f77_adjustable(s)) { f77_shost[s] = 2; continue; }
-            if (f77_urecur[f77_cur_unit]) {
-                char m[F77_MAX_NAME + 80];
-                sprintf(m, "%s: a RECURSIVE procedure's local in its internal procedures is not supported yet", f77_sname[s]);
-                f77_error(m);
-                return;
-            }
+            /* a RECURSIVE host's local is each call's own: through the
+             * table too (a SAVEd one's storage is static all the same) */
+            if (f77_urecur[f77_cur_unit]) { f77_shost[s] = 2; continue; }
             f77_shost[s] = 1;
             f77_ssaved[s] = 1;
         }
@@ -10121,7 +10161,18 @@ static void f77_stmt_allocate(int skip, int alloc) {
             s = f77_sym_find(lex_name);
             if (nobj >= F77_MAX_ALLOBJ) { f77_error("too many objects in one ALLOCATE"); return; }
             isptr[nobj] = 0;
-            if (s >= 0 && (f77_sptr[s] || f77_sty[s] == TY_DERIVED)) {
+            if (s >= 0 && f77_sty[s] == TY_DERIVED && f77_salloc[s] && !f77_sptr[s]) {
+                /* an ALLOCATABLE array of structures: itself, unless a
+                 * component is named (D(2)%P) */
+                int at;
+                at = (int)(lx_rp - lx_stmt);
+                if (at < lx_stmt_len && lx_stmt[at] == '(') at = f77_match_paren(at);
+                if (!(at < lx_stmt_len && lx_stmt[at] == '%')) s = -2 - s;
+            }
+            if (s <= -2) {
+                s = -2 - s;
+                f77_tok();
+            } else if (s >= 0 && (f77_sptr[s] || f77_sty[s] == TY_DERIVED)) {
                 /* a POINTER, or a designator's POINTER or ALLOCATABLE component */
                 f77_ptr_alloc_ok = 1;
                 s = f77_ptr_object();
@@ -10402,6 +10453,7 @@ static void f77_desc_guard(void) {
             }
             if (bad) {
                 char m[F77_MAX_NAME + 80];
+                if (getenv("F77_DCX_DEBUG")) fprintf(stderr, "desc guard: inst %d kind %d src1 %d src2 %d (line %d)\n", i, h_kind[i], h_src1[i], h_src2[i], lx_line);
                 sprintf(m, "the %s array %s is not supported in this context yet",
                         f77_salloc[s] ? "ALLOCATABLE" : "assumed-shape", f77_sname[s]);
                 f77_error(m);
@@ -12037,8 +12089,10 @@ static int f77_temp_array(int ty, int log, int nar, int esz, int r, int *ext) {
 }
 
 /* A CHARACTER hidden array's length is that of the array it was made
- * from, a constant or a run-time value. */
+ * from, a constant or a run-time value; an array of structures' type is
+ * its source's. */
 static void f77_char_like(int dst, int src) {
+    if (f77_sty[src] == TY_DERIVED) f77_sdt[dst] = f77_sdt[src];
     if (f77_sty[src] != TY_CHAR) return;
     f77_slen[dst] = f77_slen[src];
     f77_slenv[dst] = f77_slenv[src];
@@ -12062,10 +12116,21 @@ static int f77_temp_like(int src, int r, int *ext) {
     return h;
 }
 
+/* Are arrays a and b of one type (structures: of one derived type)? */
+static int f77_arr_same_type(int a, int b) {
+    return f77_sty[a] == f77_sty[b] && f77_slog[a] == f77_slog[b] && (f77_sty[a] != TY_DERIVED || f77_sdt[a] == f77_sdt[b]);
+}
+/* Is the scalar f77_expr just left of array a's type? */
+static int f77_val_arr_type(int a) {
+    return ex_ty == f77_sty[a] && ex_log == f77_slog[a] && (ex_ty != TY_DERIVED || ex_dt == f77_sdt[a]);
+}
+
 /* Store a value of array r's type to its element at dst: a CHARACTER
- * one (v an address, vlen its length) blank-padded or truncated. */
+ * one (v an address, vlen its length) blank-padded or truncated, a
+ * structure (v its address) by its bytes. */
 static void f77_store_elem(int r, int dst, int v, int vty, int vhi, int vlen) {
     if (f77_sty[r] == TY_CHAR) { f77_char_assign(dst, f77_esize_v(r), v, vlen); return; }
+    if (f77_sty[r] == TY_DERIVED) { f77_copy_n(dst, f77_dcx_arg(v), f77_iconst(f77_esize(r))); return; }
     f77_store_at(dst, f77_mty(r), v, vty, vhi);
 }
 
@@ -12173,7 +12238,7 @@ static int f77_av_pack(F77Args *A) {
     if (iv >= 0) {
         v = f77_av_operand(A->from[iv], A->to[iv]);
         if (v < 0) return -1;
-        if (f77_srank[v] != 1 || f77_sty[v] != f77_sty[a] || f77_slog[v] != f77_slog[a]) {
+        if (f77_srank[v] != 1 || !f77_arr_same_type(v, a)) {
             f77_error("PACK's VECTOR is an array of rank 1 of ARRAY's type");
             return -1;
         }
@@ -12250,13 +12315,13 @@ static int f77_av_unpack(F77Args *A) {
     if (f77_aex_first(A->from[ifl], A->to[ifl], &at) >= 0) {
         fld = f77_av_operand(A->from[ifl], A->to[ifl]);
         if (fld < 0) return -1;
-        if (f77_sty[fld] != f77_sty[v] || f77_slog[fld] != f77_slog[v]) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
+        if (!f77_arr_same_type(fld, v)) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
         if (f77_sty[fld] == TY_CHAR && !f77_len_agrees(v, f77_slen[fld])) { f77_error("UNPACK's FIELD differs in length from its VECTOR"); return -1; }
     } else {
         fv = f77_expr_at(A->from[ifl], A->to[ifl]);
         fvhi = ex_hi;
         fvlen = ex_len;
-        if (ex_ty != f77_sty[v] || ex_log != f77_slog[v]) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
+        if (!f77_val_arr_type(v)) { f77_error("UNPACK's FIELD differs in type from its VECTOR"); return -1; }
         if (ex_ty == TY_CHAR && !f77_len_agrees(v, ex_clen)) { f77_error("UNPACK's FIELD differs in length from its VECTOR"); return -1; }
     }
     for (k = 0; k < f77_srank[msk]; k++) ext[k] = f77_hid_ext(msk, k);
@@ -12357,15 +12422,18 @@ static int f77_av_shift(F77Args *A, int eo) {
         if (ib >= 0 && f77_aex_first(A->from[ib], A->to[ib], &at) >= 0) {
             bnd = f77_av_operand(A->from[ib], A->to[ib]);
             if (bnd < 0) return -1;
-            if (f77_sty[bnd] != f77_sty[a] || f77_slog[bnd] != f77_slog[a]) { f77_error("EOSHIFT's BOUNDARY differs in type from its ARRAY"); return -1; }
+            if (!f77_arr_same_type(bnd, a)) { f77_error("EOSHIFT's BOUNDARY differs in type from its ARRAY"); return -1; }
             if (f77_sty[bnd] == TY_CHAR && !f77_len_agrees(a, f77_slen[bnd])) { f77_error("EOSHIFT's BOUNDARY differs in length from its ARRAY"); return -1; }
             if (!f77_av_line_shape(bnd, a, d, "BOUNDARY")) return -1;
         } else if (ib >= 0) {
             bv = f77_expr_at(A->from[ib], A->to[ib]);
             bvhi = ex_hi;
             bvlen = ex_len;
-            if (ex_ty != f77_sty[a] || ex_log != f77_slog[a]) { f77_error("EOSHIFT's BOUNDARY differs in type from its ARRAY"); return -1; }
+            if (!f77_val_arr_type(a)) { f77_error("EOSHIFT's BOUNDARY differs in type from its ARRAY"); return -1; }
             if (!f77_len_agrees(a, ex_clen)) { f77_error("EOSHIFT's BOUNDARY differs in length from its ARRAY"); return -1; }
+        } else if (f77_sty[a] == TY_DERIVED) {
+            f77_error("EOSHIFT of structures needs a BOUNDARY");     /* F90 13.13.32 */
+            return -1;
         } else if (f77_sty[a] == TY_CHAR) {
             bv = f77_iconst(0);                  /* blanks: no characters, padded */
         } else {
@@ -12649,6 +12717,21 @@ static int f77_av_kind(int b, int open) {
 
 /* The leftmost innermost array-valued reference or constructor in the
  * text [from, to): its kind, the offset of its start, past its ')'. */
+/* An implied DO `(items, V = e1, e2 [, e3])` whose '(' is at text offset
+ * i: the offset its control starts at, else -1.  Its items are evaluated
+ * once for each value of V, so what is hoisted out of them is hoisted
+ * inside the loop (f77_implied_do), not to the statement's front: the
+ * scans for array-valued text step over the items and go on at the
+ * control, which is evaluated once, where the statement is. */
+static int f77_implied_do_spans(int open, int *close_off, int *eq_off, int *items_off, int *ctl_off);
+static int f77_ido_ctl(int i) {
+    int close; int eq; int items; int ctl;
+    if (i > 0 && (lx_isalpha(lx_stmt[i - 1]) || lx_isdigit(lx_stmt[i - 1]) || lx_stmt[i - 1] == '_')) return -1;
+    if (i + 1 < lx_stmt_len && lx_stmt[i + 1] == '/') return -1;
+    if (!f77_implied_do_spans(i, &close, &eq, &items, &ctl)) return -1;
+    return ctl;
+}
+
 static int f77_av_find(int from, int to, int *b, int *close) {
     int i; int k;
     i = from;
@@ -12659,6 +12742,7 @@ static int f77_av_find(int from, int to, int *b, int *close) {
             i = i + 1;
             continue;
         }
+        if (lx_stmt[i] == '(' && (k = f77_ido_ctl(i)) >= 0 && k <= to) { i = k; continue; }
         if (lx_stmt[i] == '(' && i + 1 < to && lx_stmt[i + 1] == '/') {
             int c;
             c = f77_match_paren(i);
@@ -12749,7 +12833,7 @@ static int f77_av_operand(int from, int to) {
          * 16-byte slots, or the length of a CHARACTER value */
         int n; int base; int pos; int bslot; int lslot; int args[3];
         F77AexSave asv;
-        int ty; int log; int esz; int clen;
+        int ty; int log; int esz; int clen; int dt;
         F77Loop lp[F77_MAX_RANK];
         nt = f77_aex_shape(sy, at, ext);
         if (nt <= 0) return -1;
@@ -12772,7 +12856,8 @@ static int f77_av_operand(int from, int to) {
             int v; int vhi; int vlen; int p; int at2; int b_new; int b_go;
             v = f77_expr_at(from, to);
             ty = ex_ty; vhi = ex_hi; log = ex_log; vlen = ex_len; clen = ex_clen;
-            esz = ty == TY_CHAR ? vlen : f77_iconst(16);
+            dt = ty == TY_DERIVED ? ex_dt : -1;
+            esz = ty == TY_CHAR ? vlen : ty == TY_DERIVED ? f77_iconst(f77_dt_size[dt]) : f77_iconst(16);
             b_new = hir_new_block(); b_go = hir_new_block();
             hi_emit(HI_BRC, TY_VOID, hi_emit(HI_SEQ, TY_INT, hi_emit(HI_LOAD, TY_INT, bslot, -1, 0, NULL), f77_iconst(0), 0, NULL),
                     b_new, b_go, NULL);
@@ -12789,6 +12874,7 @@ static int f77_av_operand(int from, int to) {
             at2 = hi_emit(HI_ADD, HL_ADDR_TY, hi_emit(HI_LOAD, TY_INT, bslot, -1, 0, NULL),
                           hi_emit(HI_MUL, TY_INT, p, esz, 0, NULL), 0, NULL);
             if (ty == TY_CHAR) f77_char_assign(at2, vlen, v, vlen);
+            else if (ty == TY_DERIVED) f77_copy_n(at2, f77_dcx_arg(v), esz);
             else f77_store_at(at2, ty, v, ty, vhi);
             hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
         }
@@ -12800,6 +12886,9 @@ static int f77_av_operand(int from, int to) {
             k = f77_hidden_array(TY_CHAR, 0, 0, nt, f77_run_desc(base, nt, ext, 1));
             f77_slen[k] = clen;
             f77_slenv[k] = clen >= 0 ? -1 : hi_emit(HI_LOAD, TY_INT, lslot, -1, 0, NULL);
+        } else if (ty == TY_DERIVED) {
+            k = f77_hidden_array(TY_DERIVED, 0, 0, nt, f77_run_desc(base, nt, ext, 1));
+            f77_sdt[k] = dt;
         } else k = f77_hidden_array(ty, log, 0, nt, f77_run_desc(base, nt, ext, 16 / f77_tysize(ty)));
         f77_hid_note_ext(k, nt, ext);
         return k;
@@ -12817,15 +12906,18 @@ static int f77_avc_log;
 static int f77_avc_n;        /* values, or -1 once an implied-DO makes the number dynamic */
 static int f77_avc_clen;     /* CHARACTER values: the first's constant length, -1 unknown, -2 none yet */
 static int f77_avc_lslot;    /* ... and their length at run time */
+static int f77_avc_dt;       /* structures: their type */
 static void f77_avc_item(void);
 static void f77_avc_items(int items_off, int ctl_off) {
+    int tail;
+    tail = lx_stmt_len - ctl_off;        /* an item's own implied DO may move the text */
     f77_scan_from(items_off);
     for (;;) {
         f77_avc_item();
         if (lx_t != T_COMMA) break;
-        if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail - 1) break;
         f77_tok();
-        if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail) break;
     }
 }
 static void f77_avc_value(int v);
@@ -12845,8 +12937,18 @@ static void f77_avc_item(void) {
 static void f77_avc_value(int v) {
     int vhi; int args[2];
     vhi = ex_hi;
-    if (f77_avc_ty < 0) { f77_avc_ty = ex_ty; f77_avc_log = ex_log; }
-    else if (ex_ty != f77_avc_ty || ex_log != f77_avc_log) { f77_error("the values of an array constructor differ in type"); return; }
+    if (f77_avc_ty < 0) { f77_avc_ty = ex_ty; f77_avc_log = ex_log; f77_avc_dt = ex_ty == TY_DERIVED ? ex_dt : -1; }
+    else if (ex_ty != f77_avc_ty || ex_log != f77_avc_log || (ex_ty == TY_DERIVED && ex_dt != f77_avc_dt)) {
+        f77_error("the values of an array constructor differ in type");
+        return;
+    }
+    if (ex_ty == TY_DERIVED) {
+        /* a structure: its bytes */
+        int a3[3];
+        a3[0] = f77_avc_h; a3[1] = f77_dcx_arg(v); a3[2] = f77_iconst(f77_dt_size[ex_dt]);
+        f77_call_i("f77_vec_pushn", 3, a3);
+        return;
+    }
     if (ex_ty == TY_CHAR) {
         /* of one length (F90 4.5): the first's, each pushed at it */
         int a3[3];
@@ -12870,9 +12972,9 @@ static void f77_avc_value(int v) {
 static int f77_av_acon(int b, int close) {
     int sh; int ss; int st; int sl; int sn;
     int args[1];
-    int n; int base; int s; int esz; int sc; int sls;
+    int n; int base; int s; int esz; int sc; int sls; int sd;
     sh = f77_avc_h; ss = f77_avc_slot; st = f77_avc_ty; sl = f77_avc_log; sn = f77_avc_n;
-    sc = f77_avc_clen; sls = f77_avc_lslot;
+    sc = f77_avc_clen; sls = f77_avc_lslot; sd = f77_avc_dt;
     f77_avc_h = f77_call_i("f77_vec_new", 0, args);
     f77_avc_slot = f77_char_temp(16);
     f77_avc_clen = -2;
@@ -12883,11 +12985,14 @@ static int f77_av_acon(int b, int close) {
     f77_avc_n = 0;
     f77_scan_from(b + 2);
     if (!(lx_t == T_SLASH && (int)(lx_rts - lx_stmt) == close - 2)) {
+        int len0;
+        len0 = lx_stmt_len;
         for (;;) {
             f77_avc_item();
             if (lx_t != T_COMMA) break;
             f77_tok();
         }
+        close = close + (lx_stmt_len - len0);        /* an implied DO's items hoist in place */
     }
     if ((int)(lx_rts - lx_stmt) != close - 2) f77_error("expected /) after an array constructor");
     args[0] = f77_avc_h;
@@ -12899,13 +13004,16 @@ static int f77_av_acon(int b, int close) {
         s = f77_hidden_array(TY_CHAR, 0, 0, 1, f77_run_desc(base, 1, &n, 1));
         f77_slen[s] = f77_avc_clen;
         f77_slenv[s] = f77_avc_clen >= 0 ? -1 : hi_emit(HI_LOAD, TY_INT, f77_avc_lslot, -1, 0, NULL);
+    } else if (f77_avc_ty == TY_DERIVED) {
+        s = f77_hidden_array(TY_DERIVED, 0, 0, 1, f77_run_desc(base, 1, &n, 1));
+        f77_sdt[s] = f77_avc_dt;
     } else {
         esz = f77_tysize(f77_avc_ty);
         s = f77_hidden_array(f77_avc_ty, f77_avc_log, 0, 1, f77_run_desc(base, 1, &n, 16 / esz));
     }
     f77_shcount[s] = f77_avc_n;
     f77_avc_h = sh; f77_avc_slot = ss; f77_avc_ty = st; f77_avc_log = sl; f77_avc_n = sn;
-    f77_avc_clen = sc; f77_avc_lslot = sls;
+    f77_avc_clen = sc; f77_avc_lslot = sls; f77_avc_dt = sd;
     return s;
 }
 
@@ -13104,7 +13212,7 @@ static int f77_av_reshape(F77Args *A) {
     if (ipad >= 0) {
         pad = f77_av_operand(A->from[ipad], A->to[ipad]);
         if (pad < 0) return -1;
-        if (f77_sty[pad] != f77_sty[src] || f77_slog[pad] != f77_slog[src]) { f77_error("RESHAPE's PAD differs in type from its SOURCE"); return -1; }
+        if (!f77_arr_same_type(pad, src)) { f77_error("RESHAPE's PAD differs in type from its SOURCE"); return -1; }
         if (f77_sty[pad] == TY_CHAR && !f77_len_agrees(src, f77_slen[pad])) { f77_error("RESHAPE's PAD differs in length from its SOURCE"); return -1; }
     }
     r = f77_temp_like(src, nr, ext);
@@ -13198,6 +13306,7 @@ static int f77_av_spread(F77Args *A) {
         ty = ex_ty; vhi = ex_hi; log = ex_log;
         ext[0] = nc;
         if (ty == TY_CHAR) r = f77_temp_char(ex_len, ex_clen, 1, ext);
+        else if (ty == TY_DERIVED) { r = f77_temp_array(ty, 0, 0, f77_dt_size[ex_dt], 1, ext); f77_sdt[r] = ex_dt; }
         else r = f77_temp_array(ty, log, 0, f77_tysize(ty), 1, ext);
         vlen = ex_len;
         f77_loop_begin(&l1, f77_iconst(1), nc, f77_iconst(1));
@@ -13383,6 +13492,11 @@ static int f77_desig_hoist(int from, int *to) {
             i = i + 1;
             continue;
         }
+        if (lx_stmt[i] == '(') {
+            int c;
+            c = f77_ido_ctl(i);
+            if (c >= 0 && c <= *to) { i = c; continue; }
+        }
         if (lx_isalpha(lx_stmt[i]) && f77_name_starts(i, from)) {
             char nm[F77_MAX_NAME];
             int b; int k; int sy; int e;
@@ -13478,9 +13592,10 @@ static int f77_hoist(int from, int *to) {
         int av; int b; int close; int s; int len0;
         av = f77_av_find(from, *to, &b, &close);
         if (av == AV_NONE) break;
+        len0 = lx_stmt_len;
         s = f77_av_eval(av, b, close);
         if (s < 0 || f77_nerr > nerr0) break;
-        len0 = lx_stmt_len;
+        close = close + (lx_stmt_len - len0);        /* a constructor's implied DO hoists in place */
         f77_text_replace(b, close, s);
         if (f77_nerr > nerr0) break;
         *to = *to + (lx_stmt_len - len0);
@@ -14432,6 +14547,7 @@ static void f77_emit_copyin(void) {
             f77_error(m);
         }
     }
+    if (f77_result_sym >= 0 && f77_sty[f77_result_sym] == TY_DERIVED) f77_urdt[f77_cur_unit] = f77_sdt[f77_result_sym] + 1;
     f77_layout_static();
     f77_host_table();
     f77_dta_entry();
@@ -14784,7 +14900,7 @@ static void f77_mod_snapshot(int u) {
     for (g = 0; g < f77_ndtv; g++) {
         /* its types, and those it USEs */
         int e;
-        e = f77_me_new(m, f77_dt_name[f77_dtv[g]], F77_ME_TYPE);
+        e = f77_me_new(m, f77_dtv_name[g], F77_ME_TYPE);
         if (e < 0) return;
         f77_me_ival[e] = f77_dtv[g];
     }
@@ -14943,8 +15059,7 @@ static void f77_me_bind(int e, char *local) {
         return;
     }
     if (f77_me_kind[e] == F77_ME_TYPE) {
-        if (strcmp(local, f77_me_name[e]) != 0) { f77_error("renaming a derived type in a USE is not supported yet"); return; }
-        f77_dt_see(f77_me_ival[e]);
+        f77_dt_see_as(f77_me_ival[e], local);          /* by the name the USE gives it */
         return;
     }
     if (f77_me_kind[e] == F77_ME_HVAR) {
@@ -15083,7 +15198,7 @@ static void f77_host_save(int u) {
     for (k = 0; k < f77_ndtv; k++) {
         /* the types it sees, its internal procedures see */
         int e;
-        e = f77_me_new(m, f77_dt_name[f77_dtv[k]], F77_ME_TYPE);
+        e = f77_me_new(m, f77_dtv_name[k], F77_ME_TYPE);
         if (e < 0) return;
         f77_me_ival[e] = f77_dtv[k];
     }
@@ -16589,6 +16704,7 @@ static void f77_wr_one(void);
  * straight into the body block.  Rewinding is safe here precisely
  * because nothing has been emitted for the items yet.  I/O lists and
  * array constructors share it. */
+static void f77_io_ido_items(int items_off, int ctl_off);
 static int f77_implied_do(void (*items)(int, int)) {
     {
         int open_off;
@@ -16602,6 +16718,7 @@ static int f77_implied_do(void (*items)(int, int)) {
             int sv;
             int m1, m2, m3, t1, t2, t3;
             int trip;
+            int keep;
             int b_test, b_body, b_exit, c;
 
             f77_scan_from(ctl_off);
@@ -16621,6 +16738,16 @@ static int f77_implied_do(void (*items)(int, int)) {
                 m3 = f77_iconst(1);
             }
 
+            /* a constructor's variable is the implied DO's own (F90
+             * 14.1.3): the scoping unit's variable of that name has its
+             * value again after it.  An I/O list's is the variable. */
+            keep = -1;
+            if (items != f77_io_ido_items) {
+                keep = f77_int_temp();
+                hi_emit(HI_STORE, TY_INT, keep,
+                        f77_snar[sv] ? f77_load_at(f77_sval[sv], f77_mty(sv))
+                                     : hi_emit(HI_LOAD, TY_INT, f77_sval[sv], -1, 0, NULL), 0, NULL);
+            }
             f77_sstored[sv] = 1;
             if (f77_snar[sv]) f77_store_at(f77_sval[sv], f77_mty(sv), m1, TY_INT, -1);
             else hi_emit(HI_STORE, TY_INT, f77_sval[sv], m1, 0, NULL);
@@ -16643,8 +16770,19 @@ static int f77_implied_do(void (*items)(int, int)) {
             f77_cur_blk_live = 0;
             f77_begin_blk(b_body);
 
-            /* Rewind to the items and emit them inside the body. */
-            items(items_off, ctl_off);
+            /* Rewind to the items and emit them inside the body: what
+             * is array-valued among them evaluated here, once for each
+             * value of the variable, and freed before the next. */
+            {
+                int mk; int end; int tail;
+                mk = f77_tfree_mark();
+                tail = lx_stmt_len - close_off;      /* the text before it moves */
+                end = ctl_off - 1;
+                f77_hoist(items_off, &end);
+                items(items_off, end + 1);
+                f77_tfree_to(mk);
+                close_off = lx_stmt_len - tail;
+            }
 
             {
                 int iv;
@@ -16664,6 +16802,12 @@ static int f77_implied_do(void (*items)(int, int)) {
             }
             f77_cur_blk_live = 0;
             f77_begin_blk(b_exit);
+            if (keep >= 0) {
+                int kv;
+                kv = hi_emit(HI_LOAD, TY_INT, keep, -1, 0, NULL);
+                if (f77_snar[sv]) f77_store_at(f77_sval[sv], f77_mty(sv), kv, TY_INT, -1);
+                else hi_emit(HI_STORE, TY_INT, f77_sval[sv], kv, 0, NULL);
+            }
 
             /* Continue after the implied-DO's closing paren. */
             f77_scan_from(close_off);
@@ -16675,13 +16819,15 @@ static int f77_implied_do(void (*items)(int, int)) {
 
 /* An I/O list's implied-DO items. */
 static void f77_io_ido_items(int items_off, int ctl_off) {
+    int tail;
+    tail = lx_stmt_len - ctl_off;        /* an item's own implied DO may move the text */
     f77_scan_from(items_off);
     for (;;) {
         f77_wr_one();
         if (lx_t != T_COMMA) break;
-        if ((int)(lx_rts - lx_stmt) >= ctl_off - 1) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail - 1) break;
         f77_tok();
-        if ((int)(lx_rts - lx_stmt) >= ctl_off) break;
+        if ((int)(lx_rts - lx_stmt) >= lx_stmt_len - tail) break;
     }
 }
 
@@ -18248,8 +18394,9 @@ static int f77_dt_array_desig(int s) {
     for (k = 0; k < f77_srank[s]; k++) if (!f77_aa_sec[aa] || f77_aa_trip[aa][k]) nt = nt + 1;
     d = f77_aa_desc(aa, nt);
     f77_naa = saved;
-    /* the components: an offset from each structure */
-    base = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
+    /* the components: an offset from each structure (an assumed-shape
+     * array's own descriptor is read through an ADDI, as its guard asks) */
+    base = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 0, NULL), -1, 0, NULL);
     dt = f77_sdt[s];
     t = -1;
     for (;;) {
@@ -18618,7 +18765,7 @@ static int f77_td_stmt(int cls) {
 
 /* ASSOCIATED(POINTER [, TARGET]) (F90 13.13.13): its slot (an array's
  * base) not null -- or, with TARGET, the address it holds TARGET's (an
- * array's base and extents its). */
+ * array's base, extents and strides its, and no extent zero). */
 static int f77_associated(void) {
     int ps; int v; int base;
     f77_tok();                                   /* the name */
@@ -18640,19 +18787,46 @@ static int f77_associated(void) {
             t = f77_dt_desig(t);
             if (f77_scalc[t]) { f77_error("an ALLOCATABLE component is no POINTER"); return f77_iconst(0); }
         }
-        if (f77_sptr[t]) {
-            /* another pointer: the same target */
+        if (f77_sptr[t] && lx_t != T_LP) {
+            /* another pointer: the same target -- an array's base, and
+             * each dimension's extent and stride */
             ta = hi_emit(HI_LOAD, TY_INT, f77_ptr_slot(t), -1, 0, NULL);
             v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
-            for (k = 0; k < f77_srank[ps] && k < f77_srank[t]; k++) {
+            for (k = 0; k < 2 * f77_srank[ps] && k < 2 * f77_srank[t]; k++) {
                 int e1; int e2;
-                e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 8 * k, NULL), -1, 0, NULL);
-                e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(t), -1, 4 + 8 * k, NULL), -1, 0, NULL);
+                e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 4 * k, NULL), -1, 0, NULL);
+                e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(t), -1, 4 + 4 * k, NULL), -1, 0, NULL);
                 v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
+                if (k % 2 == 0) v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SNE, TY_INT, e2, f77_iconst(0), 0, NULL), 0, NULL);   /* and no zero-sized one (F95 13.14.13) */
             }
         } else {
             if (f77_srank[t] > 0 && lx_t == T_LP && !f77_paren_has_colon()) { f77_tok(); ta = f77_subscript_addr(t); }
-            else if (f77_srank[t] > 0 && lx_t == T_LP) { f77_error("ASSOCIATED with a section TARGET is not supported yet"); return f77_iconst(0); }
+            else if (f77_srank[t] > 0 && f77_srank[ps] > 0) {
+                /* an array or a section of one: its base, and each
+                 * dimension's extent and stride, the pointer's */
+                int aa; int nt; int d; int saved;
+                saved = f77_naa;
+                if (lx_t == T_LP) { f77_tok(); f77_aa_section(t); aa = f77_act_aa; }
+                else aa = f77_aa_new(t);
+                if (aa < 0) { f77_naa = saved; return f77_iconst(0); }
+                nt = 0;
+                for (k = 0; k < f77_srank[t]; k++) if (!f77_aa_sec[aa] || f77_aa_trip[aa][k]) nt = nt + 1;
+                if (nt != f77_srank[ps]) { f77_error("ASSOCIATED's TARGET is of the pointer's rank"); f77_naa = saved; return f77_iconst(0); }
+                d = hi_emit(HI_ADDI, HL_ADDR_TY, f77_aa_desc(aa, nt), -1, 0, NULL);   /* an assumed-shape array's own, maybe */
+                f77_naa = saved;
+                ta = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
+                v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
+                for (k = 0; k < 2 * nt; k++) {
+                    int e1; int e2;
+                    e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 4 * k, NULL), -1, 0, NULL);
+                    e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 4 * k, NULL), -1, 0, NULL);
+                    v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
+                    if (k % 2 == 0) v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SNE, TY_INT, e2, f77_iconst(0), 0, NULL), 0, NULL);   /* and no zero-sized one (F95 13.14.13) */
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected ) after ASSOCIATED's arguments");
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+                return v;
+            }
             else ta = f77_salloc[t] ? f77_desc_base(t) : f77_sval[t];
             v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
             for (k = 0; k < f77_srank[ps] && k < f77_srank[t]; k++) {
@@ -18762,7 +18936,7 @@ static void f77_ptr_assign_rhs(int ps) {
         nt = 0;
         for (k = 0; k < f77_srank[t]; k++) if (!f77_aa_sec[aa] || f77_aa_trip[aa][k]) nt = nt + 1;
         if (nt != f77_srank[ps]) { f77_error("a pointer's target is of its rank"); f77_naa = saved; return; }
-        d = f77_aa_desc(aa, nt);
+        d = hi_emit(HI_ADDI, HL_ADDR_TY, f77_aa_desc(aa, nt), -1, 0, NULL);   /* an assumed-shape array's own, maybe */
         f77_naa = saved;
         base = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
         nt = 0;
