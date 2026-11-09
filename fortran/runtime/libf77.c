@@ -1581,6 +1581,43 @@ void *f77_deallocate(void *cur, int *stat) {
  * (Fortran 95's rule; F90 left them undefined). */
 void f77_dealloc_auto(void *cur) { if (cur) free(cur); }
 
+/* ALLOCATABLE components (the Fortran 95 TR's): each one's descriptor
+ * [base, (extent, stride) per dimension, lower bounds], as a pointer
+ * array's.  f77_dta_free frees the component at p in count structures
+ * stride bytes apart and leaves it unallocated; f77_dta_dup gives the
+ * one at d storage of its own, a copy of what it describes (intrinsic
+ * assignment's deep copy). */
+void f77_dta_free(char *p, int count, int stride) {
+    int i;
+    for (i = 0; i < count; i++) {
+        void **s = (void **)(p + i * stride);
+        if (*s) { free(*s); *s = 0; }
+    }
+}
+void f77_dta_dup(int *d, int rank, int esize) {
+    int k; int n = 1; char *q;
+    if (!d[0]) return;
+    for (k = 0; k < rank; k++) n *= d[1 + 2 * k] > 0 ? d[1 + 2 * k] : 0;
+    q = (char *)malloc(n * esize > 0 ? (size_t)n * esize : 1);
+    if (!q) { fprintf(stderr, "f77: out of memory copying an ALLOCATABLE component\n"); exit(2); }
+    {
+        /* its elements in array element order, by its strides */
+        int idx[7] = {0, 0, 0, 0, 0, 0, 0};
+        int e;
+        for (e = 0; e < n; e++) {
+            int off = 0;
+            for (k = 0; k < rank; k++) off += idx[k] * d[2 + 2 * k];
+            memcpy(q + e * esize, (char *)d[0] + off * esize, (size_t)esize);
+            for (k = 0; k < rank; k++) { if (++idx[k] < d[1 + 2 * k]) break; idx[k] = 0; }
+        }
+    }
+    d[0] = (int)q;
+    {
+        int st = 1;
+        for (k = 0; k < rank; k++) { d[2 + 2 * k] = st; st *= d[1 + 2 * k]; }
+    }
+}
+
 /* An assumed-shape array's descriptor (Fortran 90), as the compiler
  * builds it: d[0] the base address, then per dimension d[1+2k] the
  * extent and d[2+2k] the stride, in elements.  f77_as_pack gives an

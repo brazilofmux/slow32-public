@@ -365,8 +365,18 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = 1.0\nend\n' > "$W/dtasgty.f90"
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
-    printf 'type pt\nreal, allocatable :: x(:)\nend type\nend\n' > "$W/dtptr.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    # ALLOCATABLE components: what is refused
+    alt='program p\ntype t\nreal, allocatable :: a(:)\nend type\n'
+    printf "${alt}type(t) :: x\nx = t(1.0)\nend\n" > "$W/alcons.f90"
+    printf "${alt}type(t) :: x(2), y(2)\nx = y\nend\n" > "$W/alarr.f90"
+    printf "${alt}type(t) :: x\nnullify(x%%a)\nend\n" > "$W/alnull.f90"
+    printf "${alt}type(t) :: x\nreal, pointer :: q(:)\nq => x%%a\nend\n" > "$W/alptr.f90"
+    printf "${alt}type(t) :: x\nprint *, associated(x%%a)\nend\n" > "$W/alassoc.f90"
+    printf "${alt}type(t) :: x\nprint *, x\nend\n" > "$W/alio.f90"
+    printf "${alt}type u\ntype(t), allocatable :: b(:)\nend type\nend\n" > "$W/alnest.f90"
+    printf "${alt}call s(3)\ncontains\nsubroutine s(n)\ninteger n\ntype(t) :: w(n)\nend subroutine\nend\n" > "$W/alauto.f90"
+    printf "program p\ntype t\nreal, allocatable :: a\nend type\nend\n" > "$W/alscal.f90"
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nprint *, x\nend\n' > "$W/dtptrio.f90"
     printf 'program p\ntype t\ninteger, pointer :: q\nend type\ntype(t) :: x\nx = t(3)\nend\n' > "$W/dtptrcons.f90"
     printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
@@ -479,8 +489,16 @@ if [ -x "$F77" ]; then
              "dtasgty:line 5: a value of another type for a structure" \
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
-             "dtptr:line 2: an ALLOCATABLE component is not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "alcons:line 6: a structure constructor of T, a type with ALLOCATABLE components, is not supported" \
+             "alarr:line 6: an array assignment of structures with ALLOCATABLE components is not supported" \
+             "alnull:line 6: an ALLOCATABLE component is no POINTER" \
+             "alptr:line 7: a pointer to an ALLOCATABLE component is not supported" \
+             "alassoc:line 6: an ALLOCATABLE component is no POINTER" \
+             "alio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
+             "alnest:line 7: an ALLOCATABLE component of a type with ALLOCATABLE components is not supported" \
+             "alauto:line 10: an array of no constant size of a type with ALLOCATABLE components is not supported" \
+             "alscal:line 3: an ALLOCATABLE array needs its rank, as (:) or (:,:)" \
              "dtptrio:line 6: a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)" \
              "dtptrcons:line 6: a pointer's target is a variable" \
              "opaex:line 26: a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)" \

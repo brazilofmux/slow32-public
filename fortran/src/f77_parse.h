@@ -140,6 +140,8 @@ static int  f77_sopt[F77_MAX_SYM];       /* an OPTIONAL dummy argument */
  * TARGET: what a pointer may point to. */
 static int  f77_sptr[F77_MAX_SYM];
 static int  f77_starg[F77_MAX_SYM];
+static int  f77_scalc[F77_MAX_SYM];      /* an ALLOCATABLE component's temporary (f77_sptr too: its descriptor) */
+static int  f77_sintout[F77_MAX_SYM];    /* a dummy said INTENT(OUT) */
 static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
 /* Host association of variables (Fortran 90).  A host of internal
  * procedures has, before it is compiled, the names its procedures' text
@@ -369,7 +371,7 @@ static int  f77_dc_rank[F77_MAX_DTC];
 static int  f77_dc_lo[F77_MAX_DTC][7];
 static int  f77_dc_ext[F77_MAX_DTC][7];
 static int  f77_dc_off[F77_MAX_DTC];
-static int  f77_dc_ptr[F77_MAX_DTC];                /* a POINTER component: a slot, or a descriptor */
+static int  f77_dc_ptr[F77_MAX_DTC];                /* 1 a POINTER component: a slot, or a descriptor; 2 an ALLOCATABLE one, a descriptor */
 static int  f77_ndc;
 /* the types the unit being compiled sees, by name: its own, its host's,
  * its modules' */
@@ -400,6 +402,52 @@ static void f77_dt_see(int dt) {
     if (f77_ndtv < F77_MAX_DT) f77_dtv[f77_ndtv++] = dt;
 }
 static int  ex_dt = -1;                            /* a TY_DERIVED expression's type */
+static int  f77_dt_fresh = -1;                     /* a derived FUNCTION's result just made (f77_dt_fcall) */
+static void f77_dt_assign(int addr, int v, int dt);
+/* Results of derived FUNCTIONs with ALLOCATABLE components, made and not
+ * yet consumed: a call that takes one as an actual frees its components
+ * after it returns (f77_dtf_after); an assignment takes them over. */
+static int f77_dtf_v[64]; static int f77_dtf_dt[64]; static int f77_dtf_n;
+static int f77_dtp_v[64]; static int f77_dtp_dt[64]; static int f77_dtp_n;   /* consumed: freed at the statement's end */
+static void f77_dtf_after(int r);
+static void f77_dtf_flush(void);
+/* The ALLOCATABLE components of a structure of type dt at byte off0,
+ * nested in its (non-POINTER) structure components too, flattened: each
+ * one's descriptor's offset, rank and element size.  Their count, or -1
+ * when more than max. */
+#define F77_MAX_DTA 64
+static int f77_dta_list(int dt, int off0, int *offs, int *rk, int *esz, int max) {
+    int c; int n;
+    n = 0;
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
+        if (f77_dc_ptr[c] == 2) {
+            int e;
+            if (n >= max) return -1;
+            e = f77_dc_ty[c] == TY_CHAR ? f77_dc_len[c] : f77_dc_ty[c] == 11 ? f77_dt_size[f77_dc_dt[c]] :
+                f77_dc_nar[c] ? f77_dc_nar[c] : f77_dc_ty[c] == TY_CPLX ? 8 : f77_dc_ty[c] == TY_DCPLX ? 16 : ty_size(f77_dc_ty[c]);
+            offs[n] = off0 + f77_dc_off[c]; rk[n] = f77_dc_rank[c]; esz[n] = e;
+            n = n + 1;
+        } else if (f77_dc_ptr[c] == 0 && f77_dc_ty[c] == 11) {        /* TY_DERIVED */
+            int ne; int k; int q;
+            ne = 1;
+            for (k = 0; k < f77_dc_rank[c]; k++) ne = ne * f77_dc_ext[c][k];
+            for (q = 0; q < ne; q++) {
+                int m;
+                m = f77_dta_list(f77_dc_dt[c], off0 + f77_dc_off[c] + q * f77_dt_size[f77_dc_dt[c]], offs + n, rk + n, esz + n, max - n);
+                if (m < 0) return -1;
+                n = n + m;
+            }
+        }
+    }
+    return n;
+}
+/* How many ALLOCATABLE components a structure of type dt has (-1: more
+ * than this compiler follows). */
+static int f77_dt_nalloc(int dt) {
+    int offs[F77_MAX_DTA]; int rk[F77_MAX_DTA]; int esz[F77_MAX_DTA];
+    if (dt < 0) return 0;
+    return f77_dta_list(dt, 0, offs, rk, esz, F77_MAX_DTA);
+}
 static int f77_desig_follows(void);
 static int f77_dt_desig(int s);
 static int f77_ptr_deref(int s);
@@ -742,6 +790,7 @@ static int f77_sym(char *nm) {
     f77_sopt[f77_nsym] = 0;
     f77_sptr[f77_nsym] = 0;
     f77_starg[f77_nsym] = 0;
+    f77_scalc[f77_nsym] = 0; f77_sintout[f77_nsym] = 0;
     f77_shost[f77_nsym] = 0;
     f77_sdt[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
@@ -806,6 +855,7 @@ static int f77_sym_temp(int ty) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -992,6 +1042,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -1284,7 +1335,7 @@ static int f77_fp64_call2(char *name, int alo, int ahi, int blo, int bhi, int *r
     f77_carg(blo, 0);
     f77_carg(bhi, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
 }
@@ -1297,7 +1348,7 @@ static int f77_fp64_pair1(char *name, int alo, int ahi, int *rhi) {
     f77_carg(alo, 0);
     f77_carg(ahi, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
 }
@@ -1308,7 +1359,7 @@ static int f77_fp64_call1(char *name, int alo, int *rhi) {
     cb = h_ncarg;
     f77_carg(alo, 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     if (rhi) *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
 }
@@ -1331,7 +1382,7 @@ static int f77_libm_d1(char *name, int a, int ahi, int *rhi) {
     f77_carg(a, 1);
     f77_carg(ahi, 2);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
 }
@@ -1345,7 +1396,7 @@ static int f77_libm_d2(char *name, int a, int ahi, int b, int bhi, int *rhi) {
     f77_carg(b, 1);
     f77_carg(bhi, 2);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     return r;
 }
@@ -1356,7 +1407,7 @@ static int f77_libm_f1(char *name, int a) {
     cb = h_ncarg;
     f77_carg(a, 0);
     r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 1, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     return r;
 }
 
@@ -1367,7 +1418,7 @@ static int f77_libm_f2(char *name, int a, int b) {
     f77_carg(a, 0);
     f77_carg(b, 0);
     r = hi_emit(HI_CALL, TY_FLOAT, -1, -1, 2, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     return r;
 }
 
@@ -1559,7 +1610,7 @@ static int f77_cvt(int v, int *hi, int from, int to) {
         f77_carg(*hi, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2,
                     to == TY_INT ? "__fp64_cvt_DtoI" : "__fp64_cvt_DtoF");
-        h_cbase[r] = cb;
+        h_cbase[r] = cb; f77_dtf_after(r);
         h_ty[r] = to;
         return r;
     }
@@ -2392,7 +2443,7 @@ static int f77_call_i(char *name, int n, int *args) {
         f77_carg(args[i], 0);
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, n, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     return r;
 }
 
@@ -2549,7 +2600,7 @@ static int f77_dcx_fcall(char *name, int fptr, int *addrs, int *lens, int nargs)
     }
     if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     ex_ty = TY_DCPLX; ex_hi = -1; ex_log = 0;
     return f77_dcx_mark(out);
 }
@@ -2575,7 +2626,7 @@ static int f77_afn_call(char *name, int rank, int rty, int rlog, int rlen, int *
         nc = nc + 1;
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     f77_afn_desc = -1;                     /* this call's */
     f77_afn_rank = rank;
     f77_afn_len = rlen;
@@ -2607,9 +2658,14 @@ static int f77_dt_fcall(char *name, int fptr, int *addrs, int *lens, int nargs, 
     }
     if (fptr >= 0) r = hi_emit(HI_CALLP, TY_INT, fptr, -1, nc, NULL);
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     ex_ty = TY_DERIVED; ex_dt = dt; ex_hi = -1; ex_log = 0;
-    return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, out, -1, 0, NULL));
+    f77_dt_fresh = f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, out, -1, 0, NULL));
+    if (f77_dt_nalloc(dt) > 0) {
+        if (f77_dtf_n >= 64) { memmove(f77_dtf_v, f77_dtf_v + 1, 63 * sizeof(int)); memmove(f77_dtf_dt, f77_dtf_dt + 1, 63 * sizeof(int)); f77_dtf_n = 63; }
+        f77_dtf_v[f77_dtf_n] = f77_dt_fresh; f77_dtf_dt[f77_dtf_n] = dt; f77_dtf_n = f77_dtf_n + 1;
+    }
+    return f77_dt_fresh;
 }
 
 static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs) {
@@ -2637,7 +2693,7 @@ static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs
         nc = nc + 1;
     }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     ex_ty = TY_CHAR;
     ex_hi = -1;
     ex_clen = rlen;
@@ -2897,6 +2953,19 @@ static int f77_primary(void) {
             }
             if (in == IN_ALLOCATED) {
                 int as;
+                if (lx_t == T_NAME && (as = f77_sym_find(lex_name)) >= 0 && f77_sty[as] == TY_DERIVED &&
+                    lx_rp < lx_rpe && (*lx_rp == '%' || *lx_rp == '(')) {
+                    /* an ALLOCATABLE component */
+                    f77_tok();
+                    if (f77_desig_follows()) {
+                        if (f77_sptr[as] && f77_srank[as] == 0) as = f77_ptr_deref(as);
+                        as = f77_dt_desig(as);
+                    }
+                    if (!f77_scalc[as]) { f77_error("ALLOCATED needs an ALLOCATABLE array"); return f77_iconst(0); }
+                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                    ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+                    return hi_emit(HI_SNE, TY_INT, hi_emit(HI_LOAD, TY_INT, f77_ptr_slot(as), -1, 0, NULL), f77_iconst(0), 0, NULL);
+                }
                 if (lx_t != T_NAME || (as = f77_sym_find(lex_name)) < 0 || !f77_salloc[as]) {
                     f77_error("ALLOCATED needs an ALLOCATABLE array");
                     return f77_iconst(0);
@@ -3232,7 +3301,7 @@ static int f77_primary(void) {
                 f77_carg(a, 1);
                 f77_carg(ahi, 2);
                 r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_exponent");
-                h_cbase[r] = cb;
+                h_cbase[r] = cb; f77_dtf_after(r);
                 ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
                 return r;
             }
@@ -3565,7 +3634,7 @@ static int f77_primary(void) {
             }
             r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1,
                         nc, f77_ulink[u]);
-            h_cbase[r] = cb;
+            h_cbase[r] = cb; f77_dtf_after(r);
             ex_ty = rty;
             ex_log = f77_urlog[u];
             if (rty == TY_DOUBLE)
@@ -3737,7 +3806,7 @@ static int f77_primary(void) {
             else
                 r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1,
                             nc, cname);
-            h_cbase[r] = cb;
+            h_cbase[r] = cb; f77_dtf_after(r);
             ex_ty = rty;
             ex_log = rlog;
             ex_hi = -1;
@@ -3847,7 +3916,7 @@ static int f77_power(void) {
             f77_carg(ahi, 2);
             f77_carg(b, 0);
             r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_dpow_i");
-            h_cbase[r] = cb;
+            h_cbase[r] = cb; f77_dtf_after(r);
             ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             ex_ty = TY_DOUBLE;
             return r;
@@ -3856,7 +3925,7 @@ static int f77_power(void) {
         f77_carg(b, 0);
         r = hi_emit(HI_CALL, aty == TY_FLOAT ? TY_FLOAT : TY_INT, -1, -1, 2,
                     aty == TY_FLOAT ? "f77_rpow_i" : "f77_ipow");
-        h_cbase[r] = cb;
+        h_cbase[r] = cb; f77_dtf_after(r);
         ex_ty = aty;
         return r;
     }
@@ -4073,7 +4142,7 @@ static int f77_call_me(int e, int *addrs, int *lens, int nargs) {
     for (ai = 0; ai < nargs; ai++) { f77_carg(addrs[ai], 0); nc = nc + 1; }
     for (ai = 0; ai < nargs; ai++) if (lens[ai] >= 0) { f77_carg(lens[ai], 0); nc = nc + 1; }
     r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1, nc, f77_me_str[e]);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     ex_ty = rty; ex_log = f77_me_log[e]; ex_hi = -1;
     if (rty == TY_DOUBLE) ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
     else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
@@ -4122,7 +4191,7 @@ static int f77_asg_try(int taddr, int tty, int tdt, int tlen, int *x) {
     for (k = 0; k < 2; k++) { f77_carg(addrs[k], 0); nc = nc + 1; }
     for (k = 0; k < 2; k++) if (lens[k] >= 0) { f77_carg(lens[k], 0); nc = nc + 1; }
     r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, f77_me_str[e]);
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     return 1;
 }
 
@@ -5432,6 +5501,11 @@ static void f77_array_assign1(int s, int whole) {
     int doff;     /* the target substring's offset in each element, or -1 */
     rank = f77_srank[s];
     ty = f77_sty[s];
+    if (ty == TY_DERIVED && f77_dt_nalloc(f77_sdt[s]) != 0) {
+        f77_error("an array assignment of structures with ALLOCATABLE components is not supported");
+        lx_t = T_EOF;
+        return;
+    }
     mty = f77_mty(s);
     isch = ty == TY_CHAR;
     dlen = -1;
@@ -6389,7 +6463,7 @@ static void f77_stmt_assign(void) {
                 if (f77_asg_try(addr, TY_DERIVED, dt, -1, xo)) { f77_tfree_to(mk); return; }
             }
             if (ex_ty != TY_DERIVED || ex_dt != dt) { f77_error("a value of another type for a structure"); f77_tfree_to(mk); return; }
-            f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_dt_size[dt]));
+            f77_dt_assign(addr, v, dt);
             f77_tfree_to(mk);
         }
         return;
@@ -7611,6 +7685,7 @@ static void f77_stmt_decl(int ty, int skip) {
     int a_ext;
     int a_intr;
     int a_alloc;
+    int a_out;                    /* INTENT(OUT) */
     int a_vis;              /* PUBLIC 1, PRIVATE 2 */
     int a_opt;
     int a_ptr;
@@ -7618,6 +7693,7 @@ static void f77_stmt_decl(int ty, int skip) {
     int dim_off;
     clen = 1;
     a_alloc = 0;
+    a_out = 0;
     a_vis = 0;
     a_opt = 0;
     a_ptr = 0;
@@ -7696,6 +7772,7 @@ static void f77_stmt_decl(int ty, int skip) {
                     f77_error("INTENT needs (IN), (OUT) or (INOUT)");
                     return;
                 }
+                a_out = strcmp(lex_name, "OUT") == 0;
                 f77_tok();
                 if (lx_t != T_RP) { f77_error("expected ) after INTENT"); return; }
                 f77_tok();
@@ -7764,6 +7841,7 @@ static void f77_stmt_decl(int ty, int skip) {
             }
             if (a_ptr && !f77_ptr_note(s)) return;
             if (a_tgt) f77_starg[s] = 1;
+            if (a_out) f77_sintout[s] = 1;
             if (a_alloc) {
                 if (!f77_salloc[s]) { f77_error("an ALLOCATABLE array needs its rank, as (:) or (:,:)"); return; }
                 if (f77_sarg[s]) { f77_error("an ALLOCATABLE dummy argument is not supported"); return; }
@@ -9349,6 +9427,7 @@ static int f77_stat_target(void) {
 /* A pointer object at the scanner -- a POINTER variable, or a designator
  * whose last component is a POINTER (N%NEXT) -- the scanner past it: a
  * symbol whose slot (its value) is the pointer's, or -1 (said). */
+static int f77_ptr_alloc_ok;          /* ALLOCATE and DEALLOCATE: an ALLOCATABLE component will do */
 static int f77_ptr_object(void) {
     int s;
     if (lx_t != T_NAME) { f77_error("expected a POINTER"); return -1; }
@@ -9359,6 +9438,7 @@ static int f77_ptr_object(void) {
         s = f77_dt_desig(s);
     }
     if (!f77_sptr[s]) { f77_error("expected a POINTER"); return -1; }
+    if (f77_scalc[s] && !f77_ptr_alloc_ok) { f77_error("an ALLOCATABLE component is no POINTER"); return -1; }
     f77_sstored[s] = 1;
     return s;
 }
@@ -9420,8 +9500,10 @@ static void f77_stmt_allocate(int skip, int alloc) {
             if (nobj >= F77_MAX_ALLOBJ) { f77_error("too many objects in one ALLOCATE"); return; }
             isptr[nobj] = 0;
             if (s >= 0 && (f77_sptr[s] || f77_sty[s] == TY_DERIVED)) {
-                /* a POINTER, or a designator's POINTER component (Fortran 90) */
+                /* a POINTER, or a designator's POINTER or ALLOCATABLE component */
+                f77_ptr_alloc_ok = 1;
                 s = f77_ptr_object();
+                f77_ptr_alloc_ok = 0;
                 if (s < 0) return;
                 isptr[nobj] = 1;
             } else {
@@ -9488,12 +9570,24 @@ static void f77_stmt_allocate(int skip, int alloc) {
                     st[k] = n;
                     n = hi_emit(HI_MUL, TY_INT, n, ext[i][k], 0, NULL);
                 }
-                args[0] = f77_iconst(0);
+                /* an ALLOCATABLE component already allocated is refused
+                 * (or, under STAT=, left as it was) */
+                args[0] = f77_scalc[s] ? cur : f77_iconst(0);
                 args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
                 args[2] = statp >= 0 ? statp : f77_iconst(0);
                 r = f77_call_i("f77_allocate", 3, args);
                 if (f77_srank[s] == 0) hi_emit(HI_STORE, TY_INT, slot, r, 0, NULL);
-                else f77_ptr_desc_set(s, r, ext[i], st, lo[i]);
+                else if (f77_scalc[s]) {
+                    int changed; int e2[F77_MAX_RANK]; int s2[F77_MAX_RANK]; int l2[F77_MAX_RANK]; int r2;
+                    r2 = f77_srank[s];
+                    changed = hi_emit(HI_SNE, TY_INT, r, cur, 0, NULL);
+                    for (k = 0; k < r2; k++) {
+                        e2[k] = f77_select(changed, ext[i][k], hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, slot, -1, 4 + 8 * k, NULL), -1, 0, NULL));
+                        s2[k] = f77_select(changed, st[k], hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, slot, -1, 8 + 8 * k, NULL), -1, 0, NULL));
+                        l2[k] = f77_select(changed, lo[i][k], hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, slot, -1, 4 + 8 * r2 + 4 * k, NULL), -1, 0, NULL));
+                    }
+                    f77_ptr_desc_set(s, r, e2, s2, l2);
+                } else f77_ptr_desc_set(s, r, ext[i], st, lo[i]);
             } else {
                 args[0] = cur;
                 args[1] = statp >= 0 ? statp : f77_iconst(0);
@@ -9529,12 +9623,124 @@ static void f77_stmt_allocate(int skip, int alloc) {
     }
 }
 
+/* ALLOCATABLE components (the Fortran 95 TR's).  A structure that has
+ * them (f77_dt_nalloc) starts with them unallocated -- a local's zeroed
+ * at the end of the declaration part, a FUNCTION's result too; static
+ * storage is zero already -- and a RETURN frees a local's (an unSAVEd
+ * one's), an INTENT(OUT) dummy's on entry.  f77_dta_free_at frees those
+ * of count structures from addr. */
+static void f77_dta_free_at(int addr, int dt, int count);
+static void f77_dtf_after(int r) {
+    int q; int b; int k;
+    if (f77_dtf_n == 0 || h_cbase[r] < 0) return;
+    for (q = 0; q < h_val[r]; q++) {
+        b = h_carg[h_cbase[r] + q];
+        if (b >= 0 && h_kind[b] == HI_ADDI && h_val[b] == 0) b = h_src1[b];
+        for (k = 0; k < f77_dtf_n; k++)
+            if (f77_dtf_v[k] == b) {
+                int dt;
+                dt = f77_dtf_dt[k];
+                f77_dtf_v[k] = f77_dtf_v[f77_dtf_n - 1]; f77_dtf_dt[k] = f77_dtf_dt[f77_dtf_n - 1];
+                f77_dtf_n = f77_dtf_n - 1;
+                /* freed at the end of the statement: here it would come
+                 * between a call and its result's second word */
+                if (f77_dtp_n < 64) { f77_dtp_v[f77_dtp_n] = b; f77_dtp_dt[f77_dtp_n] = dt; f77_dtp_n = f77_dtp_n + 1; }
+                break;
+            }
+    }
+}
+static void f77_dtf_flush(void) {
+    int k; int n;
+    n = f77_dtp_n;
+    f77_dtp_n = 0;
+    if (!f77_cur_blk_live) return;          /* after a GO TO or RETURN: left (a leak, not a fault) */
+    for (k = 0; k < n; k++) f77_dta_free_at(f77_dtp_v[k], f77_dtp_dt[k], 1);
+}
+static void f77_dta_free_at(int addr, int dt, int count) {
+    int offs[F77_MAX_DTA]; int rk[F77_MAX_DTA]; int esz[F77_MAX_DTA]; int n; int i;
+    n = f77_dta_list(dt, 0, offs, rk, esz, F77_MAX_DTA);
+    for (i = 0; i < n; i++) {
+        int args[3];
+        args[0] = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, offs[i], NULL);
+        args[1] = f77_iconst(count);
+        args[2] = f77_iconst(f77_dt_size[dt]);
+        f77_call_i("f77_dta_free", 3, args);
+    }
+}
+/* Is s a structure (or array of them) of this unit's own storage --
+ * not a dummy, a module's or COMMON's -- with ALLOCATABLE components? */
+static int f77_dta_local(int s) {
+    return f77_sty[s] == TY_DERIVED && !f77_sarg[s] && !f77_scom[s] && !f77_sassoc[s] && !f77_sptr[s] &&
+           s != f77_result_sym && f77_sname[s][0] != '%' && !f77_shidden[s] && f77_dt_nalloc(f77_sdt[s]) != 0;
+}
+static void f77_dta_entry(void) {
+    int s;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        int args[3];
+        if (f77_sty[s] != TY_DERIVED || f77_sdt[s] < 0) continue;
+        if (f77_dt_nalloc(f77_sdt[s]) < 0) {
+            char m[F77_MAX_NAME + 80];
+            sprintf(m, "%s: a type with more ALLOCATABLE components than f77 follows (%d)", f77_sname[s], F77_MAX_DTA);
+            f77_error(m);
+            continue;
+        }
+        if (f77_dt_nalloc(f77_sdt[s]) == 0) continue;
+        if (s == f77_result_sym || (f77_dta_local(s) && f77_sgidx[s] < 0)) {
+            if (f77_sauto[s] || f77_sassz[s] || f77_adjustable(s)) {
+                f77_error("an array of no constant size of a type with ALLOCATABLE components is not supported");
+                continue;
+            }
+            f77_sstored[s] = 1;
+            args[0] = f77_sval[s]; args[1] = f77_iconst(0); args[2] = f77_iconst(f77_esize(s) * f77_sym_nelem(s));
+            f77_call_i("memset", 3, args);
+        } else if (f77_sarg[s] && f77_sintout[s]) {
+            if (f77_srank[s] > 0) { f77_error("an INTENT(OUT) array of a type with ALLOCATABLE components is not supported"); continue; }
+            f77_dta_free_at(f77_sval[s], f77_sdt[s], 1);
+        }
+    }
+}
+
+/* A structure of type dt assigned (intrinsic assignment) at addr from
+ * the value v: its bytes, then each ALLOCATABLE component given storage
+ * of its own (a copy), the target's old storage freed after -- or, from
+ * a FUNCTION's result just made (f77_dt_fresh), its storage taken over. */
+static void f77_dt_assign(int addr, int v, int dt) {
+    int offs[F77_MAX_DTA]; int rk[F77_MAX_DTA]; int esz[F77_MAX_DTA]; int old[F77_MAX_DTA]; int n; int i; int fresh;
+    n = f77_dta_list(dt, 0, offs, rk, esz, F77_MAX_DTA);
+    fresh = 0;
+    for (i = 0; i < f77_dtf_n; i++)
+        if (f77_dtf_v[i] == v) {                 /* taken over, not freed */
+            fresh = 1;
+            f77_dtf_v[i] = f77_dtf_v[f77_dtf_n - 1]; f77_dtf_dt[i] = f77_dtf_dt[f77_dtf_n - 1];
+            f77_dtf_n = f77_dtf_n - 1;
+            break;
+        }
+    if (n < 0) { f77_error("a type with more ALLOCATABLE components than f77 follows"); return; }
+    for (i = 0; i < n; i++) old[i] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, offs[i], NULL), -1, 0, NULL);
+    f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_dt_size[dt]));
+    for (i = 0; i < n; i++) {
+        int args[3];
+        if (!fresh) {
+            args[0] = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, offs[i], NULL);
+            args[1] = f77_iconst(rk[i]); args[2] = f77_iconst(esz[i]);
+            f77_call_i("f77_dta_dup", 3, args);
+        }
+    }
+    for (i = 0; i < n; i++) {
+        int args[1];
+        args[0] = old[i];
+        f77_call_i("f77_dealloc_auto", 1, args);
+    }
+}
+
 /* A RETURN frees the subprogram's allocated, unSAVEd ALLOCATABLE arrays
  * (Fortran 95's rule).  Its units are never spliced (f77_unosplice). */
 static void f77_alloc_free_all(void) {
     int s;
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int args[1];
+        if (f77_dta_local(s) && (!f77_ssaved[s] || f77_shost[s] == 1) && f77_ukind[f77_cur_unit] != F77_UNIT_PROGRAM)
+            f77_dta_free_at(f77_sval[s], f77_sdt[s], f77_sym_nelem(s));
         if (f77_sauto[s] && !f77_decls_open) {
             args[0] = f77_sval[s];
             f77_call_i("f77_dealloc_auto", 1, args);
@@ -12918,6 +13124,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -13317,7 +13524,7 @@ static void f77_stmt_call1(int skip) {
         } else if (ds >= 0 && f77_slink[ds]) cname = f77_slink[ds];
         r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, cname);
     }
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     f77_tfree_to(f77_call_mk);                /* before the alternate returns branch */
     if (nalt > 0) {
         /* RETURN k in the callee comes back as k: branch to the k-th
@@ -13475,6 +13682,7 @@ static void f77_emit_copyin(void) {
     }
     f77_layout_static();
     f77_host_table();
+    f77_dta_entry();
     /* An array-valued FUNCTION: callers took its value for a scalar and
      * stored it to every element of the target (found 2026-11-09). */
     if (f77_result_sym >= 0 && f77_inline_depth == 0) {
@@ -15230,14 +15438,14 @@ static void f77_wr_item(int v, int vty, int vhi) {
     if (vty == TY_DCPLX) {
         f77_carg(f77_dcx_arg(v), 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_z");
-        h_cbase[r] = cb;
+        h_cbase[r] = cb; f77_dtf_after(r);
         return;
     }
     if (vty == TY_CPLX) {
         f77_carg(v, 0);
         f77_carg(vhi, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_wr_c");
-        h_cbase[r] = cb;
+        h_cbase[r] = cb; f77_dtf_after(r);
         return;
     }
     if (vty == TY_DOUBLE) {
@@ -15257,7 +15465,7 @@ static void f77_wr_item(int v, int vty, int vhi) {
         f77_carg(v, 0);
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_wr_i");
     }
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
 }
 
 /* READ leaf: hand the runtime the item's address to store through.
@@ -15301,7 +15509,7 @@ static void f77_rd_item(int addr, int ty) {
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_r");
     else
         r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "f77_rd_i");
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
 }
 
 /* A READ list item must be a variable or an array element -- somewhere
@@ -15913,7 +16121,7 @@ static void f77_wr_begin(int unit_val, int fmt_label) {
     f77_carg(f77_fmt_len_arg(fmt_label), 0);
     if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 5, "f77_wr_begin_int");
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_wr_begin");
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     f77_io_int = 0;
 }
 
@@ -16522,7 +16730,7 @@ static void f77_stmt_read(int skip) {
                                  ((f77_io_err_label >= 0 || f77_io_iostat >= 0) ? 2 : 0)), 0);
     if (f77_io_int) r = hi_emit(HI_CALL, TY_INT, -1, -1, 6, "f77_rd_begin_int");
     else r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "f77_rd_begin");
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     f77_io_int = 0;
 
     f77_io_after_read(r);
@@ -16683,7 +16891,7 @@ static void f77_stmt_open(int skip) {
     f77_carg(recl_val, 0);
     f77_carg(f77_iconst((err_label >= 0 || iostat_addr >= 0) ? 1 : 0), 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 13, "f77_open");
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
     if (iostat_addr >= 0) hi_emit(HI_STORE, TY_INT, iostat_addr, r, 0, NULL);
     if (err_label >= 0) {
         int b_cont; int c;
@@ -16880,7 +17088,7 @@ static void f77_stmt_close(int skip) {
     f77_carg(a, 0);
     f77_carg(f77_iconst(stat_slen), 0);
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "f77_close");
-    h_cbase[r] = cb;
+    h_cbase[r] = cb; f77_dtf_after(r);
 }
 
 /* REWIND u  --  or REWIND (u). */
@@ -17013,6 +17221,7 @@ static int f77_dt_temp_comp(int c, int addr) {
     f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
     f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
     f77_sptr[t] = f77_dc_ptr[c] != 0; f77_starg[t] = 0;
+    f77_scalc[t] = f77_dc_ptr[c] == 2; f77_sintout[t] = 0;
     if (f77_dc_ptr[c] && f77_dc_rank[c] > 0) f77_sashape[t] = 1;     /* a pointer array: its descriptor */
     /* a slot or descriptor of its own address, even at offset 0: the
      * guard (f77_desc_guard) reads every use of it, and the structure's
@@ -17243,6 +17452,14 @@ static int f77_dt_construct(int dt) {
     f77_tok();
     if (!f77_intr_args(&A)) return f77_iconst(0);
     tmp = f77_char_temp(f77_dt_size[dt]);
+    if (f77_dt_nalloc(dt) != 0) {
+        char m[F77_MAX_NAME + 80];
+        sprintf(m, "a structure constructor of %s, a type with ALLOCATABLE components, is not supported", f77_dt_name[dt]);
+        f77_error(m);
+        f77_scan_from(A.end);
+        ex_ty = TY_DERIVED; ex_dt = dt; ex_hi = -1;
+        return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 0, NULL));
+    }
     if (A.n != f77_dt_nc[dt]) {
         char m[F77_MAX_NAME + 80];
         sprintf(m, "the structure constructor %s needs %d values", f77_dt_name[dt], f77_dt_nc[dt]);
@@ -17413,7 +17630,7 @@ static void f77_td_end(void) {
         c = f77_ndc;
         ty = f77_sty[sy];
         if (f77_slen[sy] < 0 && ty == TY_CHAR) { f77_error("a CHARACTER component's length is a constant"); return; }
-        for (k = 0; k < f77_srank[sy] && !f77_sptr[sy]; k++)
+        for (k = 0; k < f77_srank[sy] && !f77_sptr[sy] && !f77_salloc[sy]; k++)
             if (f77_sextv[sy][k] >= 0 || f77_slov[sy][k] >= 0 || f77_salloc[sy] || f77_sassz[sy]) {
                 f77_error("a component's bounds are constants");
                 return;
@@ -17422,11 +17639,15 @@ static void f77_td_end(void) {
         f77_dc_ty[c] = ty; f77_dc_log[c] = f77_slog[sy]; f77_dc_nar[c] = f77_snar[sy];
         f77_dc_len[c] = f77_slen[sy]; f77_dc_dt[c] = ty == TY_DERIVED ? f77_sdt[sy] : -1;
         f77_dc_rank[c] = f77_srank[sy];
-        f77_dc_ptr[c] = f77_sptr[sy];
+        f77_dc_ptr[c] = f77_sptr[sy] ? 1 : f77_salloc[sy] ? 2 : 0;
         if (ty == TY_DERIVED && f77_sdt[sy] == dt && !f77_sptr[sy]) { f77_error("a component of its own type is a POINTER"); return; }
+        if (f77_salloc[sy] && ty == TY_DERIVED && f77_dt_nalloc(f77_sdt[sy]) != 0) {
+            f77_error("an ALLOCATABLE component of a type with ALLOCATABLE components is not supported");
+            return;
+        }
         for (k = 0; k < f77_srank[sy]; k++) { f77_dc_lo[c][k] = f77_slo[sy][k]; f77_dc_ext[c][k] = f77_sext[sy][k]; }
         /* its natural alignment */
-        if (f77_sptr[sy]) a = 4;                  /* a slot, or a descriptor */
+        if (f77_sptr[sy] || f77_salloc[sy]) a = 4;    /* a slot, or a descriptor */
         else if (ty == TY_DERIVED) a = f77_dt_align[f77_sdt[sy]];
         else if (ty == TY_CHAR) a = 1;
         else if (ty == TY_DOUBLE || ty == TY_DCPLX) a = 8;
@@ -17434,7 +17655,7 @@ static void f77_td_end(void) {
         else a = 4;
         off = (off + a - 1) & ~(a - 1);
         f77_dc_off[c] = off;
-        off = off + f77_storage_bytes(sy);
+        off = off + (f77_salloc[sy] ? 4 + 12 * f77_srank[sy] : f77_storage_bytes(sy));   /* a pointer array's descriptor */
         if (a > al) al = a;
         f77_ndc = f77_ndc + 1;
         f77_dt_nc[dt] = f77_dt_nc[dt] + 1;
@@ -17472,14 +17693,6 @@ static int f77_td_stmt(int cls) {
                 lx_t = T_EOF;
                 return 1;
             }
-            for (k = 0; k < c; k++) {
-                if (lx_stmt[k] == '\'') return 0;
-                if (strncmp(lx_stmt + k, ",ALLOCATABLE", 12) == 0) {
-                    f77_error("an ALLOCATABLE component is not supported yet");
-                    lx_t = T_EOF;
-                    return 1;
-                }
-            }
         }
         return 0;
     }
@@ -17515,6 +17728,7 @@ static int f77_associated(void) {
         if (f77_sty[t] == TY_DERIVED && f77_desig_follows()) {
             if (f77_sptr[t] && f77_srank[t] == 0) t = f77_ptr_deref(t);
             t = f77_dt_desig(t);
+            if (f77_scalc[t]) { f77_error("an ALLOCATABLE component is no POINTER"); return f77_iconst(0); }
         }
         if (f77_sptr[t]) {
             /* another pointer: the same target */
@@ -17593,6 +17807,7 @@ static void f77_ptr_assign_rhs(int ps) {
     if (f77_sty[t] == TY_DERIVED && f77_desig_follows()) {
         if (f77_sptr[t] && f77_srank[t] == 0) { t = f77_ptr_deref(t); tgt = 1; }
         t = f77_dt_desig(t);
+        if (f77_scalc[t]) { f77_error("a pointer to an ALLOCATABLE component is not supported"); lx_t = T_EOF; return; }
         tgt = tgt || f77_sptr[t];
     }
     if (!tgt) {
@@ -18279,7 +18494,7 @@ static void f77_statement(void) {
             cb = h_ncarg;
             f77_carg(v, 0);
             r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "exit");
-            h_cbase[r] = cb;
+            h_cbase[r] = cb; f77_dtf_after(r);
             hi_emit(HI_RET, TY_INT, v, -1, 0, NULL);
         }
         f77_cur_blk_live = 0;
@@ -18326,6 +18541,7 @@ done:
      * INTEGER N/9000/, LEN/30000/ lost both values and every name after
      * them.  A statement that already reported an error is left be. */
     if (lx_t != T_EOF && f77_nerr == nerr0) f77_error("unexpected text after the statement");
+    if (f77_dtp_n) f77_dtf_flush();
     if (ctl_n == ctl_n0 + 1) strcpy(ctl_name[ctl_n - 1], cname);
     /* If this statement carried a label that closes one or more DO
      * loops, close them now -- the terminal statement is part of the
