@@ -132,6 +132,7 @@ static int  f77_ssaved[F77_MAX_SYM];
  * address passed onward).  One-pass compilation means the store may
  * be seen after the load, so loads are recorded and the flag is
  * RETRACTED at unit end for every symbol that got stored. */
+static int  f77_sopt[F77_MAX_SYM];       /* an OPTIONAL dummy argument */
 static int  f77_sstored[F77_MAX_SYM];
 #define F77_MAX_LDRO 4096
 static int  f77_ldro_inst[F77_MAX_LDRO];
@@ -151,7 +152,7 @@ static int f77_ldro_local_ok(int s);
 static void f77_ldro_finalize(void) {
     int i;
     for (i = 0; i < f77_ldro_n; i++) {
-        if (f77_sstored[f77_ldro_sym[i]] ||
+        if (f77_sstored[f77_ldro_sym[i]] || f77_sopt[f77_ldro_sym[i]] ||
             (!f77_sarg[f77_ldro_sym[i]] && !f77_ldro_local_ok(f77_ldro_sym[i])))
             h_ld_ro[f77_ldro_inst[i]] = 0;
     }
@@ -689,6 +690,7 @@ static int f77_sym_temp(int ty) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
+    f77_sopt[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -758,6 +760,8 @@ static int    f77_me_lo[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_assoc = 2;                  /* f77_me_bind's: 1 host association, 2 USE */
 static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, not a USE's */
+static char  *f77_me_dnames[F77_MAX_MODENT];     /* a procedure's dummies' names, space-separated */
+#define F77_ARG_OPT 65536                        /* f77_me_argty: an OPTIONAL dummy */
 /* PUBLIC and PRIVATE (Fortran 90 5.2.3): the module being compiled says
  * them in its specification part (f77_vis_*); its snapshot keeps them per
  * module (f77_mvis_*) for its procedures, entered after it. */
@@ -816,6 +820,8 @@ static int f77_text_unit(void) {
 static char f77_famd_name[F77_MAX_FAMD][F77_MAX_NAME];
 static int  f77_famd_unit[F77_MAX_FAMD];
 static int  f77_famd_as[F77_MAX_FAMD];     /* its rank, when an assumed-shape array (the scan) */
+static int  f77_famd_opt[F77_MAX_FAMD];    /* OPTIONAL (the scan) */
+static int  f77_famd_char[F77_MAX_FAMD];   /* CHARACTER: a hidden length travels for it (the scan) */
 static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
 static int  f77_hdr_clen_off;
@@ -852,6 +858,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
+    f77_sopt[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -1071,6 +1078,10 @@ static void f77_hoist_actuals(void);
 static int f77_naa;            /* array actuals recorded (f77_aa_*) */
 static int f77_act_aa;         /* the last f77_actual_addr's entry, or -1 */
 static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e);
+static void f77_kw_take(char *kw);
+static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n);
+static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
+                             char kws[][F77_MAX_NAME], int *pn);
 static int f77_tfree_mark(void);
 static int f77_implied_do(void (*items)(int, int));
 static int f77_is_inquiry(char *nm);
@@ -1915,6 +1926,7 @@ static int f77_select(int cond, int a, int b) {
 #define IN_LBOUND   74
 #define IN_UBOUND   75
 #define IN_MERGE    76    /* Fortran 90, elemental */
+#define IN_PRESENT  77    /* Fortran 90: an OPTIONAL dummy's actual is there */
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -2086,6 +2098,7 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "UBOUND") == 0) return IN_UBOUND;
     if (strcmp(nm, "MERGE") == 0) return IN_MERGE;
     if (strcmp(nm, "ALLOCATED") == 0) return IN_ALLOCATED;
+    if (strcmp(nm, "PRESENT") == 0) return IN_PRESENT;
     if (strcmp(nm, "TRANSFER") == 0) return IN_TRANSFER;
     if (strcmp(nm, "TRIM") == 0) return IN_TRIM;
     if (f77_is_inquiry(nm)) return IN_INQUIRY;
@@ -2190,6 +2203,7 @@ static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
+static void f77_opt_note(int s);
 static void f77_vis_note(char *nm, int priv);
 static void f77_hide_assoc(char *nm);
 
@@ -2608,6 +2622,20 @@ static int f77_primary(void) {
                 if (t == TY_FLOAT) { ex_ty = TY_FLOAT; return f77_rconst(dv); }
                 ex_ty = TY_INT;
                 return f77_iconst(t == TY_INT ? iv : 0);
+            }
+            if (in == IN_PRESENT) {
+                /* an absent actual is passed as a null address */
+                int ps;
+                if (lx_t != T_NAME || (ps = f77_sym_find(lex_name)) < 0 || !f77_sopt[ps]) {
+                    f77_error("PRESENT needs an OPTIONAL dummy argument");
+                    return f77_iconst(0);
+                }
+                f77_tok();
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+                /* through an ADDI: an assumed-shape dummy's slot is its
+                 * descriptor's address, which the guard lets only an ADDI use */
+                return hi_emit(HI_SNE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[ps], -1, 0, NULL), f77_iconst(0), 0, NULL);
             }
             if (in == IN_ALLOCATED) {
                 int as;
@@ -3091,6 +3119,8 @@ static int f77_primary(void) {
             int addrs[64];
             int lens[64];
             int aas[64];
+            int tys[64];
+            char kws[64][F77_MAX_NAME];
             int aamk;
             int ai;
             int mk;
@@ -3107,7 +3137,10 @@ static int f77_primary(void) {
                          * h_carg slots: an actual may itself contain a
                          * call, which would otherwise interleave its
                          * arguments with ours. */
-                        if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; }
+                        if (nargs < 64) {
+                            f77_kw_take(kws[nargs]);
+                            addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; tys[nargs] = f77_act_ty;
+                        }
                         else f77_actual_addr();
                         nargs = nargs + 1;
                         if (lx_t != T_COMMA) break;
@@ -3117,6 +3150,7 @@ static int f77_primary(void) {
                 if (lx_t != T_RP) f77_error("expected ) after arguments");
                 else f77_tok();
             }
+            if (!f77_actuals_order(u, -1, nm, addrs, lens, tys, aas, kws, &nargs)) { f77_tfree_to(mk); ex_ty = TY_INT; return f77_iconst(0); }
             f77_actuals_final(addrs, aas, nargs, u, -1);
             f77_naa = aamk;
             rty = f77_urty_of(u);
@@ -3261,6 +3295,7 @@ static int f77_primary(void) {
             int mk;
             int tys[64];
             int aas[64];
+            char kws[64][F77_MAX_NAME];
             int aamk;
             int me;
             char *cname;
@@ -3274,7 +3309,10 @@ static int f77_primary(void) {
             f77_tok();
             if (lx_t != T_RP) {
                 for (;;) {
-                    if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; }
+                    if (nargs < 64) {
+                        f77_kw_take(kws[nargs]);
+                        addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa;
+                    }
                     else f77_actual_addr();
                     nargs = nargs + 1;
                     if (lx_t != T_COMMA) break;
@@ -3294,11 +3332,14 @@ static int f77_primary(void) {
             if (f77_sme[s] >= 0) {
                 int e;
                 e = f77_sme[s];
-                if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick(e, tys, nargs > 64 ? 64 : nargs);
+                if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick_kw(e, tys, kws, nargs > 64 ? 64 : nargs);
                 if (e >= 0 && f77_me_pkind[e] != F77_UNIT_FUNC) { f77_error("a SUBROUTINE referenced as a FUNCTION"); e = -1; }
                 if (e >= 0) { rty = f77_me_ty[e]; rlog = f77_me_log[e]; cname = f77_me_str[e]; }
                 me = e;
             } else if (f77_slink[s]) cname = f77_slink[s];
+            if (!f77_actuals_order(-1, fptr >= 0 ? -1 : me, nm, addrs, lens, tys, aas, kws, &nargs)) {
+                f77_tfree_to(mk); ex_ty = rty; ex_hi = -1; return f77_iconst(0);
+            }
             f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me);
             f77_naa = aamk;
             if (me >= 0 && f77_me_rrank[me] > 0) {
@@ -6739,10 +6780,12 @@ static void f77_stmt_decl(int ty, int skip) {
     int a_intr;
     int a_alloc;
     int a_vis;              /* PUBLIC 1, PRIVATE 2 */
+    int a_opt;
     int dim_off;
     clen = 1;
     a_alloc = 0;
     a_vis = 0;
+    a_opt = 0;
     tnar = 0;
     dcolon = 0;
     a_param = 0; a_save = 0; a_ext = 0; a_intr = 0;
@@ -6810,8 +6853,9 @@ static void f77_stmt_decl(int ty, int skip) {
                 a_alloc = 1;
             } else if (strcmp(at, "PUBLIC") == 0 || strcmp(at, "PRIVATE") == 0) {
                 a_vis = at[1] == 'R' ? 2 : 1;
-            } else if (strcmp(at, "POINTER") == 0 ||
-                       strcmp(at, "TARGET") == 0 || strcmp(at, "OPTIONAL") == 0) {
+            } else if (strcmp(at, "OPTIONAL") == 0) {
+                a_opt = 1;
+            } else if (strcmp(at, "POINTER") == 0 || strcmp(at, "TARGET") == 0) {
                 char m[96];
                 sprintf(m, "the %s attribute is not supported yet", at);
                 f77_error(m);
@@ -6833,6 +6877,7 @@ static void f77_stmt_decl(int ty, int skip) {
         if (lx_t != T_NAME) break;
         if (a_vis) f77_vis_note(lex_name, a_vis == 2);
         s = f77_sym_decl(lex_name);
+        if (a_opt) f77_opt_note(s);
         if (ty >= 0) {                  /* declaration overrides implicit typing */
             f77_sty[s] = ty;
             f77_styped[s] = 1;
@@ -9246,6 +9291,12 @@ static void f77_hide_assoc(char *nm) {
     if (s >= 0 && f77_sassoc[s]) f77_sname[s][0] = '%';
 }
 
+/* s said OPTIONAL: a dummy argument's (F90 5.1.2.6). */
+static void f77_opt_note(int s) {
+    if (!f77_sarg[s] || s == f77_result_sym) { f77_error("OPTIONAL is a dummy argument's"); return; }
+    f77_sopt[s] = 1;
+}
+
 /* The symbol a declaration of nm declares: a module's entity a module
  * procedure has by host association is hidden by it, a local of its own
  * (F90 12.1.2.2.1); one a USE gave cannot be declared again (11.3.2). */
@@ -9761,11 +9812,122 @@ static int f77_unit_dummy_as(int u, int k) {
  * interface (F90 12.3.1.1), so a unit of this file that is no module or
  * internal procedure is refused one. */
 static int f77_run_desc(int base, int r, int *ext, int step);
+
+/* An actual's keyword (Fortran 90 12.4.1), NAME= before it: taken into kw,
+ * the scanner past the =; "" when there is none. */
+static void f77_kw_take(char *kw) {
+    kw[0] = 0;
+    if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '=' && !(lx_rp + 1 < lx_rpe && lx_rp[1] == '=')) {
+        strcpy(kw, lex_name);
+        f77_tok();
+        f77_tok();
+    }
+}
+
+/* The dummies of the procedure a call reaches -- unit u of this file, or
+ * module procedure e: their number, names, and which are OPTIONAL and
+ * CHARACTER.  -1 when not known (an implicit interface). */
+static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt, int *isch) {
+    int n; int q;
+    n = 0;
+    if (u >= 0) {
+        for (q = 0; q < f77_nfamd && n < 64; q++) {
+            if (f77_famd_unit[q] != u) continue;
+            strcpy(names[n], f77_famd_name[q]);
+            opt[n] = f77_famd_opt[q];
+            isch[n] = f77_famd_char[q];
+            n = n + 1;
+        }
+        return n;
+    }
+    if (e >= 0 && f77_me_kind[e] == F77_ME_PROC) {
+        char *p;
+        p = f77_me_dnames[e];
+        for (n = 0; n < f77_me_nargs[e] && n < 16; n++) {
+            int k;
+            k = 0;
+            while (p && *p == ' ') p++;
+            while (p && *p && *p != ' ' && k < F77_MAX_NAME - 1) names[n][k++] = *p++;
+            names[n][k] = 0;
+            opt[n] = (f77_me_argty[e][n] & F77_ARG_OPT) != 0;
+            isch[n] = f77_me_argty[e][n] >= 0 && (f77_me_argty[e][n] & 15) == TY_CHAR;
+        }
+        return n;
+    }
+    return -1;
+}
+
+/* A generic's specific, by the actuals' types and ranks; keywords not
+ * taken through a generic yet. */
+static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n) {
+    int i;
+    for (i = 0; i < n; i++)
+        if (kws[i][0]) { f77_error("keyword arguments through a generic interface are not supported yet"); return -1; }
+    return f77_generic_pick(g, tys, n);
+}
+
+/* Keyword actuals and absent OPTIONAL dummies (Fortran 90 12.4.1): the
+ * actuals of a call to unit u or module procedure e put in their dummies'
+ * order -- positional ones first, then by keyword -- and each absent
+ * OPTIONAL dummy given a null address (and a CHARACTER one a length of
+ * 0 among the hidden ones), marked absent (aas -2).  0 on error, said. */
+static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
+                             char kws[][F77_MAX_NAME], int *pn) {
+    static char names[64][F77_MAX_NAME];
+    int opt[64]; int isch[64]; int slot[64];
+    int na[64]; int nl[64]; int nt[64]; int nz[64];
+    int n; int nd; int i; int j; int anykw; int anyopt;
+    char m[F77_MAX_NAME * 2 + 80];
+    n = *pn > 64 ? 64 : *pn;
+    anykw = 0;
+    for (i = 0; i < n; i++) if (kws[i][0]) anykw = 1;
+    nd = f77_callee_dummies(u, e, names, opt, isch);
+    if (nd < 0 || (u >= 0 && f77_uhost[u] < 0)) {
+        if (anykw) {
+            sprintf(m, "keyword arguments to %s need an explicit interface", nm);
+            f77_error(m);
+            return 0;
+        }
+        return 1;
+    }
+    anyopt = 0;
+    for (j = 0; j < nd; j++) if (opt[j]) anyopt = 1;
+    if (!anykw && (n == nd || !anyopt)) return 1;       /* in order, all there (or F77's own business) */
+    if (n > nd) { sprintf(m, "%s takes %d arguments, not %d", nm, nd, n); f77_error(m); return 0; }
+    for (j = 0; j < nd; j++) slot[j] = -1;
+    for (i = 0; i < n; i++) {
+        if (!kws[i][0]) {
+            if (i > 0 && kws[i - 1][0]) { f77_error("a positional argument after a keyword argument"); return 0; }
+            slot[i] = i;
+            continue;
+        }
+        for (j = 0; j < nd; j++) if (strcmp(names[j], kws[i]) == 0) break;
+        if (j == nd) { sprintf(m, "%s has no dummy argument %s", nm, kws[i]); f77_error(m); return 0; }
+        if (slot[j] >= 0) { sprintf(m, "the dummy argument %s of %s has two actuals", kws[i], nm); f77_error(m); return 0; }
+        slot[j] = i;
+    }
+    for (j = 0; j < nd; j++) {
+        if (slot[j] >= 0) {
+            na[j] = addrs[slot[j]]; nl[j] = lens[slot[j]]; nt[j] = tys[slot[j]]; nz[j] = aas[slot[j]];
+            continue;
+        }
+        if (!opt[j]) { sprintf(m, "no actual argument for %s, which is not OPTIONAL, of %s", names[j], nm); f77_error(m); return 0; }
+        na[j] = f77_iconst(0);
+        nl[j] = isch[j] ? f77_iconst(0) : -1;
+        nt[j] = -1;
+        nz[j] = -2;
+    }
+    for (j = 0; j < nd; j++) { addrs[j] = na[j]; lens[j] = nl[j]; tys[j] = nt[j]; aas[j] = nz[j]; }
+    *pn = nd;
+    return 1;
+}
+
 static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
     int i; int r;
     static char m[F77_MAX_NAME + 100];
     for (i = 0; i < nargs && i < 64; i++) {
         r = 0;
+        if (aas[i] == -2) continue;                  /* an absent OPTIONAL one */
         if (u >= 0) r = f77_unit_dummy_as(u, i);
         else if (e >= 0 && i < 16) r = (f77_me_argty[e][i] >> 8) & 15;
         if (r > 0 && u >= 0 && f77_uhost[u] < 0) {
@@ -11243,7 +11405,6 @@ static void f77_hoist_actuals(void) {
         found = 0;
         for (k = 0; k < A.n; k++) {
             int sy; int at; int h;
-            if (A.kw[k][0]) continue;
             sy = f77_aex_first(A.from[k], A.to[k], &at);
             if (sy < 0) continue;
             if (at == A.from[k] && (f77_sty[sy] == TY_CHAR ? f77_text_is_char_operand(sy, A.from[k], A.to[k])
@@ -11511,6 +11672,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_slink[s] = NULL;
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
+    f77_sopt[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -11742,6 +11904,7 @@ static void f77_stmt_call1(int skip) {
     int addrs[64];
     int lens[64];
     int tys[64];
+    char kws[64][F77_MAX_NAME];
     int aas[64];
     int aamk;
     int fe;
@@ -11779,7 +11942,10 @@ static void f77_stmt_call1(int skip) {
                 }
                 /* Evaluated before any h_carg slot is reserved -- see
                  * the note in the FUNCTION path. */
-                if (nargs < 64) { addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; }
+                if (nargs < 64) {
+                    f77_kw_take(kws[nargs]);
+                    addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa;
+                }
                 else f77_actual_addr();
                 nargs = nargs + 1;
                 if (lx_t != T_COMMA) break;
@@ -11799,9 +11965,10 @@ static void f77_stmt_call1(int skip) {
             fu = f77_find_unit(nm);
             if (fu < 0 && ds >= 0 && f77_sme[ds] >= 0) {
                 fe = f77_sme[ds];
-                if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick(fe, tys, nargs > 64 ? 64 : nargs);
+                if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick_kw(fe, tys, kws, nargs > 64 ? 64 : nargs);
             }
         }
+        if (!f77_actuals_order(fu, fe, nm, addrs, lens, tys, aas, kws, &nargs)) return;
         f77_actuals_final(addrs, aas, nargs, fu, fe);
         f77_naa = aamk;
     }
@@ -12129,7 +12296,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL;
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -12293,7 +12460,16 @@ static void f77_mod_proc(int u) {
                 if (lx_t == T_NAME) {
                     s = f77_sym_find(lex_name);
                     if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0)
-                                    + 4096 * f77_srank[s];
+                                    + 4096 * f77_srank[s] + (f77_sopt[s] ? F77_ARG_OPT : 0);
+                    if (n < 16) {
+                        char *o;
+                        int l;
+                        o = f77_me_dnames[e];
+                        l = o ? (int)strlen(o) : 0;
+                        f77_me_dnames[e] = (char *)realloc(o, (size_t)l + strlen(lex_name) + 2);
+                        if (l) f77_me_dnames[e][l++] = ' ';
+                        strcpy(f77_me_dnames[e] + l, lex_name);
+                    }
                 }
                 if (n < 16) f77_me_argty[e][n] = t;
                 n = n + 1;
@@ -12544,6 +12720,17 @@ static int f77_mod_read(char *nm) {
             for (a = 0; a < na && a < 16; a++) {
                 f77_me_argty[e][a] = (int)strtol(q, &q, 10);
             }
+            while (*q == ' ') q++;
+            if (*q == '=') {
+                char *eol;
+                q++;
+                while (*q == ' ') q++;
+                eol = strchr(q, '\n');
+                if (!eol) eol = q + strlen(q);
+                f77_me_dnames[e] = (char *)malloc((size_t)(eol - q) + 1);
+                memcpy(f77_me_dnames[e], q, (size_t)(eol - q));
+                f77_me_dnames[e][eol - q] = 0;
+            }
         } else if (kind == 'H') {
             hide_next = 1;                       /* the entity on the next line is PRIVATE */
         } else if (kind == 'V') {
@@ -12613,6 +12800,7 @@ static void f77_mod_write(void) {
                 fprintf(f, "R %s %s %d %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
                         f77_me_log[e], f77_me_rrank[e], f77_me_nargs[e]);
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
+                if (f77_me_dnames[e]) fprintf(f, " = %s", f77_me_dnames[e]);
                 fputc('\n', f);
             } else if (f77_me_kind[e] == F77_ME_VAR) {
                 int k;
@@ -12779,12 +12967,16 @@ static int f77_generic_pick(int g, int *tys, int n) {
         nm[k] = 0;
         while (*p == ' ') p++;
         e = f77_me_find(m, nm);
-        if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] == n) {
+        if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] >= n) {
             int a;
-            /* by type and rank (F90 14.1.2.3; kinds are types here) */
+            /* by type and rank (F90 14.1.2.3; kinds are types here); the
+             * dummies past the actuals OPTIONAL */
             for (a = 0; a < n && a < 16; a++)
                 if ((f77_me_argty[e][a] & 255) != (tys[a] & 255) || ((f77_me_argty[e][a] >> 12) & 15) != ((tys[a] >> 12) & 15)) break;
-            if (a == n || a == 16) return e;
+            if (a == n || a == 16) {
+                for (a = n; a < f77_me_nargs[e] && a < 16; a++) if (!(f77_me_argty[e][a] & F77_ARG_OPT)) break;
+                if (a >= f77_me_nargs[e] || a == 16) return e;
+            }
         }
     }
     {
@@ -14799,6 +14991,7 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("MODULE")) return 1;
     if (f77_starts("PUBLIC")) return 1;
     if (f77_starts("PRIVATE")) return 1;
+    if (f77_starts("OPTIONAL")) return 1;
     return 0;
 }
 
@@ -15157,6 +15350,18 @@ static void f77_statement(void) {
     }
     if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
     if (cls == S_KEYWORD && (n = f77_starts("PUBLIC")) != 0) { f77_stmt_access(0, n); goto done; }
+    if (cls == S_KEYWORD && (n = f77_starts("OPTIONAL")) != 0) {
+        /* OPTIONAL [::] dummies */
+        if (strncmp(lx_stmt + n, "::", 2) == 0) n = n + 2;
+        f77_scan_from(n);
+        while (lx_t == T_NAME) {
+            f77_opt_note(f77_sym(lex_name));
+            f77_tok();
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        goto done;
+    }
     if (cls == S_KEYWORD && (n = f77_starts("PRIVATE")) != 0) { f77_stmt_access(1, n); goto done; }
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }

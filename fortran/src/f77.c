@@ -175,6 +175,8 @@ static void f77_collect_dummies(int skip, int unit) {
             strcpy(f77_famd_name[f77_nfamd], lex_name);
             f77_famd_unit[f77_nfamd] = unit;
             f77_famd_as[f77_nfamd] = 0;
+            f77_famd_opt[f77_nfamd] = 0;
+            f77_famd_char[f77_nfamd] = 0;
             f77_nfamd = f77_nfamd + 1;
         }
         f77_tok();
@@ -287,7 +289,26 @@ static int f77_skip_parens(int i) {
     return i;
 }
 static void f77_scan_shapes(int u) {
-    int i; int skip; int dattr; int dc; int alloc;
+    int i; int skip; int dattr; int dc; int alloc; int opt; int isch;
+    if (f77_starts("OPTIONAL")) {
+        /* OPTIONAL [::] names: the dummies a caller may leave out */
+        i = 8;
+        if (i + 1 < lx_stmt_len && lx_stmt[i] == ':' && lx_stmt[i + 1] == ':') i = i + 2;
+        while (i < lx_stmt_len) {
+            char nm[F77_MAX_NAME];
+            int n; int q;
+            n = 0;
+            while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+                if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
+                i++;
+            }
+            nm[n] = 0;
+            for (q = 0; q < f77_nfamd; q++)
+                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) { f77_famd_opt[q] = 1; f77_unosplice[u] = 1; }
+            i++;
+        }
+        return;
+    }
     if (f77_starts("DIMENSION")) skip = 9;
     else if (f77_starts("DOUBLEPRECISION")) skip = 15;
     else if (f77_starts("DOUBLECOMPLEX")) skip = 13;
@@ -296,6 +317,8 @@ static void f77_scan_shapes(int u) {
     else if (f77_starts("REAL")) skip = 4;
     else return;
     alloc = f77_has_attr("ALLOCATABLE");
+    opt = f77_has_attr("OPTIONAL");
+    isch = f77_starts("CHARACTER") != 0;
     dattr = -1;
     i = skip;
     dc = f77_toplevel(':', 0);
@@ -330,12 +353,12 @@ static void f77_scan_shapes(int u) {
         so = (i < lx_stmt_len && lx_stmt[i] == '(') ? i : dattr;
         ra = so >= 0 && !alloc ? f77_text_assumed_rank(so) : 0;
         rs = so >= 0 ? f77_text_spec_rank(so) : 0;
-        if (ra > 0)
-            for (q = 0; q < f77_nfamd; q++)
-                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) {
-                    f77_famd_as[q] = ra;
-                    f77_unosplice[u] = 1;
-                }
+        for (q = 0; q < f77_nfamd; q++) {
+            if (f77_famd_unit[q] != u || strcmp(f77_famd_name[q], nm) != 0) continue;
+            if (ra > 0) { f77_famd_as[q] = ra; f77_unosplice[u] = 1; }
+            if (opt) { f77_famd_opt[q] = 1; f77_unosplice[u] = 1; }
+            if (isch) f77_famd_char[q] = 1;
+        }
         if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_unit_rname(u)) == 0) {
             f77_urrank[u] = rs;
             f77_unosplice[u] = 1;

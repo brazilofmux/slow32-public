@@ -352,6 +352,13 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf 'program p\ncall ext(k=1)\nend\n' > "$W/kwext.f90"
+    printf 'program p\ncall s()\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/optmiss.f90"
+    printf 'program p\ncall s(1, z=2)\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/kwnone.f90"
+    printf 'program p\ncall s(i=1, i=2)\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/kwtwice.f90"
+    printf 'program p\ncall s(j=1, 2)\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/kwpos.f90"
+    printf 'program p\nk = 1\nprint *, present(k)\nend\n' > "$W/presnot.f90"
+    printf 'subroutine s(i)\ninteger, optional :: j\nend\n' > "$W/optlocal.f90"
     printf 'subroutine s\ncall s\nend\n' > "$W/recsub.f90"
     printf 'function f(n) result(f)\nf = n\nend\n' > "$W/resname.f90"
     printf 'implicit none\nimplicit integer (i)\nend\n' > "$W/impmix.f90"
@@ -423,6 +430,13 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "kwext:line 2: keyword arguments to EXT need an explicit interface" \
+             "optmiss:line 2: no actual argument for I, which is not OPTIONAL, of S" \
+             "kwnone:line 2: S has no dummy argument Z" \
+             "kwtwice:line 2: the dummy argument I of S has two actuals" \
+             "kwpos:line 2: a positional argument after a keyword argument" \
+             "presnot:line 3: PRESENT needs an OPTIONAL dummy argument" \
+             "optlocal:line 2: OPTIONAL is a dummy argument's" \
              "recsub:line 2: S is not RECURSIVE: it cannot call itself" \
              "resname:line 1: a FUNCTION's RESULT has a name of its own" \
              "impmix:line 2: IMPLICIT NONE is the only IMPLICIT statement of its unit" \
