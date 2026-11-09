@@ -184,6 +184,30 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    PUBLIC/PRIVATE), explicit interfaces, OPTIONAL and keyword arguments,
    generic interfaces, operator and assignment overloading, internal
    procedures, SELECT CASE, RESULT, KIND and SELECTED_*_KIND.
+
+   **Status 2026-11-09: done but for operator and assignment
+   overloading**, which waits for milestone 5's derived types:
+   - SELECT CASE; RESULT and RECURSIVE;
+   - module variables, through a block of the module's own, laid out as
+     COMMON's; PUBLIC and PRIVATE;
+   - OPTIONAL and keyword arguments, PRESENT;
+   - internal procedures using their host's variables: the host's
+     locals they name are static, its dummies reached through a table in
+     its frame whose address they take as a hidden argument;
+   - interface bodies, and generic interfaces of them in any unit;
+     keywords and array-valued results through generics;
+   - CHARACTER and COMPLEX*16 module functions; SELECTED_REAL_KIND and
+     SELECTED_INT_KIND anywhere; TRANSFER with CHARACTER;
+   - the CHARACTER intrinsics ADJUSTL, ADJUSTR, REPEAT, SCAN, VERIFY,
+     ACHAR, IACHAR, INDEX's BACK.
+
+   Found on the way, pre-existing: an undeclared dummy named as a host's
+   PARAMETER took the PARAMETER's value; ELSE and ELSE IF without the
+   construct name in a named IF were refused; IMPLICIT in a contained
+   procedure did not give its letters back from the host's IMPLICIT
+   NONE.  Still refused by name: a RECURSIVE host's locals in its
+   internal procedures, ENTRY in an array-valued function, a generic of
+   scalar and array-valued functions where an array is wanted.
 5. **Derived types and pointers**: TYPE, components, structure constructors,
    POINTER and TARGET, ALLOCATABLE components (as in F95's TR), NULLIFY and
    ASSOCIATED, pointers to arrays.
