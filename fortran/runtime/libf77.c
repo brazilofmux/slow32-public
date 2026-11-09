@@ -70,6 +70,9 @@ static char  fio_ltok[128];
 #define FIO_MAXNAME 256
 static FILE *fio_ufile[FIO_MAXUNIT];
 static char  fio_ufname[FIO_MAXUNIT][FIO_MAXNAME];
+static int fio_udelim[FIO_MAXUNIT];      /* OPEN's DELIM=: 0 none, else the quote */
+static int fio_uaction[FIO_MAXUNIT];     /* ... ACTION=: 0 READWRITE, 1 READ, 2 WRITE */
+static int fio_uposn[FIO_MAXUNIT];       /* ... POSITION=: 0 ASIS, 1 REWIND, 2 APPEND */
 /* Logical end of file set by ENDFILE (-1 = the physical end): a READ
  * at or past it sees end of file, a WRITE moves it. */
 static long  fio_uend[FIO_MAXUNIT];
@@ -154,6 +157,8 @@ static int fio_str_is(const char *s, int len, const char *kw) {
  * past the end), so `T1` after text overprints and trailing X emits no
  * blanks -- both as gfortran does. */
 static int fio_col;
+static int fio_noadv;            /* this statement is non-advancing (f77_io_adv) */
+static int fio_open_rec;         /* the record being flushed stays open: no end of record */
 static void fio_putc(int c) {
     if (fio_col >= FIO_MAXLINE - 1) return;
     while (fio_len < fio_col) fio_line[fio_len++] = ' ';
@@ -203,7 +208,8 @@ static void fio_flush_line(void) {
     /* All fio_len bytes: a CHARACTER item may hold CHAR(0), which
      * fputs took for the end of the record and dropped the rest. */
     fwrite(fio_line, 1, (size_t)fio_len, f);
-    fputc('\n', f);
+    if (fio_open_rec) fio_open_rec = 0;    /* a non-advancing WRITE's record left open */
+    else fputc('\n', f);
     fio_len = 0;
     if (fio_unit > 0 && fio_unit < FIO_MAXUNIT && fio_unit != 5 && fio_unit != 6)
         fio_uend[fio_unit] = ftell(f);
@@ -246,6 +252,46 @@ static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
 /* Fetch the next input record.  Returns 1 at end of file.  A record
  * shorter than the fields read from it behaves as if blank-padded,
  * which fio_field_in provides by supplying blanks past fio_rlen. */
+/* Non-advancing I/O (F90 9.2.1.3.1): f77_io_adv, called before a READ or
+ * WRITE begins, makes it non-advancing.  A WRITE's record is left open:
+ * its characters go out with no end of record.  A READ's record stays
+ * the unit's, its position with it, for the next READ (fio_pend*); one
+ * that runs past the record's end has the end-of-record condition
+ * (fio_eor: the item padded with blanks, the statement's other items
+ * left), and SIZE= counts the characters its data edits took. */
+static int fio_eor;
+static int fio_size;
+static int *fio_sizep;
+static int fio_pend[FIO_MAXUNIT];
+static char *fio_psave[FIO_MAXUNIT];
+static int fio_plen[FIO_MAXUNIT], fio_ppos[FIO_MAXUNIT];
+static int fio_pslot(int unit) { return unit > 0 && unit < FIO_MAXUNIT ? unit : 0; }
+void f77_io_adv(const char *a, int alen, int *sizep) {
+    int i = 0, j;
+    while (i < alen && a[i] == ' ') i++;
+    j = alen;
+    while (j > i && a[j - 1] == ' ') j--;
+    if (j - i == 2 && toupper((unsigned char)a[i]) == 'N' && toupper((unsigned char)a[i + 1]) == 'O') fio_noadv = 1;
+    else if (j - i == 3 && toupper((unsigned char)a[i]) == 'Y' && toupper((unsigned char)a[i + 1]) == 'E' &&
+             toupper((unsigned char)a[i + 2]) == 'S') fio_noadv = 0;
+    else { fprintf(stderr, "f77: ADVANCE= is 'YES' or 'NO'\n"); exit(2); }
+    fio_sizep = sizep;
+    fio_eor = 0;
+    fio_size = 0;
+}
+/* A READ's data edit takes w columns: what SIZE= counts, and whether
+ * the record ends first (non-advancing). */
+static void fio_adv_take(int w) {
+    int avail;
+    if (!fio_noadv || !fio_reading) return;
+    avail = fio_rlen - fio_rpos;
+    if (avail < 0) avail = 0;
+    fio_size += w < avail ? w : avail;
+    if (w > avail) fio_eor = 1;
+}
+/* After a READ: 1 when it had the end-of-record condition. */
+int f77_io_eor(void) { int r = fio_eor; fio_eor = 0; return r; }
+
 static int fio_getrec(void) {
     if (fio_ibuf) {
         if (fio_irec >= fio_inrec) return 1;
@@ -329,7 +375,7 @@ static int fio_fmt_width_next(int j) {
     c = toupper((unsigned char)fio_fbuf[j - 1]);
     b = j >= 2 ? toupper((unsigned char)fio_fbuf[j - 2]) : 0;
     if (c == 'Z') return b != 'B';
-    return c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' ||
+    return c == 'B' || c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' ||
            c == 'L' || c == 'A' || c == 'O' || c == 'T' || c == 'R' || c == '.';
 }
 
@@ -463,16 +509,11 @@ static int fio_fmt_check(void) {
             if (c == 'P' || c == 'S') i++;
             continue;
         }
-        if (c == 'B') {
-            i++;
-            c = toupper((unsigned char)s[i]);
-            if (c == 'N' || c == 'Z') { i++; continue; }
-            fio_fmt_why = "B is BN or BZ";
-            return -1;
-        }
-        if (c == 'A' || c == 'Z' || c == 'O') {
+        if (c == 'B' && (toupper((unsigned char)s[i + 1]) == 'N' || toupper((unsigned char)s[i + 1]) == 'Z')) { i += 2; continue; }
+        if (c == 'A' || c == 'Z' || c == 'O' || c == 'B') {    /* Bw.m Ow.m Zw.m (F90), A[w] */
             i++;
             (void)fio_fmt_digits(s, &i);
+            if (c != 'A' && s[i] == '.') { i++; (void)fio_fmt_digits(s, &i); }
             continue;
         }
         if (c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' || c == 'L') {
@@ -700,7 +741,7 @@ static int fio_next_desc(void) {
         /* Data descriptors */
         if (c=='I'||c=='i'||c=='F'||c=='f'||c=='E'||c=='e'||
             c=='D'||c=='d'||c=='G'||c=='g'||c=='A'||c=='a'||
-            c=='L'||c=='l') {
+            c=='L'||c=='l'||c=='B'||c=='b'||c=='O'||c=='o'||c=='Z'||c=='z') {
             int esn = 0;
             fio_pos++;
             if ((c == 'E' || c == 'e') && (toupper((unsigned char)fio_fmt[fio_pos]) == 'S' ||
@@ -731,6 +772,7 @@ static int fio_next_desc(void) {
 
 /* Obtain the descriptor for the next item, honouring repeat counts. */
 static int fio_want(void) {
+    if (fio_eor) return 0;                 /* the record ended: the READ's other items are left */
     if (fio_desc && fio_rep > 0) return fio_desc;
     fio_desc = 0;
     return fio_next_desc();
@@ -1102,6 +1144,7 @@ void f77_ru_end(void) { fio_busy = 0; }
 void f77_backspace(int unit) {
     FILE *f;
     long pos;
+    fio_pend[fio_pslot(unit)] = 0;          /* a non-advancing READ's record given up */
     fio_init_units();
     if (unit <= 0 || unit >= FIO_MAXUNIT || unit == 5 || unit == 6) return;
     f = fio_resolve(unit, 1);
@@ -1208,6 +1251,22 @@ void f77_wr_i(int v) {
     if (d == 'L') {
         if (fio_w > 1) fio_pad(fio_w - 1);
         fio_putc(v ? 'T' : 'F');
+        fio_consumed();
+        return;
+    }
+    if (d == 'B' || d == 'O' || d == 'Z') {
+        /* Bw.m, Ow.m, Zw.m (13.5.9.1): the bits as an unsigned number in
+         * base 2, 8 or 16, m digits at least; Bw.0 of zero blanks */
+        unsigned int u = (unsigned int)v;
+        int base = d == 'B' ? 2 : d == 'O' ? 8 : 16;
+        char dig[40];
+        int nd = 0, k;
+        do { dig[nd++] = "0123456789ABCDEF"[u % base]; u /= base; } while (u);
+        while (nd < fio_d) dig[nd++] = '0';
+        for (k = 0; k < nd; k++) buf[k] = dig[nd - 1 - k];
+        buf[nd] = 0;
+        if (v == 0 && fio_d == 0 && fio_fmt[fio_pos - 1] == '0' && fio_fmt[fio_pos - 2] == '.') buf[0] = 0;
+        fio_field(buf, fio_w);
         fio_consumed();
         return;
     }
@@ -1397,6 +1456,17 @@ void f77_wr_a(const char *s, int len) {
     if (fio_listed) {
         /* List-directed: the record's leading blank, then character
          * items run together with no separator (gfortran's layout). */
+        int q = fio_unit > 0 && fio_unit < FIO_MAXUNIT && !fio_ibuf ? fio_udelim[fio_unit] : 0;
+        if (q) {
+            /* DELIM=: each item quoted, its quotes doubled, blanks between */
+            fio_putc(' ');
+            fio_putc(q);
+            for (i = 0; i < len; i++) { if (s[i] == q) fio_putc(q); fio_putc(s[i]); }
+            fio_putc(q);
+            fio_first_item = 0;
+            fio_prev_char = 0;
+            return;
+        }
         if (fio_first_item || !fio_prev_char) fio_putc(' ');
         for (i = 0; i < len; i++) fio_putc(s[i]);
         fio_first_item = 0;
@@ -2148,7 +2218,10 @@ void f77_wr_end(void) {
         fio_next_desc();
         fio_draining = 0;
     }
+    fio_open_rec = fio_noadv && !fio_ibuf;
+    fio_noadv = 0;
     fio_flush_line();
+    fio_open_rec = 0;
     fio_ibuf = 0;
 }
 
@@ -2194,6 +2267,7 @@ static void fio_field_in(char *buf, int w) {
         if (n < FIO_MAXLINE - 1) buf[n++] = (char)c;
     }
     buf[n] = 0;
+    fio_adv_take(w);
     fio_rpos += w;
 }
 
@@ -2202,6 +2276,21 @@ static int fio_in_int(int w) {
     fio_field_in(buf, w);
     if (!buf[0]) return 0;
     return (int)strtol(buf, 0, 10);
+}
+/* B, O and Z input: digits of the base, the bits of the item */
+static int fio_in_base(int w, int base) {
+    char buf[FIO_MAXLINE];
+    unsigned int u = 0;
+    int i;
+    fio_field_in(buf, w);
+    for (i = 0; buf[i]; i++) {
+        int c = toupper((unsigned char)buf[i]), x;
+        if (c == ' ') continue;
+        x = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+        if (x >= base) { fprintf(stderr, "f77: bad digit '%c' in a B, O or Z input field\n", buf[i]); exit(2); }
+        u = u * (unsigned int)base + (unsigned int)x;
+    }
+    return (int)u;
 }
 
 static int fio_in_logical(int w) {
@@ -2456,8 +2545,18 @@ static int fio_rd_setup(const char *fmt, int fmtlen, int has_end) {
         while (fio_fmt[fio_pos] == ' ') fio_pos++;
         if (fio_fmt[fio_pos] == '(') { fio_pos++; fio_revert = fio_pos; }   /* inside it: see fio_wr_setup's */
     }
+    if (!fio_ibuf && fio_pend[fio_pslot(fio_unit)]) {
+        /* the record a non-advancing READ left, where it left it */
+        int sl = fio_pslot(fio_unit);
+        memcpy(fio_rec, fio_psave[sl], (size_t)fio_plen[sl]);
+        fio_rlen = fio_plen[sl];
+        fio_rpos = fio_ppos[sl];
+        fio_pend[sl] = 0;
+        return 0;
+    }
     if (fio_getrec()) {
         fio_reading = 0;
+        fio_noadv = 0;
         if (has_end & 3) return 1;
         fprintf(stderr, "f77: end of file on READ\n");
         exit(2);
@@ -2490,6 +2589,7 @@ void f77_rd_i(int *p) {
     if (d == 0) return;
     if (d == 'L') *p = fio_in_logical(fio_w);
     else if (d == 'I') *p = fio_in_int(fio_w);
+    else if (d == 'B' || d == 'O' || d == 'Z') *p = fio_in_base(fio_w, d == 'B' ? 2 : d == 'O' ? 8 : 16);
     else if (d == 'A') { f77_rd_s((char *)p, (int)sizeof *p); return; }   /* text into an INTEGER */
     else *p = (int)fio_in_real(fio_w, fio_d);
     fio_consumed();
@@ -2605,6 +2705,7 @@ void f77_rd_s(char *p, int len) {
             p[i] = (char)c;
         }
     }
+    fio_adv_take(w);
     fio_rpos += w;
     fio_consumed();
 }
@@ -2680,6 +2781,20 @@ void f77_rd_z(double *p) {
 }
 
 void f77_rd_end(void) {
+    if (fio_noadv) {
+        /* the record kept for the next READ, unless it ended here */
+        int sl = fio_pslot(fio_unit);
+        if (!fio_eor) {                    /* at its end too: the next READ meets the end of record */
+            if (!fio_psave[sl]) fio_psave[sl] = (char *)malloc(FIO_MAXLINE);
+            memcpy(fio_psave[sl], fio_rec, (size_t)fio_rlen);
+            fio_plen[sl] = fio_rlen;
+            fio_ppos[sl] = fio_rpos;
+            fio_pend[sl] = 1;
+        }
+        if (fio_sizep) *fio_sizep = fio_size;
+        fio_noadv = 0;
+        fio_sizep = 0;
+    }
     fio_busy = 0;
     fio_reading = 0;
     fio_ibuf = 0;
@@ -2985,6 +3100,7 @@ static void nml_parse(void) {
 static int nml_read_group(void) {
     char rec[FIO_MAXLINE];
     int in = 0;
+    int col1 = 0;                                    /* the group began in column 1: F90's records, read whole */
     int glen = (int)strlen(nml_grp);
     nml_tlen = 0;
     nml_text_add("", 0);
@@ -2997,9 +3113,10 @@ static int nml_read_group(void) {
         f77_rd_end();
         n = FIO_MAXLINE - 1;
         while (n > 1 && rec[n - 1] == ' ') n--;
-        i = 1;                                       /* column 1 is not read, as on H */
+        i = col1 ? 0 : 1;                            /* column 1 is not read, as on H */
         if (!in) {
             int k;
+            if (rec[0] == '&' || rec[0] == '$') { i = 0; col1 = 1; }   /* but a group there is F90's */
             while (i < n && rec[i] == ' ') i++;
             if (i >= n || (rec[i] != '&' && rec[i] != '$')) continue;
             for (k = 0; k < glen; k++)
@@ -3328,6 +3445,17 @@ float f77_rpow_i(float a, int n) {
  * An OPEN on an already-open unit closes it first. */
 /* OPEN.  Returns 0, or 2 for a failure the statement can recover from
  * (ERR=/IOSTAT= present); otherwise a failure is fatal here. */
+/* OPEN's Fortran 90 specifiers, given before f77_open (f77_open_f90):
+ * POSITION= ('APPEND' starts at the end), ACTION= (checked), PAD=
+ * ('YES' only), DELIM= (list-directed CHARACTER output delimited). */
+static const char *fio_o_pos, *fio_o_act, *fio_o_pad, *fio_o_delim;
+static int fio_o_poslen, fio_o_actlen, fio_o_padlen, fio_o_delimlen;
+void f77_open_f90(const char *pos, int poslen, const char *act, int actlen,
+                  const char *pad, int padlen, const char *delim, int delimlen) {
+    fio_o_pos = pos; fio_o_poslen = poslen; fio_o_act = act; fio_o_actlen = actlen;
+    fio_o_pad = pad; fio_o_padlen = padlen; fio_o_delim = delim; fio_o_delimlen = delimlen;
+}
+static int fio_str_is(const char *s, int n, const char *want);
 int f77_open(int unit, const char *name, int nlen,
              const char *status, int slen,
              const char *access, int alen,
@@ -3403,6 +3531,13 @@ int f77_open(int unit, const char *name, int nlen,
             fprintf(stderr, "f77: OPEN cannot create '%s'\n", nm);
             exit(2);
         }
+    } else if (status && slen > 0 && fio_str_is(status, slen, "REPLACE")) {
+        f = fopen(nm, "w+");                 /* Fortran 90: a new file, an old one deleted first */
+        if (!f) {
+            if (recoverable) return 2;
+            fprintf(stderr, "f77: OPEN cannot create '%s'\n", nm);
+            exit(2);
+        }
     } else if (!status || slen <= 0 ||
                fio_str_is(status, slen, "UNKNOWN")) {
         f = fopen(nm, "r+");
@@ -3418,6 +3553,31 @@ int f77_open(int unit, const char *name, int nlen,
         exit(2);
     }
     fio_ufile[unit] = f;
+    fio_udelim[unit] = 0;
+    fio_uaction[unit] = 0;
+    fio_uposn[unit] = 0;
+    if (fio_o_act && fio_o_actlen > 0)
+        fio_uaction[unit] = fio_str_is(fio_o_act, fio_o_actlen, "READ") ? 1 : fio_str_is(fio_o_act, fio_o_actlen, "WRITE") ? 2 : 0;
+    if (fio_o_pos && fio_o_poslen > 0) {
+        if (fio_str_is(fio_o_pos, fio_o_poslen, "APPEND")) { fseek(f, 0, SEEK_END); fio_uposn[unit] = 2; }
+        else if (fio_str_is(fio_o_pos, fio_o_poslen, "REWIND")) fio_uposn[unit] = 1;
+        else if (!fio_str_is(fio_o_pos, fio_o_poslen, "ASIS")) {
+            fprintf(stderr, "f77: OPEN POSITION= is ASIS, REWIND or APPEND\n"); exit(2);
+        }
+    }
+    if (fio_o_act && fio_o_actlen > 0 && !fio_str_is(fio_o_act, fio_o_actlen, "READ") &&
+        !fio_str_is(fio_o_act, fio_o_actlen, "WRITE") && !fio_str_is(fio_o_act, fio_o_actlen, "READWRITE")) {
+        fprintf(stderr, "f77: OPEN ACTION= is READ, WRITE or READWRITE\n"); exit(2);
+    }
+    if (fio_o_pad && fio_o_padlen > 0 && !fio_str_is(fio_o_pad, fio_o_padlen, "YES")) {
+        fprintf(stderr, "f77: OPEN PAD='NO' is not supported\n"); exit(2);
+    }
+    if (fio_o_delim && fio_o_delimlen > 0) {
+        if (fio_str_is(fio_o_delim, fio_o_delimlen, "APOSTROPHE")) fio_udelim[unit] = '\'';
+        else if (fio_str_is(fio_o_delim, fio_o_delimlen, "QUOTE")) fio_udelim[unit] = '"';
+        else if (!fio_str_is(fio_o_delim, fio_o_delimlen, "NONE")) { fprintf(stderr, "f77: OPEN DELIM= is APOSTROPHE, QUOTE or NONE\n"); exit(2); }
+    }
+    fio_o_pos = fio_o_act = fio_o_pad = fio_o_delim = 0;
     strcpy(fio_ufname[unit], scratch ? "" : nm);
     fio_uend[unit] = -1;
     fio_udirect[unit] = direct;
@@ -3431,6 +3591,7 @@ int f77_open(int unit, const char *name, int nlen,
  * open is permitted and does nothing, as the standard says. */
 void f77_close(int unit, const char *status, int slen) {
     int del;
+    fio_pend[fio_pslot(unit)] = 0;          /* a non-advancing READ's record given up */
     if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) return;
     del = (status && slen > 0 && fio_str_is(status, slen, "DELETE"));
     if (status && slen > 0 && !del && !fio_str_is(status, slen, "KEEP")) {
@@ -3460,12 +3621,14 @@ static int  inq_unf;
 static int  inq_recl;
 static long inq_nextrec;
 static int  inq_bz;
+static int  inq_action, inq_posn, inq_delim;
 
 int f77_inquire(int unit, const char *file, int flen) {
     int i;
     fio_init_units();
     inq_unit = -1; inq_exist = 0; inq_opened = 0; inq_name[0] = 0; inq_named = 0;
     inq_direct = 0; inq_unf = 0; inq_recl = 0; inq_nextrec = 0; inq_bz = 0;
+    inq_action = 0; inq_posn = 0; inq_delim = 0;
     if (file && flen > 0) {
         char nm[FIO_MAXNAME];
         FILE *f;
@@ -3500,6 +3663,9 @@ int f77_inquire(int unit, const char *file, int flen) {
     inq_unf = fio_uunf[unit];
     inq_recl = fio_urecl[unit];
     inq_bz = fio_ubz[unit];
+    inq_action = fio_uaction[unit];
+    inq_posn = fio_uposn[unit];
+    inq_delim = fio_udelim[unit];
     if (inq_direct && inq_recl > 0) {
         fflush(fio_ufile[unit]);
         inq_nextrec = ftell(fio_ufile[unit]) / inq_recl + 1;
@@ -3531,12 +3697,21 @@ void f77_inq(int code, void *p, int len) {
     case 12: if (inq_opened && inq_direct) *ip = inq_recl; break;
     case 13: if (inq_opened && inq_direct) *ip = (int)inq_nextrec; break;
     case 14: inq_put_s(cp, len, (!inq_opened || inq_unf) ? "UNDEFINED" : inq_bz ? "ZERO" : "NULL"); break;
+    /* Fortran 90's */
+    case 15: inq_put_s(cp, len, !inq_opened ? "UNDEFINED" : inq_action == 1 ? "READ" : inq_action == 2 ? "WRITE" : "READWRITE"); break;
+    case 16: inq_put_s(cp, len, (!inq_opened || inq_direct) ? "UNDEFINED" : inq_posn == 2 ? "APPEND" : inq_posn == 1 ? "REWIND" : "ASIS"); break;
+    case 17: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_action != 2 ? "YES" : "NO"); break;
+    case 18: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_action != 1 ? "YES" : "NO"); break;
+    case 19: inq_put_s(cp, len, !inq_opened ? "UNKNOWN" : inq_action == 0 ? "YES" : "NO"); break;
+    case 20: inq_put_s(cp, len, (!inq_opened || inq_unf) ? "UNDEFINED" : inq_delim == '\'' ? "APOSTROPHE" : inq_delim == '"' ? "QUOTE" : "NONE"); break;
+    case 21: inq_put_s(cp, len, (!inq_opened || inq_unf) ? "UNDEFINED" : "YES"); break;
     default: break;
     }
 }
 
 void f77_rewind(int unit) {
     FILE *f;
+    fio_pend[fio_pslot(unit)] = 0;          /* a non-advancing READ's record given up */
     fio_init_units();
     if (unit <= 0 || unit >= FIO_MAXUNIT || unit == 5 || unit == 6) {
         fprintf(stderr, "f77: REWIND: unit %d cannot be rewound\n", unit);

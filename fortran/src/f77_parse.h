@@ -17037,15 +17037,18 @@ static void f77_check_format(const char *s, int n) {
             continue;
         }
         if (c == 'B') {
-            i = i + 1;
-            k = f77_fmt_peek(s, n, &i);
-            if (k == 'N' || k == 'Z' || k == 'n' || k == 'z') { i = i + 1; continue; }
-            f77_fmt_bad("B is BN or BZ");
-            return;
+            int j;
+            j = i + 1;
+            k = f77_fmt_peek(s, n, &j);
+            if (k == 'N' || k == 'Z' || k == 'n' || k == 'z') { i = j + 1; continue; }
         }
-        if (c == 'A' || c == 'Z' || c == 'O') {    /* the width may be left out */
+        if (c == 'A' || c == 'Z' || c == 'O' || c == 'B') {    /* Bw.m Ow.m Zw.m (F90); A's width may be left out */
             i = i + 1;
-            (void)f77_fmt_digits(s, n, &i);
+            if (f77_fmt_digits(s, n, &i) < 0 && c == 'B') { f77_fmt_bad("B needs a width, Bw or Bw.m"); return; }
+            if (c != 'A' && f77_fmt_peek(s, n, &i) == '.') {
+                i = i + 1;
+                if (f77_fmt_digits(s, n, &i) < 0) { f77_fmt_bad("a . needs digits after it"); return; }
+            }
             continue;
         }
         if (c == 'I' || c == 'F' || c == 'E' || c == 'D' || c == 'G' || c == 'L') {
@@ -17104,6 +17107,10 @@ static int f77_io_end_label;
 static int f77_io_err_label;
 static int f77_io_iostat;      /* address of the IOSTAT variable, or -1 */
 static int f77_io_rec;         /* REC= value, or -1 */
+static int f77_io_adv = -1;    /* ADVANCE= (F90): its value's address and length, or -1 */
+static int f77_io_adv_len;
+static int f77_io_size;        /* SIZE=: the variable's address, or -1 */
+static int f77_io_eor_label;   /* EOR=, or -1 */
 
 /* A unit or a format may be a whole CHARACTER array: an internal file
  * of its elements' records, the concatenation of its elements. */
@@ -17197,6 +17204,9 @@ static int f77_io_control1(int is_read, int *unit_val, int *fmt_label) {
     f77_io_err_label = -1;
     f77_io_iostat = -1;
     f77_io_rec = -1;
+    f77_io_adv = -1;
+    f77_io_size = -1;
+    f77_io_eor_label = -1;
     f77_io_int = 0;
     if (lx_t != T_LP) { f77_error("I/O statement needs a control list"); return 0; }
     f77_tok();
@@ -17254,6 +17264,23 @@ static int f77_io_control1(int is_read, int *unit_val, int *fmt_label) {
         } else if (strcmp(kw, "REC") == 0) {
             f77_io_rec = f77_expr();
             f77_io_rec = f77_cvt(f77_io_rec, &ex_hi, ex_ty, TY_INT);
+        } else if (strcmp(kw, "ADVANCE") == 0) {
+            f77_io_adv = f77_expr();
+            if (ex_ty != TY_CHAR) { f77_error("ADVANCE= is a CHARACTER value, 'YES' or 'NO'"); return 0; }
+            f77_io_adv_len = ex_len;
+        } else if (strcmp(kw, "SIZE") == 0) {
+            int ss;
+            if (lx_t != T_NAME) { f77_error("SIZE= needs an INTEGER variable"); return 0; }
+            ss = f77_sym(lex_name);
+            f77_tok();
+            if (f77_sty[ss] != TY_INT || f77_slog[ss] || f77_snar[ss]) { f77_error("SIZE= needs an INTEGER variable"); return 0; }
+            f77_sstored[ss] = 1;
+            if (lx_t == T_LP && f77_srank[ss] > 0) { f77_tok(); f77_io_size = f77_subscript_addr(ss); }
+            else f77_io_size = f77_sval[ss];
+        } else if (strcmp(kw, "EOR") == 0) {
+            if (lx_t != T_ICON) { f77_error("EOR= needs a statement label"); return 0; }
+            f77_io_eor_label = lex_ival;
+            f77_tok();
         } else {
             f77_error("unknown keyword in the control list");
             return 0;
@@ -17271,6 +17298,16 @@ static int f77_io_control1(int is_read, int *unit_val, int *fmt_label) {
         f77_error("a CHARACTER unit is an internal file and needs a format");
         return 0;
     }
+    /* ADVANCE= (F90 9.4.1.8): an external file's formatted transfer with
+     * an explicit format; SIZE= and EOR= a non-advancing READ's */
+    if (f77_io_adv >= 0 && (f77_io_int || *fmt_label == -1 || *fmt_label == -4 || *fmt_label == -5)) {
+        f77_error("ADVANCE= is for an external file and an explicit format");
+        return 0;
+    }
+    if ((f77_io_size >= 0 || f77_io_eor_label >= 0) && (!is_read || f77_io_adv < 0)) {
+        f77_error("SIZE= and EOR= are a READ's with ADVANCE=");
+        return 0;
+    }
     return 1;
 }
 
@@ -17278,6 +17315,11 @@ static int f77_io_control1(int is_read, int *unit_val, int *fmt_label) {
  * before the statement opens. */
 static void f77_io_announce(void) {
     if (f77_io_rec >= 0) f77_call_i("f77_set_rec", 1, &f77_io_rec);
+    if (f77_io_adv >= 0) {
+        int args[3];
+        args[0] = f77_io_adv; args[1] = f77_io_adv_len; args[2] = f77_io_size >= 0 ? f77_io_size : f77_iconst(0);
+        f77_call_i("f77_io_adv", 3, args);
+    }
 }
 
 /* After f77_rd_begin: branch on its code -- 1 end of file, 2 error --
@@ -17538,6 +17580,21 @@ static void f77_stmt_read(int skip) {
     f77_io_rd = 0;
     r = hi_emit(HI_CALL, TY_INT, -1, -1, 0, "f77_rd_end");
     h_cbase[r] = h_ncarg;
+    if (f77_io_adv >= 0 && (f77_io_eor_label >= 0 || f77_io_iostat >= 0)) {
+        /* the end of the record: IOSTAT -2 (libgfortran's), EOR= taken */
+        int e;
+        e = f77_call_i("f77_io_eor", 0, NULL);
+        if (f77_io_iostat >= 0)
+            hi_emit(HI_STORE, TY_INT, f77_io_iostat,
+                    f77_select(e, f77_iconst(-2), hi_emit(HI_LOAD, TY_INT, f77_io_iostat, -1, 0, NULL)), 0, NULL);
+        if (f77_io_eor_label >= 0) {
+            int b_cont;
+            b_cont = hir_new_block();
+            hi_emit(HI_BRC, TY_VOID, e, f77_label_blk(f77_io_eor_label), b_cont, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_cont);
+        }
+    }
 }
 
 /* --- OPEN / CLOSE / REWIND -------------------------------------------- */
@@ -17571,6 +17628,7 @@ static void f77_stmt_open(int skip) {
     int acc_addr; int acc_lenv;
     int form_addr; int form_lenv;
     int blank_addr; int blank_lenv;
+    int f9a[4]; int f9l[4];          /* POSITION ACTION PAD DELIM (Fortran 90) */
     int recl_val;
     int err_label;
     int iostat_addr;
@@ -17586,6 +17644,7 @@ static void f77_stmt_open(int skip) {
     acc_addr = -1; acc_lenv = -1;
     form_addr = -1; form_lenv = -1;
     blank_addr = -1; blank_lenv = -1;
+    f9a[0] = f9a[1] = f9a[2] = f9a[3] = -1;
     recl_val = -1;
     err_label = -1;
     iostat_addr = -1;
@@ -17627,6 +17686,13 @@ static void f77_stmt_open(int skip) {
                 } else if (strcmp(kw, "RECL") == 0) {
                     recl_val = f77_expr();
                     recl_val = f77_cvt(recl_val, &ex_hi, ex_ty, TY_INT);
+                } else if (strcmp(kw, "POSITION") == 0 || strcmp(kw, "ACTION") == 0 || strcmp(kw, "PAD") == 0 ||
+                           strcmp(kw, "DELIM") == 0) {
+                    int a; int w;
+                    w = kw[0] == 'P' ? (kw[1] == 'O' ? 0 : 2) : kw[0] == 'A' ? 1 : 3;
+                    a = f77_expr();
+                    if (ex_ty != TY_CHAR) { f77_error("this OPEN specifier needs a CHARACTER value"); return; }
+                    f9a[w] = a; f9l[w] = ex_len;
                 } else if (strcmp(kw, "ERR") == 0) {
                     if (lx_t != T_ICON) { f77_error("ERR= needs a statement label"); return; }
                     err_label = lex_ival;
@@ -17666,6 +17732,14 @@ static void f77_stmt_open(int skip) {
     f77_tok();
     if (!have_unit) { f77_error("OPEN needs a unit"); return; }
 
+    if (f9a[0] >= 0 || f9a[1] >= 0 || f9a[2] >= 0 || f9a[3] >= 0) {
+        int args[8]; int k;
+        for (k = 0; k < 4; k++) {
+            args[2 * k] = f9a[k] >= 0 ? f9a[k] : f77_iconst(0);
+            args[2 * k + 1] = f9a[k] >= 0 ? f9l[k] : f77_iconst(0);
+        }
+        f77_call_i("f77_open_f90", 8, args);
+    }
     /* f77_open(unit, file, flen, status, slen, access, alen, form, fmlen,
      *          blank, blen, recl, recoverable) -> 0 ok, 2 error */
     cb = h_ncarg;
@@ -17781,6 +17855,44 @@ static void f77_stmt_inquire(int skip) {
         else if (strcmp(kw, "RECL") == 0) code = 12;
         else if (strcmp(kw, "NEXTREC") == 0) code = 13;
         else if (strcmp(kw, "BLANK") == 0) code = 14;
+        else if (strcmp(kw, "ACTION") == 0) code = 15;       /* Fortran 90's */
+        else if (strcmp(kw, "POSITION") == 0) code = 16;
+        else if (strcmp(kw, "READ") == 0) code = 17;
+        else if (strcmp(kw, "WRITE") == 0) code = 18;
+        else if (strcmp(kw, "READWRITE") == 0) code = 19;
+        else if (strcmp(kw, "DELIM") == 0) code = 20;
+        else if (strcmp(kw, "PAD") == 0) code = 21;
+        else if (strcmp(kw, "IOLENGTH") == 0) {
+            /* INQUIRE (IOLENGTH=n) list (F90 9.6.3): the bytes an
+             * unformatted record of the list's items takes */
+            int ty; int dst; int tot; int nonc;
+            dst = f77_rd_target(&ty);
+            if (ty != TY_INT) { f77_error("IOLENGTH= needs an INTEGER variable"); return; }
+            if (lx_t != T_RP) { f77_error("INQUIRE (IOLENGTH=) has nothing else in its parentheses"); return; }
+            f77_tok();
+            tot = 0; nonc = 0;
+            while (lx_t != T_EOF) {
+                int s2;
+                if (lx_t == T_NAME && (s2 = f77_sym_find(lex_name)) >= 0 && f77_srank[s2] > 0 &&
+                    !((int)(lx_rte - lx_stmt) < lx_stmt_len && lx_stmt[lx_rte - lx_stmt] == '(')) {
+                    if (f77_adjustable(s2) || f77_sassz[s2] || f77_salloc[s2] || f77_sashape[s2]) nonc = 1;
+                    else tot = tot + f77_esize(s2) * f77_sym_nelem(s2);
+                    f77_tok();
+                } else {
+                    f77_expr();
+                    if (ex_ty == TY_CHAR) {
+                        if (ex_clen < 0) nonc = 1; else tot = tot + ex_clen;
+                    } else if (ex_ty == TY_DERIVED) tot = tot + f77_dt_size[ex_dt];
+                    else tot = tot + f77_tysize(ex_ty);
+                }
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+            }
+            if (nonc) { f77_error("IOLENGTH of an item of no constant size is not supported"); return; }
+            if (lx_t != T_EOF) { f77_error("unexpected text after the INQUIRE list"); return; }
+            hi_emit(HI_STORE, TY_INT, dst, f77_iconst(tot), 0, NULL);
+            return;
+        }
         else { f77_error("unknown INQUIRE specifier"); return; }
         if (code > 0) {
             int ty;
