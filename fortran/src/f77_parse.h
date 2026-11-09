@@ -3402,7 +3402,7 @@ static int f77_primary(void) {
                 return r;
             }
             if (rty == TY_CHAR || rty == TY_DCPLX) {
-                r = rty == TY_CHAR ? f77_char_fcall(cname, f77_slen[s], addrs, lens, nargs)
+                r = rty == TY_CHAR ? f77_char_fcall(cname, me >= 0 ? f77_me_ival[me] : f77_slen[s], addrs, lens, nargs)
                                    : f77_dcx_fcall(cname, fptr, addrs, lens, nargs);
                 f77_tfree_to(mk);
                 return r;
@@ -12585,9 +12585,10 @@ static void f77_mod_proc(int u) {
     f77_me_log[e] = f77_urlog[u];
     f77_me_rrank[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urrank[u] : 0;
     f77_me_private[e] = f77_mod_private(m, f77_uname[u]);
-    if (f77_ukind[u] == F77_UNIT_FUNC && (f77_urty[u] == TY_CHAR || f77_urty[u] == TY_DCPLX)) {
-        f77_error("a CHARACTER or COMPLEX*16 module FUNCTION is not supported yet");
-        return;
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
+        /* its callers pass the result's buffer, of the length it has */
+        if (f77_urlen[u] < 0) { f77_error("a module FUNCTION of assumed CHARACTER length is not supported"); return; }
+        f77_me_ival[e] = f77_urlen[u];
     }
     lx_pos = f77_upos[u];
     lx_line = f77_uline[u];
@@ -12653,6 +12654,7 @@ static void f77_me_bind(int e, char *local) {
         f77_slog[s] = f77_me_log[e];
         f77_slink[s] = f77_me_str[e];
         f77_sme[s] = e;
+        if (f77_me_ty[e] == TY_CHAR) f77_slen[s] = f77_me_ival[e];     /* a CHARACTER FUNCTION's result */
         return;
     }
     if (f77_me_kind[e] == F77_ME_VAR) {
@@ -12785,6 +12787,7 @@ static void f77_host_save(int u) {
             f77_me_ty[e] = f77_me_ty[o]; f77_me_log[e] = f77_me_log[o];
             f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o];
             f77_me_nargs[e] = f77_me_nargs[o];
+            f77_me_ival[e] = f77_me_ival[o]; f77_me_rrank[e] = f77_me_rrank[o]; f77_me_dnames[e] = f77_me_dnames[o];
             memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
             continue;
         }
@@ -12906,7 +12909,7 @@ static int f77_mod_read(char *nm) {
     close(fd);
     if (n < 0) n = 0;
     buf[n] = 0;
-    if (strncmp(buf, "F77MOD 2 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
+    if (strncmp(buf, "F77MOD 3 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
     m = f77_mod_new(nm, -1);
     if (m < 0) { free(buf); return -2; }
     p = strchr(buf, '\n');
@@ -12936,16 +12939,17 @@ static int f77_mod_read(char *nm) {
                 p = q ? q + 1 + len : p;
             }
         } else if (kind == 'R') {
-            int pk; int ty; int lg; int rr; int na; int a;
+            int pk; int ty; int lg; int rr; int iv; int na; int a;
             char link[F77_MAX_LINK];
             char *q;
             e = f77_me_new(m, name, F77_ME_PROC);
             if (e < 0) break;
-            sscanf(p + 2, "%*s %255s %d %d %d %d %d", link, &pk, &ty, &lg, &rr, &na);
+            sscanf(p + 2, "%*s %255s %d %d %d %d %d %d", link, &pk, &ty, &lg, &rr, &iv, &na);
             f77_me_str[e] = strdup(link);
-            f77_me_pkind[e] = pk; f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_rrank[e] = rr; f77_me_nargs[e] = na;
+            f77_me_pkind[e] = pk; f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_rrank[e] = rr; f77_me_ival[e] = iv;
+            f77_me_nargs[e] = na;
             q = p + 2;
-            for (a = 0; a < 7; a++) { while (*q && *q != ' ') q++; while (*q == ' ') q++; }
+            for (a = 0; a < 8; a++) { while (*q && *q != ' ') q++; while (*q == ' ') q++; }
             for (a = 0; a < na && a < 16; a++) {
                 f77_me_argty[e][a] = (int)strtol(q, &q, 10);
             }
@@ -13015,7 +13019,7 @@ static void f77_mod_write(void) {
         strcpy(path + k, ".mod");
         f = fopen(path, "w");
         if (!f) { f77_error("cannot write a .mod file"); return; }
-        fprintf(f, "F77MOD 2 %s\n", f77_mod_name[m]);
+        fprintf(f, "F77MOD 3 %s\n", f77_mod_name[m]);
         for (e = 0; e < f77_nme; e++) {
             if (f77_me_mod[e] != m) continue;
             if (f77_me_private[e]) fprintf(f, "H %s\n", f77_me_name[e]);    /* before the entity it hides */
@@ -13026,8 +13030,8 @@ static void f77_mod_write(void) {
                 fputc('\n', f);
             } else if (f77_me_kind[e] == F77_ME_PROC) {
                 int a;
-                fprintf(f, "R %s %s %d %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
-                        f77_me_log[e], f77_me_rrank[e], f77_me_nargs[e]);
+                fprintf(f, "R %s %s %d %d %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
+                        f77_me_log[e], f77_me_rrank[e], f77_me_ival[e], f77_me_nargs[e]);
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
                 if (f77_me_dnames[e]) fprintf(f, " = %s", f77_me_dnames[e]);
                 fputc('\n', f);

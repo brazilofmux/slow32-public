@@ -352,6 +352,7 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf 'module m\ncontains\nfunction f()\ncharacter(len=*) :: f\nf = "a"\nend function\nend module\n' > "$W/modclen.f90"
     printf 'program p\ncall ext(k=1)\nend\n' > "$W/kwext.f90"
     printf 'program p\ncall s()\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/optmiss.f90"
     printf 'program p\ncall s(1, z=2)\ncontains\nsubroutine s(i, j)\ninteger, optional :: j\nend subroutine\nend\n' > "$W/kwnone.f90"
@@ -430,6 +431,7 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "modclen:line 6: a module FUNCTION of assumed CHARACTER length is not supported" \
              "kwext:line 2: keyword arguments to EXT need an explicit interface" \
              "optmiss:line 2: no actual argument for I, which is not OPTIONAL, of S" \
              "kwnone:line 2: S has no dummy argument Z" \
