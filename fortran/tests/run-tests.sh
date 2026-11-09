@@ -365,6 +365,8 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    printf 'real, target :: a(5)\nreal, pointer :: p(:)\ninteger :: iv(2)\np => a(iv)\nend\n' > "$W/vecptr.f90"
+    printf 'integer :: a(5), iv(2), jv(2)\nprint *, a(iv(jv))\nend\n' > "$W/vecvec.f90"
     printf 'integer :: v(2)\nv = transfer(1.0d0, v)\nprint *, transfer(1.0d0, (/ 0 /))\nend\n' > "$W/trarr.f90"
     printf 'integer :: k\ncall random_number(k)\nend\n' > "$W/rndint.f90"
     printf 'print *, modulo(7, 2.0)\nend\n' > "$W/modmix.f90"
@@ -500,6 +502,8 @@ if [ -x "$F77" ]; then
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "vecptr:line 4: a section with a vector subscript is not supported here" \
+             "vecvec:line 2: a vector subscript with a vector subscript of its own is not supported" \
              "trarr:line 3: TRANSFER with an array result is supported only as an actual argument" \
              "rndint:line 2: RANDOM_NUMBER's HARVEST is REAL or DOUBLE PRECISION" \
              "modmix:line 1: MODULO's arguments are both INTEGER or both REAL of one kind" \

@@ -2559,15 +2559,50 @@ static int f77_substr_off(int lenv, int clen) {
 static int f77_paren_has_colon_at(int i);
 static int f77_paren_has_colon(void) { return f77_paren_has_colon_at((int)(lx_rts - lx_stmt)); }
 /* Is there a ':' at the top level of the parentheses opening at text offset i? */
+/* Is the text at offset i, up to the ',' or ')' ending a subscript, a
+ * vector subscript: a rank-1 INTEGER array's name, or a section of one? */
+static int f77_paren_has_colon_at(int i);
+static int f77_text_is_vecsub(int i) {
+    char nm[F77_MAX_NAME]; int k; int s;
+    k = 0;
+    while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) { if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[i]; i++; }
+    nm[k] = 0;
+    if (k == 0 || !lx_isalpha(nm[0])) return 0;
+    s = f77_sym_find(nm);
+    if (s < 0 || f77_srank[s] != 1 || f77_sty[s] != TY_INT || f77_slog[s] || f77_sparam[s] || f77_sexternal[s]) return 0;
+    if (i < lx_stmt_len && lx_stmt[i] == '(') {
+        if (!f77_paren_has_colon_at(i)) return 0;
+        i = f77_match_paren(i);
+    }
+    return i < lx_stmt_len && (lx_stmt[i] == ',' || lx_stmt[i] == ')');
+}
+/* Has the subscript list opening at text offset i a vector subscript? */
+static int f77_paren_has_vecsub_at(int i) {
+    int depth;
+    if (i < 0 || i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    depth = 0;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; }
+        else if (lx_stmt[i] == '(') { depth = depth + 1; if (depth == 1 && f77_text_is_vecsub(i + 1)) return 1; }
+        else if (lx_stmt[i] == ')') { depth = depth - 1; if (depth == 0) return 0; }
+        else if (lx_stmt[i] == ',' && depth == 1 && f77_text_is_vecsub(i + 1)) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
 static int f77_paren_has_colon_at(int i) {
     int depth;
     if (i < 0 || i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
     depth = 0;
     while (i < lx_stmt_len) {
         if (lx_stmt[i] == '\'') { i = i + 1; while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1; }
-        else if (lx_stmt[i] == '(') depth = depth + 1;
+        else if (lx_stmt[i] == '(') {
+            depth = depth + 1;
+            if (depth == 1 && f77_text_is_vecsub(i + 1)) return 1;      /* a vector subscript makes a section too */
+        }
         else if (lx_stmt[i] == ')') { depth = depth - 1; if (depth == 0) return 0; }
         else if (lx_stmt[i] == ':' && depth == 1) return 1;
+        else if (lx_stmt[i] == ',' && depth == 1 && f77_text_is_vecsub(i + 1)) return 1;
         i = i + 1;
     }
     return 0;
@@ -4948,6 +4983,46 @@ static void f77_dim_bounds(int s, int k, int *lo, int *hi) {
     *hi = hi_emit(HI_ADDI, TY_INT, *hi, -1, -1, NULL);
 }
 
+/* Vector subscripts (F90 6.2.2.3.2): a section's subscript that is a
+ * rank-1 INTEGER array -- a variable, a section of one, a constructor
+ * the hoist made one -- has, as a triplet would, an extent (the vector's)
+ * and a lower bound, here a value of its own that says which vector; the
+ * element its p-th position (from 0) names is the vector's (f77_sec_at).
+ * Every user of a section's bounds goes through f77_sec_at, or refuses a
+ * vector (f77_sec_has_vec). */
+#define F77_MAX_VEC 64
+static int f77_vec_lo[F77_MAX_VEC];      /* the marker value */
+static int f77_vec_sym[F77_MAX_VEC];
+static int f77_vec_vlo[F77_MAX_VEC];     /* the vector's first position and stride, in its own subscripts */
+static int f77_vec_vst[F77_MAX_VEC];
+static int f77_vec_n;
+static int f77_vec_find(int lo) {
+    int k;
+    for (k = 0; k < F77_MAX_VEC && k < f77_vec_n; k++) if (f77_vec_lo[k] == lo) return k;
+    return -1;
+}
+static int f77_elem_addr(int s, int *subs, int nsub);
+static int f77_extent(int lo, int hi, int st);
+/* The subscript at position c (from 0) of a section's dimension whose
+ * lower bound is lo, stride st. */
+static int f77_sec_at(int lo, int st, int c) {
+    int v; int sub;
+    v = lo >= 0 ? f77_vec_find(lo) : -1;
+    if (v < 0) return hi_emit(HI_ADD, TY_INT, lo, hi_emit(HI_MUL, TY_INT, c, st, 0, NULL), 0, NULL);
+    sub = hi_emit(HI_ADD, TY_INT, f77_vec_vlo[v], hi_emit(HI_MUL, TY_INT, c, f77_vec_vst[v], 0, NULL), 0, NULL);
+    return f77_load_at(f77_elem_addr(f77_vec_sym[v], &sub, 1), TY_INT);
+}
+/* ... from a loop that runs lo..hi by st: its variable's value i. */
+static int f77_sec_loopv(int lo, int i) {
+    if (lo < 0 || f77_vec_find(lo) < 0) return i;
+    return f77_sec_at(lo, f77_iconst(1), hi_emit(HI_ADDI, TY_INT, i, -1, -1, NULL));
+}
+static int f77_sec_has_vec(int *lo, int *trip, int rank) {
+    int k;
+    for (k = 0; k < rank; k++) if (trip[k] && f77_vec_find(lo[k]) >= 0) return 1;
+    return 0;
+}
+
 /* The subscripts of a section, lx_t just past its '(' and the ')' eaten:
  * per dimension a scalar (trip[k] 0, idx[k] its value) or a triplet
  * (trip[k] 1, lo/hi/st[k]).  Returns the number of triplets, -1 on error. */
@@ -4961,6 +5036,38 @@ static int f77_section_subs(int s, int *idx, int *trip, int *lo, int *hi, int *s
         trip[k] = 0;
         idx[k] = -1;
         f77_sec_full[k] = lx_t == T_COLON;
+        if (lx_t == T_NAME && f77_text_is_vecsub((int)(lx_rts - lx_stmt))) {
+            /* a vector subscript */
+            int vs; int vlo; int vst; int n; int v;
+            vs = f77_sym(lex_name);
+            f77_tok();
+            if (lx_t == T_LP) {
+                int i2[F77_MAX_RANK]; int t2[F77_MAX_RANK]; int l2[F77_MAX_RANK]; int h2[F77_MAX_RANK]; int s2[F77_MAX_RANK];
+                f77_tok();
+                if (f77_section_subs(vs, i2, t2, l2, h2, s2) != 1) return -1;
+                if (f77_vec_find(l2[0]) >= 0) { f77_error("a vector subscript with a vector subscript of its own is not supported"); return -1; }
+                vlo = l2[0]; vst = s2[0]; n = f77_extent(l2[0], h2[0], s2[0]);
+            } else {
+                int dl; int dh;
+                f77_dim_bounds(vs, 0, &dl, &dh);
+                if (dh < 0) { f77_error("an assumed-size array as a vector subscript"); return -1; }
+                vlo = dl; vst = f77_iconst(1); n = f77_extent(dl, dh, f77_iconst(1));
+            }
+            if (f77_vec_n >= F77_MAX_VEC) { f77_error("too many vector subscripts in one statement"); return -1; }
+            v = f77_vec_n;
+            f77_vec_n = f77_vec_n + 1;
+            f77_vec_lo[v] = hi_emit(HI_ADDI, TY_INT, f77_iconst(1), -1, 0, NULL);   /* 1, a value of its own */
+            f77_vec_sym[v] = vs; f77_vec_vlo[v] = vlo; f77_vec_vst[v] = vst;
+            trip[k] = 1;
+            nt = nt + 1;
+            lo[k] = f77_vec_lo[v];
+            hi[k] = n;
+            st[k] = f77_iconst(1);
+            f77_sec_full[k] = 0;
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+            continue;
+        }
         if (lx_t != T_COLON) {
             idx[k] = f77_expr();
             idx[k] = f77_cvt(idx[k], &ex_hi, ex_ty, TY_INT);
@@ -5075,18 +5182,9 @@ static int f77_aex_first(int from, int to, int *at) {
             sy = f77_sym_find(nm);
             if (sy >= 0 && f77_srank[sy] > 0 && !f77_sparam[sy]) {
                 if (!paren) { *at = b; return sy; }            /* a whole array */
-                {
-                    int d;
-                    int j;
-                    d = 0;
-                    for (j = i; j < to; j++) {
-                        if (lx_stmt[j] == '\'') { j = j + 1; while (j < to && lx_stmt[j] != '\'') j = j + 1; continue; }
-                        if (lx_stmt[j] == '(') d = d + 1;
-                        else if (lx_stmt[j] == ')') { d = d - 1; if (d == 0) break; }
-                        else if (lx_stmt[j] == ':' && d == 1) { *at = b; return sy; }   /* a section */
-                    }
-                }
-                continue;   /* an element: a whole array in its subscripts is a vector subscript's */
+                if (f77_paren_has_colon_at(i)) { *at = b; return sy; }   /* a section, vector subscripts too */
+                i = f77_match_paren(i);                    /* an element: its subscripts scalars */
+                continue;
             }
             if (paren) {
                 int in;
@@ -5179,9 +5277,7 @@ static int f77_aex_elem(int s, int whole) {
         t = 0;
         for (k = 0; k < f77_srank[s]; k++) {
             if (trip[k]) {
-                int c;
-                c = hi_emit(HI_MUL, TY_INT, f77_aex_cnt[t], st[k], 0, NULL);
-                cur[k] = hi_emit(HI_ADD, TY_INT, lo[k], c, 0, NULL);
+                cur[k] = f77_sec_at(lo[k], st[k], f77_aex_cnt[t]);
                 t = t + 1;
             } else {
                 cur[k] = idx[k];
@@ -5250,7 +5346,7 @@ static int f77_aa_target(int s, int *idx, int *tdim, int *lo, int *st, int *cnt,
     int j;
     for (k = 0; k < f77_srank[s]; k++) cur[k] = idx[k];
     for (j = 0; j < nt; j++)
-        cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]], hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
+        cur[tdim[j]] = f77_sec_at(lo[tdim[j]], st[tdim[j]], cnt[j]);
     return f77_elem_addr(s, cur, f77_srank[s]);
 }
 
@@ -5424,7 +5520,7 @@ static void f77_acon_value(int v) {
         int cur[F77_MAX_RANK];
         int k;
         for (k = 0; k < f77_acon_rank; k++) cur[k] = f77_acon_idx[k];
-        cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, f77_acon_lo, hi_emit(HI_MUL, TY_INT, p, f77_acon_st, 0, NULL), 0, NULL);
+        cur[f77_acon_tdim] = f77_sec_at(f77_acon_lo, f77_acon_st, p);
         addr = f77_elem_addr(s, cur, f77_acon_rank);
         f77_aa_store(s, addr, f77_acon_doff, f77_acon_dlen, v, vty == TY_CHAR ? vhi : vty, vhi);
     }
@@ -5504,7 +5600,7 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
         v = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, c, esz, 0, NULL), 0, NULL);
         if (f77_sty[s] != TY_CHAR) v = f77_load_at(v, mty);
         for (k = 0; k < f77_acon_rank; k++) cur[k] = idx[k];
-        cur[f77_acon_tdim] = hi_emit(HI_ADD, TY_INT, lo[f77_acon_tdim], hi_emit(HI_MUL, TY_INT, c, st[f77_acon_tdim], 0, NULL), 0, NULL);
+        cur[f77_acon_tdim] = f77_sec_at(lo[f77_acon_tdim], st[f77_acon_tdim], c);
         f77_aa_store(s, f77_elem_addr(s, cur, f77_acon_rank), doff, dlen, v,
                      f77_sty[s] == TY_CHAR ? dlen : mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : f77_sty[s], ex_hi);
         f77_loop_end(&cl);
@@ -5655,7 +5751,7 @@ static void f77_array_assign1(int s, int whole) {
         {
             int cur[F77_MAX_RANK];
             for (k = 0; k < rank; k++)
-                cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+                cur[k] = trip[k] ? f77_sec_loopv(lo[k], hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL)) : idx[k];
             f77_aa_store(s, f77_elem_addr(s, cur, rank), doff, dlen, v, isch ? vlen : ty, vhi);
         }
         for (k = 0; k < rank; k++)
@@ -5822,6 +5918,7 @@ static int f77_expr_at(int from, int to) {
 static int f77_extent(int lo, int hi, int st) {
     int e;
     int cl; int ch; int cs;
+    if (lo >= 0 && f77_vec_find(lo) >= 0) return hi;     /* a vector subscript's: the vector's */
     /* constant bounds, a constant extent: what the conformance check reads */
     if (f77_hconst(lo, &cl) && f77_hconst(hi, &ch) && f77_hconst(st, &cs) && cs != 0) {
         e = (ch - cl + cs) / cs;
@@ -11332,7 +11429,7 @@ static int f77_transfer_actual(void) {
             for (k = rank - 1; k >= 0; k--)
                 if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
             for (k = 0; k < rank; k++)
-                cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+                cur[k] = trip[k] ? f77_sec_loopv(lo[k], hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL)) : idx[k];
             p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
             f77_copy_bytes(hi_emit(HI_ADD, HL_ADDR_TY, tmp, p, 0, NULL), f77_elem_addr(s, cur, rank), esz);
             hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, esz, NULL), 0, NULL);
@@ -11407,9 +11504,7 @@ static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *
     for (k = rank - 1; k >= 0; k--)
         if (trip[k]) f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
     for (k = 0; k < rank; k++)
-        cur[k] = trip[k] ? hi_emit(HI_ADD, TY_INT, lo[k],
-                                   hi_emit(HI_MUL, TY_INT, hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL), st[k], 0, NULL), 0, NULL)
-                         : idx[k];
+        cur[k] = trip[k] ? f77_sec_at(lo[k], st[k], hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL)) : idx[k];
     ea = f77_elem_addr(s, cur, rank);
     if (soff >= 0) ea = hi_emit(HI_ADD, HL_ADDR_TY, ea, soff, 0, NULL);
     p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
@@ -11463,6 +11558,11 @@ static int f77_aa_section(int s) {
     f77_aa_sec[e] = 1;
     nt = f77_section_subs(s, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], hi, f77_aa_st[e]);
     if (nt < 0) { f77_act_aa = -1; return f77_iconst(0); }
+    if (f77_sec_has_vec(f77_aa_lo[e], f77_aa_trip[e], f77_srank[s])) {
+        f77_error("a section with a vector subscript is not supported here");
+        f77_act_aa = -1;
+        return f77_iconst(0);
+    }
     f77_nsec_rank = nt;
     last = -1;
     for (k = 0; k < f77_srank[s]; k++) {
@@ -12607,7 +12707,7 @@ static int f77_av_operand(int from, int to) {
     int ext[F77_MAX_RANK];
     sy = f77_aex_first(from, to, &at);
     if (sy < 0) { f77_error("an array-valued intrinsic needs an array argument here"); return -1; }
-    if (at == from && f77_text_is_operand(sy, from, to)) {
+    if (at == from && f77_text_is_operand(sy, from, to) && !f77_paren_has_vecsub_at(at + (int)strlen(f77_sname[sy]))) {
         int d;
         int saved;
         saved = f77_naa;
@@ -13415,7 +13515,8 @@ static void f77_hoist_actuals(void) {
             sy = f77_aex_first(A.from[k], A.to[k], &at);
             if (sy < 0) continue;
             if (at == A.from[k] && (f77_sty[sy] == TY_CHAR ? f77_text_is_char_operand(sy, A.from[k], A.to[k])
-                                                           : f77_text_is_operand(sy, A.from[k], A.to[k]))) continue;
+                                                           : f77_text_is_operand(sy, A.from[k], A.to[k])) &&
+                !f77_paren_has_vecsub_at(at + (int)strlen(f77_sname[sy]))) continue;   /* a vector subscript's: a copy */
             h = f77_av_operand(A.from[k], A.to[k]);
             if (h < 0) break;
             f77_text_replace(A.from[k], A.to[k], h);
@@ -16358,7 +16459,7 @@ static void f77_io_section(int s) {
     for (k = f77_srank[s] - 1; k >= 0; k--)
         if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
     for (k = 0; k < f77_srank[s]; k++)
-        cur[k] = trip[k] ? hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL) : idx[k];
+        cur[k] = trip[k] ? f77_sec_loopv(lo[k], hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL)) : idx[k];
     if (soff >= 0)
         f77_io_chars(hi_emit(HI_ADD, HL_ADDR_TY, f77_elem_addr(s, cur, f77_srank[s]), soff, 0, NULL), slen);
     else
@@ -18583,6 +18684,7 @@ static void f77_statement(void) {
      * is scanned must be used up (see done:) */
     lx_t = T_EOF;
     nerr0 = f77_nerr;
+    f77_vec_n = 0;                     /* a statement's vector subscripts (f77_sec_at) */
     cls = f77_classify();
 
     /* A construct name (the card reader took it off the text) is on a
