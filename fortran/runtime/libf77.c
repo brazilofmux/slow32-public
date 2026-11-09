@@ -893,6 +893,13 @@ static void fio_list_out_real(double v, int dbl) {
     int fblanks = dbl ? 5 : 4;
     double lim = dbl ? 1e17 : 1e9;
     fio_putc(' ');
+    if (v != v || v - v != 0.0) {
+        /* gfortran's Infinity, -Infinity, NaN, right in the full field */
+        fio_field(v != v ? "NaN" : v < 0 ? "-Infinity" : "Infinity", width);
+        fio_first_item = 0;
+        fio_prev_char = 0;
+        return;
+    }
     if (v == 0.0 || (a >= 0.1 && a < lim)) {
         int intd = 0;
         double t = a;
@@ -1230,6 +1237,23 @@ void f77_wr_d(double v) {
     d = fio_want();
     if (d == 0) return;
     if (d == 'A') { fio_hol_out(&v, (int)sizeof v); return; }   /* DOUBLE PRECISION text, 8 bytes */
+    if (d != 'I' && (v != v || v - v != 0.0)) {
+        /* Infinity and NaN under F, E, D, G, ES, EN: libgfortran's text.
+         * "Infinity" when 8 columns are left after the sign, else "Inf", the sign
+         * before it (- always, + under SP); "NaN" unsigned; asterisks below
+         * 3 columns or where the sign will not fit.  It was formatted as a
+         * number: E12.3 gave 0.INFE+01 (LAPACK's SBAL suite). */
+        int w = fio_w;
+        if (v != v) strcpy(buf, "NaN");
+        else {
+            char sgn = v < 0 ? '-' : fio_sp ? '+' : 0;
+            const char *t = w - (sgn ? 1 : 0) >= 8 ? "Infinity" : "Inf";
+            if (sgn) { buf[0] = sgn; strcpy(buf + 1, t); } else strcpy(buf, t);
+        }
+        fio_field(buf, w);                 /* asterisks when it does not fit */
+        fio_consumed();
+        return;
+    }
     if (d == 'I') {
         snprintf(buf, sizeof buf, "%d", (int)v);
     } else if (d == 'F') {
