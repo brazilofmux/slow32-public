@@ -2179,6 +2179,7 @@ static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
+static void f77_hide_assoc(char *nm);
 
 /* A call to a runtime routine taking `n` word arguments, result in r1. */
 static int f77_call_i(char *name, int n, int *args) {
@@ -9219,6 +9220,16 @@ static int f77_sym_find(char *nm) {
     return -1;
 }
 
+/* A dummy argument or a FUNCTION's result named as a module's entity the
+ * procedure has by host association hides it (F90 12.1.2.2.1).  An
+ * undeclared dummy named as a module's variable or PARAMETER had been
+ * the module's. */
+static void f77_hide_assoc(char *nm) {
+    int s;
+    s = f77_sym_find(nm);
+    if (s >= 0 && f77_sassoc[s]) f77_sname[s][0] = '%';
+}
+
 /* The symbol a declaration of nm declares: a module's entity a module
  * procedure has by host association is hidden by it, a local of its own
  * (F90 12.1.2.2.1); one a USE gave cannot be declared again (11.3.2). */
@@ -12843,6 +12854,7 @@ static void f77_bind_unit(int u) {
                     continue;
                 }
                 if (lx_t != T_NAME) { f77_error("bad dummy argument"); break; }
+                f77_hide_assoc(lex_name);
                 s = f77_sym_param(lex_name, nparam);
                 if (f77_ci_n < F77_MAX_COPYIN) {
                     f77_ci_sym[f77_ci_n] = s;
@@ -12865,6 +12877,7 @@ static void f77_bind_unit(int u) {
         /* an array: a local of the declared shape, the caller's
          * descriptor hidden param 0 (f77_afn_copyout) */
         f77_result_desc = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
+        f77_hide_assoc(f77_unit_rname(u));
         f77_result_sym = f77_sym(f77_unit_rname(u));
         f77_sty[f77_result_sym] = f77_urty[u];
         f77_slog[f77_result_sym] = f77_urlog[u];
@@ -12874,6 +12887,7 @@ static void f77_bind_unit(int u) {
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
         /* The result is the caller's buffer: a by-reference CHARACTER
          * dummy in all but name, with its length in hidden param 1. */
+        f77_hide_assoc(f77_unit_rname(u));
         f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
         f77_sty[f77_result_sym] = TY_CHAR;
         f77_styped[f77_result_sym] = 1;
@@ -12882,10 +12896,12 @@ static void f77_bind_unit(int u) {
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) {
         /* The result is the caller's 16-byte temporary, hidden param 0
          * (f77_dcx_fcall): a by-reference COMPLEX*16 dummy in all but name. */
+        f77_hide_assoc(f77_unit_rname(u));
         f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
         f77_sty[f77_result_sym] = TY_DCPLX;
         f77_styped[f77_result_sym] = 1;
     } else if (f77_ukind[u] == F77_UNIT_FUNC) {
+        f77_hide_assoc(f77_unit_rname(u));
         f77_result_sym = f77_sym(f77_unit_rname(u));
         f77_sty[f77_result_sym] = f77_urty[u];
         f77_slog[f77_result_sym] = f77_urlog[u];
