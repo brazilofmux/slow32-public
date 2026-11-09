@@ -121,6 +121,26 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    the array intrinsics (SUM, PRODUCT, MAXVAL, MINVAL, DOT_PRODUCT, MATMUL,
    TRANSPOSE, RESHAPE, SPREAD, SHAPE, SIZE, LBOUND, UBOUND, ANY, ALL, COUNT,
    PACK, UNPACK, CSHIFT, EOSHIFT, MERGE).
+
+   **Status 2026-11-08:**
+   - Done:
+     - reductions of any array expression: SUM, PRODUCT, MAXVAL,
+       MINVAL, COUNT, ANY, ALL, DOT_PRODUCT, MAXLOC and MINLOC (rank 1),
+       with MASK;
+     - SIZE, LBOUND and UBOUND with DIM;
+     - WHERE, the statement and the construct;
+     - sections as actual arguments (copied in and out unless plainly
+       contiguous);
+     - assumed-shape dummies, through the descriptor above.  The scan
+       and the `.mod` file tell a caller which dummies take one;
+       anything else gets the array's storage, packed if needed.
+   - Found on the way: MAXVAL of no INTEGER elements was -HUGE, not
+     -HUGE-1.
+   - Left: the array-valued intrinsics (MATMUL, TRANSPOSE, RESHAPE,
+     SPREAD, PACK, UNPACK, CSHIFT, EOSHIFT, MERGE, SHAPE; LBOUND and
+     UBOUND without DIM; reductions with DIM on rank 2 and above), array
+     expressions in I/O lists and as actual arguments, and constructors
+     inside expressions.
 4. **Procedures and modules**: modules and USE (ONLY, renames,
    PUBLIC/PRIVATE), explicit interfaces, OPTIONAL and keyword arguments,
    generic interfaces, operator and assignment overloading, internal
