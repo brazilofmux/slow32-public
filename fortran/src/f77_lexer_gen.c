@@ -55,6 +55,7 @@
 #define T_NEQV   27
 #define T_TRUE   28
 #define T_FALSE  29
+#define T_PCT    30   /* % (Fortran 90: a component of a structure) */
 
 /* === Current token === */
 
@@ -181,11 +182,11 @@ static int f77_number(char *ts, char *te, char *pe) {
 }
 
 
-#line 255 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 257 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 
 
 
-#line 189 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 190 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 static const int f77_lexer_start = 38;
 static const int f77_lexer_first_final = 38;
 static const int f77_lexer_error = 0;
@@ -193,7 +194,7 @@ static const int f77_lexer_error = 0;
 static const int f77_lexer_en_main = 38;
 
 
-#line 258 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 260 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 
 /* Point the scanner at the statement the card reader just assembled. */
 static void f77_lex_stmt_init(void) {
@@ -204,7 +205,7 @@ static void f77_lex_stmt_init(void) {
     lx_rp = lx_stmt;
     lx_rpe = lx_stmt + lx_stmt_len;
     
-#line 208 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 209 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	{
 	cs = f77_lexer_start;
 	ts = 0;
@@ -212,7 +213,7 @@ static void f77_lex_stmt_init(void) {
 	act = 0;
 	}
 
-#line 268 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 270 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
     lx_rcs = cs;
     lx_ract = act;
     lx_rts = ts;
@@ -242,7 +243,7 @@ static void f77_tok(void) {
     if (p >= pe) return;
 
     
-#line 246 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 247 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
@@ -261,184 +262,188 @@ tr0:
 	}
 	goto st38;
 tr13:
-#line 211 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 212 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{{p = ((te))-1;}{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
 	goto st38;
 tr18:
-#line 198 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 199 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_AND;   {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr20:
-#line 192 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 193 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_EQ;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr22:
-#line 201 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 202 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_EQV;   {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr27:
-#line 204 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 205 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_FALSE; {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr30:
-#line 197 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 198 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_GE;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr31:
-#line 196 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 197 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_GT;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr34:
-#line 195 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 196 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_LE;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr35:
-#line 194 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 195 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_LT;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr38:
-#line 193 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 194 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_NE;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr41:
-#line 202 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 203 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_NEQV;  {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr43:
-#line 200 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 201 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_NOT;   {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr45:
-#line 199 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 200 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_OR;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr49:
-#line 203 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 204 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_TRUE;  {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr50:
-#line 207 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 208 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{{p = ((te))-1;}{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
 	goto st38;
 tr53:
-#line 219 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 220 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{{p = ((te))-1;}{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
 	goto st38;
 tr58:
-#line 233 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p+1;{ lx_t = T_LP;     {p++; cs = 38; goto _out;} }}
+#line 250 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_PCT;    {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr59:
 #line 234 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_LP;     {p++; cs = 38; goto _out;} }}
+	goto st38;
+tr60:
+#line 235 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_RP;     {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr61:
-#line 244 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr62:
+#line 245 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_PLUS;   {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr62:
-#line 235 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr63:
+#line 236 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_COMMA;  {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr63:
-#line 245 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr64:
+#line 246 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_MINUS;  {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr67:
-#line 248 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr68:
+#line 249 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_COLON;  {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr71:
-#line 252 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr72:
+#line 254 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{ /* skip */ }}
 	goto st38;
-tr72:
-#line 228 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr73:
+#line 229 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{ f77_name_tok(ts, te); {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr73:
-#line 225 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr74:
+#line 226 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{ f77_string_tok(ts, te); {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr74:
-#line 246 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr75:
+#line 247 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{ lx_t = T_STAR;   {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr75:
-#line 231 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr76:
+#line 232 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_POWER;  {p++; cs = 38; goto _out;} }}
 	goto st38;
-tr76:
-#line 211 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr77:
+#line 212 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
-	goto st38;
-tr78:
-#line 247 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p;p--;{ lx_t = T_SLASH;  {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr79:
-#line 232 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p+1;{ lx_t = T_CONCAT; {p++; cs = 38; goto _out;} }}
+#line 248 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p;p--;{ lx_t = T_SLASH;  {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr80:
-#line 239 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p+1;{ lx_t = T_NE;     {p++; cs = 38; goto _out;} }}
+#line 233 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_CONCAT; {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr81:
-#line 219 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 240 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_NE;     {p++; cs = 38; goto _out;} }}
+	goto st38;
+tr82:
+#line 220 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
 	goto st38;
-tr84:
-#line 207 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p;p--;{
-            p = ts + f77_number(ts, te, pe) - 1;
-            {p++; cs = 38; goto _out;}
-        }}
-	goto st38;
-tr86:
-#line 215 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+tr85:
+#line 208 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p;p--;{
             p = ts + f77_number(ts, te, pe) - 1;
             {p++; cs = 38; goto _out;}
         }}
 	goto st38;
 tr87:
-#line 240 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p;p--;{ lx_t = T_LT;     {p++; cs = 38; goto _out;} }}
+#line 216 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p;p--;{
+            p = ts + f77_number(ts, te, pe) - 1;
+            {p++; cs = 38; goto _out;}
+        }}
 	goto st38;
 tr88:
 #line 241 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p+1;{ lx_t = T_LE;     {p++; cs = 38; goto _out;} }}
+	{te = p;p--;{ lx_t = T_LT;     {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr89:
-#line 236 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p;p--;{ lx_t = T_ASSIGN; {p++; cs = 38; goto _out;} }}
+#line 242 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_LE;     {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr90:
-#line 238 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p+1;{ lx_t = T_EQ;     {p++; cs = 38; goto _out;} }}
+#line 237 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p;p--;{ lx_t = T_ASSIGN; {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr91:
-#line 242 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
-	{te = p;p--;{ lx_t = T_GT;     {p++; cs = 38; goto _out;} }}
+#line 239 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p+1;{ lx_t = T_EQ;     {p++; cs = 38; goto _out;} }}
 	goto st38;
 tr92:
 #line 243 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+	{te = p;p--;{ lx_t = T_GT;     {p++; cs = 38; goto _out;} }}
+	goto st38;
+tr93:
+#line 244 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{te = p+1;{ lx_t = T_GE;     {p++; cs = 38; goto _out;} }}
 	goto st38;
 st38:
@@ -451,21 +456,22 @@ st38:
 case 38:
 #line 1 "NONE"
 	{ts = p;}
-#line 455 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 460 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	switch( (*p) ) {
 		case 9: goto st39;
 		case 32: goto st39;
 		case 36: goto st40;
+		case 37: goto tr58;
 		case 39: goto st1;
-		case 40: goto tr58;
-		case 41: goto tr59;
+		case 40: goto tr59;
+		case 41: goto tr60;
 		case 42: goto st42;
-		case 43: goto tr61;
-		case 44: goto tr62;
-		case 45: goto tr63;
+		case 43: goto tr62;
+		case 44: goto tr63;
+		case 45: goto tr64;
 		case 46: goto st2;
 		case 47: goto st45;
-		case 58: goto tr67;
+		case 58: goto tr68;
 		case 60: goto st50;
 		case 61: goto st51;
 		case 62: goto st52;
@@ -473,7 +479,7 @@ case 38:
 	}
 	if ( (*p) < 65 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
-			goto tr66;
+			goto tr67;
 	} else if ( (*p) > 90 ) {
 		if ( 97 <= (*p) && (*p) <= 122 )
 			goto st40;
@@ -491,7 +497,7 @@ case 39:
 		case 9: goto st39;
 		case 32: goto st39;
 	}
-	goto tr71;
+	goto tr72;
 st40:
 	if ( ++p == pe )
 		goto _test_eof40;
@@ -508,7 +514,7 @@ case 40:
 			goto st40;
 	} else
 		goto st40;
-	goto tr72;
+	goto tr73;
 st1:
 	if ( ++p == pe )
 		goto _test_eof1;
@@ -519,24 +525,24 @@ case 1:
 tr2:
 #line 1 "NONE"
 	{te = p+1;}
-#line 225 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 226 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 	{act = 18;}
 	goto st41;
 st41:
 	if ( ++p == pe )
 		goto _test_eof41;
 case 41:
-#line 530 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 536 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	if ( (*p) == 39 )
 		goto st1;
-	goto tr73;
+	goto tr74;
 st42:
 	if ( ++p == pe )
 		goto _test_eof42;
 case 42:
 	if ( (*p) == 42 )
-		goto tr75;
-	goto tr74;
+		goto tr76;
+	goto tr75;
 st2:
 	if ( ++p == pe )
 		goto _test_eof2;
@@ -562,7 +568,7 @@ st43:
 	if ( ++p == pe )
 		goto _test_eof43;
 case 43:
-#line 566 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 572 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	if ( (*p) < 68 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
 			goto tr3;
@@ -571,7 +577,7 @@ case 43:
 			goto st3;
 	} else
 		goto st3;
-	goto tr76;
+	goto tr77;
 st3:
 	if ( ++p == pe )
 		goto _test_eof3;
@@ -596,7 +602,7 @@ st44:
 case 44:
 	if ( 48 <= (*p) && (*p) <= 57 )
 		goto st44;
-	goto tr76;
+	goto tr77;
 st5:
 	if ( ++p == pe )
 		goto _test_eof5;
@@ -815,11 +821,11 @@ st45:
 		goto _test_eof45;
 case 45:
 	switch( (*p) ) {
-		case 47: goto tr79;
-		case 61: goto tr80;
+		case 47: goto tr80;
+		case 61: goto tr81;
 	}
-	goto tr78;
-tr66:
+	goto tr79;
+tr67:
 #line 1 "NONE"
 	{te = p+1;}
 	goto st46;
@@ -827,19 +833,19 @@ st46:
 	if ( ++p == pe )
 		goto _test_eof46;
 case 46:
-#line 831 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 837 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	if ( (*p) == 46 )
-		goto tr82;
+		goto tr83;
 	if ( (*p) < 68 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
-			goto tr66;
+			goto tr67;
 	} else if ( (*p) > 69 ) {
 		if ( 100 <= (*p) && (*p) <= 101 )
 			goto st36;
 	} else
 		goto st36;
-	goto tr81;
-tr82:
+	goto tr82;
+tr83:
 #line 1 "NONE"
 	{te = p+1;}
 	goto st47;
@@ -847,16 +853,16 @@ st47:
 	if ( ++p == pe )
 		goto _test_eof47;
 case 47:
-#line 851 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
+#line 857 "/Users/sdennis/slow-32/fortran/src/f77_lexer_gen.c"
 	if ( (*p) < 68 ) {
 		if ( 48 <= (*p) && (*p) <= 57 )
-			goto tr82;
+			goto tr83;
 	} else if ( (*p) > 69 ) {
 		if ( 100 <= (*p) && (*p) <= 101 )
 			goto st34;
 	} else
 		goto st34;
-	goto tr84;
+	goto tr85;
 st34:
 	if ( ++p == pe )
 		goto _test_eof34;
@@ -881,7 +887,7 @@ st48:
 case 48:
 	if ( 48 <= (*p) && (*p) <= 57 )
 		goto st48;
-	goto tr84;
+	goto tr85;
 st36:
 	if ( ++p == pe )
 		goto _test_eof36;
@@ -906,28 +912,28 @@ st49:
 case 49:
 	if ( 48 <= (*p) && (*p) <= 57 )
 		goto st49;
-	goto tr86;
+	goto tr87;
 st50:
 	if ( ++p == pe )
 		goto _test_eof50;
 case 50:
 	if ( (*p) == 61 )
-		goto tr88;
-	goto tr87;
+		goto tr89;
+	goto tr88;
 st51:
 	if ( ++p == pe )
 		goto _test_eof51;
 case 51:
 	if ( (*p) == 61 )
-		goto tr90;
-	goto tr89;
+		goto tr91;
+	goto tr90;
 st52:
 	if ( ++p == pe )
 		goto _test_eof52;
 case 52:
 	if ( (*p) == 61 )
-		goto tr92;
-	goto tr91;
+		goto tr93;
+	goto tr92;
 	}
 	_test_eof38: cs = 38; goto _test_eof; 
 	_test_eof39: cs = 39; goto _test_eof; 
@@ -986,34 +992,34 @@ case 52:
 	if ( p == eof )
 	{
 	switch ( cs ) {
-	case 39: goto tr71;
-	case 40: goto tr72;
+	case 39: goto tr72;
+	case 40: goto tr73;
 	case 1: goto tr0;
-	case 41: goto tr73;
-	case 42: goto tr74;
-	case 43: goto tr76;
+	case 41: goto tr74;
+	case 42: goto tr75;
+	case 43: goto tr77;
 	case 3: goto tr13;
 	case 4: goto tr13;
-	case 44: goto tr76;
-	case 45: goto tr78;
-	case 46: goto tr81;
-	case 47: goto tr84;
+	case 44: goto tr77;
+	case 45: goto tr79;
+	case 46: goto tr82;
+	case 47: goto tr85;
 	case 34: goto tr50;
 	case 35: goto tr50;
-	case 48: goto tr84;
+	case 48: goto tr85;
 	case 36: goto tr53;
 	case 37: goto tr53;
-	case 49: goto tr86;
-	case 50: goto tr87;
-	case 51: goto tr89;
-	case 52: goto tr91;
+	case 49: goto tr87;
+	case 50: goto tr88;
+	case 51: goto tr90;
+	case 52: goto tr92;
 	}
 	}
 
 	_out: {}
 	}
 
-#line 297 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
+#line 299 "/Users/sdennis/slow-32/fortran/src/f77_lexer.rl"
 
     lx_rp = p;
     lx_rcs = cs;

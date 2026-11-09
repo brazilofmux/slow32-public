@@ -53,6 +53,7 @@
 #define T_NEQV   27
 #define T_TRUE   28
 #define T_FALSE  29
+#define T_PCT    30   /* % (Fortran 90: a component of a structure) */
 
 /* === Current token === */
 
@@ -246,6 +247,7 @@ static int f77_number(char *ts, char *te, char *pe) {
         '*'  => { lx_t = T_STAR;   fbreak; };
         '/'  => { lx_t = T_SLASH;  fbreak; };
         ':'  => { lx_t = T_COLON;  fbreak; };
+        '%'  => { lx_t = T_PCT;    fbreak; };
 
         # Stray blanks cannot occur (the card reader squeezed them), but
         # tolerate them so a hand-fed statement still scans.

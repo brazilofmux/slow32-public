@@ -315,6 +315,7 @@ static void f77_scan_shapes(int u) {
     else if (f77_starts("CHARACTER")) skip = 9;
     else if (f77_starts("INTEGER") || f77_starts("LOGICAL") || f77_starts("COMPLEX")) skip = 7;
     else if (f77_starts("REAL")) skip = 4;
+    else if (f77_starts("TYPE(")) skip = f77_match_paren(4);     /* TYPE(name) */
     else return;
     alloc = f77_has_attr("ALLOCATABLE");
     opt = f77_has_attr("OPTIONAL");
@@ -408,6 +409,7 @@ static void f77_scan_units(void) {
     int hstack[4];    /* Fortran 90: the units whose CONTAINS we are past */
     int hn;
     int in_iface;     /* inside INTERFACE ... END INTERFACE */
+    int in_type;      /* inside TYPE name ... END TYPE */
 
     f77_nunit = 0;
     f77_nent = 0;
@@ -422,6 +424,7 @@ static void f77_scan_units(void) {
     mains = 0;
     hn = 0;
     in_iface = 0;
+    in_type = 0;
     { int z; for (z = 0; z < F77_MAX_UNIT; z++) f77_uhost[z] = -1; }
     pos = lx_pos;
     line = lx_line;
@@ -434,6 +437,22 @@ static void f77_scan_units(void) {
         if (in_iface) {
             if (lx_stmt_len >= 12 && strncmp(lx_stmt, "ENDINTERFACE", 12) == 0) in_iface = 0;
             if (started && f77_nunit > 0) f77_ustmts[f77_nunit - 1]++;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
+        /* a derived type's definition: its components are no unit's
+         * entities */
+        if (in_type) {
+            if (f77_starts("ENDTYPE")) in_type = 0;
+            if (started && f77_nunit > 0) f77_ustmts[f77_nunit - 1]++;
+            pos = lx_pos;
+            line = lx_line;
+            continue;
+        }
+        if (started && !ended && f77_is_typedef()) {
+            in_type = 1;
+            if (f77_nunit > 0) { f77_ustmts[f77_nunit - 1]++; f77_unosplice[f77_nunit - 1] = 1; }
             pos = lx_pos;
             line = lx_line;
             continue;

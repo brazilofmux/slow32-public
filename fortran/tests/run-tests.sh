@@ -353,6 +353,15 @@ if [ -x "$F77" ]; then
     printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
     printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
     printf 'private\nend\n' > "$W/privprog.f90"
+    printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p, q\nq = pt(1.0, 2.0)\np = q\nif (p == q) stop\nend\n' > "$W/dtcmp.f90"
+    printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\nx = p + 1.0\nend\n' > "$W/dtadd.f90"
+    printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np%%z = 1.0\nend\n' > "$W/dtnocomp.f90"
+    printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = 1.0\nend\n' > "$W/dtasgty.f90"
+    printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
+    printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
+    printf 'type pt\nreal, pointer :: x\nend type\nend\n' > "$W/dtptr.f90"
+    printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
     printf 'program p\ninterface g\nreal function f(x)\nend function\nsubroutine s(i)\nend subroutine\nend interface\nend\n' > "$W/genmix.f90"
     printf 'program p\ninterface g\nmodule procedure f\nend interface\nend\n' > "$W/genmodp.f90"
     printf 'subroutine s(c)\ncharacter*(*) c\ncall t(transfer(1, c))\nend\n' > "$W/trclen.f90"
@@ -439,6 +448,15 @@ if [ -x "$F77" ]; then
              "privuse:line 5: X is PRIVATE in module M" \
              "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
              "privprog:line 1: PUBLIC and PRIVATE are a module's" \
+             "dtcmp:line 7: a comparison of structures needs an operator defined for their type (not supported yet)" \
+             "dtadd:line 5: an operator on a structure needs one defined for its type (not supported yet)" \
+             "dtnocomp:line 5: the type PT has no component Z" \
+             "dtasgty:line 5: a value of another type for a structure" \
+             "dtcons:line 5: the structure constructor PT needs 2 values" \
+             "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
+             "dtptr:line 2: a POINTER or ALLOCATABLE component is not supported yet" \
+             "dtnone:line 1: no derived type NOPE here" \
+             "dtcdiv:line 6: a component of an array of structures whose size does not divide the structure's is not supported yet" \
              "genmix:line 7: a generic's procedures are all FUNCTIONs or all SUBROUTINEs" \
              "genmodp:line 3: MODULE PROCEDURE is in a module's generic interface (F90 12.3.2.1)" \
              "trclen:line 3: TRANSFER's CHARACTER MOLD needs a length known here" \

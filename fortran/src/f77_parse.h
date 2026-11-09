@@ -228,6 +228,7 @@ static int  f77_slog[F77_MAX_SYM];
  * it is loaded and stored at this width (fort370 issue 10); 0 for a
  * fullword or any other type. */
 static signed char f77_snar[F77_MAX_SYM];
+static int f77_sdt[F77_MAX_SYM];           /* TY_DERIVED: its type, an index of f77_dt_* */
 static int  f77_imp_log[26];
 static int  f77_imp_nar[26];          /* IMPLICIT INTEGER*2, LOGICAL*1 per letter */
 static int  ex_log;
@@ -317,6 +318,10 @@ static void f77_assign_params(int n);
  * the type of an HIR instruction: f77_dcx_guard stops a unit in which one
  * is, a value having reached code that does not handle the type. */
 #define TY_DCPLX 10
+/* A derived type (Fortran 90): a value of one is its address, as a
+ * COMPLEX*16's is, and the guard holds it to that (f77_dcx_mark); the
+ * type is f77_sdt (a symbol's), ex_dt (an expression's). */
+#define TY_DERIVED 11
 /* A hexadecimal or octal constant of DATA (MIL-STD-1753 Z'1F', O'17'),
  * only ever the type of a DATA value: its bits are in f77_cx_u. */
 #define TY_HEXC 11
@@ -331,7 +336,76 @@ static int f77_lennar(int ty, int n, int lg) {
 }
 
 /* Element size: a CHARACTER element is its length. */
+/* Derived types (Fortran 90 4.4): each a layout the front end computes,
+ * its components offsets in it.  f77_dt_*: per type; f77_dc_*: per
+ * component, a type's f77_dt_nc of them from f77_dt_c0. */
+#define F77_MAX_DT  256
+#define F77_MAX_DTC 4096
+static char f77_dt_name[F77_MAX_DT][F77_MAX_NAME];
+static char f77_dt_mod[F77_MAX_DT][F77_MAX_NAME];   /* its module, for its identity across files; "" a unit's */
+static int  f77_dt_size[F77_MAX_DT];
+static int  f77_dt_align[F77_MAX_DT];
+static int  f77_dt_c0[F77_MAX_DT];
+static int  f77_dt_nc[F77_MAX_DT];
+static int  f77_dt_seq[F77_MAX_DT];
+static int  f77_dt_unit[F77_MAX_DT];                /* the unit that defined it, -1 if read */
+static int  f77_ndt;
+static char f77_dc_name[F77_MAX_DTC][F77_MAX_NAME];
+static int  f77_dc_ty[F77_MAX_DTC];
+static int  f77_dc_log[F77_MAX_DTC];
+static int  f77_dc_nar[F77_MAX_DTC];
+static int  f77_dc_len[F77_MAX_DTC];
+static int  f77_dc_dt[F77_MAX_DTC];
+static int  f77_dc_rank[F77_MAX_DTC];
+static int  f77_dc_lo[F77_MAX_DTC][7];
+static int  f77_dc_ext[F77_MAX_DTC][7];
+static int  f77_dc_off[F77_MAX_DTC];
+static int  f77_ndc;
+/* the types the unit being compiled sees, by name: its own, its host's,
+ * its modules' */
+static int  f77_dtv[F77_MAX_DT];
+static int  f77_ndtv;
+static int  f77_dt_find(char *nm) {
+    int k;
+    for (k = f77_ndtv - 1; k >= 0; k--) if (strcmp(f77_dt_name[f77_dtv[k]], nm) == 0) return f77_dtv[k];
+    return -1;
+}
+/* The type of name nm defined in module mod ("" a unit's), or -1. */
+static int f77_dt_lookup(char *nm, char *mod) {
+    int k;
+    for (k = 0; k < f77_ndt; k++) if (strcmp(f77_dt_name[k], nm) == 0 && strcmp(f77_dt_mod[k], mod) == 0) return k;
+    return -1;
+}
+/* Is type b type a, or the type of one of its components' (deep)? */
+static int f77_dt_reaches(int a, int b) {
+    int c;
+    if (a == b) return 1;
+    for (c = f77_dt_c0[a]; c < f77_dt_c0[a] + f77_dt_nc[a]; c++)
+        if (f77_dc_dt[c] >= 0 && f77_dc_dt[c] != a && f77_dt_reaches(f77_dc_dt[c], b)) return 1;
+    return 0;
+}
+static void f77_dt_see(int dt) {
+    int k;
+    for (k = 0; k < f77_ndtv; k++) if (f77_dtv[k] == dt) return;
+    if (f77_ndtv < F77_MAX_DT) f77_dtv[f77_ndtv++] = dt;
+}
+static int  ex_dt = -1;                            /* a TY_DERIVED expression's type */
+static int f77_desig_follows(void);
+static int f77_dt_desig(int s);
+static int f77_dt_value(int s);
+static int f77_dt_construct(int dt);
+static void f77_io_derived(int addr, int dt);
+static int f77_td_in;
+static int f77_td_stmt(int cls);
+static int f77_is_typedef(void);
+static void f77_td_begin(void);
+static int f77_dtt_used;
+static int f77_dtt_n;
+static int f77_rd_dt;           /* a structure READ item's type */
+static void f77_copy_n(int dst, int src, int n);
+
 static int f77_esize(int s) {
+    if (f77_sty[s] == 11 && f77_sdt[s] >= 0) return f77_dt_size[f77_sdt[s]];     /* TY_DERIVED */
     if (f77_snar[s]) return f77_snar[s];
     if (f77_sty[s] == TY_CHAR) return f77_slen[s] > 0 ? f77_slen[s] : 1;
     if (f77_sty[s] == TY_CPLX) return 8;
@@ -656,6 +730,7 @@ static int f77_sym(char *nm) {
     f77_sassoc[f77_nsym] = 0;
     f77_sopt[f77_nsym] = 0;
     f77_shost[f77_nsym] = 0;
+    f77_sdt[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
     f77_sashape[f77_nsym] = 0;
     f77_shidden[f77_nsym] = 0;
@@ -717,6 +792,7 @@ static int f77_sym_temp(int ty) {
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
     f77_shost[s] = 0;
+    f77_sdt[s] = -1;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -761,6 +837,7 @@ static char f77_ulink[F77_MAX_UNIT][F77_MAX_LINK];
 #define F77_ME_GENERIC 3
 #define F77_ME_VAR     4   /* a module variable: in a block (me_str), at an offset (f77_me_off) */
 #define F77_ME_HVAR    5   /* a host's variable through its table: the slot of its address (f77_me_off) */
+#define F77_ME_TYPE    6   /* a derived type: f77_me_ival its index */
 static int    f77_nmod;
 static char   f77_mod_name[F77_MAX_MOD][F77_MAX_NAME];
 static int    f77_mod_unit[F77_MAX_MOD];         /* its unit in this file, -1 if read */
@@ -890,6 +967,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
     f77_shost[s] = 0;
+    f77_sdt[s] = -1;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -1365,7 +1443,7 @@ static void f77_dcx_guard(void) {
             h_kind[i] != HI_ADDI && h_kind[i] != HI_LOAD && h_kind[i] != HI_STORE) bad = 1;
         if (bad) {
             if (getenv("F77_DCX_DEBUG")) fprintf(stderr, "dcx guard: inst %d kind %d src1 %d src2 %d\n", i, h_kind[i], h_src1[i], h_src2[i]);
-            f77_error("COMPLEX*16 is not supported in this context yet");
+            f77_error("COMPLEX*16 or a derived type is not supported in this context yet");
             free(is);
             return;
         }
@@ -2596,6 +2674,13 @@ static int f77_primary(void) {
         int u;
         int in;
         strcpy(nm, lex_name);
+        if (lx_rp < lx_rpe && *lx_rp == '(' && f77_sym_find(nm) < 0 && f77_dt_find(nm) >= 0) {
+            /* a structure constructor (Fortran 90 4.4.4) */
+            int dtc;
+            dtc = f77_dt_find(nm);
+            f77_tok();
+            return f77_dt_construct(dtc);
+        }
         u = f77_find_func(nm);
         if (u < 0 && (strcmp(nm, "SELECTED_REAL_KIND") == 0 || strcmp(nm, "SELECTED_INT_KIND") == 0) &&
             lx_rp < lx_rpe && *lx_rp == '(' && f77_find_unit(nm) < 0) {
@@ -3391,6 +3476,15 @@ static int f77_primary(void) {
         }
         s = f77_sym(nm);
         f77_tok();
+        if (f77_sty[s] == TY_DERIVED) {
+            if (f77_desig_follows()) s = f77_dt_desig(s);
+            else if (f77_srank[s] > 0 && f77_aex_k > 0) {
+                /* an array of structures in an array expression */
+                if (lx_t != T_LP) return f77_aex_elem(s, 1);
+                if (f77_paren_has_colon()) return f77_aex_elem(s, 0);
+            }
+            if (f77_sty[s] == TY_DERIVED) return f77_dt_value(s);
+        }
         if (f77_sty[s] == TY_CHAR && f77_srank[s] > 0 && f77_aex_k > 0 && !f77_sparam[s]) {
             if (lx_t != T_LP) return f77_aex_elem(s, 1);            /* a whole array's element */
             if (f77_paren_has_colon()) return f77_aex_elem(s, 0);   /* a section's element */
@@ -3658,6 +3752,11 @@ static int f77_power(void) {
  * (SUM, PRODUCT, DOT_PRODUCT) for each element. */
 static int f77_binop(int op, int a, int aty, int ahi, int b, int bty, int bhi) {
     int rty;
+    if (aty == TY_DERIVED || bty == TY_DERIVED) {
+        f77_error("an operator on a structure needs one defined for its type (not supported yet)");
+        ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+        return f77_iconst(0);
+    }
     rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
     ex_log = 0;
     if (rty == TY_DCPLX) {
@@ -3794,6 +3893,11 @@ static int f77_relat(void) {
         b = f77_concat();
         bty = ex_ty; bhi = ex_hi;
         ex_log = 1;
+        if (aty == TY_DERIVED || bty == TY_DERIVED) {
+            f77_error("a comparison of structures needs an operator defined for their type (not supported yet)");
+            ex_ty = TY_INT;
+            return f77_iconst(0);
+        }
         if (aty == TY_CHAR || bty == TY_CHAR) {
             int args[4];
             if (aty != bty) { f77_error("CHARACTER compared with a numeric"); ex_ty = TY_INT; return f77_iconst(0); }
@@ -4301,7 +4405,7 @@ static int f77_name_starts(int i, int from) {
     int c;
     if (i == from) return 1;
     c = lx_stmt[i - 1];
-    if (lx_isalpha(c) || lx_isdigit(c) || c == '_') return 0;
+    if (lx_isalpha(c) || lx_isdigit(c) || c == '_' || c == '%') return 0;    /* % : a component's */
     if (c != '.') return 1;
     return f77_dot_closes(i - 1);
 }
@@ -4446,6 +4550,12 @@ static int f77_aex_elem(int s, int whole) {
             }
         }
     }
+    if (f77_sty[s] == TY_DERIVED) {
+        /* a structure element is its address */
+        v = f77_elem_addr(s, cur, f77_srank[s]);
+        ex_ty = TY_DERIVED; ex_dt = f77_sdt[s]; ex_hi = -1; ex_log = 0;
+        return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, v, -1, 0, NULL));
+    }
     if (f77_sty[s] == TY_CHAR) {
         /* a CHARACTER element is its address, and a substring of it may
          * follow: C(:)(2:3) */
@@ -4466,6 +4576,15 @@ static int f77_extent(int lo, int hi, int st);
 
 /* An array assignment's value has the target's kind: CHARACTER for a
  * CHARACTER array, numeric or LOGICAL for the rest. */
+/* A structure array's value is a structure of its type. */
+static int f77_aa_dt_ok(int s, int vty, int vdt) {
+    if ((f77_sty[s] == TY_DERIVED) != (vty == TY_DERIVED) || (vty == TY_DERIVED && vdt != f77_sdt[s])) {
+        f77_error("a value of another type for an array of structures");
+        return 0;
+    }
+    return 1;
+}
+
 static int f77_aa_value_ok(int isch, int vty) {
     if (isch && vty != TY_CHAR) { f77_error("a CHARACTER array needs a CHARACTER value"); return 0; }
     if (!isch && vty == TY_CHAR) { f77_error("a CHARACTER value for a numeric array"); return 0; }
@@ -4501,6 +4620,11 @@ static int f77_aa_target(int s, int *idx, int *tdim, int *lo, int *st, int *cnt,
  * address, vty its length, copied blank-padded into dlen bytes doff in
  * (doff -1: from the start). */
 static void f77_aa_store(int s, int addr, int doff, int dlen, int v, int vty, int vhi) {
+    if (f77_sty[s] == TY_DERIVED) {
+        /* a structure: its bytes */
+        f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_esize(s)));
+        return;
+    }
     if (f77_sty[s] == TY_CHAR) {
         if (doff >= 0) addr = hi_emit(HI_ADD, HL_ADDR_TY, addr, doff, 0, NULL);
         f77_char_assign(addr, dlen, v, vty);
@@ -4881,8 +5005,8 @@ static void f77_array_assign1(int s, int whole) {
         /* a scalar to every element */
         v = f77_expr();
         vty = ex_ty; vhi = ex_hi; vlen = ex_len;
-        if (!f77_aa_value_ok(isch, vty)) return;
-        if (!isch) v = f77_cvt(v, &vhi, vty, ty);
+        if (!f77_aa_value_ok(isch, vty) || !f77_aa_dt_ok(s, vty, ex_dt)) return;
+        if (!isch && ty != TY_DERIVED) v = f77_cvt(v, &vhi, vty, ty);
         for (k = rank - 1; k >= 0; k--)
             if (trip[k]) f77_loop_begin(&lp[k], lo[k], hi[k], st[k]);
         {
@@ -4936,12 +5060,13 @@ static void f77_array_assign1(int s, int whole) {
         v = f77_expr();
         vty = ex_ty; vhi = ex_hi; vlen = ex_len;
         f77_aex_leave(&asv);
-        if (f77_nerr > nerr0 || !f77_aa_value_ok(isch, vty)) return;
+        if (f77_nerr > nerr0 || !f77_aa_value_ok(isch, vty) || !f77_aa_dt_ok(s, vty, ex_dt)) return;
         if (overlap) {
             /* the temporary, in the loops' order: count[0] fastest */
             int at;
             at = hi_emit(HI_ADD, HL_ADDR_TY, tmp, f77_aa_tmp_off(cnt, ext, nt, esz), 0, NULL);
             if (isch) f77_char_assign(at, dlen, v, vlen);
+            else if (ty == TY_DERIVED) f77_copy_n(at, f77_dcx_arg(v), esz);
             else f77_store_at(at, mty, v, vty, vhi);
         } else {
             f77_aa_store(s, f77_aa_target(s, idx, tdim, lo, st, cnt, nt), doff, dlen, v, isch ? vlen : vty, vhi);
@@ -4961,6 +5086,8 @@ static void f77_array_assign1(int s, int whole) {
                 if (isch) {
                     v = at;
                     vty = dlen;
+                } else if (ty == TY_DERIVED) {
+                    v = at;
                 } else {
                     v = f77_load_at(at, mty);
                     vty = mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : ty;
@@ -5745,6 +5872,40 @@ static void f77_stmt_assign(void) {
     s = f77_sym(lex_name);
     if (f77_sparam[s]) { f77_error("cannot assign to a PARAMETER"); return; }
     f77_tok();
+    if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) {
+        int nerr0;
+        nerr0 = f77_nerr;
+        f77_sstored[s] = 1;
+        s = f77_dt_desig(s);
+        if (f77_nerr > nerr0) { lx_t = T_EOF; return; }
+    }
+    if (f77_sty[s] == TY_DERIVED) {
+        /* a structure, or an element of an array of them: its bytes */
+        int dt;
+        dt = f77_sdt[s];
+        f77_sstored[s] = 1;
+        if (f77_srank[s] > 0 && lx_t != T_LP) { f77_array_assign(s, 1); return; }
+        if (f77_srank[s] > 0 && f77_paren_has_colon()) { f77_tok(); f77_array_assign(s, 0); return; }
+        if (f77_where_on()) { f77_error("a WHERE assigns to arrays, not to a scalar or an element"); return; }
+        if (f77_srank[s] > 0) { f77_tok(); addr = f77_subscript_addr(s); }
+        else addr = f77_sval[s];
+        if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
+        f77_tok();
+        {
+            /* array-valued references in a structure constructor's
+             * values, evaluated first, as an array assignment's are */
+            int rhs; int end; int mk;
+            mk = f77_tfree_mark();
+            rhs = (int)(lx_rts - lx_stmt);
+            end = lx_stmt_len;
+            if (f77_hoist(rhs, &end)) f77_scan_from(rhs);
+            v = f77_expr();
+            if (ex_ty != TY_DERIVED || ex_dt != dt) { f77_error("a value of another type for a structure"); f77_tfree_to(mk); return; }
+            f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_dt_size[dt]));
+            f77_tfree_to(mk);
+        }
+        return;
+    }
     if (f77_sty[s] == TY_CHAR) {
         int dlen;
         if (f77_srank[s] > 0 && lx_t != T_LP) { f77_array_assign(s, 1); return; }
@@ -6931,6 +7092,7 @@ static int f77_decl_init(int s);
 static int f77_decl_init_eq(int s);
 static int f77_param_def(int s);
 static int f77_save_note(int s);
+static int f77_decl_dt;          /* TYPE(name): its type */
 static void f77_stmt_decl(int ty, int skip) {
     int s;
     int clen;
@@ -6975,6 +7137,19 @@ static void f77_stmt_decl(int ty, int skip) {
         /* CHARACTER(LEN=n), CHARACTER(n), CHARACTER(LEN=*) */
         if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
         clen = f77_char_len();
+    } else if (lx_t == T_LP && ty == TY_DERIVED) {
+        /* TYPE(name) (Fortran 90) */
+        f77_tok();
+        if (lx_t != T_NAME || (f77_decl_dt = f77_dt_find(lex_name)) < 0) {
+            char m[F77_MAX_NAME + 40];
+            sprintf(m, "no derived type %s here", lx_t == T_NAME ? lex_name : "");
+            f77_error(m);
+            return;
+        }
+        f77_tok();
+        if (lx_t != T_RP) { f77_error("expected ) after TYPE(name"); return; }
+        f77_tok();
+        if (lx_t == T_COMMA && !has_dc) f77_tok();
     } else if (lx_t == T_LP && ty >= 0) {
         /* a kind: REAL(WP), REAL(KIND=8), COMPLEX(DP) (Fortran 90) */
         ty = f77_kind_sel(ty);
@@ -7043,6 +7218,7 @@ static void f77_stmt_decl(int ty, int skip) {
         if (a_opt) f77_opt_note(s);
         if (ty >= 0) {                  /* declaration overrides implicit typing */
             f77_sty[s] = ty;
+            if (ty == TY_DERIVED) f77_sdt[s] = f77_decl_dt;
             f77_styped[s] = 1;
             f77_slog[s] = f77_decl_log;
             f77_snar[s] = tnar;
@@ -9420,12 +9596,17 @@ static int f77_actual_is_simple(void) {
     i = (int)(lx_rts - lx_stmt);       /* start of the current token */
     if (i < 0 || i >= lx_stmt_len) return 0;
     if (!lx_isalpha(lx_stmt[i])) return 0;
-    while (i < lx_stmt_len &&
-           (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
-    if (i < lx_stmt_len && lx_stmt[i] == '(') {
-        i = f77_match_paren(i);
-        /* a CHARACTER array's section or element, a substring after it */
-        if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_match_paren(i);
+    for (;;) {
+        while (i < lx_stmt_len &&
+               (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) i = i + 1;
+        if (i < lx_stmt_len && lx_stmt[i] == '(') {
+            i = f77_match_paren(i);
+            /* a CHARACTER array's section or element, a substring after it */
+            if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_match_paren(i);
+        }
+        /* a designator's next component (Fortran 90) */
+        if (i + 1 < lx_stmt_len && lx_stmt[i] == '%' && lx_isalpha(lx_stmt[i + 1])) { i = i + 1; continue; }
+        break;
     }
     if (i >= lx_stmt_len) return 0;
     return lx_stmt[i] == ',' || lx_stmt[i] == ')';
@@ -11633,10 +11814,120 @@ static int f77_text_replace(int b, int e, int s) {
 /* Evaluate the array-valued references and constructors in the text
  * [from, *to), innermost first, each replaced by its hidden array's name;
  * *to follows the text.  How many there were.  The caller re-scans. */
+/* Is the designator whose base sy's name ends at text offset i an array
+ * (its last component an array without subscripts, or a section of
+ * one)?  Read from the text and the types, nothing compiled; *end past
+ * it. */
+static int f77_desig_text_array(int sy, int i, int *end) {
+    int dt; int arr;
+    arr = 0;
+    if (i < lx_stmt_len && lx_stmt[i] == '(') { arr = f77_paren_has_colon_at(i); i = f77_match_paren(i); }
+    else arr = f77_srank[sy] > 0;
+    dt = f77_sdt[sy];
+    while (i < lx_stmt_len && lx_stmt[i] == '%' && dt >= 0) {
+        char nm[F77_MAX_NAME];
+        int k; int c;
+        i = i + 1;
+        k = 0;
+        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) { if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[i]; i = i + 1; }
+        nm[k] = 0;
+        for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) if (strcmp(f77_dc_name[c], nm) == 0) break;
+        if (c == f77_dt_c0[dt] + f77_dt_nc[dt]) { *end = i; return 0; }     /* said where it is parsed */
+        if (i < lx_stmt_len && lx_stmt[i] == '(') {
+            if (f77_dc_rank[c] > 0) arr = arr || f77_paren_has_colon_at(i);
+            i = f77_match_paren(i);
+        } else if (f77_dc_rank[c] > 0) arr = 1;
+        dt = f77_dc_dt[c];
+    }
+    *end = i;
+    return arr;
+}
+
+/* The array-valued designators in the text [from, *to) -- S%V, S%V(2:3),
+ * A(I)%M(:,J) -- each a hidden array over its storage, through a
+ * descriptor, its text replaced by the hidden array's name; *to follows
+ * the text.  A scalar one is left where it is, to be compiled where it
+ * is parsed (it may sit behind a condition). */
+static int f77_desig_hoist(int from, int *to) {
+    int i; int n; int nerr0;
+    n = 0;
+    nerr0 = f77_nerr;
+    i = from;
+    while (i < *to) {
+        if (lx_stmt[i] == '\'') {
+            i = i + 1;
+            while (i < *to && lx_stmt[i] != '\'') i = i + 1;
+            i = i + 1;
+            continue;
+        }
+        if (lx_isalpha(lx_stmt[i]) && f77_name_starts(i, from)) {
+            char nm[F77_MAX_NAME];
+            int b; int k; int sy; int e;
+            b = i;
+            k = 0;
+            while (i < *to && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) { if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[i]; i = i + 1; }
+            nm[k] = 0;
+            sy = f77_sym_find(nm);
+            if (sy < 0 || f77_sty[sy] != TY_DERIVED) continue;
+            e = i;
+            if (e < *to && lx_stmt[e] == '(') e = f77_match_paren(e);
+            if (!(e < *to && lx_stmt[e] == '%')) continue;
+            if (!f77_desig_text_array(sy, i, &e)) { i = e; continue; }     /* a scalar: where it is */
+            {
+                int t; int end; int aa; int nt; int saved; int h; int q;
+                int ext[F77_MAX_RANK];
+                f77_scan_from(b);
+                f77_tok();
+                t = f77_dt_desig(sy);
+                if (f77_nerr > nerr0) return n;
+                end = lx_t == T_EOF ? lx_stmt_len : (int)(lx_rts - lx_stmt);
+                if (f77_srank[t] == 0) { f77_error("an array-valued designator the compiler could not place"); return n; }
+                if (f77_shidden[t]) {
+                    /* over an array of structures: a hidden array already */
+                    k = lx_stmt_len;
+                    f77_text_replace(b, end, t);
+                    *to = *to + (lx_stmt_len - k);
+                    i = b + (int)strlen(f77_sname[t]);
+                    n = n + 1;
+                    continue;
+                }
+                saved = f77_naa;
+                if (lx_t == T_LP) {
+                    f77_tok();
+                    f77_aa_section(t);
+                    aa = f77_act_aa;
+                    if (aa < 0) { f77_naa = saved; return n; }
+                    if (f77_aa_soff[aa] >= 0) { f77_error("substrings of a component's section are not supported yet"); f77_naa = saved; return n; }
+                    end = lx_t == T_EOF ? lx_stmt_len : (int)(lx_rts - lx_stmt);
+                } else aa = f77_aa_new(t);
+                if (aa < 0) return n;
+                nt = 0;
+                for (q = 0; q < f77_srank[t]; q++)
+                    if (!f77_aa_sec[aa] || f77_aa_trip[aa][q]) ext[nt++] = f77_aa_sec[aa] ? f77_aa_ext[aa][q] : f77_iconst(f77_sext[t][q]);
+                h = f77_hidden_array(f77_sty[t], f77_slog[t], f77_snar[t], nt, f77_aa_desc(aa, nt));
+                f77_naa = saved;
+                f77_char_like(h, t);
+                f77_sdt[h] = f77_sdt[t];
+                f77_hid_note_ext(h, nt, ext);
+                k = lx_stmt_len;
+                f77_text_replace(b, end, h);
+                *to = *to + (lx_stmt_len - k);
+                i = b + (int)strlen(f77_sname[h]);
+                n = n + 1;
+            }
+            continue;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
 static int f77_hoist(int from, int *to) {
     int n; int nerr0;
     n = 0;
     nerr0 = f77_nerr;
+    n = f77_desig_hoist(from, to);
+    if (f77_nerr > nerr0) return n;
     for (;;) {
         int av; int b; int close; int s; int len0;
         av = f77_av_find(from, *to, &b, &close);
@@ -11693,6 +11984,7 @@ static void f77_hoist_actuals(void) {
 
 static int f77_actual_addr(void) {
     int s;
+    int named;
     int v;
     int vty;
     int vhi;
@@ -11763,9 +12055,17 @@ static int f77_actual_addr(void) {
         /* A PARAMETER is a named constant, not a variable.  Passing
          * its leftover alloca would hand the callee garbage; fall
          * through and evaluate into a temp, like N+0 already does. */
+        named = 0;
+        if (f77_sty[s] == TY_DERIVED && !f77_sparam[s]) {
+            /* a structure, an element of one, or a designator: by address
+             * as any variable (the scanner past the name now) */
+            f77_tok();
+            named = 1;
+            if (f77_desig_follows()) s = f77_dt_desig(s);
+        }
 
         if (f77_sty[s] == TY_CHAR) {
-            f77_tok();
+            if (!named) f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
                 /* a section, as the other types' (a substring of each
                  * element may follow): the hidden length its elements' */
@@ -11795,7 +12095,7 @@ static int f77_actual_addr(void) {
         }
         f77_act_len = -1;
         if (!f77_sparam[s]) {
-            f77_tok();
+            if (!named) f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
                 f77_tok();
                 v = f77_aa_section(s);
@@ -11838,6 +12138,7 @@ static int f77_actual_addr(void) {
         return v;
     }
     f77_act_len = -1;
+    if (vty == TY_DERIVED) return f77_dcx_arg(v);   /* a structure's value is its address (a constructor's temporary) */
     f77_frame = f77_frame + f77_tysize(vty);
     tmp = hi_emit(HI_ALLOCA, f77_aty(vty), -1, -1, 0 - f77_frame, NULL);
     f77_alloca_add(tmp, 0 - f77_frame);
@@ -11944,6 +12245,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
     f77_shost[s] = 0;
+    f77_sdt[s] = -1;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -12766,6 +13068,13 @@ static void f77_mod_snapshot(int u) {
             f77_me_str[e][lex_str_len[k]] = 0;
         }
     }
+    for (g = 0; g < f77_ndtv; g++) {
+        /* its types, and those it USEs */
+        int e;
+        e = f77_me_new(m, f77_dt_name[f77_dtv[g]], F77_ME_TYPE);
+        if (e < 0) return;
+        f77_me_ival[e] = f77_dtv[g];
+    }
     for (g = 0; g < f77_gi_n; g++) {
         int e;
         e = f77_me_new(m, f77_gi_name[g], F77_ME_GENERIC);
@@ -12909,6 +13218,11 @@ static void f77_me_bind(int e, char *local) {
         if (end > ps_gsize[g]) ps_gsize[g] = end;
         return;
     }
+    if (f77_me_kind[e] == F77_ME_TYPE) {
+        if (strcmp(local, f77_me_name[e]) != 0) { f77_error("renaming a derived type in a USE is not supported yet"); return; }
+        f77_dt_see(f77_me_ival[e]);
+        return;
+    }
     if (f77_me_kind[e] == F77_ME_HVAR) {
         /* through the host's table, once the hidden argument is bound
          * (f77_bind_hvars); its own dummy of the name hides it */
@@ -12988,6 +13302,13 @@ static void f77_host_save(int u) {
     m = f77_mod_find(f77_host_key(u));
     if (m < 0) m = f77_mod_new(f77_host_key(u), u);
     if (m < 0) return;
+    for (k = 0; k < f77_ndtv; k++) {
+        /* the types it sees, its internal procedures see */
+        int e;
+        e = f77_me_new(m, f77_dt_name[f77_dtv[k]], F77_ME_TYPE);
+        if (e < 0) return;
+        f77_me_ival[e] = f77_dtv[k];
+    }
     k = 0;
     f77_uhn_pool[u][0] = 0;
     for (s = f77_scope_base; s < f77_nsym; s++) {
@@ -13180,6 +13501,48 @@ static int f77_mod_read(char *nm) {
                 memcpy(f77_me_dnames[e], q, (size_t)(eol - q));
                 f77_me_dnames[e][eol - q] = 0;
             }
+        } else if (kind == 'T') {
+            /* a derived type: the one of its name and module this
+             * compilation has, or a new one */
+            char tm[F77_MAX_NAME];
+            int dt; int sz; int al; int sq; int nc; int c; int k; int a;
+            char *q;
+            sscanf(p + 2, "%*s %63s %d %d %d %d", tm, &sz, &al, &sq, &nc);
+            if (strcmp(tm, "-") == 0) tm[0] = 0;
+            dt = f77_dt_lookup(name, tm);
+            if (dt < 0) {
+                if (f77_ndt >= F77_MAX_DT || f77_ndc + nc > F77_MAX_DTC) { f77_error("too many derived types"); break; }
+                dt = f77_ndt++;
+                strcpy(f77_dt_name[dt], name); strcpy(f77_dt_mod[dt], tm);
+                f77_dt_size[dt] = sz; f77_dt_align[dt] = al; f77_dt_seq[dt] = sq; f77_dt_nc[dt] = nc;
+                f77_dt_c0[dt] = f77_ndc; f77_dt_unit[dt] = -1;
+                q = p + 2;
+                for (a = 0; a < 6; a++) { while (*q && *q != ' ' && *q != '\n') q++; while (*q == ' ') q++; }
+                for (k = 0; k < nc; k++) {
+                    char cn[F77_MAX_NAME]; char rn[F77_MAX_NAME]; char rm[F77_MAX_NAME];
+                    int used; int r;
+                    c = f77_ndc++;
+                    used = 0;
+                    sscanf(q, "%63s %d %d %d %d %63s %63s %d %d%n", cn, &f77_dc_ty[c], &f77_dc_log[c], &f77_dc_nar[c],
+                           &f77_dc_len[c], rn, rm, &f77_dc_off[c], &f77_dc_rank[c], &used);
+                    q = q + used;
+                    strcpy(f77_dc_name[c], cn);
+                    f77_dc_dt[c] = strcmp(rn, "-") == 0 ? -1 : f77_dt_lookup(rn, strcmp(rm, "-") == 0 ? "" : rm);
+                    if (f77_dc_ty[c] == TY_DERIVED && f77_dc_dt[c] < 0) { f77_error("a .mod file's type of a component is not here"); break; }
+                    for (r = 0; r < f77_dc_rank[c] && r < 7; r++) {
+                        f77_dc_lo[c][r] = (int)strtol(q, &q, 10);
+                        f77_dc_ext[c][r] = (int)strtol(q, &q, 10);
+                    }
+                    while (*q == ' ') q++;
+                }
+            }
+        } else if (kind == 'Y') {
+            char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
+            sscanf(p + 2, "%*s %63s %63s", tn, tm);
+            e = f77_me_new(m, name, F77_ME_TYPE);
+            if (e < 0) break;
+            f77_me_ival[e] = f77_dt_lookup(tn, strcmp(tm, "-") == 0 ? "" : tm);
+            if (f77_me_ival[e] < 0) { f77_error("a .mod file's type is not here"); break; }
         } else if (kind == 'H') {
             hide_next = 1;                       /* the entity on the next line is PRIVATE */
         } else if (kind == 'V') {
@@ -13236,6 +13599,29 @@ static void f77_mod_write(void) {
         f = fopen(path, "w");
         if (!f) { f77_error("cannot write a .mod file"); return; }
         fprintf(f, "F77MOD 3 %s\n", f77_mod_name[m]);
+        {
+            /* its derived types, each after those its components are of
+             * (definition order), by name and defining module */
+            int dt;
+            for (dt = 0; dt < f77_ndt; dt++) {
+                int used; int c;
+                used = 0;
+                for (e = 0; e < f77_nme; e++)
+                    if (f77_me_mod[e] == m && f77_me_kind[e] == F77_ME_TYPE && f77_dt_reaches(f77_me_ival[e], dt)) used = 1;
+                if (!used) continue;
+                fprintf(f, "T %s %s %d %d %d %d", f77_dt_name[dt], f77_dt_mod[dt][0] ? f77_dt_mod[dt] : "-",
+                        f77_dt_size[dt], f77_dt_align[dt], f77_dt_seq[dt], f77_dt_nc[dt]);
+                for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
+                    int q;
+                    fprintf(f, " %s %d %d %d %d %s %s %d %d", f77_dc_name[c], f77_dc_ty[c], f77_dc_log[c], f77_dc_nar[c],
+                            f77_dc_len[c], f77_dc_dt[c] >= 0 ? f77_dt_name[f77_dc_dt[c]] : "-",
+                            f77_dc_dt[c] >= 0 && f77_dt_mod[f77_dc_dt[c]][0] ? f77_dt_mod[f77_dc_dt[c]] : "-",
+                            f77_dc_off[c], f77_dc_rank[c]);
+                    for (q = 0; q < f77_dc_rank[c]; q++) fprintf(f, " %d %d", f77_dc_lo[c][q], f77_dc_ext[c][q]);
+                }
+                fputc('\n', f);
+            }
+        }
         for (e = 0; e < f77_nme; e++) {
             if (f77_me_mod[e] != m) continue;
             if (f77_me_private[e]) fprintf(f, "H %s\n", f77_me_name[e]);    /* before the entity it hides */
@@ -13251,6 +13637,10 @@ static void f77_mod_write(void) {
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
                 if (f77_me_dnames[e]) fprintf(f, " = %s", f77_me_dnames[e]);
                 fputc('\n', f);
+            } else if (f77_me_kind[e] == F77_ME_TYPE) {
+                int dt;
+                dt = f77_me_ival[e];
+                fprintf(f, "Y %s %s %s\n", f77_me_name[e], f77_dt_name[dt], f77_dt_mod[dt][0] ? f77_dt_mod[dt] : "-");
             } else if (f77_me_kind[e] == F77_ME_VAR) {
                 int k;
                 fprintf(f, "V %s %s %d %d %d %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_ty[e], f77_me_log[e],
@@ -13671,6 +14061,10 @@ static void f77_bind_unit(int u) {
     f77_result_sym = -1;
     f77_result_desc = -1;
     f77_htab = -1;
+    f77_ndtv = 0;
+    f77_dtt_n = 0;
+    f77_dtt_used = 0;
+    f77_td_in = 0;
     nparam = 0;
     f77_unit_nparams = 0;
     f77_ci_n = 0;
@@ -13959,6 +14353,7 @@ static void f77_wr_item(int v, int vty, int vhi) {
 static void f77_rd_item(int addr, int ty) {
     int cb;
     int r;
+    if (ty == TY_DERIVED) { f77_io_derived(addr, f77_rd_dt); return; }
     if (f77_io_unf) {
         int args[2];
         args[0] = addr;
@@ -14016,7 +14411,15 @@ static int f77_rd_target(int *tyo) {
     }
     f77_sstored[s] = 1;
     f77_tok();
+    if (f77_sty[s] == TY_DERIVED && f77_desig_follows()) s = f77_dt_desig(s);
     *tyo = f77_mty(s);
+    if (f77_sty[s] == TY_DERIVED) {
+        /* a structure: its components (f77_rd_item) */
+        f77_rd_dt = f77_sdt[s];
+        if (f77_srank[s] > 0 && lx_t == T_LP) { f77_tok(); return f77_subscript_addr(s); }
+        if (f77_srank[s] > 0) { f77_error("an array of structures as a READ item is not supported yet"); return f77_iconst(0); }
+        return f77_sval[s];
+    }
     if (f77_sty[s] == TY_CHAR) {
         int a;
         a = f77_char_ref(s);
@@ -14084,6 +14487,7 @@ static void f77_io_chars(int addr, int len) {
 static void f77_io_elem(int s, int addr) {
     int v;
     int vhi;
+    if (f77_sty[s] == TY_DERIVED) { f77_io_derived(addr, f77_sdt[s]); return; }
     if (f77_io_unf) {
         int args[2];
         args[0] = addr;
@@ -14427,6 +14831,7 @@ static void f77_wr_one(void) {
 
 /* Write the value f77_expr just left (ex_ty, ex_hi, ex_len, ex_log). */
 static void f77_wr_value(int v) {
+    if (ex_ty == TY_DERIVED) { f77_io_derived(v, ex_dt); return; }
     if (f77_io_unf) {
         /* raw bytes: a character value is an address already; anything
          * else goes through a temporary */
@@ -15639,7 +16044,484 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("PUBLIC")) return 1;
     if (f77_starts("PRIVATE")) return 1;
     if (f77_starts("OPTIONAL")) return 1;
+    if (f77_starts("TYPE")) return 1;                /* a definition, TYPE(name) a declaration */
+    if (f77_starts("ENDTYPE") || f77_starts("SEQUENCE")) return 1;
     return 0;
+}
+
+/* --- derived types (Fortran 90 4.4, milestone 5) ----------------------
+ *
+ * A designator -- A%B, A(I)%B(J)%C, X%S(2:3) -- is compiled where it is
+ * parsed: its address computed from its base's, the components' offsets
+ * added, and the last component made a temporary by-reference symbol of
+ * its own type and shape (f77_dt_desig), so that everything after it --
+ * subscripts, substrings, sections, an actual argument's address, an
+ * I/O item -- is what it is for any variable.  The temporaries come from
+ * a pool reused by each statement (f77_dtt_get). */
+static int f77_dtt_pool[256];
+static int f77_dtt_n;
+static int f77_dtt_used;
+static int f77_dtt_get(void) {
+    int t;
+    if (f77_dtt_used < f77_dtt_n) t = f77_dtt_pool[f77_dtt_used];
+    else {
+        t = f77_sym_temp(TY_INT);
+        if (f77_dtt_n < 256) f77_dtt_pool[f77_dtt_n++] = t;
+    }
+    f77_dtt_used = f77_dtt_used + 1;
+    strcpy(f77_sname[t], "%D");
+    return t;
+}
+
+/* A temporary symbol for component c at address addr. */
+static int f77_dt_temp_comp(int c, int addr) {
+    int t; int k;
+    t = f77_dtt_get();
+    f77_sty[t] = f77_dc_ty[c];
+    f77_slog[t] = f77_dc_log[c];
+    f77_snar[t] = (signed char)f77_dc_nar[c];
+    f77_slen[t] = f77_dc_ty[c] == TY_CHAR ? f77_dc_len[c] : 1;
+    f77_slenv[t] = -1;
+    f77_sdt[t] = f77_dc_dt[c];
+    f77_srank[t] = f77_dc_rank[c];
+    for (k = 0; k < F77_MAX_RANK; k++) {
+        f77_slo[t][k] = k < f77_dc_rank[c] ? f77_dc_lo[c][k] : 1;
+        f77_sext[t][k] = k < f77_dc_rank[c] ? f77_dc_ext[c][k] : 1;
+        f77_slov[t][k] = -1; f77_sextv[t][k] = -1;
+    }
+    f77_sarg[t] = 1;                  /* storage by address: the structure's */
+    f77_sval[t] = addr;
+    f77_shi[t] = -1; f77_scom[t] = 0; f77_ssaved[t] = 0; f77_sgidx[t] = -1; f77_sgoff[t] = 0;
+    f77_sparam[t] = 0; f77_styped[t] = 1; f77_sstored[t] = 1;   /* never read-only: other names reach it */
+    f77_sexternal[t] = 0; f77_sauto[t] = 0; f77_slink[t] = NULL; f77_sme[t] = -1; f77_sassoc[t] = 0;
+    f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
+    f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
+    return t;
+}
+
+/* Component nm of type dt: its index, or -1 (said). */
+static int f77_dt_comp(int dt, char *nm) {
+    int c;
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++)
+        if (strcmp(f77_dc_name[c], nm) == 0) return c;
+    {
+        char m[F77_MAX_NAME * 2 + 40];
+        sprintf(m, "the type %s has no component %s", f77_dt_name[dt], nm);
+        f77_error(m);
+    }
+    return -1;
+}
+
+/* Is the scanner, just past a name, at a designator's % -- after the
+ * name or after its parenthesised subscripts? */
+static int f77_desig_follows(void) {
+    int e;
+    if (lx_t == T_PCT) return 1;
+    if (lx_t != T_LP) return 0;
+    e = f77_match_paren((int)(lx_rts - lx_stmt));
+    return e < lx_stmt_len && lx_stmt[e] == '%';
+}
+
+/* The designator whose base, derived-type symbol s, was just scanned:
+ * its last component as a temporary symbol, the scanner after that
+ * component's name (its own subscripts or substring the caller's). */
+static int f77_dt_array_desig(int s);
+static int f77_dt_desig(int s) {
+    int addr; int dt; int c;
+    if (f77_srank[s] > 0) {
+        if (lx_t != T_LP || f77_paren_has_colon()) return f77_dt_array_desig(s);
+        f77_tok();
+        addr = f77_subscript_addr(s);
+    } else addr = f77_sval[s];
+    dt = f77_sdt[s];
+    for (;;) {
+        if (lx_t != T_PCT) { f77_error("expected % and a component"); return s; }
+        f77_tok();
+        if (lx_t != T_NAME) { f77_error("expected a component's name after %"); return s; }
+        c = f77_dt_comp(dt, lex_name);
+        if (c < 0) { lx_t = T_EOF; return s; }
+        f77_tok();
+        if (f77_dc_off[c]) addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, f77_dc_off[c], NULL);
+        if (f77_dc_dt[c] >= 0 && f77_desig_follows()) {
+            /* a structure on the way to another component */
+            if (f77_dc_rank[c] > 0) {
+                int t;
+                if (lx_t != T_LP || f77_paren_has_colon()) {
+                    f77_error("a component of an array of structures, an array itself, is not supported yet");
+                    lx_t = T_EOF;
+                    return s;
+                }
+                t = f77_dt_temp_comp(c, addr);
+                f77_tok();
+                addr = f77_subscript_addr(t);
+            } else if (lx_t == T_LP) { f77_error("a scalar component has no subscripts"); return s; }
+            dt = f77_dc_dt[c];
+            continue;
+        }
+        return f77_dt_temp_comp(c, addr);
+    }
+}
+
+/* A designator over an array of structures, or a section of one -- A%X,
+ * A(2:5)%P%Y, A(:)%V(3) -- the scanner at what follows A: a hidden array
+ * over the components, its descriptor the structures' with their
+ * strides multiplied by the type's size over the component's (which must
+ * divide it).  Every part after A is scalar (F90 6.1.2). */
+static int f77_dt_array_desig(int s) {
+    int aa; int nt; int saved; int d; int base; int k; int dt; int c; int ratio; int h; int t;
+    int ext[F77_MAX_RANK];
+    saved = f77_naa;
+    if (lx_t == T_LP) {
+        f77_tok();
+        f77_aa_section(s);
+        aa = f77_act_aa;
+    } else aa = f77_aa_new(s);
+    if (aa < 0) { f77_naa = saved; return s; }
+    nt = 0;
+    for (k = 0; k < f77_srank[s]; k++) if (!f77_aa_sec[aa] || f77_aa_trip[aa][k]) nt = nt + 1;
+    d = f77_aa_desc(aa, nt);
+    f77_naa = saved;
+    /* the components: an offset from each structure */
+    base = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
+    dt = f77_sdt[s];
+    t = -1;
+    for (;;) {
+        if (lx_t != T_PCT) { f77_error("expected % and a component"); return s; }
+        f77_tok();
+        if (lx_t != T_NAME) { f77_error("expected a component's name after %"); return s; }
+        c = f77_dt_comp(dt, lex_name);
+        if (c < 0) { lx_t = T_EOF; return s; }
+        f77_tok();
+        if (f77_dc_off[c]) base = hi_emit(HI_ADDI, HL_ADDR_TY, base, -1, f77_dc_off[c], NULL);
+        t = f77_dt_temp_comp(c, base);
+        if (f77_dc_rank[c] > 0) {
+            if (lx_t != T_LP || f77_paren_has_colon()) {
+                f77_error("an array of arrays: only one part of a designator is an array (F90 6.1.2)");
+                lx_t = T_EOF;
+                return s;
+            }
+            f77_tok();
+            base = f77_subscript_addr(t);
+            f77_srank[t] = 0;
+        }
+        if (f77_dc_dt[c] >= 0 && f77_desig_follows()) { dt = f77_dc_dt[c]; continue; }
+        break;
+    }
+    if (lx_t == T_LP && f77_sty[t] == TY_CHAR) {
+        f77_error("substrings of components of an array of structures are not supported yet");
+        lx_t = T_EOF;
+        return s;
+    }
+    k = f77_esize(t);
+    if (k <= 0 || f77_dt_size[f77_sdt[s]] % k != 0) {
+        f77_error("a component of an array of structures whose size does not divide the structure's is not supported yet");
+        return s;
+    }
+    ratio = f77_dt_size[f77_sdt[s]] / k;
+    /* its descriptor: the structures', the base the first component's,
+     * the strides in its elements */
+    {
+        int d2;
+        d2 = f77_char_temp(4 + 8 * nt);
+        hi_emit(HI_STORE, TY_INT, d2, base, 0, NULL);
+        for (k = 0; k < nt; k++) {
+            ext[k] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 8 * k, NULL), -1, 0, NULL);
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d2, -1, 4 + 8 * k, NULL), ext[k], 0, NULL);
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d2, -1, 8 + 8 * k, NULL),
+                    hi_emit(HI_MUL, TY_INT, hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 8 + 8 * k, NULL), -1, 0, NULL),
+                            f77_iconst(ratio), 0, NULL), 0, NULL);
+        }
+        h = f77_hidden_array(f77_sty[t], f77_slog[t], f77_snar[t], nt, d2);
+    }
+    f77_char_like(h, t);
+    f77_sdt[h] = f77_sdt[t];
+    if (f77_aa_sec[aa]) { int j; j = 0; for (k = 0; k < f77_srank[s]; k++) if (f77_aa_trip[aa][k]) ext[j++] = f77_aa_ext[aa][k]; }
+    else for (k = 0; k < nt; k++) { int lo; int hi; f77_dim_bounds(s, k, &lo, &hi); ext[k] = hi >= 0 ? f77_extent(lo, hi, f77_iconst(1)) : f77_iconst(-1); }
+    f77_hid_note_ext(h, nt, ext);
+    return h;
+}
+
+/* A derived-type symbol's value, the scanner after its name: the whole
+ * scalar or an element, as an address (ex_ty TY_DERIVED, ex_dt). */
+static int f77_dt_value(int s) {
+    int addr;
+    if (f77_srank[s] > 0) {
+        if (lx_t != T_LP || f77_paren_has_colon()) {
+            f77_error("an array of structures in an expression is not supported yet");
+            ex_ty = TY_INT; ex_hi = -1;
+            return f77_iconst(0);
+        }
+        f77_tok();
+        addr = f77_subscript_addr(s);
+    } else addr = f77_sval[s];
+    ex_ty = TY_DERIVED; ex_dt = f77_sdt[s]; ex_hi = -1; ex_log = 0;
+    return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 0, NULL));
+}
+
+/* Store a value of type vty (ex_* as f77_expr left them, vlen a
+ * CHARACTER's length) to temporary symbol t's storage at addr, as
+ * assignment converts it. */
+static int f77_dt_store(int t, int addr, int v, int vty, int vhi, int vlen, int vdt) {
+    int ty;
+    ty = f77_sty[t];
+    if (ty == TY_DERIVED) {
+        if (vty != TY_DERIVED || vdt != f77_sdt[t]) { f77_error("a value of another type for a structure"); return 0; }
+        f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_dt_size[f77_sdt[t]]));
+        return 1;
+    }
+    if (ty == TY_CHAR) {
+        if (vty != TY_CHAR) { f77_error("a CHARACTER component needs a CHARACTER value"); return 0; }
+        f77_char_assign(addr, f77_iconst(f77_slen[t]), v, vlen);
+        return 1;
+    }
+    if (vty == TY_CHAR || vty == TY_DERIVED) { f77_error("a value of another type for a component"); return 0; }
+    v = f77_cvt(v, &vhi, vty, ty);
+    f77_store_at(addr, f77_mty(t), v, ty, vhi);
+    return 1;
+}
+
+/* A structure constructor, type dt, the scanner at its '(' (F90 4.4.4):
+ * its components' values in order, each converted as assignment does,
+ * an array component's from an array expression or a scalar, into a
+ * frame temporary -- its address. */
+static int f77_dt_construct(int dt) {
+    F77Args A;
+    int tmp; int k; int mk;
+    f77_tok();
+    if (!f77_intr_args(&A)) return f77_iconst(0);
+    tmp = f77_char_temp(f77_dt_size[dt]);
+    if (A.n != f77_dt_nc[dt]) {
+        char m[F77_MAX_NAME + 80];
+        sprintf(m, "the structure constructor %s needs %d values", f77_dt_name[dt], f77_dt_nc[dt]);
+        f77_error(m);
+        f77_scan_from(A.end);
+        ex_ty = TY_DERIVED; ex_dt = dt; ex_hi = -1;
+        return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 0, NULL));
+    }
+    mk = f77_tfree_mark();
+    for (k = 0; k < A.n; k++) {
+        int c; int t; int caddr; int at; int v;
+        c = f77_dt_c0[dt] + k;
+        if (A.kw[k][0]) { f77_error("a keyword in a structure constructor is Fortran 2003's"); break; }
+        caddr = f77_dc_off[c] ? hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, f77_dc_off[c], NULL) : tmp;
+        t = f77_dt_temp_comp(c, caddr);
+        if (f77_dc_rank[c] == 0) {
+            v = f77_expr_at(A.from[k], A.to[k]);
+            if (!f77_dt_store(t, caddr, v, ex_ty, ex_hi, ex_len, ex_dt)) break;
+            continue;
+        }
+        {
+            /* an array component: element by element, from an array
+             * expression's elements in array element order, or a scalar */
+            int n; int h; int esz; int sty; int sdt;
+            F77Loop lp;
+            n = 1;
+            for (at = 0; at < f77_dc_rank[c]; at++) n = n * f77_dc_ext[c][at];
+            esz = f77_esize(t);
+            h = -1;
+            if (f77_aex_first(A.from[k], A.to[k], &at) >= 0) {
+                int e;
+                h = f77_av_operand(A.from[k], A.to[k]);
+                if (h < 0) break;
+                if (f77_hconst(f77_hid_size(h), &e) && e != n) { f77_error("an array component's value has another number of elements"); break; }
+                sty = f77_sty[h]; sdt = f77_sdt[h];
+                v = -1;
+            } else {
+                v = f77_expr_at(A.from[k], A.to[k]);
+                sty = ex_ty; sdt = ex_dt;
+            }
+            {
+                int vhi; int vlen;
+                vhi = ex_hi; vlen = ex_len;
+                f77_loop_begin(&lp, f77_iconst(0), f77_iconst(n - 1), f77_iconst(1));
+                {
+                    int p; int dst; int x;
+                    p = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+                    dst = hi_emit(HI_ADD, HL_ADDR_TY, caddr, hi_emit(HI_MUL, TY_INT, p, f77_iconst(esz), 0, NULL), 0, NULL);
+                    if (h >= 0) {
+                        x = f77_hid_elem_p(h, p);
+                        if (sty == TY_CHAR) vlen = f77_esize_v(h);
+                        else if (sty != TY_DERIVED) { x = f77_load_at(x, f77_mty(h)); vhi = ex_hi; }
+                    } else x = v;
+                    f77_dt_store(t, dst, x, sty, vhi, vlen, sdt);
+                }
+                f77_loop_end(&lp);
+            }
+        }
+    }
+    f77_tfree_to(mk);
+    f77_scan_from(A.end);
+    ex_ty = TY_DERIVED; ex_dt = dt; ex_hi = -1; ex_log = 0;
+    return f77_dcx_mark(hi_emit(HI_ADDI, HL_ADDR_TY, tmp, -1, 0, NULL));
+}
+
+/* A structure in an I/O list, at addr: its components in order (F90
+ * 9.4.2), an array component's elements in array element order. */
+static void f77_io_elem(int s, int addr);
+static void f77_io_derived(int addr, int dt) {
+    int c;
+    addr = f77_dcx_arg(addr);              /* an alias: a value's address may reach calls so */
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
+        int caddr; int t; int n; int k;
+        caddr = f77_dc_off[c] ? hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, f77_dc_off[c], NULL) : addr;
+        t = f77_dt_temp_comp(c, caddr);
+        n = 1;
+        for (k = 0; k < f77_dc_rank[c]; k++) n = n * f77_dc_ext[c][k];
+        f77_srank[t] = 0;                       /* its elements, one by one */
+        if (f77_dc_rank[c] == 0) { f77_io_elem(t, caddr); continue; }
+        {
+            F77Loop lp;
+            int p;
+            f77_loop_begin(&lp, f77_iconst(0), f77_iconst(n - 1), f77_iconst(1));
+            p = hi_emit(HI_LOAD, TY_INT, lp.idx, -1, 0, NULL);
+            f77_io_elem(t, hi_emit(HI_ADD, HL_ADDR_TY, caddr, hi_emit(HI_MUL, TY_INT, p, f77_iconst(f77_esize(t)), 0, NULL), 0, NULL));
+            f77_loop_end(&lp);
+        }
+    }
+}
+
+/* TYPE name ... END TYPE: a derived type's definition.  Its component
+ * declarations go through the ordinary declaration code in a scope of
+ * their own; at END TYPE the layout is taken from them -- each component
+ * at its natural alignment -- and the scope dropped. */
+static int f77_td_in;
+static int f77_td_base; static int f77_td_scope; static int f77_td_frame; static int f77_td_seq;
+static char f77_td_name[F77_MAX_NAME];
+
+/* Is the statement a derived type's definition's first: TYPE name, TYPE
+ * :: name, TYPE, PUBLIC :: name -- not TYPE(name), a declaration? */
+static int f77_is_typedef(void) {
+    if (!f77_starts("TYPE") || lx_stmt_len <= 4 || lx_stmt[4] == '(') return 0;
+    return f77_toplevel('=', 0) < 0;
+}
+
+static void f77_td_begin(void) {
+    int i;
+    i = 4;
+    if (lx_stmt[i] == ',') {
+        /* , PUBLIC or , PRIVATE :: -- the type's own accessibility */
+        int pub;
+        pub = strncmp(lx_stmt + i + 1, "PUBLIC::", 8) == 0;
+        if (!pub && strncmp(lx_stmt + i + 1, "PRIVATE::", 9) != 0) { f77_error("a type's attribute is PUBLIC or PRIVATE"); return; }
+        i = i + (pub ? 9 : 10);
+        f77_scan_from(i);
+        if (lx_t == T_NAME) f77_vis_note(lex_name, !pub);
+    } else if (lx_stmt[i] == ':' && lx_stmt[i + 1] == ':') i = i + 2;
+    f77_scan_from(i);
+    if (lx_t != T_NAME) { f77_error("TYPE needs a name"); return; }
+    if (f77_dt_find(lex_name) >= 0 && f77_dt_unit[f77_dt_find(lex_name)] == f77_cur_unit) {
+        f77_error("a type of that name is defined already");
+        return;
+    }
+    strcpy(f77_td_name, lex_name);
+    f77_tok();
+    f77_td_in = 1;
+    f77_td_seq = 0;
+    f77_td_base = f77_nsym;
+    f77_td_scope = f77_scope_base;
+    f77_td_frame = f77_frame;
+    f77_scope_base = f77_nsym;
+}
+
+static void f77_td_end(void) {
+    int dt; int sy; int off; int al;
+    char *nm;
+    nm = f77_name_tail(7);
+    if (!nm) { f77_error("unexpected text after END TYPE"); nm = f77_td_name; }
+    if (nm[0] && strcmp(nm, f77_td_name) != 0) f77_error("END TYPE names another type");
+    f77_td_in = 0;
+    if (f77_ndt >= F77_MAX_DT) { f77_error("too many derived types"); return; }
+    dt = f77_ndt;
+    strcpy(f77_dt_name[dt], f77_td_name);
+    f77_dt_mod[dt][0] = 0;
+    if (f77_ukind[f77_cur_unit] == F77_UNIT_MODULE) strcpy(f77_dt_mod[dt], f77_uname[f77_cur_unit]);
+    f77_dt_c0[dt] = f77_ndc;
+    f77_dt_nc[dt] = 0;
+    f77_dt_seq[dt] = f77_td_seq;
+    f77_dt_unit[dt] = f77_cur_unit;
+    off = 0;
+    al = 1;
+    for (sy = f77_td_base; sy < f77_nsym; sy++) {
+        int c; int k; int a; int ty;
+        if (f77_ndc >= F77_MAX_DTC) { f77_error("too many components"); return; }
+        c = f77_ndc;
+        ty = f77_sty[sy];
+        if (f77_slen[sy] < 0 && ty == TY_CHAR) { f77_error("a CHARACTER component's length is a constant"); return; }
+        for (k = 0; k < f77_srank[sy]; k++)
+            if (f77_sextv[sy][k] >= 0 || f77_slov[sy][k] >= 0 || f77_salloc[sy] || f77_sassz[sy]) {
+                f77_error("a component's bounds are constants");
+                return;
+            }
+        strcpy(f77_dc_name[c], f77_sname[sy]);
+        f77_dc_ty[c] = ty; f77_dc_log[c] = f77_slog[sy]; f77_dc_nar[c] = f77_snar[sy];
+        f77_dc_len[c] = f77_slen[sy]; f77_dc_dt[c] = ty == TY_DERIVED ? f77_sdt[sy] : -1;
+        f77_dc_rank[c] = f77_srank[sy];
+        for (k = 0; k < f77_srank[sy]; k++) { f77_dc_lo[c][k] = f77_slo[sy][k]; f77_dc_ext[c][k] = f77_sext[sy][k]; }
+        /* its natural alignment */
+        if (ty == TY_DERIVED) a = f77_dt_align[f77_sdt[sy]];
+        else if (ty == TY_CHAR) a = 1;
+        else if (ty == TY_DOUBLE || ty == TY_DCPLX) a = 8;
+        else if (f77_snar[sy]) a = f77_snar[sy];
+        else a = 4;
+        off = (off + a - 1) & ~(a - 1);
+        f77_dc_off[c] = off;
+        off = off + f77_storage_bytes(sy);
+        if (a > al) al = a;
+        f77_ndc = f77_ndc + 1;
+        f77_dt_nc[dt] = f77_dt_nc[dt] + 1;
+    }
+    if (f77_dt_nc[dt] == 0) f77_error("a derived type with no components");
+    f77_dt_align[dt] = al;
+    f77_dt_size[dt] = (off + al - 1) & ~(al - 1);
+    if (f77_dt_size[dt] == 0) f77_dt_size[dt] = al;
+    f77_ndt = f77_ndt + 1;
+    /* the scope dropped, the unit's own back */
+    f77_nsym = f77_td_base;
+    f77_scope_base = f77_td_scope;
+    f77_frame = f77_td_frame;
+    f77_dt_see(dt);
+}
+
+/* A statement inside a type's definition: 1 when it was handled here,
+ * 0 for a component's declaration (the ordinary code's). */
+static int f77_td_stmt(int cls) {
+    if (f77_starts("ENDTYPE") && (lx_stmt_len == 7 || f77_name_tail(7))) { f77_td_end(); lx_t = T_EOF; return 1; }
+    if (lx_stmt_len == 8 && f77_starts("SEQUENCE")) { f77_td_seq = 1; return 1; }
+    if (lx_stmt_len == 7 && f77_starts("PRIVATE")) return 1;     /* the components' (no effect here) */
+    if (cls == S_KEYWORD && (f77_starts("INTEGER") || f77_starts("REAL") || f77_starts("DOUBLEPRECISION") ||
+                             f77_starts("DOUBLECOMPLEX") || f77_starts("COMPLEX") || f77_starts("LOGICAL") ||
+                             f77_starts("CHARACTER") || f77_starts("TYPE("))) {
+        int c;
+        c = f77_toplevel(':', 0);
+        if (c >= 0 && c + 1 < lx_stmt_len && lx_stmt[c + 1] == ':') {
+            int k;
+            int eq;
+            eq = f77_toplevel('=', c + 2);
+            while (eq >= 0 && !f77_eq_is_assign(eq)) eq = f77_toplevel('=', eq + 1);
+            if (eq >= 0) {
+                f77_error("a component's default initialization is Fortran 95's, not supported yet");
+                lx_t = T_EOF;
+                return 1;
+            }
+            for (k = 0; k < c; k++) {
+                if (lx_stmt[k] == '\'') return 0;
+                if (strncmp(lx_stmt + k, ",POINTER", 8) == 0 || strncmp(lx_stmt + k, ",ALLOCATABLE", 12) == 0) {
+                    f77_error("a POINTER or ALLOCATABLE component is not supported yet");
+                    lx_t = T_EOF;
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+    if (cls == S_ASSIGN) {
+        f77_error("a component's default initialization is Fortran 95's, not supported yet");
+        lx_t = T_EOF;
+        return 1;
+    }
+    f77_error("a derived type's definition holds component declarations only");
+    lx_t = T_EOF;
+    return 1;
 }
 
 /* Dispatch one statement.  Called once per assembled statement. */
@@ -15678,6 +16560,9 @@ static void f77_statement(void) {
 
     /* Fortran 90: the statements of an INTERFACE block, and USE */
     if (f77_iface_stmt()) goto done;
+    /* Fortran 90's derived types: a definition's statements */
+    if (f77_td_in && f77_td_stmt(cls)) goto done;
+    if (cls == S_KEYWORD && f77_is_typedef()) { f77_td_begin(); goto done; }
     if (cls == S_KEYWORD && (n = f77_starts("USE")) != 0) {
         f77_stmt_use(n);
         goto done;
@@ -15984,6 +16869,7 @@ static void f77_statement(void) {
 
     if (f77_starts("CONTINUE")) goto done;
     if (f77_starts("INTEGER"))  { f77_stmt_decl(TY_INT,   7); goto done; }
+    if (cls == S_KEYWORD && f77_starts("TYPE(")) { f77_stmt_decl(TY_DERIVED, 4); goto done; }
     if (f77_starts("LOGICAL"))  { f77_decl_log = 1; f77_stmt_decl(TY_INT, 7); f77_decl_log = 0; goto done; }
     if (f77_starts("DOUBLEPRECISION")) { f77_stmt_decl(TY_DOUBLE, 15); goto done; }
     if (f77_starts("DOUBLECOMPLEX")) { f77_stmt_decl(TY_DCPLX, 13); goto done; }
