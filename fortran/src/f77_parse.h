@@ -273,15 +273,22 @@ static int f77_arr_inquiry(int in);
  * the element those counts reach (f77_aex_elem).  0 elsewhere. */
 static int f77_aex_k;
 /* WHERE (Fortran 90): the mask, evaluated once into a heap temporary of
- * its shape (its elements 0 or 1, as INTEGERs, in array element order),
- * and whether the assignments are ELSEWHERE's.  Active for the array
+ * its shape (INTEGERs, in array element order): 1 where the assignments
+ * of the part being compiled are made (the control mask of Fortran 95's
+ * 7.5.3.2), 2 where an ELSEWHERE's may yet be (the pending mask), 0 where
+ * neither.  f77_where_want is which of them the assignments are for: 1,
+ * and 2 after the ELSEWHERE with no mask.  Active for the array
  * assignments of the text the WHERE is in, not a spliced callee's
- * (f77_where_depth).  -1: none. */
+ * (f77_where_depth).  -1: none.  A WHERE inside one (Fortran 95) has a
+ * temporary of its own, and the outer's waits on f77_where_stk. */
+#define F77_MAX_WHERE 16
 static int f77_where_tmp = -1;
-static int f77_where_neg;
+static int f77_where_want;
 static int f77_where_depth;
 static int f77_where_nt;
 static int f77_where_ext[8];
+static int f77_where_sp;
+static int f77_where_stk[F77_MAX_WHERE][4 + 8];
 static int f77_aex_cnt[8];
 static int f77_aex_first(int from, int to, int *at);
 static int f77_match_paren(int i);
@@ -916,6 +923,7 @@ static char f77_uname[F77_MAX_UNIT][F77_MAX_NAME];
  * external SLAISNAN beside SISNAN's internal one -- and is seen by name
  * only from its host and the host's other procedures (and, for a module
  * procedure, where a USE brings it). */
+static int  f77_uhosted[F77_MAX_UNIT];  /* the scan read a constant of its host's for it (f77_scan_const) */
 static int  f77_uhost[F77_MAX_UNIT];
 static char f77_ulink[F77_MAX_UNIT][F77_MAX_LINK];
 
@@ -991,11 +999,14 @@ static int  f77_upos[F77_MAX_UNIT];    /* source offset of the header */
 static int  f77_uline[F77_MAX_UNIT];
 static int  f77_urty[F77_MAX_UNIT];    /* FUNCTION result type */
 static int  f77_urpend[F77_MAX_UNIT];  /* ... its kind not told by the scan (REAL(K), K not found) */
-static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*) */
+static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*), F77_LEN_PEND */
+#define F77_LEN_PEND (-3)              /* ... not told by the scan (a name it has not), see f77_ultext */
 static int  f77_urlog[F77_MAX_UNIT];   /* LOGICAL FUNCTION */
 static int  f77_urnar[F77_MAX_UNIT];   /* INTEGER*2 or LOGICAL*1 FUNCTION: f77_snar of the result */
 static int  f77_urrank[F77_MAX_UNIT];  /* an array-valued FUNCTION: its result's rank (the scan's) */
 static int  f77_urecur[F77_MAX_UNIT];  /* RECURSIVE (Fortran 90) */
+static int  f77_upure[F77_MAX_UNIT];   /* PURE (Fortran 95); ELEMENTAL is PURE too */
+static int  f77_uelem[F77_MAX_UNIT];   /* ELEMENTAL (Fortran 95) */
 static char f77_uresult[F77_MAX_UNIT][F77_MAX_NAME];   /* a FUNCTION's RESULT name, or "" */
 static char f77_urtn[F77_MAX_UNIT][F77_MAX_NAME];      /* a FUNCTION of a derived type: the type's name */
 static int  f77_urdt[F77_MAX_UNIT];                    /* ... and 1 + the type, once the unit is compiled: its caller
@@ -1037,6 +1048,12 @@ static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2
 static int  f77_hdr_clen_off;
 static int  f77_hdr_log;
 static int  f77_hdr_len;              /* REAL*8 FUNCTION: the *n seen by f77_function_kw_end, else 0 */
+static int  f77_hdr_kind_off;         /* REAL(k) FUNCTION: the kind selector's '(' , else -1 */
+static char f77_ukname[F77_MAX_UNIT][F77_MAX_NAME];
+#define F77_MAX_LTEXT 64
+static char f77_ultext[F77_MAX_UNIT][F77_MAX_LTEXT];  /* F77_LEN_PEND: the length's text, see f77_scan_clen */
+static int f77_clen_a;                 /* the length expression f77_char_len or f77_char_sel last read: */
+static int f77_clen_b;                 /* lx_stmt[a..b), a < 0 for none */   /* REAL(WP) FUNCTION, WP not known to the scan: the name */
 static int  f77_nunit;
 
 /* Create a symbol whose storage is a by-reference dummy argument: its
@@ -1280,7 +1297,7 @@ static int f77_is_cname(char *nm) {
  * loop off the control stack. */
 static int f77_ctl_base;
 
-static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; f77_ncname = 0; f77_where_tmp = -1; }
+static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; f77_ncname = 0; f77_where_tmp = -1; f77_where_sp = 0; }
 
 /* --- expression lowering -------------------------------------------- */
 
@@ -1316,6 +1333,7 @@ static int f77_is_inquiry(char *nm);
 static int f77_inquiry(char *nm, int t, int *iv, double *dv);
 static int f77_const_int(int *v);
 static int f77_kind_ty(int ty, int k);
+static int f77_int_kind_arg(void);
 static void f77_tfree_to(int mark);
 static int f77_urty_of(int u);
 static int f77_load_at(int addr, int ty);
@@ -3085,6 +3103,12 @@ static int f77_primary(void) {
                 }
                 saved = f77_char_whole_ok;
                 if (in == IN_LEN) f77_char_whole_ok = 1;
+                if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '=' && !(lx_rp + 1 < lx_rpe && lx_rp[1] == '=')) {
+                    char m[F77_MAX_NAME + 80];
+                    sprintf(m, "%s's first argument by keyword (%s=) is not supported", nm, lex_name);
+                    f77_error(m);
+                    return f77_iconst(0);
+                }
                 a = f77_expr(); aty = ex_ty; ahi = ex_hi;
                 f77_char_whole_ok = saved;
             }
@@ -3154,6 +3178,52 @@ static int f77_primary(void) {
                 return f77_bits(in, v);
             }
 
+            if (in == IN_CMPLX) {
+                /* CMPLX(X [, Y] [, KIND]) (Fortran 90): of kind 8 it is
+                 * DCMPLX */
+                int im; int imhi; int imty; int k; int has_y; int kn;
+                int a0; int a0hi;
+                im = -1; imhi = -1; imty = -1; k = 4; has_y = 0; kn = 0;
+                if (lx_t == T_COMMA) {
+                    f77_tok();
+                    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') kn = 1;
+                    else {
+                        im = f77_expr(); imhi = ex_hi; imty = ex_ty;
+                        has_y = 1;
+                        if (lx_t == T_COMMA) { f77_tok(); kn = 1; }
+                    }
+                }
+                if (kn) {
+                    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+                    if (!f77_const_int(&k) || f77_kind_ty(TY_CPLX, k) < 0) { f77_error("this kind is not supported"); return f77_iconst(0); }
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (has_y && (aty == TY_CPLX || aty == TY_DCPLX || imty == TY_CPLX || imty == TY_DCPLX)) { f77_error("CMPLX(x, y) needs x and y not COMPLEX"); return f77_iconst(0); }
+                if (has_y && (aty == TY_CHAR || imty == TY_CHAR)) { f77_error("CMPLX needs numeric arguments"); return f77_iconst(0); }
+                ex_log = 0;
+                if (k == 8) {
+                    ex_ty = TY_DCPLX;
+                    if (has_y) {
+                        a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                        im = f77_cvt(im, &imhi, imty, TY_DOUBLE);
+                        ex_hi = -1;
+                        return f77_dcx_make(a, ahi, im, imhi);
+                    }
+                    a = f77_cvt(a, &ahi, aty, TY_DCPLX);
+                    ex_hi = -1;
+                    return a;
+                }
+                a0 = a; a0hi = ahi;
+                a = f77_cvt(a, &ahi, aty, TY_FLOAT);
+                if (has_y) im = f77_cvt(im, &imhi, imty, TY_FLOAT);
+                else if (aty == TY_CPLX) im = ahi;
+                else if (aty == TY_DCPLX) {         /* CMPLX of a COMPLEX*16: each part narrowed */
+                    im = f77_cvt(a0, &a0hi, TY_DCPLX, TY_CPLX);
+                    im = a0hi;
+                } else im = f77_rconst(0.0);
+                ex_ty = TY_CPLX; ex_hi = im;
+                return a;
+            }
             if (in == IN_DCMPLX ||
                 (aty == TY_DCPLX && (in == IN_AIMAG || in == IN_CONJG || in == IN_REAL || in == IN_DBLE))) {
                 /* COMPLEX*16: DCMPLX(x [,y]); and of a COMPLEX*16, as
@@ -3197,29 +3267,7 @@ static int f77_primary(void) {
                 ex_ty = TY_DCPLX; ex_hi = -1;
                 return f77_dcx_make(re, rehi, im, imhi);
             }
-            if (in == IN_AIMAG || in == IN_CONJG || in == IN_CMPLX) {
-                if (in == IN_CMPLX) {
-                    int im;
-                    int a0;
-                    int a0hi;
-                    a0 = a; a0hi = ahi;
-                    a = f77_cvt(a, &ahi, aty, TY_FLOAT);
-                    if (lx_t == T_COMMA) {
-                        f77_tok();
-                        im = f77_expr();
-                        im = f77_cvt(im, &ex_hi, ex_ty, TY_FLOAT);
-                    } else if (aty == TY_CPLX) {
-                        im = ahi;
-                    } else if (aty == TY_DCPLX) {   /* CMPLX of a COMPLEX*16: each part narrowed */
-                        im = f77_cvt(a0, &a0hi, TY_DCPLX, TY_CPLX);
-                        im = a0hi;
-                    } else {
-                        im = f77_rconst(0.0);
-                    }
-                    if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
-                    ex_ty = TY_CPLX; ex_hi = im; ex_log = 0;
-                    return a;
-                }
+            if (in == IN_AIMAG || in == IN_CONJG) {
                 if (aty != TY_CPLX) { a = f77_cvt(a, &ahi, aty, TY_CPLX); }
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 if (in == IN_AIMAG) { ex_ty = TY_FLOAT; ex_hi = -1; return ahi; }
@@ -3307,6 +3355,13 @@ static int f77_primary(void) {
                 if (in == IN_CHAR) {
                     int tmp;
                     a = f77_cvt(a, &ahi, aty, TY_INT);
+                    if (lx_t == T_COMMA && strcmp(nm, "CHAR") == 0) {
+                        /* CHAR(I, KIND) (Fortran 90): one kind of CHARACTER here */
+                        int k;
+                        f77_tok();
+                        if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+                        if (!f77_const_int(&k) || k != 1) { f77_error("CHAR's KIND is 1 here"); return f77_iconst(0); }
+                    }
                     if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                     tmp = f77_char_temp(1);
                     hi_emit(HI_STORE, TY_CHAR, tmp, a, 0, NULL);
@@ -3369,6 +3424,7 @@ static int f77_primary(void) {
                 /* the INTEGER next above (below) x: truncate, and step
                  * by one when the truncation went the other way */
                 int t; int b; int bhi2; int c;
+                if (!f77_int_kind_arg()) return f77_iconst(0);
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 if (aty != TY_FLOAT && aty != TY_DOUBLE) { f77_error("CEILING and FLOOR need a REAL or DOUBLE PRECISION argument"); return f77_iconst(0); }
                 bhi2 = ahi;
@@ -3495,7 +3551,18 @@ static int f77_primary(void) {
                  * D-specific names force the double path; NINT is
                  * ANINT followed by the integer conversion. */
                 int dbl;
+                int rk;
                 char *fn;
+                rk = -1;
+                if (in == IN_NINT && strcmp(nm, "NINT") == 0 && !f77_int_kind_arg()) return f77_iconst(0);
+                if (lx_t == T_COMMA && (strcmp(nm, "AINT") == 0 || strcmp(nm, "ANINT") == 0)) {
+                    /* AINT(A, KIND), ANINT(A, KIND) (Fortran 90) */
+                    int k;
+                    f77_tok();
+                    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+                    rk = f77_const_int(&k) ? f77_kind_ty(TY_FLOAT, k) : -1;
+                    if (rk < 0) { f77_error("this kind is not supported"); return f77_iconst(0); }
+                }
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 dbl = (aty == TY_DOUBLE) || (in != IN_NINT && nm[0] == 'D') ||
                       strcmp(nm, "IDNINT") == 0;
@@ -3514,7 +3581,11 @@ static int f77_primary(void) {
                     a = f77_cvt(a, &ahi, aty, TY_INT);
                     aty = TY_INT;
                 }
-                ex_ty = aty; ex_hi = ahi;
+                if (rk >= 0 && rk != aty) {
+                    a = f77_cvt(a, &ahi, aty, rk);
+                    aty = rk;
+                }
+                ex_ty = aty; ex_hi = aty == TY_DOUBLE ? ahi : -1;
                 return a;
             }
 
@@ -3607,19 +3678,17 @@ static int f77_primary(void) {
                     a = f77_fp64_call2("__fp64_mul", a, ahi, b, bhi, &ahi);
                     rty = TY_DOUBLE;
                 } else if (in == IN_SIGN) {
-                    /* |a| with the sign of b */
+                    /* |a| with the sign of b -- its sign bit, so a negative
+                     * zero's too (Fortran 95, 13.14.98: a processor that
+                     * tells the zeros apart, and IEEE's does) */
                     int neg;
                     a = f77_abs(a, rty, &ahi);
                     if (rty == TY_DOUBLE) {
-                        neg = f77_fp64_call2("__fp64_lt", b, bhi,
-                                             f77_dconst(0.0, &qzero_hi), qzero_hi, NULL);
-                        ahi = f77_select(neg,
-                                hi_emit(HI_OR, TY_INT, ahi, f77_iconst(0x80000000), 0, NULL),
-                                ahi);
+                        neg = hi_emit(HI_AND, TY_INT, bhi, f77_iconst(0x80000000), 0, NULL);
+                        ahi = hi_emit(HI_OR, TY_INT, ahi, neg, 0, NULL);
                     } else if (rty == TY_FLOAT) {
-                        neg = hi_emit(HI_FLT, TY_INT, b, f77_rconst(0.0), 0, NULL);
-                        a = f77_select(neg,
-                                hi_emit(HI_OR, TY_INT, a, f77_iconst(0x80000000), 0, NULL), a);
+                        neg = hi_emit(HI_AND, TY_INT, b, f77_iconst(0x80000000), 0, NULL);
+                        a = hi_emit(HI_OR, TY_INT, a, neg, 0, NULL);
                     } else {
                         neg = hi_emit(HI_SLT, TY_INT, b, f77_iconst(0), 0, NULL);
                         a = f77_select(neg, hi_emit(HI_NEG, TY_INT, a, -1, 0, NULL), a);
@@ -3730,6 +3799,14 @@ static int f77_primary(void) {
                 }
             }
         typed:
+            if (rty == TY_CHAR && f77_urlen[u] == F77_LEN_PEND && (f77_uhost[u] >= 0 || f77_urrank[u] > 0)) {
+                /* an external one's caller declares its length; these
+                 * have only the definition's, which is not read yet */
+                char m[160];
+                sprintf(m, "the result length of %s is not known where it is referenced", f77_uname[u]);
+                f77_error(m);
+                return f77_iconst(0);
+            }
             if (f77_urrank[u] > 0) {
                 if (f77_uhost[u] < 0) {
                     char m[200];
@@ -4191,6 +4268,12 @@ static int f77_me_pending(int m, char *nm) {
     f77_me_ival[e] = 0;
     if (f77_me_ty[e] == TY_DERIVED) f77_me_ival[e] = f77_dt_find(f77_urtn[v]);
     if (f77_me_ty[e] == TY_CHAR) f77_me_ival[e] = f77_urlen[v];
+    if (f77_me_ty[e] == TY_CHAR && f77_urlen[v] == F77_LEN_PEND) {
+        char m[160];
+        sprintf(m, "the result length of %s is not known where it is referenced", f77_uname[v]);
+        f77_error(m);
+        f77_me_ival[e] = 1;
+    }
     n = 0;
     for (q = 0; q < f77_nfamd; q++) {
         int ty; int dt; int rk;
@@ -5647,20 +5730,24 @@ static int f77_where_on(void) {
     return f77_where_tmp >= 0 && f77_where_depth == f77_inline_depth;
 }
 
+/* Is the shape ext[0..nt) the WHERE's mask's, as far as constants say? */
+static int f77_where_conform(int *ext, int nt, char *msg) {
+    int j;
+    if (nt != f77_where_nt) { f77_error(msg); return 0; }
+    for (j = 0; j < nt; j++) {
+        int a; int b;
+        if (f77_hconst(ext[j], &a) && f77_hconst(f77_where_ext[j], &b) && a != b) { f77_error(msg); return 0; }
+    }
+    return 1;
+}
+
 /* In an array assignment's loops (cnt the counts, first fastest): branch
  * past the element unless the mask holds for it (ELSEWHERE: unless it
  * does not), leaving the element's block current.  The block to go on
  * in, which the caller enters after the element. */
 static int f77_where_guard(int *cnt, int *ext, int nt) {
     int off; int c; int j; int b_do; int b_skip;
-    if (nt != f77_where_nt) { f77_error("the shapes of a WHERE's mask and its assignment do not conform"); return -1; }
-    for (j = 0; j < nt; j++) {
-        int a; int b;
-        if (f77_hconst(ext[j], &a) && f77_hconst(f77_where_ext[j], &b) && a != b) {
-            f77_error("the shapes of a WHERE's mask and its assignment do not conform");
-            return -1;
-        }
-    }
+    if (!f77_where_conform(ext, nt, "the shapes of a WHERE's mask and its assignment do not conform")) return -1;
     off = cnt[nt - 1];
     for (j = nt - 2; j >= 0; j--) {
         off = hi_emit(HI_MUL, TY_INT, off, f77_where_ext[j], 0, NULL);
@@ -5668,7 +5755,7 @@ static int f77_where_guard(int *cnt, int *ext, int nt) {
     }
     off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(4), 0, NULL);
     c = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADD, HL_ADDR_TY, f77_where_tmp, off, 0, NULL), -1, 0, NULL);
-    c = hi_emit(f77_where_neg ? HI_SEQ : HI_SNE, TY_INT, c, f77_iconst(0), 0, NULL);
+    c = hi_emit(HI_SEQ, TY_INT, c, f77_iconst(f77_where_want), 0, NULL);
     b_do = hir_new_block();
     b_skip = hir_new_block();
     hi_emit(HI_BRC, TY_VOID, c, b_do, b_skip, NULL);
@@ -6553,58 +6640,106 @@ static int f77_merge(void) {
  * (f77_where_tmp); each assignment then loops over its own shape, which
  * must be the mask's rank, and stores only the elements the mask holds
  * for -- ELSEWHERE's those it does not.  The right side is evaluated for
- * those elements only.  F90's WHERE: no WHERE inside one, no masked
- * ELSEWHERE (Fortran 95's), assignments alone in its body. */
-static void f77_where_begin(int from, int to) {
+ * those elements only.
+ *
+ * Fortran 95's (7.5.3.2): a WHERE inside a WHERE (els 0, another
+ * temporary: its mask evaluated where the outer one's assignments are
+ * made, and nothing of it holds elsewhere), and ELSEWHERE (mask) (els 1,
+ * the same temporary: the mask evaluated where no mask before it held,
+ * and those elements divided again).  0 after an error. */
+static int f77_where_mask(int from, int to, int els) {
     int sy; int at; int nt; int k; int n; int tmp; int pos;
     int ext[F77_MAX_RANK];
     F77AexSave asv;
     int args[3];
     F77Loop lp[F77_MAX_RANK];
     sy = f77_aex_first(from, to, &at);
-    if (sy < 0) { f77_error("WHERE needs a LOGICAL array for its mask"); return; }
+    if (sy < 0) { f77_error("WHERE needs a LOGICAL array for its mask"); return 0; }
     nt = f77_aex_shape(sy, at, ext);
-    if (nt <= 0) return;
-    if (nt > 8) { f77_error("too many dimensions in an array expression"); return; }
-    n = ext[0];
-    for (k = 1; k < nt; k++) n = hi_emit(HI_MUL, TY_INT, n, ext[k], 0, NULL);
-    args[0] = f77_iconst(0);
-    args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(4), 0, NULL);
-    args[2] = f77_iconst(0);
-    tmp = f77_call_i("f77_allocate", 3, args);
+    if (nt <= 0) return 0;
+    if (nt > 8) { f77_error("too many dimensions in an array expression"); return 0; }
+    if (els) {
+        if (!f77_where_conform(ext, nt, "the shapes of a WHERE's mask and its ELSEWHERE's do not conform")) return 0;
+        tmp = f77_where_tmp;
+    } else {
+        if (f77_where_tmp >= 0 && f77_where_sp >= F77_MAX_WHERE) { f77_error("WHERE constructs nested too deep"); return 0; }
+        if (f77_where_on() &&
+            !f77_where_conform(ext, nt, "the shapes of a WHERE's mask and the mask of a WHERE inside it do not conform")) return 0;
+        n = ext[0];
+        for (k = 1; k < nt; k++) n = hi_emit(HI_MUL, TY_INT, n, ext[k], 0, NULL);
+        args[0] = f77_iconst(0);
+        args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(4), 0, NULL);
+        args[2] = f77_iconst(0);
+        tmp = f77_call_i("f77_allocate", 3, args);
+    }
     pos = f77_int_temp();
     hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
     for (k = nt - 1; k >= 0; k--)
         f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
     {
         int c[8];
+        int v; int p; int at; int b_skip;
         for (k = 0; k < nt; k++) c[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
+        at = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(4), 0, NULL), 0, NULL);
+        b_skip = -1;
+        if (els) {
+            /* an element no mask has held for yet: this one's to divide */
+            int old; int b_do;
+            old = hi_emit(HI_LOAD, TY_INT, at, -1, 0, NULL);
+            hi_emit(HI_STORE, TY_INT, at, f77_iconst(0), 0, NULL);
+            b_do = hir_new_block();
+            b_skip = hir_new_block();
+            hi_emit(HI_BRC, TY_VOID, hi_emit(HI_SEQ, TY_INT, old, f77_iconst(2), 0, NULL), b_do, b_skip, NULL);
+            f77_cur_blk_live = 0;
+            f77_begin_blk(b_do);
+        } else if (f77_where_on()) {
+            hi_emit(HI_STORE, TY_INT, at, f77_iconst(0), 0, NULL);
+            b_skip = f77_where_guard(c, ext, nt);
+            if (b_skip < 0) return 0;
+        }
         f77_aex_enter(&asv, nt, c, ext);
-    }
-    {
-        int v; int p;
         v = f77_expr_at(from, to);
         if (ex_ty != TY_INT || !ex_log) f77_error("WHERE needs a LOGICAL array for its mask");
-        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
-        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(4), 0, NULL), 0, NULL),
-                hi_emit(HI_SNE, TY_INT, v, f77_iconst(0), 0, NULL), 0, NULL);
-        hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
+        f77_aex_leave(&asv);
+        hi_emit(HI_STORE, TY_INT, at,
+                hi_emit(HI_SUB, TY_INT, f77_iconst(2), hi_emit(HI_SNE, TY_INT, v, f77_iconst(0), 0, NULL), 0, NULL), 0, NULL);
+        if (b_skip >= 0) { f77_goto_blk(b_skip); f77_begin_blk(b_skip); }
     }
-    f77_aex_leave(&asv);
     for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
+    if (els) return 1;
+    if (f77_where_tmp >= 0) {
+        int *w;
+        w = f77_where_stk[f77_where_sp];
+        w[0] = f77_where_tmp; w[1] = f77_where_want; w[2] = f77_where_depth; w[3] = f77_where_nt;
+        for (k = 0; k < 8; k++) w[4 + k] = f77_where_ext[k];
+        f77_where_sp = f77_where_sp + 1;
+    }
     f77_where_tmp = tmp;
-    f77_where_neg = 0;
+    f77_where_want = 1;
     f77_where_depth = f77_inline_depth;
     f77_where_nt = nt;
     for (k = 0; k < nt; k++) f77_where_ext[k] = ext[k];
+    return 1;
 }
 
+/* The WHERE is over: its temporary freed, and the WHERE it was inside
+ * the one in force again. */
 static void f77_where_end(void) {
     int args[1];
+    int k;
     if (f77_where_tmp < 0) return;
     args[0] = f77_where_tmp;
     f77_call_i("f77_dealloc_auto", 1, args);
     f77_where_tmp = -1;
+    if (f77_where_sp > 0) {
+        int *w;
+        f77_where_sp = f77_where_sp - 1;
+        w = f77_where_stk[f77_where_sp];
+        f77_where_tmp = w[0]; f77_where_want = w[1]; f77_where_depth = w[2]; f77_where_nt = w[3];
+        for (k = 0; k < 8; k++) f77_where_ext[k] = w[4 + k];
+    }
 }
 
 static void f77_stmt_assign(void);
@@ -6612,16 +6747,15 @@ static void f77_stmt_assign(void);
 /* WHERE (mask) assignment, or WHERE (mask) opening the construct its
  * ELSEWHERE and END WHERE close. */
 static void f77_stmt_where(void) {
-    int after; int mk; int end;
+    int after; int mk; int end; int ok;
     after = f77_match_paren(5);
-    if (f77_where_on()) { f77_error("a WHERE inside a WHERE is Fortran 95's, not supported"); return; }
     /* array-valued intrinsics in the mask, evaluated first (f77_hoist) */
     mk = f77_tfree_mark();
     end = after - 1;
     if (f77_hoist(6, &end)) after = f77_match_paren(5);
-    f77_where_begin(6, after - 1);
+    ok = f77_where_mask(6, after - 1, 0);
     f77_tfree_to(mk);
-    if (f77_where_tmp < 0) return;
+    if (!ok) return;
     if (after == lx_stmt_len) {
         if (ctl_n >= F77_MAX_CTL) { f77_error("control nesting too deep"); return; }
         ctl_kind[ctl_n] = F77_CTL_WHERE;
@@ -6643,6 +6777,32 @@ static void f77_stmt_where(void) {
         else f77_stmt_assign();
     }
     f77_where_end();
+}
+
+/* ELSEWHERE [(mask)] [name] */
+static void f77_cname_match_opt(int k, char *nm, char *what);
+static char *f77_name_tail(int off);
+static void f77_stmt_elsewhere(void) {
+    int after; char *nm;
+    after = 9;
+    if (ctl_else[ctl_n - 1]) { f77_error("an ELSEWHERE after the WHERE construct's ELSEWHERE with no mask"); return; }
+    if (lx_stmt[9] == '(') {
+        int mk; int end; int ok;
+        after = f77_match_paren(9);
+        mk = f77_tfree_mark();
+        end = after - 1;
+        if (f77_hoist(10, &end)) after = f77_match_paren(9);
+        ok = f77_where_mask(10, after - 1, 1);
+        f77_tfree_to(mk);
+        if (!ok) return;
+    } else {
+        ctl_else[ctl_n - 1] = 1;
+        f77_where_want = 2;
+    }
+    nm = f77_name_tail(after);
+    if (!nm) { f77_error("unexpected text after ELSEWHERE"); return; }
+    f77_cname_match_opt(ctl_n - 1, nm, "ELSEWHERE");
+    lx_t = T_EOF;
 }
 
 static void f77_stmt_assign(void) {
@@ -6849,6 +7009,51 @@ static int f77_stf_char_arg(int dlen, int v, int vlen) {
     return s;
 }
 
+/* The statement and the token scanner on it, checkpointed: what reads
+ * another statement's text in the middle of this one -- a statement
+ * function's, a spliced callee's, a length the unit scan kept -- comes
+ * back to this one's cursor and current token.  Restoring the buffer
+ * alone is not enough: that is what broke ISQ(ISQ(2)), the outer call
+ * resuming with a stale cursor. */
+typedef struct {
+    char stmt[F77_MAX_STMT];
+    unsigned char brk[F77_MAX_STMT];
+    int len;
+    char *rp; char *rpe; char *rts; char *rte;
+    int rcs; int ract;
+    int t;
+    char name[F77_MAX_NAME];
+    int namelen;
+    int ival;
+    double dval;
+    int sidx;
+    int slen;
+} F77LxSave;
+static void f77_lx_save(F77LxSave *sv) {
+    memcpy(sv->stmt, lx_stmt, lx_stmt_len + 1);
+    memcpy(sv->brk, lx_brk, lx_stmt_len);
+    sv->len = lx_stmt_len;
+    sv->rp = lx_rp; sv->rpe = lx_rpe; sv->rts = lx_rts; sv->rte = lx_rte;
+    sv->rcs = lx_rcs; sv->ract = lx_ract;
+    sv->t = lx_t;
+    memcpy(sv->name, lex_name, F77_MAX_NAME);
+    sv->namelen = lex_namelen;
+    sv->ival = lex_ival; sv->dval = lex_dval;
+    sv->sidx = lex_sidx; sv->slen = lex_slen;
+}
+static void f77_lx_restore(F77LxSave *sv) {
+    memcpy(lx_stmt, sv->stmt, sv->len + 1);
+    memcpy(lx_brk, sv->brk, sv->len);
+    lx_stmt_len = sv->len;
+    lx_rp = sv->rp; lx_rpe = sv->rpe; lx_rts = sv->rts; lx_rte = sv->rte;
+    lx_rcs = sv->rcs; lx_ract = sv->ract;
+    lx_t = sv->t;
+    memcpy(lex_name, sv->name, F77_MAX_NAME);
+    lex_namelen = sv->namelen;
+    lex_ival = sv->ival; lex_dval = sv->dval;
+    lex_sidx = sv->sidx; lex_slen = sv->slen;
+}
+
 static int f77_stf_expand(int si) {
     int n;
     int k;
@@ -6857,18 +7062,7 @@ static int f77_stf_expand(int si) {
     int vhi;
     int fs;
     int targs[F77_MAX_STF_ARGS];
-    char save_stmt[F77_MAX_STMT];
-    unsigned char save_brk[F77_MAX_STMT];
-    int save_len;
-    char *save_rp; char *save_rpe; char *save_rts; char *save_rte;
-    int save_rcs; int save_ract;
-    int save_t;
-    char save_name[F77_MAX_NAME];
-    int save_namelen;
-    int save_ival;
-    double save_dval;
-    int save_sidx;
-    int save_slen;
+    F77LxSave sv;
 
     f77_tok();
     if (lx_t != T_LP) { f77_error("statement function needs arguments"); return f77_iconst(0); }
@@ -6897,16 +7091,7 @@ static int f77_stf_expand(int si) {
     if (f77_stfb_n + n > F77_MAX_STFB) { f77_error("statement functions nested too deep"); return f77_iconst(0); }
 
     /* Checkpoint the statement and scanner, swap the definition in. */
-    memcpy(save_stmt, lx_stmt, lx_stmt_len + 1);
-    memcpy(save_brk, lx_brk, lx_stmt_len);
-    save_len = lx_stmt_len;
-    save_rp = lx_rp; save_rpe = lx_rpe; save_rts = lx_rts; save_rte = lx_rte;
-    save_rcs = lx_rcs; save_ract = lx_ract;
-    save_t = lx_t;
-    memcpy(save_name, lex_name, F77_MAX_NAME);
-    save_namelen = lex_namelen;
-    save_ival = lex_ival; save_dval = lex_dval;
-    save_sidx = lex_sidx; save_slen = lex_slen;
+    f77_lx_save(&sv);
 
     memcpy(lx_stmt, f77_stf_pool + f77_stf_text[si], f77_stf_len[si]);
     memcpy(lx_brk, f77_stf_pbrk + f77_stf_text[si], f77_stf_len[si]);
@@ -6922,16 +7107,7 @@ static int f77_stf_expand(int si) {
     if (lx_t != T_EOF) f77_error("junk after statement function expression");
     f77_stfb_n = f77_stfb_n - n;
 
-    memcpy(lx_stmt, save_stmt, save_len + 1);
-    memcpy(lx_brk, save_brk, save_len);
-    lx_stmt_len = save_len;
-    lx_rp = save_rp; lx_rpe = save_rpe; lx_rts = save_rts; lx_rte = save_rte;
-    lx_rcs = save_rcs; lx_ract = save_ract;
-    lx_t = save_t;
-    memcpy(lex_name, save_name, F77_MAX_NAME);
-    lex_namelen = save_namelen;
-    lex_ival = save_ival; lex_dval = save_dval;
-    lex_sidx = save_sidx; lex_slen = save_slen;
+    f77_lx_restore(&sv);
 
     fs = f77_stf_sym[si];
     v = f77_cvt(v, &vhi, vty, f77_sty[fs]);
@@ -7097,26 +7273,74 @@ static int f77_cx_promote(int a, int b);
  * the unit's INTEGER named constants, and errors not reported but
  * remembered (f77_scan_bad): what the scan cannot tell, the compilation
  * will, or refuse. */
-static char f77_sk_name[64][F77_MAX_NAME];
-static int f77_sk_val[64];
+#define F77_MAX_SK 256
+static char f77_sk_name[F77_MAX_SK][F77_MAX_NAME];
+static int f77_sk_val[F77_MAX_SK];
+static int f77_sk_own[F77_MAX_SK];     /* the unit whose constant it is */
+static int f77_sk_ok[F77_MAX_SK];      /* 0: a constant of the unit the scan has no value for */
 static int f77_sk_n;
 static int f77_sk_unit = -1;
+static int f77_scan_local(int unit, char *nm);
+/* A name's value: the unit's own constant, else its host's -- unless the
+ * unit has a dummy or a declaration of that name, which hides the host's.
+ * One host up and no further: what a host in between declares, the scan
+ * did not keep, and the compilation tells what the scan cannot.  What the
+ * unit's own USEs hide, the scan cannot know either: a unit told by its
+ * host is marked (f77_uhosted), and the compilation checks its result. */
 static int f77_scan_const(char *nm, int *v) {
-    int i;
+    int i; int h;
     *v = 0;
-    for (i = 0; i < f77_sk_n; i++)
-        if (strcmp(f77_sk_name[i], nm) == 0) { *v = f77_sk_val[i]; return 1; }
+    if (f77_scan_mode == 2) {            /* f77_len_text: the compilation's names */
+        i = f77_sym_find(nm);
+        if (i < 0 || !f77_sparam[i] || f77_sty[i] != TY_INT || f77_slog[i] || f77_srank[i] > 0) return 0;
+        *v = f77_spival[i];
+        return 1;
+    }
+    for (i = f77_sk_n - 1; i >= 0; i--)
+        if (f77_sk_own[i] == f77_sk_unit && strcmp(f77_sk_name[i], nm) == 0) {
+            if (f77_sk_ok[i]) *v = f77_sk_val[i];
+            return f77_sk_ok[i];
+        }
+    h = f77_sk_unit >= 0 ? f77_uhost[f77_sk_unit] : -1;
+    if (h < 0 || f77_scan_local(f77_sk_unit, nm)) return 0;
+    for (i = f77_sk_n - 1; i >= 0; i--)
+        if (f77_sk_own[i] == h && strcmp(f77_sk_name[i], nm) == 0) {
+            if (f77_sk_ok[i]) { *v = f77_sk_val[i]; f77_uhosted[f77_sk_unit] = 1; }
+            return f77_sk_ok[i];
+        }
     return 0;
 }
-/* The table is the unit's: a new unit starts it empty. */
+/* The table holds the unit's constants and its hosts': a new unit keeps
+ * its hosts' and drops the rest. */
 static void f77_scan_begin(int unit) {
-    if (f77_sk_unit != unit) { f77_sk_n = 0; f77_sk_unit = unit; }
+    int i; int n; int u;
+    if (f77_sk_unit == unit) return;
+    n = 0;
+    for (i = 0; i < f77_sk_n; i++) {
+        u = f77_uhost[unit];
+        while (u >= 0 && u != f77_sk_own[i]) u = f77_uhost[u];
+        if (u < 0) continue;
+        if (n != i) {
+            strcpy(f77_sk_name[n], f77_sk_name[i]);
+            f77_sk_val[n] = f77_sk_val[i];
+            f77_sk_own[n] = f77_sk_own[i];
+            f77_sk_ok[n] = f77_sk_ok[i];
+        }
+        n = n + 1;
+    }
+    f77_sk_n = n;
+    f77_sk_unit = unit;
 }
-static void f77_scan_const_add(int unit, char *nm, int v) {
+/* A constant of the unit: its value, or (ok 0) only that the unit has a
+ * constant of that name, which hides its host's.  A full table forgets
+ * the hosts: nothing is told that might be wrong. */
+static void f77_scan_const_add(int unit, char *nm, int v, int ok) {
     f77_scan_begin(unit);
-    if (f77_sk_n >= 64) return;
+    if (f77_sk_n >= F77_MAX_SK) { f77_sk_n = 0; return; }
     strcpy(f77_sk_name[f77_sk_n], nm);
     f77_sk_val[f77_sk_n] = v;
+    f77_sk_own[f77_sk_n] = unit;
+    f77_sk_ok[f77_sk_n] = ok;
     f77_sk_n = f77_sk_n + 1;
 }
 
@@ -7133,6 +7357,17 @@ static int f77_kind_ty(int ty, int k) {
 /* KIND of a value of type ty. */
 static int f77_ty_kind(int ty) {
     return ty == TY_DOUBLE || ty == TY_DCPLX ? 8 : ty == TY_CHAR ? 1 : 4;
+}
+
+/* The [, KIND=k] that may close CEILING, FLOOR and NINT (Fortran 95; NINT's
+ * is Fortran 90's): one kind of INTEGER here.  0 after an error. */
+static int f77_int_kind_arg(void) {
+    int k;
+    if (lx_t != T_COMMA) return 1;
+    f77_tok();
+    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+    if (!f77_const_int(&k) || f77_kind_ty(TY_INT, k) < 0) { f77_error("this kind is not supported"); return 0; }
+    return 1;
 }
 
 /* A kind selector after a type keyword, lx_t at its '(': (n) or
@@ -7174,6 +7409,100 @@ static int f77_scan_kind_sel(int ty) {
     r = f77_kind_sel(ty);
     f77_scan_mode = 0;
     return f77_scan_bad || r < 0 ? -2 : r;
+}
+
+/* A FUNCTION header's CHARACTER length, f77_hdr_clen -2: *(n), (n),
+ * (LEN=n), n a constant expression or *. */
+static int f77_char_len(void);
+static int f77_char_sel(void);
+static int f77_hdr_char_len(void) {
+    f77_scan_from(f77_hdr_clen_off);
+    return lx_t == T_LP && f77_hdr_clen_off > 0 && lx_stmt[f77_hdr_clen_off - 1] != '*' ? f77_char_sel() : f77_char_len();
+}
+/* A CHARACTER length in the unit scan, by `how`: 0 f77_char_len, 1
+ * f77_char_sel, 2 a FUNCTION header's.  The length, -1 for *, or
+ * F77_LEN_PEND where the scan cannot tell -- a name that is not in its
+ * table, which the compilation has.  A length with names in it leaves its
+ * text in `text` for the compilation to evaluate (f77_len_text) where the
+ * names are known -- unit u's host, or u after its USEs -- and to hold
+ * what the scan told to.  No text when a name in it is u's own (a dummy,
+ * or declared there: that one is not the host's) or it is too long; then
+ * u's own statement tells, when it is compiled.  Nothing is reported: the
+ * compilation reads the statement again. */
+static int f77_scan_clen(int how, int u, char *text) {
+    int l; int i; int n; int names;
+    char nm[F77_MAX_NAME];
+    text[0] = 0;
+    f77_clen_a = -1;
+    f77_scan_mode = 1;
+    f77_scan_bad = 0;
+    l = how == 2 ? f77_hdr_char_len() : how ? f77_char_sel() : f77_char_len();
+    f77_scan_mode = 0;
+    if (f77_scan_bad) l = F77_LEN_PEND;
+    if (f77_clen_a < 0 || f77_clen_b - f77_clen_a >= F77_MAX_LTEXT) return l;
+    names = 0;
+    i = f77_clen_a;
+    while (i < f77_clen_b) {
+        if (!lx_isalpha(lx_stmt[i])) { i = i + 1; continue; }
+        n = 0;
+        while (i < f77_clen_b && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+            if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
+            i = i + 1;
+        }
+        nm[n] = 0;
+        if (f77_scan_local(u, nm)) return l;
+        names = 1;
+    }
+    if (names) {
+        memcpy(text, lx_stmt + f77_clen_a, f77_clen_b - f77_clen_a);
+        text[f77_clen_b - f77_clen_a] = 0;
+    }
+    return l;
+}
+/* The length that text is, with the names here: its value, or -1 when it
+ * is not a constant of them.  Quietly -- the caller knows what to say. */
+static int f77_len_text(char *text) {
+    F77LxSave sv;
+    int l;
+    f77_lx_save(&sv);
+    lx_stmt_len = (int)strlen(text);
+    memcpy(lx_stmt, text, lx_stmt_len + 1);
+    memset(lx_brk, 0, lx_stmt_len + 1);
+    f77_scan_mode = 2;
+    f77_scan_bad = 0;
+    f77_scan_from(0);
+    f77_cexpr();
+    f77_scan_mode = 0;
+    l = (!f77_scan_bad && lx_t == T_EOF && f77_cx_ty == TY_INT && f77_cx_i >= 0) ? f77_cx_i : -1;
+    f77_lx_restore(&sv);
+    return l;
+}
+/* A FUNCTION header's kind selector that is one name, (WP) or (KIND=WP):
+ * 1 and the name. */
+static int f77_hdr_kind_name(char *nm) {
+    int i; int n;
+    i = f77_hdr_kind_off + 1;
+    if (lx_stmt_len - i > 5 && strncmp(lx_stmt + i, "KIND=", 5) == 0) i = i + 5;
+    n = 0;
+    if (i >= lx_stmt_len || !lx_isalpha(lx_stmt[i])) return 0;
+    while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) { if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i]; i = i + 1; }
+    nm[n] = 0;
+    return i < lx_stmt_len && lx_stmt[i] == ')';
+}
+/* The type that kind, an INTEGER named constant, gives ty: -1 when the
+ * name is no such constant here (said when say), or its kind is not
+ * supported (said). */
+static int f77_kind_named(int ty, char *nm, int say) {
+    int s; int r;
+    char m[F77_MAX_NAME + 80];
+    s = f77_sym_find(nm);
+    if (s < 0 || !f77_sparam[s] || f77_sty[s] != TY_INT) {
+        if (say) { sprintf(m, "the kind %s of a FUNCTION's result is not an INTEGER named constant here", nm); f77_error(m); }
+        return -1;
+    }
+    r = f77_kind_ty(ty, f77_spival[s]);
+    if (r < 0) { sprintf(m, "kind %d of this type is not supported", f77_spival[s]); f77_error(m); }
+    return r;
 }
 
 /* The inquiry intrinsics (Fortran 90), by the argument's type alone:
@@ -7936,11 +8265,59 @@ static int f77_char_len(void) {
         f77_tok();
         return -1;
     }
+    f77_clen_a = (int)(lx_rts - lx_stmt);
     f77_cexpr();
+    f77_clen_b = (int)(lx_rts - lx_stmt);
     if (lx_t != T_RP) { f77_error("expected ) after CHARACTER length"); return 1; }
     f77_tok();
     if (f77_cx_ty != TY_INT || f77_cx_i < 0) { f77_error("CHARACTER length must be an integer constant"); return 1; }
     return f77_cx_i;
+}
+
+/* A CHARACTER selector (Fortran 90), lx_t at its '(': (n), (LEN=n),
+ * (n, KIND=k), (LEN=n, KIND=k), (KIND=k [, LEN=n]) -- n a constant
+ * expression or *, and one kind here, 1.  The length; -1 for *. */
+static int f77_char_sel(void) {
+    int len; int got_len; int got_kind; int pos;
+    len = 1; got_len = 0; got_kind = 0; pos = 0;
+    f77_tok();
+    for (;;) {
+        int is_kind;
+        is_kind = pos == 1;
+        if (lx_t == T_NAME && lx_rp < lx_rpe && *lx_rp == '=' && !(lx_rp + 1 < lx_rpe && lx_rp[1] == '=') &&
+            (strcmp(lex_name, "LEN") == 0 || strcmp(lex_name, "KIND") == 0)) {
+            is_kind = lex_name[0] == 'K';
+            f77_tok(); f77_tok();
+        }
+        if (is_kind) {
+            int k;
+            if (got_kind || !f77_const_int(&k)) { f77_error("a CHARACTER's kind is one INTEGER constant"); return 1; }
+            if (k != 1) {
+                char m[64];
+                sprintf(m, "CHARACTER kind %d is not supported", k);
+                f77_error(m);
+                return 1;
+            }
+            got_kind = 1;
+        } else {
+            if (got_len) { f77_error("a CHARACTER's length is given once"); return 1; }
+            if (lx_t == T_STAR) { f77_tok(); len = -1; }
+            else {
+                f77_clen_a = (int)(lx_rts - lx_stmt);
+                f77_cexpr();
+                f77_clen_b = (int)(lx_rts - lx_stmt);
+                if (f77_cx_ty != TY_INT || f77_cx_i < 0) { f77_error("CHARACTER length must be an integer constant"); return 1; }
+                len = f77_cx_i;
+            }
+            got_len = 1;
+        }
+        pos = pos + 1;
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+    if (lx_t != T_RP) { f77_error("expected ) after CHARACTER length"); return 1; }
+    f77_tok();
+    return len;
 }
 
 /* A deferred shape, (:) or (:,:,...), lx_t at the '(': the rank of an
@@ -8028,9 +8405,8 @@ static void f77_stmt_decl(int ty, int skip) {
         }
         if (lx_t == T_COMMA && !has_dc) f77_tok();       /* CHARACTER*10, A, B */
     } else if (lx_t == T_LP && ty == TY_CHAR) {
-        /* CHARACTER(LEN=n), CHARACTER(n), CHARACTER(LEN=*) */
-        if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
-        clen = f77_char_len();
+        /* CHARACTER(LEN=n), CHARACTER(n), CHARACTER(LEN=*), a KIND with it */
+        clen = f77_char_sel();
     } else if (lx_t == T_LP && ty == TY_DERIVED) {
         /* TYPE(name) (Fortran 90) */
         f77_tok();
@@ -10870,6 +11246,7 @@ static int f77_function_kw_end(int *ty_out) {
     f77_hdr_clen = 1;
     f77_hdr_log = 0;
     f77_hdr_len = 0;
+    f77_hdr_kind_off = -1;
     n = f77_type_before_function("DOUBLEPRECISION");
     if (lx_stmt_len > 5 && strncmp(lx_stmt, "TYPE(", 5) == 0) {
         /* TYPE(name) FUNCTION (Fortran 90) */
@@ -10886,7 +11263,17 @@ static int f77_function_kw_end(int *ty_out) {
     else if ((n = f77_type_before_function("CHARACTER")) > 0) {
         off = n;
         ty = TY_CHAR;
-        if (off < lx_stmt_len && lx_stmt[off] == '*') {
+        if (off < lx_stmt_len && lx_stmt[off] == '(') {
+            /* CHARACTER(LEN=n) FUNCTION, CHARACTER(n), (LEN=*) (Fortran 90):
+             * the caller's to evaluate, as *(n) below is */
+            int end;
+            end = f77_match_paren(off);
+            if (end < 0) return -1;
+            f77_hdr_clen = -2;
+            f77_hdr_clen_off = off;
+            off = end;
+        }
+        else if (off < lx_stmt_len && lx_stmt[off] == '*') {
             /* *n or *(*) by text; *(cexpr) through the scanner. */
             off = off + 1;
             if (off + 2 < lx_stmt_len && lx_stmt[off] == '(' && lx_stmt[off + 1] == '*' &&
@@ -10927,6 +11314,16 @@ static int f77_function_kw_end(int *ty_out) {
         }
     }
 
+    /* A kind after the type: REAL(8) FUNCTION F(X), REAL(KIND=WP) (Fortran
+     * 90).  The caller evaluates it (f77_hdr_kind_off): this is the test
+     * for a header, run where the kind's names may not be known yet. */
+    if (ty != TY_CHAR && ty != TY_DERIVED && off > 0 && off < lx_stmt_len && lx_stmt[off] == '(') {
+        int end;
+        end = f77_match_paren(off);
+        if (end < 0) return -1;
+        f77_hdr_kind_off = off;
+        off = end;
+    }
     /* A length after the type: REAL*8 FUNCTION F(X) */
     if (ty != TY_CHAR && off > 0 && off + 1 < lx_stmt_len && lx_stmt[off] == '*' && lx_isdigit(lx_stmt[off + 1])) {
         int ln;
@@ -13952,31 +14349,11 @@ static void f77_statement(void);
  * bound to its dummy arguments.  Returns the FUNCTION result symbol,
  * or -1 for a SUBROUTINE. */
 static int f77_inline_unit_body(int u, int *addrs, int nargs) {
-    char save_stmt[F77_MAX_STMT];
-    unsigned char save_brk[F77_MAX_STMT];
-    int save_len;
+    F77LxSave sv;                    /* the callee's statements move the cursor */
     int save_label;
     int save_line;
     int save_stmt_line;
     int save_pos;
-    /* The token scanner runs over lx_stmt, so splicing a callee moves
-     * the cursor into the callee's statements.  Restoring the buffer is
-     * not enough -- the scanner state and the current token have to come
-     * back too, or the caller resumes mid-nowhere.  This is what broke
-     * ISQ(ISQ(2)): the outer call resumed with a stale cursor. */
-    char *save_rp;
-    char *save_rpe;
-    char *save_rts;
-    char *save_rte;
-    int save_rcs;
-    int save_ract;
-    int save_t;
-    char save_name[F77_MAX_NAME];
-    int save_namelen;
-    int save_ival;
-    double save_dval;
-    int save_sidx;
-    int save_slen;
     int save_scope;
     int save_lblbase;
     int save_nlabel;
@@ -14001,20 +14378,11 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     int result;
 
     /* Checkpoint everything the callee will disturb. */
-    memcpy(save_stmt, lx_stmt, lx_stmt_len + 1);
-    memcpy(save_brk, lx_brk, lx_stmt_len);
-    save_len = lx_stmt_len;
+    f77_lx_save(&sv);
     save_label = lx_stmt_label;
     save_line = lx_line;
     save_stmt_line = lx_stmt_line;
     save_pos = lx_pos;
-    save_rp = lx_rp; save_rpe = lx_rpe; save_rts = lx_rts; save_rte = lx_rte;
-    save_rcs = lx_rcs; save_ract = lx_ract;
-    save_t = lx_t;
-    memcpy(save_name, lex_name, F77_MAX_NAME);
-    save_namelen = lex_namelen;
-    save_ival = lex_ival; save_dval = lex_dval;
-    save_sidx = lex_sidx; save_slen = lex_slen;
     save_scope = f77_scope_base;
     save_lblbase = f77_label_base;
     save_nlabel = f77_nlabel;
@@ -14130,17 +14498,8 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     lx_pos = save_pos;
     lx_line = save_line;
     lx_stmt_line = save_stmt_line;   /* or the caller's next diagnostic names the callee's last line */
-    memcpy(lx_stmt, save_stmt, save_len + 1);
-    memcpy(lx_brk, save_brk, save_len);
-    lx_stmt_len = save_len;
+    f77_lx_restore(&sv);
     lx_stmt_label = save_label;
-    lx_rp = save_rp; lx_rpe = save_rpe; lx_rts = save_rts; lx_rte = save_rte;
-    lx_rcs = save_rcs; lx_ract = save_ract;
-    lx_t = save_t;
-    memcpy(lex_name, save_name, F77_MAX_NAME);
-    lex_namelen = save_namelen;
-    lex_ival = save_ival; lex_dval = save_dval;
-    lex_sidx = save_sidx; lex_slen = save_slen;
 
     return result;
 }
@@ -14536,6 +14895,61 @@ static int f77_host_extra(int v) {
 
 static void f77_emit_copyin(void) {
     int i;
+    /* REAL(WP) FUNCTION F: the kind the scan could not tell.  Each
+     * procedure this unit contains learns its result's from the names
+     * here, before anything in the unit or beside it refers to one; this
+     * unit's own, from a name its own declarations or USEs gave. */
+    if (f77_inline_depth == 0) {
+        int u; int kt;
+        for (u = 0; u < f77_nunit; u++) {
+            if (f77_uhost[u] != f77_cur_unit || !f77_urpend[u] || !f77_ukname[u][0]) continue;
+            if (f77_sym_find(f77_ukname[u]) < 0) continue;
+            kt = f77_kind_named(f77_urty[u], f77_ukname[u], 0);
+            if (kt >= 0) { f77_urty[u] = kt; f77_urpend[u] = 0; }
+        }
+        /* CHARACTER(LEN=N) FUNCTION F likewise, its length */
+        for (u = 0; u < f77_nunit; u++) {
+            int l;
+            if (f77_uhost[u] != f77_cur_unit || f77_urlen[u] != F77_LEN_PEND || !f77_ultext[u][0]) continue;
+            l = f77_len_text(f77_ultext[u]);
+            if (l >= 0) f77_urlen[u] = l;
+        }
+        u = f77_cur_unit;
+        if (f77_ukind[u] == F77_UNIT_FUNC && f77_urlen[u] == F77_LEN_PEND && f77_result_sym >= 0 &&
+            f77_sty[f77_result_sym] == TY_CHAR) {
+            /* this unit's own: its type statement has told it by now, or
+             * the header's waited for the USEs */
+            int l;
+            l = f77_slen[f77_result_sym];
+            if (l < 0 && f77_ultext[u][0]) l = f77_len_text(f77_ultext[u]);
+            if (l < 0) { f77_error("this FUNCTION's CHARACTER length is not a constant known here"); l = 1; }
+            f77_urlen[u] = l;
+            f77_slen[f77_result_sym] = l;
+        } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_uhost[u] >= 0 && f77_urlen[u] >= 0 && f77_ultext[u][0] &&
+                   f77_result_sym >= 0 && f77_sty[f77_result_sym] == TY_CHAR &&
+                   f77_len_text(f77_ultext[u]) != f77_urlen[u]) {
+            /* told by the host's names, to the procedures beside this one
+             * too; this one's USEs have another of the name */
+            f77_error("the length of this FUNCTION's result is one in its host and another here");
+        }
+        if (f77_ukind[u] == F77_UNIT_FUNC && f77_uhosted[u] && !f77_urpend[u] && f77_result_sym >= 0 &&
+            f77_sty[f77_result_sym] != f77_urty[u]) {
+            /* REAL(WP) :: F in it likewise, WP the host's to the scan */
+            f77_error("the kind of this FUNCTION's result is one in its host and another here");
+        }
+        if (f77_ukind[u] == F77_UNIT_FUNC && f77_ukname[u][0] && f77_result_sym >= 0) {
+            kt = f77_kind_named(f77_sty[f77_result_sym], f77_ukname[u], 1);
+            if (kt >= 0 && f77_urpend[u]) {
+                if (kt == TY_DCPLX)                  /* bound with a hidden argument, or without */
+                    f77_error("this FUNCTION's result kind must be known where its header is");
+                f77_sty[f77_result_sym] = kt;
+                f77_realloc_sym(f77_result_sym);
+                f77_urty[u] = kt;
+                f77_urpend[u] = 0;
+            } else if (kt >= 0 && kt != f77_urty[u])
+                f77_error("the kind of this FUNCTION's result is one in its host and another here");
+        }
+    }
     /* The declaration part is closing: every member's type and shape
      * is final, so COMMON blocks and SAVEd locals can be laid out. */
     if (f77_result_sym >= 0 && f77_sty[f77_result_sym] == TY_DERIVED && f77_sdt[f77_result_sym] < 0) {
@@ -15734,6 +16148,7 @@ static int f77_iface_open = -1;
 static int f77_ib_in;
 static int f77_ib_base; static int f77_ib_frame; static int f77_ib_scope;
 static int f77_ib_kind; static int f77_ib_rty; static int f77_ib_rlog; static int f77_ib_rlen;
+static char f77_ib_kname[F77_MAX_NAME];       /* its header's kind, when that is a name */
 static char f77_ib_name[F77_MAX_NAME];
 static char f77_ib_rname[F77_MAX_NAME];
 static char f77_ib_tname[F77_MAX_NAME];
@@ -15767,7 +16182,14 @@ static void f77_ib_begin(void) {
     f77_ib_rty = ty >= 0 && !f77_starts("FUNCTION") ? ty : -1;
     f77_ib_rlog = f77_hdr_log;
     f77_ib_rlen = ty == TY_CHAR ? f77_hdr_clen : 1;
-    if (ty == TY_CHAR && f77_hdr_clen == -2) { f77_scan_from(f77_hdr_clen_off); f77_ib_rlen = f77_char_len(); }
+    if (ty == TY_CHAR && f77_hdr_clen == -2) f77_ib_rlen = f77_hdr_char_len();
+    f77_ib_kname[0] = 0;
+    if (ty >= 0 && f77_hdr_kind_off >= 0 && !f77_hdr_kind_name(f77_ib_kname)) {
+        f77_ib_kname[0] = 0;
+        f77_scan_from(f77_hdr_kind_off);
+        f77_ib_rty = f77_kind_sel(ty);
+        if (f77_ib_rty < 0) f77_ib_rty = ty;
+    }
     strcpy(f77_ib_rname, lx_stmt_result);
     if (ty == TY_DERIVED) strcpy(f77_ib_tname, f77_hdr_tname);
     f77_scan_from(skip);
@@ -15833,6 +16255,12 @@ static void f77_ib_end(void) {
         /* the result: the header's type, or its variable's declaration,
          * or its letter's */
         rs = f77_sym(f77_ib_rname);
+        if (f77_ib_rty >= 0 && f77_ib_kname[0]) {
+            /* REAL(WP) FUNCTION, WP from the body's USE */
+            int kt;
+            kt = f77_kind_named(f77_ib_rty, f77_ib_kname, 1);
+            if (kt >= 0) f77_ib_rty = kt;
+        }
         f77_me_ty[e] = f77_ib_rty >= 0 ? f77_ib_rty : f77_sty[rs];
         f77_me_log[e] = f77_ib_rty >= 0 ? f77_ib_rlog : f77_slog[rs];
         f77_me_rrank[e] = f77_srank[rs];
@@ -16150,6 +16578,19 @@ static void f77_bind_unit(int u) {
         rty = f77_unit_header_ty();
         skip = f77_function_skip();
         (void)rty;
+        if (f77_hdr_kind_off >= 0 && f77_urpend[u] && !f77_ukname[u][0]) {
+            /* REAL(expression) FUNCTION, not for the scan to tell: this
+             * scope's names tell it now, or it is refused */
+            int kt;
+            f77_scan_from(f77_hdr_kind_off);
+            kt = f77_kind_sel(f77_urty[u]);
+            if (kt >= 0) f77_urty[u] = kt;
+            f77_urpend[u] = 0;
+        }
+        if (f77_urty[u] == TY_CHAR && f77_urlen[u] == F77_LEN_PEND && f77_hdr_clen == -2 && !f77_ultext[u][0]) {
+            /* CHARACTER(LEN=expression) FUNCTION likewise */
+            f77_urlen[u] = f77_hdr_char_len();
+        }
     }
     f77_scan_from(skip);
     if (lx_t != T_NAME) { f77_error("subprogram needs a name"); return; }
@@ -16167,7 +16608,9 @@ static void f77_bind_unit(int u) {
         ent = f77_uentry_parent[u] >= 0;
         for (e = 0; e < f77_nunit; e++) if (f77_uentry_parent[e] == u) ent = 1;
         if (f77_urty[u] == TY_CHAR && f77_urlen[u] < 0) {
-            f77_error("an array-valued FUNCTION of assumed CHARACTER length is not supported");
+            f77_error(f77_urlen[u] == F77_LEN_PEND
+                      ? "an array-valued CHARACTER FUNCTION's length must be known where its header is"
+                      : "an array-valued FUNCTION of assumed CHARACTER length is not supported");
             return;
         }
         if (f77_urnar[u]) { f77_error("an INTEGER*2 or LOGICAL*1 array-valued FUNCTION is not supported yet"); return; }
@@ -16234,7 +16677,9 @@ static void f77_bind_unit(int u) {
         f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
         f77_sty[f77_result_sym] = TY_CHAR;
         f77_styped[f77_result_sym] = 1;
-        f77_slen[f77_result_sym] = f77_urlen[u];
+        /* a length still to be told (F77_LEN_PEND): the caller's, until
+         * the declarations tell it (f77_emit_copyin) */
+        f77_slen[f77_result_sym] = f77_urlen[u] < 0 ? -1 : f77_urlen[u];
         f77_slenv[f77_result_sym] = hi_emit(HI_PARAM, TY_INT, -1, -1, 1, NULL);
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DERIVED) {
         /* a structure: in the caller's temporary, hidden param 0
@@ -17218,7 +17663,7 @@ static void f77_check_format(const char *s, int n) {
                 if (d < 0) { f77_fmt_bad("a . needs digits after it"); return; }
                 /* Iw.m: m digits at least, in a field of w (13.5.9.1);
                  * I10.20 printed asterisks (fort370 issue 38, from MV410) */
-                if ((c == 'I' || c == 'i') && d > w) { f77_fmt_bad("Iw.m needs m no more than w"); return; }
+                if ((c == 'I' || c == 'i') && d > w && w != 0) { f77_fmt_bad("Iw.m needs m no more than w"); return; }
             }
             k = f77_fmt_peek(s, n, &i);
             if ((c == 'E' || c == 'G' || c == 'D') && (k == 'E' || k == 'e')) {
@@ -18981,8 +19426,9 @@ static void f77_statement(void) {
     if (cname[0]) {
         if (cls == S_IF_LOGIC) { f77_error("a construct name is on a block IF, not a logical IF"); goto done; }
         if (!(cls == S_DO || cls == S_IF_BLOCK || f77_is_dowhile() || f77_is_doforever() ||
-              (cls == S_KEYWORD && f77_starts("SELECTCASE(")))) {
-            f77_error("a construct name is on DO, IF (...) THEN or SELECT CASE only");
+              (cls == S_KEYWORD && f77_starts("SELECTCASE(")) ||
+              (cls == S_KEYWORD && f77_starts("WHERE(") && f77_match_paren(5) == lx_stmt_len))) {
+            f77_error("a construct name is on DO, IF (...) THEN, SELECT CASE or WHERE (...) only");
             goto done;
         }
         f77_cname_define(cname);
@@ -19366,18 +19812,13 @@ static void f77_statement(void) {
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
 
     if (f77_starts("WHERE(") && cls == S_KEYWORD) { f77_stmt_where(); goto done; }
-    if (f77_starts("ELSEWHERE") && lx_stmt_len == 9 && ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE) {
-        if (ctl_else[ctl_n - 1]) { f77_error("a second ELSEWHERE in one WHERE construct"); goto done; }
-        ctl_else[ctl_n - 1] = 1;
-        f77_where_neg = 1;
+    if (cls == S_KEYWORD && f77_starts("ELSEWHERE") && ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE) {
+        f77_stmt_elsewhere();
         goto done;
     }
-    if (f77_starts("ELSEWHERE(") && ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE) {
-        f77_error("ELSEWHERE (mask) is Fortran 95's, not supported");
-        goto done;
-    }
-    if (f77_starts("ENDWHERE") && lx_stmt_len == 8) {
+    if (cls == S_KEYWORD && f77_starts("ENDWHERE") && f77_name_tail(8)) {
         if (!(ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE)) { f77_error("END WHERE without WHERE"); goto done; }
+        f77_cname_match(ctl_n - 1, f77_name_tail(8), "END WHERE");
         ctl_n = ctl_n - 1;
         f77_where_end();
         goto done;

@@ -22,7 +22,7 @@
 
 static void f77_error(char *msg);
 static int f77_nerr;      /* errors reported; the parser checks it per statement */
-static int f77_scan_mode; /* the unit scan evaluating a kind (f77_scan_kind_sel) */
+static int f77_scan_mode; /* 1: the unit scan evaluating a kind or a length; 2: f77_len_text */
 static int f77_scan_bad;  /* ... and something it could not tell */
 
 #include "f77_card.h"
@@ -160,6 +160,60 @@ static int f77_dn_find(int unit, char *nm) {
     for (q = f77_dn_n - 1; q >= 0; q--)
         if (strcmp(f77_dn_name[q], nm) == 0) return f77_dn_ty[q];
     return -1;
+}
+
+static int f77_dn_has(int unit, char *nm) {
+    int q;
+    if (unit != f77_dn_unit) return 0;
+    for (q = 0; q < f77_dn_n; q++)
+        if (strcmp(f77_dn_name[q], nm) == 0) return 1;
+    return 0;
+}
+
+/* Is nm unit's own name -- a dummy of it, or declared by a type statement
+ * the scan has read -- and so not its host's? */
+static int f77_scan_local(int unit, char *nm) {
+    int q;
+    for (q = 0; q < f77_nfamd; q++)
+        if (f77_famd_unit[q] == unit && strcmp(f77_famd_name[q], nm) == 0) return 1;
+    return f77_dn_has(unit, nm);
+}
+
+/* The scan's table of INTEGER named constants (f77_scan_const), from the
+ * statement being scanned: PARAMETER (N = 4, ...) in any unit, and
+ * INTEGER, PARAMETER :: N = 4 outside a FUNCTION -- whose type statements
+ * the scan reads anyway.  A name is INTEGER by its type statement, where
+ * the scan read one, else by its initial; what this leaves out, the scan
+ * cannot tell and the compilation does. */
+static void f77_scan_params(int u) {
+    int typed;
+    typed = 0;
+    if (f77_starts("PARAMETER(")) f77_scan_from(10);
+    else if (f77_ukind[u] != F77_UNIT_FUNC && f77_starts("INTEGER") && f77_has_attr("PARAMETER")) {
+        f77_scan_from(f77_toplevel(':', 0) + 2);
+        typed = 1;
+    } else return;
+    f77_scan_begin(u);
+    while (lx_t == T_NAME) {
+        char nm[F77_MAX_NAME];
+        int ty;
+        strcpy(nm, lex_name);
+        f77_tok();
+        if (lx_t != T_ASSIGN) break;
+        f77_tok();
+        f77_scan_mode = 1;
+        f77_scan_bad = 0;
+        f77_cexpr();
+        f77_scan_mode = 0;
+        ty = TY_INT;
+        if (!typed) {
+            ty = f77_dn_find(u, nm);
+            if (ty < 0) ty = f77_dn_has(u, nm) ? -1 : f77_implicit_ty(nm);
+        }
+        f77_scan_const_add(u, nm, f77_cx_i, !f77_scan_bad && f77_cx_ty == TY_INT && ty == TY_INT);
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
 }
 
 /* Record the dummy names of the header the scanner is on (past `skip`)
@@ -429,7 +483,37 @@ static void f77_host_cands(int u) {
     }
 }
 
+/* An END that says what it ends says it as the header did: the unit's
+ * keyword, and after it the unit's name or none.  END SUBROUTINE B closing
+ * SUBROUTINE A is a slip the reader of the program does not see, and it
+ * was taken without a word.  `prog` is the main program's name, which no
+ * table keeps. */
+static void f77_end_check(int u, char *prog) {
+    static char *kw[] = { "PROGRAM", "SUBROUTINE", "FUNCTION", "BLOCKDATA", "MODULE" };
+    char nm[F77_MAX_NAME];
+    char msg[96 + F77_MAX_NAME];
+    int n;
+    if (lx_stmt_len == 3) return;
+    n = (int)strlen(kw[f77_ukind[u]]);
+    if (strncmp(lx_stmt + 3, kw[f77_ukind[u]], (size_t)n) != 0) {
+        sprintf(msg, "this END names another kind of unit: END %s ends this one", kw[f77_ukind[u]]);
+        f77_error(msg);
+        return;
+    }
+    if (lx_stmt_len == 3 + n) return;
+    if (f77_ukind[u] == F77_UNIT_PROGRAM) strcpy(nm, prog);
+    else if (f77_ukind[u] == F77_UNIT_BDATA) {
+        strcpy(nm, f77_uname[u] + 6);                  /* f77bd_<name>_<n> */
+        *strrchr(nm, '_') = 0;
+    } else strcpy(nm, f77_uname[u]);
+    if ((int)strlen(nm) == lx_stmt_len - 3 - n && strncmp(lx_stmt + 3 + n, nm, strlen(nm)) == 0) return;
+    if (nm[0]) sprintf(msg, "the name on this END is not its unit's (%s)", nm);
+    else strcpy(msg, "the name on this END is not its unit's, which has none");
+    f77_error(msg);
+}
+
 static void f77_scan_units(void) {
+    char prog[F77_MAX_NAME];   /* the main program's name, for its END */
     int pos;
     int line;
     int rty;
@@ -441,6 +525,7 @@ static void f77_scan_units(void) {
     int in_iface;     /* inside INTERFACE ... END INTERFACE */
     int in_type;      /* inside TYPE name ... END TYPE */
 
+    prog[0] = 0;
     f77_nunit = 0;
     f77_nent = 0;
     f77_nfamd = 0;
@@ -504,6 +589,7 @@ static void f77_scan_units(void) {
         }
         if (hn > 0 && ended && f77_is_unit_end()) {
             hn = hn - 1;                               /* the host's END */
+            f77_end_check(hstack[hn], prog);
             pos = lx_pos;
             line = lx_line;
             continue;
@@ -595,6 +681,7 @@ static void f77_scan_units(void) {
              * caller that RETURN is a branch (Fortran 90). */
             if (strstr(lx_stmt, "ALLOCATABLE")) f77_unosplice[f77_nunit - 1] = 1;
             if (f77_starts("USE")) f77_unosplice[f77_nunit - 1] = 1;
+            f77_scan_params(f77_nunit - 1);
             if (f77_scan_may_auto(f77_nunit - 1)) f77_unosplice[f77_nunit - 1] = 1;
             f77_scan_shapes(f77_nunit - 1);
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
@@ -660,6 +747,9 @@ static void f77_scan_units(void) {
             }
             f77_collect_dummies(f77_starts("SUBROUTINE") ? 10 : f77_function_skip(), f77_nunit);
             f77_urecur[f77_nunit] = lx_stmt_recursive;
+            f77_upure[f77_nunit] = lx_stmt_pure || lx_stmt_elemental;
+            f77_uelem[f77_nunit] = lx_stmt_elemental;
+            if (lx_stmt_elemental && lx_stmt_recursive) f77_error("an ELEMENTAL procedure is not RECURSIVE");
             strcpy(f77_uresult[f77_nunit], lx_stmt_result);
             if (lx_stmt_result[0] && strcmp(lx_stmt_result, f77_uname[f77_nunit]) == 0)
                 f77_error("a FUNCTION's RESULT has a name of its own");
@@ -677,9 +767,26 @@ static void f77_scan_units(void) {
                 f77_urlog[f77_nunit] = f77_hdr_log;
                 if (rty == TY_DERIVED) strcpy(f77_urtn[f77_nunit], f77_hdr_tname);
                 f77_urnar[f77_nunit] = f77_starts("FUNCTION") ? 0 : f77_lennar(rty, f77_hdr_len, f77_hdr_log);
+                f77_ukname[f77_nunit][0] = 0;
+                if (f77_hdr_kind_off >= 0) {
+                    /* REAL(8) FUNCTION, REAL(WP): told here when the kind
+                     * is constants; a name's value the compilation tells
+                     * (f77_emit_copyin), an expression's the header */
+                    int kt;
+                    f77_scan_begin(f77_nunit);
+                    f77_scan_from(f77_hdr_kind_off);
+                    kt = f77_scan_kind_sel(rty);
+                    if (kt >= 0) f77_urty[f77_nunit] = kt;
+                    else f77_urpend[f77_nunit] = 1;
+                    /* the name, also where the host's told it: the
+                     * unit's USEs may have another */
+                    if (!f77_hdr_kind_name(f77_ukname[f77_nunit])) f77_ukname[f77_nunit][0] = 0;
+                }
+                f77_ultext[f77_nunit][0] = 0;
                 if (rty == TY_CHAR && f77_hdr_clen == -2) {
-                    f77_scan_from(f77_hdr_clen_off);
-                    f77_urlen[f77_nunit] = f77_char_len();
+                    /* CHARACTER(LEN=N) FUNCTION: as the kind */
+                    f77_scan_begin(f77_nunit);
+                    f77_urlen[f77_nunit] = f77_scan_clen(2, f77_nunit, f77_ultext[f77_nunit]);
                 } else {
                     f77_urlen[f77_nunit] = (rty == TY_CHAR) ? f77_hdr_clen : 1;
                 }
@@ -702,7 +809,9 @@ static void f77_scan_units(void) {
             int lg;
             int tnar;
             int kpend;
+            char clnm[F77_MAX_LTEXT];
             kpend = 0;
+            clnm[0] = 0;
             clen = 1;
             lg = 0;
             tnar = 0;
@@ -755,13 +864,12 @@ static void f77_scan_units(void) {
                 }
                 if (lx_t == T_STAR) {
                     int n;
-                    if (ty == TY_CHAR) { f77_tok(); clen = f77_char_len(); }
+                    if (ty == TY_CHAR) { f77_tok(); clen = f77_scan_clen(0, f77_nunit - 1, clnm); }
                     else if (f77_star_len(&n)) { ty = f77_lenty(ty, n, 0); tnar = f77_lennar(ty, n, lg); }
                     if (lx_t == T_COMMA) f77_tok();
                 } else if (lx_t == T_LP && ty == TY_CHAR) {
                     /* CHARACTER(LEN=n), CHARACTER(n) (Fortran 90) */
-                    if (lx_rpe - lx_rp >= 4 && strncmp(lx_rp, "LEN=", 4) == 0 && lx_rp[4] != '=') lx_rp = lx_rp + 4;
-                    clen = f77_char_len();
+                    clen = f77_scan_clen(1, f77_nunit - 1, clnm);
                 }
                 /* Fortran 90: [, attribute]... :: -- the entities follow the :: */
                 dc = f77_toplevel(':', 0);
@@ -774,9 +882,14 @@ static void f77_scan_units(void) {
                     f77_tok();
                     if (lx_t == T_STAR && ty == TY_CHAR) {
                         int l;
+                        char lnm[F77_MAX_LTEXT];
                         f77_tok();
-                        l = f77_char_len();
-                        if (is_fn) { f77_urty[f77_nunit - 1] = TY_CHAR; f77_urlen[f77_nunit - 1] = l; }
+                        l = f77_scan_clen(0, f77_nunit - 1, lnm);
+                        if (is_fn) {
+                            f77_urty[f77_nunit - 1] = TY_CHAR;
+                            f77_urlen[f77_nunit - 1] = l;
+                            strcpy(f77_ultext[f77_nunit - 1], lnm);
+                        }
                         else f77_dn_note(f77_nunit - 1, dnm, TY_CHAR);
                     } else if (lx_t == T_STAR) {
                         int n;
@@ -793,7 +906,7 @@ static void f77_scan_units(void) {
                         f77_urlog[f77_nunit - 1] = lg;
                         f77_urnar[f77_nunit - 1] = tnar;
                         f77_urpend[f77_nunit - 1] = kpend;
-                        if (ty == TY_CHAR) f77_urlen[f77_nunit - 1] = clen;
+                        if (ty == TY_CHAR) { f77_urlen[f77_nunit - 1] = clen; strcpy(f77_ultext[f77_nunit - 1], clnm); }
                     } else {
                         f77_dn_note(f77_nunit - 1, dnm, kpend ? -1 : ty);
                     }
@@ -803,7 +916,7 @@ static void f77_scan_units(void) {
                         f77_scan_bad = 0;
                         f77_cexpr();
                         f77_scan_mode = 0;
-                        if (!f77_scan_bad && f77_cx_ty == TY_INT) f77_scan_const_add(f77_nunit - 1, dnm, f77_cx_i);
+                        f77_scan_const_add(f77_nunit - 1, dnm, f77_cx_i, !f77_scan_bad && f77_cx_ty == TY_INT);
                     }
                     if (lx_t == T_LP) {
                         int depth;
@@ -831,7 +944,15 @@ static void f77_scan_units(void) {
             mains = mains + 1;
             started = 1;
         }
-        if (started && f77_is_unit_end()) ended = 1;
+        if (started && !ended && !prog[0] && f77_ukind[f77_nunit - 1] == F77_UNIT_PROGRAM
+            && f77_starts("PROGRAM") && f77_toplevel('=', 0) < 0) {
+            f77_scan_from(7);
+            if (lx_t == T_NAME) strcpy(prog, lex_name);
+        }
+        if (started && f77_is_unit_end()) {
+            f77_end_check(f77_nunit - 1, prog);
+            ended = 1;
+        }
         pos = lx_pos;
         line = lx_line;
     }

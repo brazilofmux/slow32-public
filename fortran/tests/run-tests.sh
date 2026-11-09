@@ -314,11 +314,21 @@ if [ -x "$F77" ]; then
     printf 'real a(2,2)\na = 1.0\nprint *, dot_product(a, a)\nend\n' > "$W/dotrank.f90"
     printf 'integer k(2)\nk = 1\nprint *, sum(k, foo=1)\nend\n' > "$W/sumkw.f90"
     printf 'integer k(2)\nk = 1\nprint *, size(k, 3)\nend\n' > "$W/sizedim.f90"
-    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\nwhere (a > 1.0) a = 2.0\nend where\nend\n' > "$W/wherenest.f90"
+    printf 'real a(2), b(3)\na = 1.0\nb = 1.0\nwhere (a > 0.0)\nwhere (b > 1.0) b = 2.0\nend where\nend\n' > "$W/wherenest.f90"
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\nif (a(1) > 0.0) a(2) = 1.0\nend where\nend\n' > "$W/whereif.f90"
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0) x = 2.0\nend\n' > "$W/wherescal.f90"
-    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nelsewhere (a < 0.0)\na = 3.0\nend where\nend\n' > "$W/wheremask.f90"
+    printf 'real a(2), b(2,2)\na = 1.0\nb = 1.0\nwhere (a > 0.0)\na = 2.0\nelsewhere (b < 0.0)\na = 3.0\nend where\nend\n' > "$W/wheremask.f90"
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nelsewhere\na = 3.0\nelsewhere\na = 4.0\nend where\nend\n' > "$W/where2else.f90"
+    printf 'program a\nend program b\n' > "$W/endname.f90"
+    printf 'subroutine s\nend function s\n' > "$W/endkind.f90"
+    printf 'i = 1\nend program p\n' > "$W/endnoname.f90"
+    printf 'block data\ncommon /c/ i\nend block data q\n' > "$W/endbdname.f90"
+    printf 'module m\ncontains\nsubroutine s\nend subroutine s\nend module n\n' > "$W/endmodname.f90"
+    printf 'y = 2.0\nprint *, sqrt(x=y)\nend\n' > "$W/kwfirst.f90"
+    printf 'print *, f(3)\ncontains\nfunction f(n)\ncharacter(len=n) :: f\nf = "abc"\nend function\nend\n' > "$W/reslenref.f90"
+    printf 'module k\ninteger, parameter :: n = 6\nend module\nmodule m\ninteger, parameter :: n = 4\ncontains\ncharacter(len=n) function f(i)\nuse k\nf = "abcdefgh"\nend function\nend module\n' > "$W/reslenhost.f90"
+    printf 'module k\ninteger, parameter :: wp = 8\nend module\nmodule m\ninteger, parameter :: wp = 4\ncontains\nreal(wp) function f(i)\nuse k\nf = i\nend function\nend module\n' > "$W/reskindhost.f90"
+    printf 'character*(n) function f(i)\nf = "abc"\nend\n' > "$W/reslenunk.f90"
     printf 'real a(2)\na = 1.0\nend where\nend\n' > "$W/wherestray.f90"
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nend\n' > "$W/whereopen.f90"
     printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
@@ -596,7 +606,7 @@ if [ -x "$F77" ]; then
              "cncycif:line 3: CYCLE names A, an IF construct, not a DO" \
              "cnexitno:line 2: EXIT names Q, which is no construct around it" \
              "cnlogif:line 1: a construct name is on a block IF, not a logical IF" \
-             "cndecl:line 1: a construct name is on DO, IF (...) THEN or SELECT CASE only" \
+             "cndecl:line 1: a construct name is on DO, IF (...) THEN, SELECT CASE or WHERE (...) only" \
              "else2:line 3: a second ELSE in one IF construct" \
              "elseelif:line 3: ELSE IF after ELSE" \
              "endifjunk:line 2: unexpected text after END IF" \
@@ -606,11 +616,21 @@ if [ -x "$F77" ]; then
              "dotrank:line 3: DOT_PRODUCT needs arrays of rank 1" \
              "sumkw:line 3: the arguments of SUM are not ones it takes" \
              "sizedim:line 3: DIM= of SIZE is outside the array's rank" \
-             "wherenest:line 4: a WHERE inside a WHERE is Fortran 95's, not supported" \
+             "wherenest:line 5: the shapes of a WHERE's mask and the mask of a WHERE inside it do not conform" \
              "whereif:line 4: a WHERE construct holds array assignments only" \
              "wherescal:line 3: a WHERE assigns to arrays, not to a scalar or an element" \
-             "wheremask:line 5: ELSEWHERE (mask) is Fortran 95's, not supported" \
-             "where2else:line 7: a second ELSEWHERE in one WHERE construct" \
+             "wheremask:line 6: the shapes of a WHERE's mask and its ELSEWHERE's do not conform" \
+             "where2else:line 7: an ELSEWHERE after the WHERE construct's ELSEWHERE with no mask" \
+             "endname:line 2: the name on this END is not its unit's (A)" \
+             "endkind:line 2: this END names another kind of unit: END SUBROUTINE ends this one" \
+             "endnoname:line 2: the name on this END is not its unit's, which has none" \
+             "endbdname:line 3: the name on this END is not its unit's, which has none" \
+             "endmodname:line 5: the name on this END is not its unit's (M)" \
+             "kwfirst:line 2: SQRT's first argument by keyword (X=) is not supported" \
+             "reslenref:line 1: the result length of F is not known where it is referenced" \
+             "reslenhost:line 9: the length of this FUNCTION's result is one in its host and another here" \
+             "reskindhost:line 9: the kind of this FUNCTION's result is one in its host and another here" \
+             "reslenunk:line 2: this FUNCTION's CHARACTER length is not a constant known here" \
              "wherestray:line 3: END WHERE without WHERE" \
              "whereopen:WHERE without END WHERE" \
              "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \

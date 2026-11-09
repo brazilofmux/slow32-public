@@ -3132,6 +3132,7 @@ static int nml_read_group(void) {
                 int c = rec[j];
                 if (q) { if (c == q) q = 0; continue; }
                 if (c == '\'' || c == '"') { q = c; continue; }
+                if (c == '!') { n = j; break; }      /* a comment to the record's end (Fortran 95, 10.9.1.6) */
                 if (c == '/' || ((c == '&' || c == '$') && j + 3 < n &&
                     toupper((unsigned char)rec[j + 1]) == 'E' && toupper((unsigned char)rec[j + 2]) == 'N' &&
                     toupper((unsigned char)rec[j + 3]) == 'D')) {

@@ -341,16 +341,68 @@ static void lx_strip_result(void) {
     lx_stmt_result[n] = 0;
     lx_stmt_len = open - 6;
 }
-static void lx_strip_recursive(void) {
-    static const char *after[] = { "SUBROUTINE", "FUNCTION", "INTEGER", "REAL", "DOUBLE",
-                                   "COMPLEX", "LOGICAL", "CHARACTER", 0 };
+/* PURE and ELEMENTAL (Fortran 95) come off with RECURSIVE: the prefixes of
+ * a header in any order, before or after its type -- PURE FUNCTION F,
+ * ELEMENTAL REAL FUNCTION F, REAL(8) PURE FUNCTION F, PURE RECURSIVE
+ * SUBROUTINE S -- and only when SUBROUTINE or FUNCTION ends them. */
+static int lx_stmt_pure;
+static int lx_stmt_elemental;
+static int lx_prefix_paren(int q) {
+    int depth;
+    depth = 0;
+    while (q < lx_stmt_len) {
+        if (lx_stmt[q] == '(') depth = depth + 1;
+        else if (lx_stmt[q] == ')') { depth = depth - 1; if (depth == 0) return q + 1; }
+        q = q + 1;
+    }
+    return q;
+}
+/* the length of the type at p -- INTEGER, REAL*8, CHARACTER(LEN=*),
+ * TYPE(T) -- or 0 */
+static int lx_prefix_type(int p) {
     static const char *types[] = { "INTEGER", "REAL", "DOUBLEPRECISION", "DOUBLECOMPLEX",
-                                   "COMPLEX", "LOGICAL", 0 };
+                                   "COMPLEX", "LOGICAL", "CHARACTER", "TYPE(", 0 };
+    int i;
+    int n;
+    int q;
+    n = 0;
+    for (i = 0; types[i]; i++) {
+        n = (int)strlen(types[i]);
+        if (p + n <= lx_stmt_len && strncmp(lx_stmt + p, types[i], (size_t)n) == 0) break;
+    }
+    if (!types[i]) return 0;
+    q = p + n;
+    if (lx_stmt[q - 1] == '(') q = q - 1;
+    if (q < lx_stmt_len && lx_stmt[q] == '*') {
+        q = q + 1;
+        if (q < lx_stmt_len && lx_stmt[q] == '(') q = lx_prefix_paren(q);
+        else while (q < lx_stmt_len && lx_isdigit(lx_stmt[q])) q = q + 1;
+    } else if (q < lx_stmt_len && lx_stmt[q] == '(') {
+        q = lx_prefix_paren(q);
+    }
+    return q - p;
+}
+static int lx_prefix_at(int p, const char *w) {
+    int n;
+    n = (int)strlen(w);
+    return p + n <= lx_stmt_len && strncmp(lx_stmt + p, w, (size_t)n) == 0;
+}
+static void lx_strip_prefix(void) {
     int i;
     int depth;
+    int p;
+    int typed;
+    int ncut;
+    int cut[3];
+    int cutn[3];
+    int rec;
+    int pure;
+    int elem;
     lx_stmt_recursive = 0;
+    lx_stmt_pure = 0;
+    lx_stmt_elemental = 0;
     lx_stmt_result[0] = 0;
-    if (lx_stmt_len < 16) return;
+    if (lx_stmt_len < 9) return;
     depth = 0;
     for (i = 0; i < lx_stmt_len; i++) {
         if (lx_stmt[i] == '\'') return;        /* no header has a string */
@@ -359,26 +411,31 @@ static void lx_strip_recursive(void) {
         else if (lx_stmt[i] == '=' && depth == 0) return;
     }
     lx_strip_result();
-    if (lx_stmt_len >= 17 && strncmp(lx_stmt, "RECURSIVE", 9) == 0) {
-        for (i = 0; after[i]; i++)
-            if (strncmp(lx_stmt + 9, after[i], strlen(after[i])) == 0) {
-                lx_stmt_cut(0, 9);
-                lx_brk[0] = 0;
-                lx_stmt_recursive = 1;
-                return;
-            }
-        return;
-    }
-    for (i = 0; types[i]; i++) {
+    p = 0;
+    typed = 0;
+    ncut = 0;
+    rec = 0; pure = 0; elem = 0;
+    for (;;) {
         int n;
-        n = (int)strlen(types[i]);
-        if (strncmp(lx_stmt, types[i], n) == 0 && n + 17 <= lx_stmt_len &&
-            strncmp(lx_stmt + n, "RECURSIVEFUNCTION", 17) == 0) {
-            lx_stmt_cut(n, 9);
-            lx_stmt_recursive = 1;
-            return;
-        }
+        if (!rec && lx_prefix_at(p, "RECURSIVE")) { rec = 1; n = 9; }
+        else if (!pure && lx_prefix_at(p, "PURE")) { pure = 1; n = 4; }
+        else if (!elem && lx_prefix_at(p, "ELEMENTAL")) { elem = 1; n = 9; }
+        else if (lx_prefix_at(p, "SUBROUTINE") || lx_prefix_at(p, "FUNCTION")) break;
+        else if (!typed && (n = lx_prefix_type(p)) > 0) { typed = 1; p = p + n; continue; }
+        else return;
+        cut[ncut] = p;
+        cutn[ncut] = n;
+        ncut = ncut + 1;
+        p = p + n;
     }
+    if (ncut == 0) return;
+    for (i = ncut - 1; i >= 0; i--) {
+        lx_stmt_cut(cut[i], cutn[i]);
+        if (cut[i] == 0) lx_brk[0] = 0;
+    }
+    lx_stmt_recursive = rec;
+    lx_stmt_pure = pure;
+    lx_stmt_elemental = elem;
 }
 
 /* True when the line starting at `p` is a comment or is entirely blank.
@@ -632,7 +689,7 @@ static int lx_next_stmt_free(void) {
             if (c == ';') {
                 /* the next statement begins after it, on this line */
                 lx_strip_cname();
-    lx_strip_recursive();
+    lx_strip_prefix();
                 lx_stmt[lx_stmt_len] = 0;
                 lx_pos = p + 1;
                 if (lx_stmt_len > 0 || lx_stmt_label >= 0) return 1;
@@ -654,7 +711,7 @@ static int lx_next_stmt_free(void) {
         first = 0;
     }
     lx_strip_cname();
-    lx_strip_recursive();
+    lx_strip_prefix();
     lx_stmt[lx_stmt_len] = 0;
     return lx_stmt_len > 0 || lx_stmt_label >= 0;
 }
@@ -1028,7 +1085,7 @@ static int f77_next_stmt(void) {
     }
 
     lx_strip_cname();
-    lx_strip_recursive();
+    lx_strip_prefix();
     lx_stmt[lx_stmt_len] = 0;
     return lx_stmt_len > 0 || lx_stmt_label >= 0;
 }
