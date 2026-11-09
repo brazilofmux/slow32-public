@@ -348,6 +348,10 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\na = merge(1.0, 2, .true.)\nend\n' > "$W/mrgty.f90"
     printf 'integer m(2,2), s(2)\nm = 1\nn = 1\ns = sum(m, n)\nend\n' > "$W/rddim.f90"
     printf 'integer m(9)\nm = 0\nm(1:5) = (/ (/ 1, 2 /), 3 /)\nend\n' > "$W/aconshp.f90"
+    printf 'print *, f(3)\nend\nfunction f(n) result(r)\nr = f(n - 1)\nend\n' > "$W/recnot.f90"
+    printf 'subroutine s\ncall s\nend\n' > "$W/recsub.f90"
+    printf 'function f(n) result(f)\nf = n\nend\n' > "$W/resname.f90"
+    printf 'implicit none\nimplicit integer (i)\nend\n' > "$W/impmix.f90"
     printf 'i = 1\nselect case (i)\ncase (1:5)\ncase (5)\nend select\nend\n' > "$W/selovl.f90"
     printf "character c\nc = 'a'\nselect case (c)\ncase ('a':'m')\ncase ('k')\nend select\nend\n" > "$W/selcovl.f90"
     printf "i = 1\nselect case (i)\ncase ('a')\nend select\nend\n" > "$W/selty.f90"
@@ -410,7 +414,11 @@ if [ -x "$F77" ]; then
              "nocomma:line 1: unexpected text after the statement" \
              "callline:line 2: unexpected text after the statement" \
              "lenfn:line 1: G is REAL here but COMPLEX*16 where it is defined (line 3)" \
-             "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT, which is not supported yet" \
+             "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT" \
+             "recnot:line 4: F is not RECURSIVE: it cannot reference itself" \
+             "recsub:line 2: S is not RECURSIVE: it cannot call itself" \
+             "resname:line 1: a FUNCTION's RESULT has a name of its own" \
+             "impmix:line 2: IMPLICIT NONE is the only IMPLICIT statement of its unit" \
              "wholearr:line 2: a whole array in an expression is not supported yet" \
              "alloceq:line 4: an ALLOCATABLE array cannot be in an EQUIVALENCE" \
              "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \

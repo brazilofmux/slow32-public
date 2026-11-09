@@ -316,13 +316,31 @@ static void lx_strip_cname(void) {
     lx_brk[0] = 0;
 }
 
-/* RECURSIVE (Fortran 90) on a SUBROUTINE or FUNCTION header -- RECURSIVE
- * SUBROUTINE S, RECURSIVE [type] FUNCTION F, type RECURSIVE FUNCTION F -- is
- * dropped from the text, so the unit scan and the parser see the header
- * they know.  Nothing more is needed: a subprogram's locals are in its
- * frame already (SAVE and DATA make the static ones, as F90 has it).  Only
- * a statement with no '=' outside parentheses: an assignment to a
+/* RECURSIVE and RESULT (Fortran 90) on a SUBROUTINE or FUNCTION header --
+ * RECURSIVE SUBROUTINE S, RECURSIVE [type] FUNCTION F, type RECURSIVE
+ * FUNCTION F, FUNCTION F(...) RESULT(R) -- are taken off the text, so the
+ * unit scan and the parser see the header they know, and noted for the
+ * scan (lx_stmt_recursive, lx_stmt_result).  A subprogram's locals are in
+ * its frame already (SAVE and DATA make the static ones, as F90 has it).
+ * Only a statement with no '=' outside parentheses: an assignment to a
  * variable whose name begins RECURSIVE is left alone. */
+static int lx_stmt_recursive;
+static char lx_stmt_result[64];
+static void lx_strip_result(void) {
+    int i; int open; int n;
+    if (lx_stmt_len < 16 || lx_stmt[lx_stmt_len - 1] != ')') return;
+    open = lx_stmt_len - 2;
+    while (open > 0 && (lx_isalpha(lx_stmt[open]) || lx_isdigit(lx_stmt[open]) || lx_stmt[open] == '_')) open = open - 1;
+    if (lx_stmt[open] != '(' || open == lx_stmt_len - 2 || open < 7) return;
+    if (strncmp(lx_stmt + open - 6, "RESULT", 6) != 0 || lx_stmt[open - 7] != ')') return;
+    for (i = 0; i + 8 <= open - 6; i++) if (strncmp(lx_stmt + i, "FUNCTION", 8) == 0) break;
+    if (i + 8 > open - 6) return;
+    n = lx_stmt_len - 2 - open;
+    if (n >= 64) return;
+    memcpy(lx_stmt_result, lx_stmt + open + 1, (size_t)n);
+    lx_stmt_result[n] = 0;
+    lx_stmt_len = open - 6;
+}
 static void lx_strip_recursive(void) {
     static const char *after[] = { "SUBROUTINE", "FUNCTION", "INTEGER", "REAL", "DOUBLE",
                                    "COMPLEX", "LOGICAL", "CHARACTER", 0 };
@@ -330,7 +348,9 @@ static void lx_strip_recursive(void) {
                                    "COMPLEX", "LOGICAL", 0 };
     int i;
     int depth;
-    if (lx_stmt_len < 17) return;
+    lx_stmt_recursive = 0;
+    lx_stmt_result[0] = 0;
+    if (lx_stmt_len < 16) return;
     depth = 0;
     for (i = 0; i < lx_stmt_len; i++) {
         if (lx_stmt[i] == '\'') return;        /* no header has a string */
@@ -338,11 +358,13 @@ static void lx_strip_recursive(void) {
         else if (lx_stmt[i] == ')') depth = depth - 1;
         else if (lx_stmt[i] == '=' && depth == 0) return;
     }
-    if (strncmp(lx_stmt, "RECURSIVE", 9) == 0) {
+    lx_strip_result();
+    if (lx_stmt_len >= 17 && strncmp(lx_stmt, "RECURSIVE", 9) == 0) {
         for (i = 0; after[i]; i++)
             if (strncmp(lx_stmt + 9, after[i], strlen(after[i])) == 0) {
                 lx_stmt_cut(0, 9);
                 lx_brk[0] = 0;
+                lx_stmt_recursive = 1;
                 return;
             }
         return;
@@ -353,6 +375,7 @@ static void lx_strip_recursive(void) {
         if (strncmp(lx_stmt, types[i], n) == 0 && n + 17 <= lx_stmt_len &&
             strncmp(lx_stmt + n, "RECURSIVEFUNCTION", 17) == 0) {
             lx_stmt_cut(n, 9);
+            lx_stmt_recursive = 1;
             return;
         }
     }

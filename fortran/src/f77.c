@@ -336,7 +336,7 @@ static void f77_scan_shapes(int u) {
                     f77_famd_as[q] = ra;
                     f77_unosplice[u] = 1;
                 }
-        if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_uname[u]) == 0) {
+        if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_unit_rname(u)) == 0) {
             f77_urrank[u] = rs;
             f77_unosplice[u] = 1;
         }
@@ -557,6 +557,10 @@ static void f77_scan_units(void) {
                 f77_unosplice[f77_nunit] = 1;
             }
             f77_collect_dummies(f77_starts("SUBROUTINE") ? 10 : f77_function_skip(), f77_nunit);
+            f77_urecur[f77_nunit] = lx_stmt_recursive;
+            strcpy(f77_uresult[f77_nunit], lx_stmt_result);
+            if (lx_stmt_result[0] && strcmp(lx_stmt_result, f77_uname[f77_nunit]) == 0)
+                f77_error("a FUNCTION's RESULT has a name of its own");
             if (rty >= 0) {
                 /* the header is classified many times; its length is
                  * reported once, here */
@@ -565,7 +569,7 @@ static void f77_scan_units(void) {
                 /* Bare FUNCTION uses the I-N rule; a later type
                  * statement of the function name overrides it. */
                 if (f77_starts("FUNCTION"))
-                    f77_urty[f77_nunit] = f77_implicit_ty(f77_uname[f77_nunit]);
+                    f77_urty[f77_nunit] = f77_implicit_ty(f77_unit_rname(f77_nunit));
                 else
                     f77_urty[f77_nunit] = rty;
                 f77_urlog[f77_nunit] = f77_hdr_log;
@@ -637,7 +641,7 @@ static void f77_scan_units(void) {
                     int is_fn;
                     char dnm[F77_MAX_NAME];
                     strcpy(dnm, lex_name);
-                    is_fn = strcmp(lex_name, f77_uname[f77_nunit - 1]) == 0;
+                    is_fn = strcmp(lex_name, f77_unit_rname(f77_nunit - 1)) == 0;
                     f77_tok();
                     if (lx_t == T_STAR && ty == TY_CHAR) {
                         int l;

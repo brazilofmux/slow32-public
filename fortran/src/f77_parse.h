@@ -371,7 +371,15 @@ static int    f77_styped[F77_MAX_SYM];
  * scan) the default rule applies directly. */
 static int f77_imp_map[26];
 static int f77_imp_ready;
-static int f77_imp_none;
+static int f77_imp_none;       /* the letters IMPLICIT NONE leaves untyped, a bit each (A = bit 0) */
+static int f77_imp_said;       /* this unit's IMPLICIT statements: 1 NONE, 2 a typed one */
+#define F77_IMP_ALL ((1 << 26) - 1)
+/* Is a name with nm's first letter left untyped by IMPLICIT NONE?  A
+ * contained procedure's own IMPLICIT gives back the letters it names
+ * (F90 5.3), the host's NONE holding for the rest. */
+static int f77_imp_none_for(const char *nm) {
+    return nm[0] >= 'A' && nm[0] <= 'Z' && ((f77_imp_none >> (nm[0] - 'A')) & 1);
+}
 
 /* Defined (tentatively) again beside their own logic further down. */
 static int f77_decls_open;
@@ -572,7 +580,7 @@ static char *f77_tyname(int ty, int lg) {
  * file alike (F77 needs it of every function name; gfortran: "has no
  * IMPLICIT type").  s < 0: the name was never declared here. */
 static void f77_need_type(int s, char *nm) {
-    if (f77_imp_none && (s < 0 || !f77_styped[s])) {
+    if (f77_imp_none_for(nm) && (s < 0 || !f77_styped[s])) {
         static char msg[F77_MAX_NAME + 40];
         strcpy(msg, nm);
         strcat(msg, " is not declared (IMPLICIT NONE)");
@@ -600,7 +608,7 @@ static int f77_sym(char *nm) {
         strcat(cmsg, " is a construct name, not a variable");
         f77_error(cmsg);
     }
-    if (f77_imp_none && !f77_decls_open) {
+    if (f77_imp_none_for(nm) && !f77_decls_open) {
         /* A name first seen in executable code has no declaration. */
         static char msg[F77_MAX_NAME + 40];
         strcpy(msg, nm);
@@ -761,6 +769,10 @@ static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 =
 static int  f77_urlog[F77_MAX_UNIT];   /* LOGICAL FUNCTION */
 static int  f77_urnar[F77_MAX_UNIT];   /* INTEGER*2 or LOGICAL*1 FUNCTION: f77_snar of the result */
 static int  f77_urrank[F77_MAX_UNIT];  /* an array-valued FUNCTION: its result's rank (the scan's) */
+static int  f77_urecur[F77_MAX_UNIT];  /* RECURSIVE (Fortran 90) */
+static char f77_uresult[F77_MAX_UNIT][F77_MAX_NAME];   /* a FUNCTION's RESULT name, or "" */
+/* The name of FUNCTION u's result variable: its RESULT's, else its own. */
+static char *f77_unit_rname(int u) { return f77_uresult[u][0] ? f77_uresult[u] : f77_uname[u]; }
 /* ENTRY: a secondary entry into a subprogram is compiled as a unit of
  * its own -- the parent's declarations, then the statements from the
  * ENTRY to END -- with f77_uentry_parent naming the parent (-1 for an
@@ -2505,7 +2517,7 @@ static int f77_primary(void) {
             for (k = 0; k < f77_stfb_n; k++)
                 if (f77_stfb_sym[k] == f77_result_sym && strcmp(f77_stfb_name[k], nm) == 0) is_res = 1;
             if (is_res) {
-                f77_error("a FUNCTION's name is its result here: a recursive reference needs RESULT, which is not supported yet");
+                f77_error("a FUNCTION's name is its result here: a recursive reference needs RESULT");
                 ex_ty = TY_INT;
                 return f77_iconst(0);
             }
@@ -3037,9 +3049,16 @@ static int f77_primary(void) {
             return a;
         }
 
-        if (u >= 0 && u != f77_cur_unit) {
+        if (u >= 0 && u == f77_cur_unit && f77_uresult[u][0] && f77_inline_depth == 0 && !f77_urecur[u]) {
+            char m[F77_MAX_NAME + 60];
+            sprintf(m, "%s is not RECURSIVE: it cannot reference itself", nm);
+            f77_error(m);
+        }
+        if (u >= 0 && (u != f77_cur_unit || f77_uresult[u][0])) {
             /* FUNCTION reference: by-reference actuals, result in the
-             * usual return register (plus its hi word for a double). */
+             * usual return register (plus its hi word for a double).
+             * Its own, inside a FUNCTION with RESULT, is a recursive
+             * call (Fortran 90). */
             int cb;
             int nargs;
             int nc;
@@ -6831,7 +6850,7 @@ static void f77_stmt_decl(int ty, int skip) {
         }
         f77_realloc_sym(s);
         if (ty >= 0 && f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_urpend[f77_cur_unit] &&
-            strcmp(f77_sname[s], f77_uname[f77_cur_unit]) == 0) {
+            strcmp(f77_sname[s], f77_unit_rname(f77_cur_unit)) == 0) {
             /* the result's kind, which the scan could not tell: known now,
              * before any reference in the unit (the scan refuses callers
              * that came first) */
@@ -7104,10 +7123,14 @@ static void f77_stmt_implicit(int skip) {
     }
     f77_scan_from(skip);
     if (lx_t == T_NAME && strcmp(lex_name, "NONE") == 0) {
-        f77_imp_none = 1;
+        f77_imp_none = F77_IMP_ALL;
+        f77_imp_said |= 1;
+        if (f77_imp_said == 3) f77_error("IMPLICIT NONE is the only IMPLICIT statement of its unit");
         f77_tok();
         return;
     }
+    f77_imp_said |= 2;
+    if (f77_imp_said == 3) { f77_error("IMPLICIT NONE is the only IMPLICIT statement of its unit"); return; }
     for (;;) {
         int clen;
         int lg;
@@ -7154,7 +7177,10 @@ static void f77_stmt_implicit(int skip) {
                 f77_error("bad IMPLICIT letter range");
                 return;
             }
-            for (c = lo; c <= hi; c++) { f77_imp_map[c - 'A'] = ty; f77_imp_len[c - 'A'] = clen; f77_imp_log[c - 'A'] = lg; f77_imp_nar[c - 'A'] = nar; }
+            for (c = lo; c <= hi; c++) {
+                f77_imp_map[c - 'A'] = ty; f77_imp_len[c - 'A'] = clen; f77_imp_log[c - 'A'] = lg; f77_imp_nar[c - 'A'] = nar;
+                f77_imp_none &= ~(1 << (c - 'A'));
+            }
             if (lx_t != T_COMMA) break;
             f77_tok();
         }
@@ -7792,7 +7818,7 @@ static void f77_layout_static(void) {
      * Names first seen in executable code are caught in f77_sym. */
     if (f77_imp_none) {
         for (s = f77_scope_base; s < f77_nsym; s++) {
-            if (f77_styped[s] || f77_sparam[s]) continue;
+            if (f77_styped[s] || f77_sparam[s] || !f77_imp_none_for(f77_sname[s])) continue;
             /* EXTERNAL and INTRINSIC name procedures: a subroutine has no
              * type, and an intrinsic has its own.  An EXTERNAL used as a
              * function needs one, and is checked where it is referenced
@@ -10376,7 +10402,7 @@ static int f77_av_kind(int b, int open) {
     if (sy < 0 || (f77_srank[sy] == 0 && !f77_sarg[sy])) {
         int u;
         u = f77_find_func(nm);
-        if (u >= 0 && u != f77_cur_unit && f77_urrank[u] > 0) return AV_UFUNC;
+        if (u >= 0 && (u != f77_cur_unit || f77_uresult[u][0]) && f77_urrank[u] > 0) return AV_UFUNC;
     }
     if (sy >= 0 && (f77_srank[sy] > 0 || f77_sarg[sy] || f77_sexternal[sy] || f77_sty[sy] == TY_CHAR ||
                     f77_sme[sy] >= 0 || f77_slink[sy])) return AV_NONE;
@@ -11478,6 +11504,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     int save_imp_nar[26];
     int save_imp_ready;
     int save_imp_none;
+    int save_imp_said;
     int b_cont;
     int skip;
     int i;
@@ -11521,6 +11548,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     memcpy(save_imp_nar, f77_imp_nar, sizeof save_imp_nar);
     save_imp_ready = f77_imp_ready;
     save_imp_none = f77_imp_none;
+    save_imp_said = f77_imp_said;
     for (i = 0; i < 26; i++) {
         f77_imp_map[i] = (i >= 'I' - 'A' && i <= 'N' - 'A') ? TY_INT : TY_FLOAT;
         f77_imp_len[i] = 1;
@@ -11529,6 +11557,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     }
     f77_imp_ready = 1;
     f77_imp_none = 0;
+    f77_imp_said = 0;
 
     b_cont = hir_new_block();
 
@@ -11596,6 +11625,7 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
     memcpy(f77_imp_nar, save_imp_nar, sizeof save_imp_nar);
     f77_imp_ready = save_imp_ready;
     f77_imp_none = save_imp_none;
+    f77_imp_said = save_imp_said;
     f77_inline_depth = f77_inline_depth - 1;
     f77_cur_unit = save_unit;
     f77_inline_ret_blk = save_ret;
@@ -11741,6 +11771,12 @@ static void f77_stmt_call1(int skip) {
     if (fptr < 0 && nalt == 0) {
         int u;
         u = f77_find_unit(nm);
+        if (u >= 0 && u == f77_cur_unit && f77_inline_depth == 0 && !f77_urecur[u]) {
+            char m[F77_MAX_NAME + 60];
+            sprintf(m, "%s is not RECURSIVE: it cannot call itself", nm);
+            f77_error(m);
+            return;
+        }
         if (u >= 0 && f77_can_inline(u)) {
             f77_inline_unit_body(u, addrs, nargs);
             return;
@@ -12618,6 +12654,7 @@ static void f77_bind_unit(int u) {
     }
     f77_imp_ready = 1;
     f77_imp_none = 0;
+    f77_imp_said = 0;
     f77_hostnames_n = 0;
     if (f77_uhost[u] >= 0) {
         /* a hosted procedure (Fortran 90): its host's implicit typing,
@@ -12710,7 +12747,7 @@ static void f77_bind_unit(int u) {
         /* an array: a local of the declared shape, the caller's
          * descriptor hidden param 0 (f77_afn_copyout) */
         f77_result_desc = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
-        f77_result_sym = f77_sym(f77_uname[u]);
+        f77_result_sym = f77_sym(f77_unit_rname(u));
         f77_sty[f77_result_sym] = f77_urty[u];
         f77_slog[f77_result_sym] = f77_urlog[u];
         if (f77_urty[u] == TY_CHAR) f77_slen[f77_result_sym] = f77_urlen[u];
@@ -12719,7 +12756,7 @@ static void f77_bind_unit(int u) {
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
         /* The result is the caller's buffer: a by-reference CHARACTER
          * dummy in all but name, with its length in hidden param 1. */
-        f77_result_sym = f77_sym_param(f77_uname[u], 0);
+        f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
         f77_sty[f77_result_sym] = TY_CHAR;
         f77_styped[f77_result_sym] = 1;
         f77_slen[f77_result_sym] = f77_urlen[u];
@@ -12727,11 +12764,11 @@ static void f77_bind_unit(int u) {
     } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) {
         /* The result is the caller's 16-byte temporary, hidden param 0
          * (f77_dcx_fcall): a by-reference COMPLEX*16 dummy in all but name. */
-        f77_result_sym = f77_sym_param(f77_uname[u], 0);
+        f77_result_sym = f77_sym_param(f77_unit_rname(u), 0);
         f77_sty[f77_result_sym] = TY_DCPLX;
         f77_styped[f77_result_sym] = 1;
     } else if (f77_ukind[u] == F77_UNIT_FUNC) {
-        f77_result_sym = f77_sym(f77_uname[u]);
+        f77_result_sym = f77_sym(f77_unit_rname(u));
         f77_sty[f77_result_sym] = f77_urty[u];
         f77_slog[f77_result_sym] = f77_urlog[u];
         f77_snar[f77_result_sym] = f77_urnar[u];
