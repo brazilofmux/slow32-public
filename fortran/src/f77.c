@@ -260,61 +260,13 @@ static int f77_text_assumed_rank(int i) {
     return 0;
 }
 
-/* Note the assumed-shape dummies (Fortran 90) a declaration of unit u
- * gives -- A(:), or a DIMENSION(:,:) attribute on entities with no shape
- * of their own -- so that a call compiled before the unit passes them
- * descriptors.  Text-level, as the scan is; ALLOCATABLE's (:) is no
- * dummy's. */
-static void f77_scan_ashape(int u) {
-    int i; int skip; int dflt; int dc;
-    if (f77_starts("DIMENSION")) skip = 9;
-    else if (f77_starts("DOUBLEPRECISION")) skip = 15;
-    else if (f77_starts("DOUBLECOMPLEX")) skip = 13;
-    else if (f77_starts("INTEGER") || f77_starts("LOGICAL") || f77_starts("COMPLEX")) skip = 7;
-    else if (f77_starts("REAL")) skip = 4;
-    else return;
-    if (f77_has_attr("ALLOCATABLE")) return;
-    dflt = 0;
-    i = skip;
-    dc = f77_toplevel(':', 0);
-    if (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') {
-        int j;
-        for (j = 0; j + 10 < dc; j++)
-            if (lx_stmt[j] == ',' && strncmp(lx_stmt + j + 1, "DIMENSION(", 10) == 0) dflt = f77_text_assumed_rank(j + 10);
-        i = dc + 2;
-    } else if (i < lx_stmt_len && lx_stmt[i] == '(') {
-        int d = 0;
-        for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
-    } else if (i < lx_stmt_len && lx_stmt[i] == '*') {
-        i++;
-        while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
-    }
-    while (i < lx_stmt_len) {
-        char nm[F77_MAX_NAME];
-        int n; int q; int r;
-        n = 0;
-        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
-            if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
-            i++;
-        }
-        nm[n] = 0;
-        if (n == 0) { i++; continue; }
-        r = dflt;
-        if (i < lx_stmt_len && lx_stmt[i] == '(') r = f77_text_assumed_rank(i);
-        if (r > 0)
-            for (q = 0; q < f77_nfamd; q++)
-                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) {
-                    f77_famd_as[q] = r;
-                    f77_unosplice[u] = 1;
-                }
-        while (i < lx_stmt_len && lx_stmt[i] != ',') {
-            if (lx_stmt[i] == '(') { int d = 0; for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) break; } }
-            i++;
-        }
-        i++;
-    }
-}
-
+/* What a declaration of unit u says about shapes, for calls compiled
+ * before the unit (text-level, as the scan is):
+ * - its assumed-shape dummies -- A(:), or a DIMENSION(:,:) attribute on
+ *   entities with no shape of their own -- take descriptors (ALLOCATABLE's
+ *   (:) is no dummy's);
+ * - a FUNCTION's result made an array -- F(3), a DIMENSION attribute,
+ *   DIMENSION F(3) -- comes back through one (f77_afn_call). */
 /* The rank of the array spec whose '(' is at text offset i: its items at
  * the top level. */
 static int f77_text_spec_rank(int i) {
@@ -329,13 +281,13 @@ static int f77_text_spec_rank(int i) {
     return 0;
 }
 
-/* Note the rank of FUNCTION u's result when a declaration of unit u
- * makes it an array -- F(3), a DIMENSION attribute, DIMENSION F(3) --
- * so that a reference compiled before the unit passes the descriptor
- * its value comes back in (f77_afn_call).  Text-level, as the scan is. */
-static void f77_scan_rarray(int u) {
-    int i; int skip; int dflt; int dc;
-    if (f77_ukind[u] != F77_UNIT_FUNC) return;
+static int f77_skip_parens(int i) {
+    int d = 0;
+    for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) return i + 1; }
+    return i;
+}
+static void f77_scan_shapes(int u) {
+    int i; int skip; int dattr; int dc; int alloc;
     if (f77_starts("DIMENSION")) skip = 9;
     else if (f77_starts("DOUBLEPRECISION")) skip = 15;
     else if (f77_starts("DOUBLECOMPLEX")) skip = 13;
@@ -343,29 +295,26 @@ static void f77_scan_rarray(int u) {
     else if (f77_starts("INTEGER") || f77_starts("LOGICAL") || f77_starts("COMPLEX")) skip = 7;
     else if (f77_starts("REAL")) skip = 4;
     else return;
-    dflt = 0;
+    alloc = f77_has_attr("ALLOCATABLE");
+    dattr = -1;
     i = skip;
     dc = f77_toplevel(':', 0);
     if (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') {
         int j;
         for (j = 0; j + 10 < dc; j++)
-            if (lx_stmt[j] == ',' && strncmp(lx_stmt + j + 1, "DIMENSION(", 10) == 0) dflt = f77_text_spec_rank(j + 10);
+            if (lx_stmt[j] == ',' && strncmp(lx_stmt + j + 1, "DIMENSION(", 10) == 0) dattr = j + 10;
         i = dc + 2;
     } else if (i < lx_stmt_len && lx_stmt[i] == '(') {
-        int d = 0;
-        for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
+        i = f77_skip_parens(i);                         /* REAL(8), CHARACTER(LEN=4) */
     } else if (i < lx_stmt_len && lx_stmt[i] == '*') {
-        i++;
-        if (i < lx_stmt_len && lx_stmt[i] == '(') {
-            int d = 0;
-            for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
-        }
+        i++;                                            /* REAL*8, CHARACTER*(*), CHARACTER*4 */
+        if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_skip_parens(i);
         while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
         if (i < lx_stmt_len && lx_stmt[i] == ',') i++;
     }
     while (i < lx_stmt_len) {
         char nm[F77_MAX_NAME];
-        int n; int r;
+        int n; int q; int so; int ra; int rs;
         n = 0;
         while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
             if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
@@ -373,22 +322,26 @@ static void f77_scan_rarray(int u) {
         }
         nm[n] = 0;
         if (n == 0) { i++; continue; }
-        r = dflt;
-        if (i < lx_stmt_len && lx_stmt[i] == '*') {          /* CHARACTER F*8(3) */
+        if (i < lx_stmt_len && lx_stmt[i] == '*') {      /* CHARACTER C*8(3) */
             i++;
-            if (i < lx_stmt_len && lx_stmt[i] == '(') {
-                int d = 0;
-                for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
-            }
+            if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_skip_parens(i);
             while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
         }
-        if (i < lx_stmt_len && lx_stmt[i] == '(') r = f77_text_spec_rank(i);
-        if (r > 0 && strcmp(nm, f77_uname[u]) == 0) {
-            f77_urrank[u] = r;
+        so = (i < lx_stmt_len && lx_stmt[i] == '(') ? i : dattr;
+        ra = so >= 0 && !alloc ? f77_text_assumed_rank(so) : 0;
+        rs = so >= 0 ? f77_text_spec_rank(so) : 0;
+        if (ra > 0)
+            for (q = 0; q < f77_nfamd; q++)
+                if (f77_famd_unit[q] == u && strcmp(f77_famd_name[q], nm) == 0) {
+                    f77_famd_as[q] = ra;
+                    f77_unosplice[u] = 1;
+                }
+        if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_uname[u]) == 0) {
+            f77_urrank[u] = rs;
             f77_unosplice[u] = 1;
         }
         while (i < lx_stmt_len && lx_stmt[i] != ',') {
-            if (lx_stmt[i] == '(') { int d = 0; for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) break; } }
+            if (lx_stmt[i] == '(') { i = f77_skip_parens(i); continue; }
             i++;
         }
         i++;
@@ -541,8 +494,7 @@ static void f77_scan_units(void) {
             if (strstr(lx_stmt, "ALLOCATABLE")) f77_unosplice[f77_nunit - 1] = 1;
             if (f77_starts("USE")) f77_unosplice[f77_nunit - 1] = 1;
             if (f77_scan_may_auto(f77_nunit - 1)) f77_unosplice[f77_nunit - 1] = 1;
-            f77_scan_ashape(f77_nunit - 1);
-            f77_scan_rarray(f77_nunit - 1);
+            f77_scan_shapes(f77_nunit - 1);
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)

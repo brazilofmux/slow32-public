@@ -736,7 +736,8 @@ static double f77_me_d2[F77_MAX_MODENT];
 static char  *f77_me_str[F77_MAX_MODENT];        /* CHARACTER value; link name; a generic's specifics */
 static int    f77_me_pkind[F77_MAX_MODENT];      /* F77_UNIT_SUBR or F77_UNIT_FUNC */
 static int    f77_me_nargs[F77_MAX_MODENT];
-static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array, +256*rank assumed-shape */
+static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array, +256*rank assumed-shape,
+                                                   * +4096*rank any array (the rank generics are resolved by) */
 static int    f77_me_rrank[F77_MAX_MODENT];      /* an array-valued FUNCTION: its result's rank */
 /* the generics a unit's INTERFACE blocks name, until its snapshot */
 static char   f77_gi_name[32][F77_MAX_NAME];
@@ -6407,7 +6408,6 @@ static void f77_parse_assumed(int s) {
     if (lx_t != T_RP) { f77_error("expected ) after an assumed shape"); return; }
     f77_tok();
     if (!f77_sarg[s]) { f77_error("a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's"); return; }
-    if (f77_sty[s] == TY_CHAR) { f77_error("a CHARACTER assumed-shape array is not supported yet"); return; }
     f77_srank[s] = rank;
     f77_sashape[s] = 1;
 }
@@ -8778,15 +8778,9 @@ static int f77_actual_is_simple(void) {
     while (i < lx_stmt_len &&
            (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
     if (i < lx_stmt_len && lx_stmt[i] == '(') {
-        depth = 0;
-        while (i < lx_stmt_len) {
-            if (lx_stmt[i] == '(') depth = depth + 1;
-            else if (lx_stmt[i] == ')') {
-                depth = depth - 1;
-                if (depth == 0) { i = i + 1; break; }
-            }
-            i = i + 1;
-        }
+        i = f77_match_paren(i);
+        /* a CHARACTER array's section or element, a substring after it */
+        if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_match_paren(i);
     }
     if (i >= lx_stmt_len) return 0;
     return lx_stmt[i] == ',' || lx_stmt[i] == ')';
@@ -8865,9 +8859,12 @@ static int f77_tfree_trip[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_tfree_lo[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_tfree_st[F77_MAX_TFREE][F77_MAX_RANK];
 static int f77_tfree_ext[F77_MAX_TFREE][F77_MAX_RANK];
+static int f77_tfree_esz[F77_MAX_TFREE];       /* a section's: its elements' bytes in the temporary (HIR) */
+static int f77_tfree_soff[F77_MAX_TFREE];      /* ... a CHARACTER one's substring offset in each, or -1 */
 static int f77_ntfree;
 static int f77_tfree_mark(void) { return f77_ntfree; }
-static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out);
+static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out, int esz, int soff);
+static int f77_esize_v(int s);
 static void f77_tfree_to(int mark) {
     int args[1];
     int e;
@@ -8880,17 +8877,36 @@ static void f77_tfree_to(int mark) {
             us = f77_tfree_sym[e];
             ua[0] = f77_sval[us];
             ua[1] = f77_iconst(f77_srank[us]);
-            ua[2] = f77_iconst(f77_esize(us));
+            ua[2] = f77_esize_v(us);
             ua[3] = f77_tfree_list[e];
             f77_call_i("f77_as_unpack", 4, ua);
             continue;
         }
         if (f77_tfree_sym[e] >= 0)
             f77_section_copy(f77_tfree_sym[e], f77_tfree_list[e], f77_tfree_idx[e], f77_tfree_trip[e],
-                             f77_tfree_lo[e], f77_tfree_st[e], f77_tfree_ext[e], 1);
+                             f77_tfree_lo[e], f77_tfree_st[e], f77_tfree_ext[e], 1,
+                             f77_tfree_esz[e], f77_tfree_soff[e]);
         args[0] = f77_tfree_list[e];
         f77_call_i("f77_dealloc_auto", 1, args);
     }
+}
+
+/* An element's bytes, as an HIR value: a CHARACTER array's length is a
+ * run-time one when it is assumed (*). */
+static int f77_char_lenv(int s, int *clen);
+static int f77_esize_v(int s) {
+    int clen;
+    if (f77_sty[s] == TY_CHAR && !f77_snar[s]) return f77_char_lenv(s, &clen);
+    return f77_iconst(f77_esize(s));
+}
+
+/* n bytes (an HIR value) from src to dst. */
+static void f77_copy_bytes(int dst, int src, int esz);
+static void f77_copy_n(int dst, int src, int n) {
+    int args[3];
+    if (h_kind[n] == HI_ICONST) { f77_copy_bytes(dst, src, h_val[n]); return; }
+    args[0] = dst; args[1] = src; args[2] = n;
+    f77_call_i("memcpy", 3, args);
 }
 
 /* esz bytes from src to dst: words, or memcpy below a word. */
@@ -9096,12 +9112,11 @@ static int f77_transfer_actual(void) {
  * array element order (out: temporary to section), through subscripts
  * evaluated once: per dimension a scalar idx, or a triplet from lo by st
  * over ext elements. */
-static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out) {
+static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *st, int *ext, int out, int esz, int soff) {
     F77Loop lp[F77_MAX_RANK];
-    int k; int rank; int esz; int pos; int p; int ea; int ta;
+    int k; int rank; int pos; int p; int ea; int ta;
     int cur[F77_MAX_RANK];
     rank = f77_srank[s];
-    esz = f77_esize(s);
     pos = f77_int_temp();
     hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
     for (k = rank - 1; k >= 0; k--)
@@ -9111,10 +9126,11 @@ static void f77_section_copy(int s, int tmp, int *idx, int *trip, int *lo, int *
                                    hi_emit(HI_MUL, TY_INT, hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL), st[k], 0, NULL), 0, NULL)
                          : idx[k];
     ea = f77_elem_addr(s, cur, rank);
+    if (soff >= 0) ea = hi_emit(HI_ADD, HL_ADDR_TY, ea, soff, 0, NULL);
     p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
-    ta = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(esz), 0, NULL), 0, NULL);
-    if (out) f77_copy_bytes(ea, ta, esz);
-    else f77_copy_bytes(ta, ea, esz);
+    ta = hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, esz, 0, NULL), 0, NULL);
+    if (out) f77_copy_n(ea, ta, esz);
+    else f77_copy_n(ta, ea, esz);
     hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
     for (k = 0; k < rank; k++)
         if (trip[k]) f77_loop_end(&lp[k]);
@@ -9134,6 +9150,9 @@ static int f77_aa_lo[F77_MAX_AA][F77_MAX_RANK];
 static int f77_aa_st[F77_MAX_AA][F77_MAX_RANK];
 static int f77_aa_ext[F77_MAX_AA][F77_MAX_RANK];
 static int f77_aa_contig[F77_MAX_AA];
+static int f77_aa_esz[F77_MAX_AA];     /* an element's bytes (HIR): a substring's for C(:)(2:3) */
+static int f77_aa_soff[F77_MAX_AA];    /* ... and its offset in each element, or -1 */
+static int f77_nsec_rank;              /* the rank of the section f77_aa_section parsed last */
 static int f77_aa_new(int s) {
     int e;
     if (f77_naa >= F77_MAX_AA) { f77_error("too many array arguments in one statement"); return -1; }
@@ -9142,6 +9161,8 @@ static int f77_aa_new(int s) {
     f77_aa_sym[e] = s;
     f77_aa_sec[e] = 0;
     f77_aa_contig[e] = 0;
+    f77_aa_esz[e] = f77_esize_v(s);
+    f77_aa_soff[e] = -1;
     return e;
 }
 
@@ -9157,6 +9178,7 @@ static int f77_aa_section(int s) {
     f77_aa_sec[e] = 1;
     nt = f77_section_subs(s, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], hi, f77_aa_st[e]);
     if (nt < 0) { f77_act_aa = -1; return f77_iconst(0); }
+    f77_nsec_rank = nt;
     last = -1;
     for (k = 0; k < f77_srank[s]; k++) {
         f77_aa_ext[e][k] = 0;
@@ -9166,6 +9188,14 @@ static int f77_aa_section(int s) {
     for (k = 0; k < last; k++)
         if (!f77_aa_trip[e][k] || !f77_sec_full[k]) f77_aa_contig[e] = 0;
     if (last >= 0 && !(h_kind[f77_aa_st[e][last]] == HI_ICONST && h_val[f77_aa_st[e][last]] == 1)) f77_aa_contig[e] = 0;
+    if (f77_sty[s] == TY_CHAR && lx_t == T_LP) {
+        /* C(2:5)(1:2): the substring of each element, copied in and out */
+        int clen;
+        f77_aa_soff[e] = f77_substr_off(f77_aa_esz[e], (f77_char_lenv(s, &clen), clen));
+        if (f77_aa_soff[e] < 0) { f77_act_aa = -1; return f77_iconst(0); }
+        f77_aa_esz[e] = ex_len;
+        f77_aa_contig[e] = 0;
+    }
     f77_act_aa = e;
     return f77_iconst(0);
 }
@@ -9186,14 +9216,17 @@ static int f77_aa_storage(int e) {
     for (k = 0; k < f77_srank[s]; k++)
         if (f77_aa_trip[e][k]) n = hi_emit(HI_MUL, TY_INT, n, f77_aa_ext[e][k], 0, NULL);
     args[0] = f77_iconst(0);
-    args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
+    args[1] = hi_emit(HI_MUL, TY_INT, n, f77_aa_esz[e], 0, NULL);
     args[2] = f77_iconst(0);
     tmp = f77_call_i("f77_allocate", 3, args);
-    f77_section_copy(s, tmp, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], f77_aa_st[e], f77_aa_ext[e], 0);
+    f77_section_copy(s, tmp, f77_aa_idx[e], f77_aa_trip[e], f77_aa_lo[e], f77_aa_st[e], f77_aa_ext[e], 0,
+                     f77_aa_esz[e], f77_aa_soff[e]);
     t = f77_ntfree;
     f77_tfree_list[t] = tmp;
     f77_tfree_sym[t] = s;
     f77_tfree_unpack[t] = 0;
+    f77_tfree_esz[t] = f77_aa_esz[e];
+    f77_tfree_soff[t] = f77_aa_soff[e];
     for (k = 0; k < f77_srank[s]; k++) {
         f77_tfree_idx[t][k] = f77_aa_idx[e][k];
         f77_tfree_trip[t][k] = f77_aa_trip[e][k];
@@ -9264,7 +9297,7 @@ static int f77_aa_pack(int s) {
     if (f77_ntfree >= F77_MAX_TFREE) { f77_error("too many array temporaries in one statement"); return f77_iconst(0); }
     args[0] = f77_sval[s];
     args[1] = f77_iconst(f77_srank[s]);
-    args[2] = f77_iconst(f77_esize(s));
+    args[2] = f77_esize_v(s);
     run = f77_call_i("f77_as_pack", 3, args);
     t = f77_ntfree;
     f77_tfree_list[t] = run;
@@ -9288,13 +9321,14 @@ static int f77_unit_dummy_as(int u, int k) {
  * becomes what its dummy takes.  An assumed-shape dummy needs an explicit
  * interface (F90 12.3.1.1), so a unit of this file that is no module or
  * internal procedure is refused one. */
+static int f77_run_desc(int base, int r, int *ext, int step);
 static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
     int i; int r;
     static char m[F77_MAX_NAME + 100];
     for (i = 0; i < nargs && i < 64; i++) {
         r = 0;
         if (u >= 0) r = f77_unit_dummy_as(u, i);
-        else if (e >= 0 && i < 16) r = f77_me_argty[e][i] >> 8;
+        else if (e >= 0 && i < 16) r = (f77_me_argty[e][i] >> 8) & 15;
         if (r > 0 && u >= 0 && f77_uhost[u] < 0) {
             sprintf(m, "%s has an assumed-shape dummy argument: it needs an explicit interface", f77_uname[u]);
             f77_error(m);
@@ -9305,7 +9339,16 @@ static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
             continue;
         }
         if (aas[i] < 0) continue;
-        if (r > 0) addrs[i] = f77_aa_desc(aas[i], r);
+        if (r > 0 && f77_aa_soff[aas[i]] >= 0) {
+            /* substrings of a section: their copy, and a descriptor of it */
+            int ext[F77_MAX_RANK]; int k; int j; int ea;
+            ea = aas[i];
+            j = 0;
+            for (k = 0; k < f77_srank[f77_aa_sym[ea]]; k++) if (f77_aa_trip[ea][k]) ext[j++] = f77_aa_ext[ea][k];
+            if (j != r) { sprintf(m, "an actual of rank %d for an assumed-shape dummy of rank %d", j, r); f77_error(m); continue; }
+            addrs[i] = f77_run_desc(f77_aa_storage(ea), r, ext, 1);
+        }
+        else if (r > 0) addrs[i] = f77_aa_desc(aas[i], r);
         else if (f77_aa_sec[aas[i]]) addrs[i] = f77_aa_storage(aas[i]);
         else if (f77_sashape[f77_aa_sym[aas[i]]]) addrs[i] = f77_aa_pack(f77_aa_sym[aas[i]]);
     }
@@ -10625,8 +10668,23 @@ static int f77_actual_addr(void) {
         if (f77_sty[s] == TY_CHAR) {
             f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
-                f77_error("a CHARACTER section as an actual argument is not supported yet");
-                return f77_iconst(0);
+                /* a section, as the other types' (a substring of each
+                 * element may follow): the hidden length its elements' */
+                f77_tok();
+                v = f77_aa_section(s);
+                if (f77_act_aa >= 0) f77_act_len = f77_aa_esz[f77_act_aa];
+                else f77_act_len = f77_iconst(1);
+                f77_act_ty = TY_CHAR + 16 + 4096 * f77_nsec_rank;
+                return v;
+            }
+            if (lx_t != T_LP && f77_srank[s] > 0) {
+                /* a whole array: recorded, f77_actuals_final decides */
+                int clen;
+                f77_act_aa = f77_aa_new(s);
+                f77_act_len = f77_char_lenv(s, &clen);
+                f77_act_ty = TY_CHAR + 16 + 4096 * f77_srank[s];
+                if (f77_salloc[s]) return f77_desc_base(s);
+                return f77_sval[s];
             }
             f77_char_whole_ok = 1;
             v = f77_char_ref(s);
@@ -10641,15 +10699,16 @@ static int f77_actual_addr(void) {
             f77_tok();
             if (lx_t == T_LP && f77_srank[s] > 0 && f77_paren_has_colon()) {
                 f77_tok();
-                f77_act_ty = f77_sty[s] + 16;
-                return f77_aa_section(s);
+                v = f77_aa_section(s);
+                f77_act_ty = f77_sty[s] + 16 + 4096 * f77_nsec_rank;
+                return v;
             }
             if (lx_t == T_LP && f77_srank[s] > 0) {
                 f77_tok();
                 f77_act_ty = f77_sty[s];
                 return f77_subscript_addr(s);
             }
-            f77_act_ty = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0);
+            f77_act_ty = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + 4096 * f77_srank[s];
             if (f77_srank[s] > 0) f77_act_aa = f77_aa_new(s);
             if (f77_sashape[s]) return f77_sval[s];   /* f77_actuals_final decides */
             if (f77_salloc[s]) {            /* an ALLOCATABLE: its storage */
@@ -11480,7 +11539,8 @@ static void f77_mod_proc(int u) {
                 t = -1;
                 if (lx_t == T_NAME) {
                     s = f77_sym_find(lex_name);
-                    if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0);
+                    if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0)
+                                    + 4096 * f77_srank[s];
                 }
                 if (n < 16) f77_me_argty[e][n] = t;
                 n = n + 1;
@@ -11906,7 +11966,9 @@ static int f77_generic_pick(int g, int *tys, int n) {
         e = f77_me_find(m, nm);
         if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] == n) {
             int a;
-            for (a = 0; a < n && a < 16; a++) if ((f77_me_argty[e][a] & 255) != tys[a]) break;
+            /* by type and rank (F90 14.1.2.3; kinds are types here) */
+            for (a = 0; a < n && a < 16; a++)
+                if ((f77_me_argty[e][a] & 255) != (tys[a] & 255) || ((f77_me_argty[e][a] >> 12) & 15) != ((tys[a] >> 12) & 15)) break;
             if (a == n || a == 16) return e;
         }
     }

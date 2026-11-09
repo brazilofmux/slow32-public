@@ -238,8 +238,8 @@ fi
 # an array in a scalar's place, an argument that is no array or of the
 # wrong type, a keyword the intrinsic does not take, a DIM outside the rank.
 # Assumed-shape dummies (Fortran 90; as*): an explicit interface, an array
-# actual of the dummy's rank, and only for a dummy; CHARACTER ones and an
-# assumed-size actual are refused.
+# actual of the dummy's rank, and only for a dummy; an assumed-size
+# actual is refused.
 # A whole CHARACTER array was its first element wherever it was not an
 # actual argument or I/O's: D = C assigned C(1) to D(1) and stopped
 # (charwhole; CHARACTER array assignment since, a scalar's place still
@@ -318,12 +318,10 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nend\n' > "$W/whereopen.f90"
     printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
     printf 'real a(2), m(2,2)\na = 1.0\nm = 1.0\nwhere (m > 0.0) a = 2.0\nend\n' > "$W/whereshape.f90"
-    printf "character*4 c(3)\ncall s(c(1:3:2))\nend\n" > "$W/charsec.f90"
     printf 'real a(3)\na = 1.0\ncall s(a)\nend\nsubroutine s(x)\nreal x(:)\nend\n' > "$W/asext.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nuse m\ny = 1.0\ncall s(y)\nend\n' > "$W/asscal.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:,:)\nend subroutine\nend module\nuse m\nreal a(3)\ncall s(a)\nend\n' > "$W/asrank.f90"
     printf 'subroutine s\nreal x(:)\nend\n' > "$W/aslocal.f90"
-    printf 'module m\ncontains\nsubroutine s(c)\ncharacter*4 c(:)\nend subroutine\nend module\n' > "$W/aschar.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nsubroutine t(y)\nuse m\nreal y(*)\ncall s(y)\nend\n' > "$W/asasz.f90"
     printf "character*2 c(2), s\nc(1) = 'ab'\nc(2) = 'cd'\ns = c\nend\n" > "$W/charwhole.f90"
     printf "character*2 c(2)\nc = 'ab'\nc = trim(c)\nend\n" > "$W/trimarr.f90"
@@ -443,12 +441,10 @@ if [ -x "$F77" ]; then
              "whereopen:WHERE without END WHERE" \
              "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \
              "whereshape:line 4: the shapes of a WHERE's mask and its assignment do not conform" \
-             "charsec:line 2: a CHARACTER section as an actual argument is not supported yet" \
              "asext:line 3: S has an assumed-shape dummy argument: it needs an explicit interface" \
              "asscal:line 9: an assumed-shape dummy needs an array or a section as its actual" \
              "asrank:line 9: an actual of rank 1 for an assumed-shape dummy of rank 2" \
              "aslocal:line 2: a shape of (:) is an assumed-shape dummy's or an ALLOCATABLE array's" \
-             "aschar:line 4: a CHARACTER assumed-shape array is not supported yet" \
              "asasz:line 10: an assumed-size array cannot be the actual of an assumed-shape dummy" \
              "charwhole:line 4: a whole CHARACTER array in an expression is not supported yet" \
              "trimarr:line 3: TRIM's argument is a scalar" \
