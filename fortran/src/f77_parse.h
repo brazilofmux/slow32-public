@@ -133,6 +133,27 @@ static int  f77_ssaved[F77_MAX_SYM];
  * be seen after the load, so loads are recorded and the flag is
  * RETRACTED at unit end for every symbol that got stored. */
 static int  f77_sopt[F77_MAX_SYM];       /* an OPTIONAL dummy argument */
+static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
+/* Host association of variables (Fortran 90).  A host of internal
+ * procedures has, before it is compiled, the names its procedures' text
+ * uses (f77_hc_name, f77.c's f77_host_cands); a local of it among them is
+ * made static (f77_shost 1), its procedures binding the storage by name,
+ * and a dummy, or anything whose address or extents are the call's, goes
+ * through a table in its frame (f77_shost 2), whose address its internal
+ * procedures take as a hidden last argument and pass on to each other
+ * (f77_htab). */
+#define F77_MAX_HC 2048
+static char f77_hc_name[F77_MAX_HC][F77_MAX_NAME];
+static int  f77_hc_n;
+static int  f77_hc_host = -1;
+static int  f77_shost[F77_MAX_SYM];
+static int  f77_htab = -1;
+static void f77_host_late(int t);
+static int  f77_hc_has(char *nm) {
+    int k;
+    for (k = 0; k < f77_hc_n; k++) if (strcmp(f77_hc_name[k], nm) == 0) return 1;
+    return 0;
+}
 static int  f77_sstored[F77_MAX_SYM];
 #define F77_MAX_LDRO 4096
 static int  f77_ldro_inst[F77_MAX_LDRO];
@@ -152,7 +173,7 @@ static int f77_ldro_local_ok(int s);
 static void f77_ldro_finalize(void) {
     int i;
     for (i = 0; i < f77_ldro_n; i++) {
-        if (f77_sstored[f77_ldro_sym[i]] || f77_sopt[f77_ldro_sym[i]] ||
+        if (f77_sstored[f77_ldro_sym[i]] || f77_sopt[f77_ldro_sym[i]] || f77_sassoc[f77_ldro_sym[i]] ||
             (!f77_sarg[f77_ldro_sym[i]] && !f77_ldro_local_ok(f77_ldro_sym[i])))
             h_ld_ro[f77_ldro_inst[i]] = 0;
     }
@@ -178,7 +199,6 @@ static int  f77_spstr[F77_MAX_SYM];    /* CHARACTER PARAMETER: string index */
 static int  f77_sexternal[F77_MAX_SYM]; /* named in EXTERNAL */
 static char *f77_slink[F77_MAX_SYM];     /* a USEd module procedure's link name, or NULL */
 static int  f77_sme[F77_MAX_SYM];        /* ... its module entity (a procedure, a generic), or -1 */
-static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
 static int  f77_sintrinsic[F77_MAX_SYM]; /* named in INTRINSIC */
 /* ALLOCATABLE (Fortran 90): the symbol's slot is a descriptor, 4 + 8*rank
  * bytes -- the storage's address, then per dimension its lower bound and
@@ -633,6 +653,9 @@ static int f77_sym(char *nm) {
     f77_sauto[f77_nsym] = 0;
     f77_slink[f77_nsym] = NULL;
     f77_sme[f77_nsym] = -1;
+    f77_sassoc[f77_nsym] = 0;
+    f77_sopt[f77_nsym] = 0;
+    f77_shost[f77_nsym] = 0;
     f77_salloc[f77_nsym] = 0;
     f77_sashape[f77_nsym] = 0;
     f77_shidden[f77_nsym] = 0;
@@ -660,6 +683,8 @@ static int f77_sym(char *nm) {
                                  0 - f77_frame, NULL);
     f77_alloca_add(f77_sval[f77_nsym], 0 - f77_frame);
     f77_nsym = f77_nsym + 1;
+    if (!f77_decls_open && f77_hc_host == f77_cur_unit && f77_inline_depth == 0 && f77_hc_has(nm))
+        f77_host_late(f77_nsym - 1);
     return f77_nsym - 1;
 }
 
@@ -691,6 +716,7 @@ static int f77_sym_temp(int ty) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_shost[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -734,6 +760,7 @@ static char f77_ulink[F77_MAX_UNIT][F77_MAX_LINK];
 #define F77_ME_PROC    2
 #define F77_ME_GENERIC 3
 #define F77_ME_VAR     4   /* a module variable: in a block (me_str), at an offset (f77_me_off) */
+#define F77_ME_HVAR    5   /* a host's variable through its table: the slot of its address (f77_me_off) */
 static int    f77_nmod;
 static char   f77_mod_name[F77_MAX_MOD][F77_MAX_NAME];
 static int    f77_mod_unit[F77_MAX_MOD];         /* its unit in this file, -1 if read */
@@ -757,7 +784,9 @@ static int    f77_me_off[F77_MAX_MODENT];        /* a variable: its offset in th
 static int    f77_me_nar[F77_MAX_MODENT];        /* ... INTEGER*2, LOGICAL*1 (f77_snar) */
 static int    f77_me_alloc[F77_MAX_MODENT];      /* ... ALLOCATABLE */
 static int    f77_me_lo[F77_MAX_MODENT][F77_MAX_RANK];
-static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];
+static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];   /* HVAR: below 0, -(slot + 1): the call's */
+static int    f77_me_ashape[F77_MAX_MODENT];     /* HVAR: assumed-shape, its descriptor's address */
+static int    f77_me_lenslot[F77_MAX_MODENT];    /* HVAR: an assumed length's slot, or -1 */
 static int    f77_me_assoc = 2;                  /* f77_me_bind's: 1 host association, 2 USE */
 static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, not a USE's */
 static char  *f77_me_dnames[F77_MAX_MODENT];     /* a procedure's dummies' names, space-separated */
@@ -859,6 +888,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_shost[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -2204,6 +2234,15 @@ static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
 static void f77_opt_note(int s);
+static void f77_host_table(void);
+static int f77_host_extra(int v);
+/* Is nm a variable this unit has by host association? */
+static int f77_assoc_var(char *nm) {
+    int s;
+    s = f77_sym_find(nm);
+    return s >= 0 && f77_sassoc[s] && !f77_sexternal[s] && f77_sme[s] < 0 && !f77_sparam[s];
+}
+static int f77_hslot_of[F77_MAX_SYM];
 static void f77_vis_note(char *nm, int priv);
 static void f77_hide_assoc(char *nm);
 
@@ -2541,6 +2580,10 @@ static int f77_primary(void) {
         int in;
         strcpy(nm, lex_name);
         u = f77_find_func(nm);
+        /* a host's variable an internal procedure has by host association
+         * -- its host FUNCTION's result among them -- is no reference to
+         * a procedure of the name (it had been called, with no actuals) */
+        if (u >= 0 && f77_assoc_var(nm)) u = -1;
 
         /* Inside a FUNCTION its name -- and an ENTRY's -- is the result
          * variable (F77 15.5.1; F90 12.5.2.2 without RESULT), so F(N-1)
@@ -3152,6 +3195,11 @@ static int f77_primary(void) {
             }
             if (!f77_actuals_order(u, -1, nm, addrs, lens, tys, aas, kws, &nargs)) { f77_tfree_to(mk); ex_ty = TY_INT; return f77_iconst(0); }
             f77_actuals_final(addrs, aas, nargs, u, -1);
+            {
+                int hx;
+                hx = f77_host_extra(u);
+                if (hx >= 0 && nargs < 64) { addrs[nargs] = hx; lens[nargs] = -1; nargs = nargs + 1; }
+            }
             f77_naa = aamk;
             rty = f77_urty_of(u);
             {
@@ -7956,6 +8004,26 @@ static void f77_layout_static(void) {
         }
     }
 
+    /* A host of internal procedures: its locals they name are static
+     * (f77_shost 1) unless their storage or extents are the call's (an
+     * automatic array) or it is the FUNCTION's result; those, and its
+     * dummies they name, go through its table (2, f77_host_table). */
+    if (f77_hc_host == f77_cur_unit && f77_inline_depth == 0) {
+        for (s = f77_scope_base; s < f77_nsym; s++) {
+            if (!f77_hc_has(f77_sname[s]) || f77_sparam[s] || f77_sexternal[s] || f77_sintrinsic[s] ||
+                f77_sme[s] >= 0 || f77_slink[s] || f77_scom[s] || f77_sassoc[s]) continue;
+            if (f77_sarg[s] || s == f77_result_sym || f77_sauto[s] || f77_adjustable(s)) { f77_shost[s] = 2; continue; }
+            if (f77_urecur[f77_cur_unit]) {
+                char m[F77_MAX_NAME + 80];
+                sprintf(m, "%s: a RECURSIVE procedure's local in its internal procedures is not supported yet", f77_sname[s]);
+                f77_error(m);
+                return;
+            }
+            f77_shost[s] = 1;
+            f77_ssaved[s] = 1;
+        }
+    }
+
     for (i = 0; i < f77_ncblk; i++) boff[i] = 0;
 
     for (i = 0; i < f77_cm_n; i++) {
@@ -8577,9 +8645,13 @@ static void f77_alloc_free_all(void) {
             f77_call_i("f77_dealloc_auto", 1, args);
             continue;
         }
-        if (!f77_salloc[s] || f77_ssaved[s] || f77_sarg[s]) continue;
+        if (!f77_salloc[s] || f77_sarg[s]) continue;
+        if (f77_ssaved[s] && f77_shost[s] != 1) continue;
         args[0] = f77_desc_base(s);
         f77_call_i("f77_dealloc_auto", 1, args);
+        /* static for its internal procedures, but not SAVEd: unallocated
+         * again for the next call */
+        if (f77_shost[s] == 1) hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 0), f77_iconst(0), 0, NULL);
     }
 }
 
@@ -11480,7 +11552,7 @@ static int f77_actual_addr(void) {
         }
     }
 
-    if (lx_t == T_NAME && f77_find_func(lex_name) < 0 && f77_actual_is_simple() &&
+    if (lx_t == T_NAME && (f77_find_func(lex_name) < 0 || f77_assoc_var(lex_name)) && f77_actual_is_simple() &&
         !f77_actual_is_call(lex_name)) {
         /* A bare name, or a subscripted element, is passed by address;
          * a whole array passes its base.  A FUNCTION reference is not a
@@ -11673,6 +11745,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sme[s] = -1;
     f77_sassoc[s] = 0;
     f77_sopt[s] = 0;
+    f77_shost[s] = 0;
     f77_salloc[s] = 0;
     f77_sashape[s] = 0;
     f77_shidden[s] = 0;
@@ -11970,6 +12043,11 @@ static void f77_stmt_call1(int skip) {
         }
         if (!f77_actuals_order(fu, fe, nm, addrs, lens, tys, aas, kws, &nargs)) return;
         f77_actuals_final(addrs, aas, nargs, fu, fe);
+        {
+            int hx;
+            hx = f77_host_extra(fu);
+            if (hx >= 0 && nargs < 64) { addrs[nargs] = hx; lens[nargs] = -1; tys[nargs] = -1; nargs = nargs + 1; }
+        }
         f77_naa = aamk;
     }
     fptr = -1;
@@ -12139,11 +12217,77 @@ static int f77_entry_blk;
 
 static int f77_copyin_on = -1;
 
+/* A local first seen in a host's executable text, named by its internal
+ * procedures: static, as its declared locals are (f77_layout_static). */
+static void f77_host_late(int t) {
+    char *on;
+    if (f77_urecur[f77_cur_unit]) {
+        char m[F77_MAX_NAME + 80];
+        sprintf(m, "%s: a RECURSIVE procedure's local in its internal procedures is not supported yet", f77_sname[t]);
+        f77_error(m);
+        return;
+    }
+    f77_sgidx[t] = f77_static_obj("f77s_", f77_sname[t], f77_storage_bytes(t), &on);
+    f77_bind_static(t, on, 0);
+    f77_sgoff[t] = 0;
+    f77_ssaved[t] = 1;
+    f77_shost[t] = 1;
+}
+
+/* A host's table for its internal procedures (f77_shost 2): per entity,
+ * the slot of its address, of an assumed length, of each run-time lower
+ * bound and extent -- the values its procedures cannot know -- in a
+ * frame array filled here, at the end of the declaration part.  Every
+ * host of internal procedures has one (one word at least). */
+static int f77_hslot_n;
+static int f77_hslot_of[F77_MAX_SYM];
+static void f77_host_table(void) {
+    int s; int k; int n;
+    if (f77_hc_host != f77_cur_unit || f77_inline_depth > 0) return;
+    n = 0;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (f77_shost[s] != 2) continue;
+        n = n + 1 + (f77_sty[s] == TY_CHAR && f77_slen[s] < 0);
+        for (k = 0; k < f77_srank[s]; k++) n = n + (f77_slov[s][k] >= 0) + (f77_sextv[s][k] >= 0);
+    }
+    f77_htab = f77_char_temp(4 * (n > 0 ? n : 1));
+    n = 0;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (f77_shost[s] != 2) continue;
+        f77_hslot_of[s] = n;
+        if (f77_shi[s] >= 0) hi_emit(HI_ADDI, HL_ADDR_TY, f77_shi[s], -1, 0, NULL);   /* both halves escape */
+        f77_sstored[s] = 1;
+        /* an ALLOCATABLE's or assumed-shape array's slot is its
+         * descriptor's address, which the guard lets only an ADDI use */
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * n++, NULL),
+                f77_salloc[s] || f77_sashape[s] ? hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 0, NULL) : f77_sval[s], 0, NULL);
+        if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0)
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * n++, NULL), f77_slenv[s], 0, NULL);
+        for (k = 0; k < f77_srank[s]; k++) {
+            if (f77_slov[s][k] >= 0)
+                hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * n++, NULL), f77_slov[s][k], 0, NULL);
+            if (f77_sextv[s][k] >= 0)
+                hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * n++, NULL), f77_sextv[s][k], 0, NULL);
+        }
+    }
+    f77_hslot_n = n;
+}
+
+/* The hidden last argument of a call to unit v: an internal procedure's
+ * host table (the caller's own, as host or as a sibling); -1 for any
+ * other callee. */
+static int f77_host_extra(int v) {
+    if (v < 0 || f77_uhost[v] < 0 || f77_ukind[f77_uhost[v]] == F77_UNIT_MODULE) return -1;
+    if (f77_htab < 0) { f77_error("an internal procedure's host table is not here (an f77 defect)"); return f77_iconst(0); }
+    return f77_htab;
+}
+
 static void f77_emit_copyin(void) {
     int i;
     /* The declaration part is closing: every member's type and shape
      * is final, so COMMON blocks and SAVEd locals can be laid out. */
     f77_layout_static();
+    f77_host_table();
     /* An array-valued FUNCTION: callers took its value for a scalar and
      * stored it to every element of the target (found 2026-11-09). */
     if (f77_result_sym >= 0 && f77_inline_depth == 0) {
@@ -12528,9 +12672,16 @@ static void f77_me_bind(int e, char *local) {
         }
         f77_sassz[s] = 0;
         f77_salloc[s] = f77_me_alloc[e];
-        b = f77_cblk_find(f77_me_str[e] + 5);           /* past f77c_ */
-        g = f77_cblk_gidx[b];
-        f77_bind_static(s, f77_cblk_name[b], f77_me_off[e]);
+        if (strncmp(f77_me_str[e], "f77c_", 5) == 0) {
+            b = f77_cblk_find(f77_me_str[e] + 5);       /* a module's block, or a COMMON block */
+            g = f77_cblk_gidx[b];
+            f77_bind_static(s, f77_cblk_name[b], f77_me_off[e]);
+        } else {
+            /* a host's static (its internal procedures, in its file) */
+            for (g = 0; g < ps_nglobals; g++) if (strcmp(ps_gname[g], f77_me_str[e]) == 0) break;
+            if (g == ps_nglobals) { f77_error("a host's static is not here (an f77 defect)"); return; }
+            f77_bind_static(s, ps_gname[g], f77_me_off[e]);
+        }
         f77_scom[s] = 1;
         f77_sgidx[s] = g;
         f77_sgoff[s] = f77_me_off[e];
@@ -12540,11 +12691,56 @@ static void f77_me_bind(int e, char *local) {
         if (end > ps_gsize[g]) ps_gsize[g] = end;
         return;
     }
+    if (f77_me_kind[e] == F77_ME_HVAR) {
+        /* through the host's table, once the hidden argument is bound
+         * (f77_bind_hvars); its own dummy of the name hides it */
+        int k;
+        if (f77_htab < 0 || f77_sym_find(local) >= 0) return;
+        s = f77_sym(local);
+        f77_sassoc[s] = 1;
+        f77_sarg[s] = 1;                          /* the host's: storage by address */
+        f77_sty[s] = f77_me_ty[e];
+        f77_styped[s] = 1;
+        f77_slog[s] = f77_me_log[e];
+        f77_snar[s] = f77_me_nar[e];
+        f77_sval[s] = hi_emit(HI_LOAD, HL_ADDR_TY, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * f77_me_off[e], NULL), -1, 0, NULL);
+        if (f77_me_ty[e] == TY_CHAR) {
+            f77_slen[s] = f77_me_lenslot[e] >= 0 ? -1 : f77_me_ival[e];
+            if (f77_me_lenslot[e] >= 0)
+                f77_slenv[s] = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * f77_me_lenslot[e], NULL), -1, 0, NULL);
+        }
+        f77_srank[s] = f77_me_rrank[e];
+        f77_sashape[s] = f77_me_ashape[e];
+        f77_salloc[s] = f77_me_alloc[e];
+        f77_sassz[s] = 0;
+        for (k = 0; k < f77_me_rrank[e]; k++) {
+            int lo; int ex;
+            lo = f77_me_lo[e][k]; ex = f77_me_ext[e][k];
+            f77_slo[s][k] = lo < 0 ? 1 : lo;
+            f77_slov[s][k] = lo < 0 ? hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * (-lo - 1), NULL), -1, 0, NULL) : -1;
+            if (ex == 0x7fffffff) { f77_sassz[s] = 1; f77_sext[s][k] = 1; f77_sextv[s][k] = -1; }
+            else {
+                f77_sext[s][k] = ex < 0 ? 1 : ex;
+                f77_sextv[s][k] = ex < 0 ? hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_htab, -1, 4 * (-ex - 1), NULL), -1, 0, NULL) : -1;
+            }
+        }
+        return;
+    }
     /* a generic: resolved where it is referenced */
     s = f77_sym(local);
     f77_sexternal[s] = 1;
     f77_styped[s] = 1;
     f77_sme[s] = e;
+}
+
+/* An internal procedure's host variables through the table, once the
+ * table's hidden argument is bound. */
+static void f77_bind_hvars(int m) {
+    int e;
+    f77_me_assoc = 1;
+    for (e = 0; e < f77_nme; e++)
+        if (f77_me_mod[e] == m && f77_me_kind[e] == F77_ME_HVAR) f77_me_bind(e, f77_me_name[e]);
+    f77_me_assoc = 2;
 }
 
 /* The whole of module m, as host association or a USE without ONLY
@@ -12590,6 +12786,39 @@ static void f77_host_save(int u) {
             f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o];
             f77_me_nargs[e] = f77_me_nargs[o];
             memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
+            continue;
+        }
+        if (!f77_sparam[s] && f77_hc_host == u && f77_hc_has(f77_sname[s]) && !f77_sexternal[s] && !f77_sintrinsic[s] &&
+            !f77_slink[s] && f77_sname[s][0] != '%' &&
+            (f77_shost[s] == 2 || (f77_sgidx[s] >= 0 && !f77_sarg[s]))) {
+            /* a variable its internal procedures name: by its static
+             * storage (VAR), or through the table (HVAR) */
+            int q;
+            e = f77_me_new(m, f77_sname[s], f77_shost[s] == 2 ? F77_ME_HVAR : F77_ME_VAR);
+            if (e < 0) return;
+            f77_me_ty[e] = f77_sty[s];
+            f77_me_log[e] = f77_slog[s];
+            f77_me_nar[e] = f77_snar[s];
+            f77_me_ival[e] = f77_sty[s] == TY_CHAR ? f77_slen[s] : 0;
+            f77_me_rrank[e] = f77_srank[s];
+            f77_me_alloc[e] = f77_salloc[s];
+            f77_me_ashape[e] = f77_sashape[s];
+            f77_me_lenslot[e] = -1;
+            if (f77_shost[s] == 2) {
+                int n;
+                n = f77_hslot_of[s];
+                f77_me_off[e] = n++;
+                if (f77_sty[s] == TY_CHAR && f77_slen[s] < 0) f77_me_lenslot[e] = n++;
+                for (q = 0; q < f77_srank[s]; q++) {
+                    f77_me_lo[e][q] = f77_slov[s][q] >= 0 ? -(n++ + 1) : f77_slo[s][q];
+                    f77_me_ext[e][q] = f77_sextv[s][q] >= 0 ? -(n++ + 1) : f77_sext[s][q];
+                }
+                if (f77_sassz[s]) f77_me_ext[e][f77_srank[s] - 1] = 0x7fffffff;      /* (*) */
+            } else {
+                f77_me_off[e] = f77_sgoff[s];
+                f77_me_str[e] = ps_gname[f77_sgidx[s]];
+                for (q = 0; q < f77_srank[s]; q++) { f77_me_lo[e][q] = f77_slo[s][q]; f77_me_ext[e][q] = f77_sext[s][q]; }
+            }
             continue;
         }
         if (!f77_sparam[s]) {
@@ -13034,6 +13263,7 @@ static void f77_bind_unit(int u) {
     f77_cur_unit = u;
     f77_result_sym = -1;
     f77_result_desc = -1;
+    f77_htab = -1;
     nparam = 0;
     f77_unit_nparams = 0;
     f77_ci_n = 0;
@@ -13145,6 +13375,16 @@ static void f77_bind_unit(int u) {
             }
         }
         if (lx_t == T_RP) f77_tok();
+    }
+
+    /* an internal procedure: its host's table, the hidden last argument
+     * (f77_host_extra), and the host variables reached through it */
+    if (f77_uhost[u] >= 0 && f77_ukind[f77_uhost[u]] != F77_UNIT_MODULE && f77_uentry_parent[u] < 0) {
+        int hm;
+        f77_htab = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, nparam, NULL);
+        nparam = nparam + 1;
+        hm = f77_mod_find(f77_host_key(f77_uhost[u]));
+        if (hm >= 0) f77_bind_hvars(hm);
     }
 
     f77_unit_nparams = nparam;

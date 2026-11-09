@@ -291,7 +291,7 @@ if [ -x "$F77" ]; then
     printf 'module mi\ninterface\nsubroutine s(x)\nend subroutine s\nend interface\nend module mi\n' > "$W/modibody.f90"
     printf 'use nosuch\nend\n' > "$W/usenone.f90"
     printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
-    printf 'x = 1.0\ncall s\ncontains\nsubroutine s\ny = x\nend subroutine s\nend\n' > "$W/hostvar.f90"
+    printf 'recursive subroutine r(n)\ninteger :: n, t\nt = n\ncall q()\ncontains\nsubroutine q()\nprint *, t\nend subroutine\nend\n' > "$W/hostrec.f90"
     printf 'module mg\ninterface g\nmodule procedure a\nend interface\ncontains\nsubroutine a(x)\nreal x\nend subroutine a\nend module mg\nuse mg\ncall g(1)\nend\n' > "$W/genmiss.f90"
     printf 'a: do i=1,2\nend do a\na: do i=1,2\nend do a\nend\n' > "$W/cndup.f90"
     printf 'integer a\na=1\na: do i=1,2\nend do a\nend\n' > "$W/cnvar.f90"
@@ -457,7 +457,7 @@ if [ -x "$F77" ]; then
              "modibody:line 2: an INTERFACE block of interface bodies is not supported yet" \
              "usenone:line 1: no module NOSUCH: neither in this file before the USE, nor a .mod file of it here" \
              "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
-             "hostvar:line 6: X: host association with a variable is not supported yet" \
+             "hostrec:line 3: T: a RECURSIVE procedure's local in its internal procedures is not supported yet" \
              "genmiss:line 11: no procedure of the generic G takes these arguments" \
              "cndup:line 3: the construct name A is used twice" \
              "cnvar:line 3: A is a variable; it cannot name a construct" \

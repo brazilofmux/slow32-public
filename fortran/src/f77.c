@@ -371,6 +371,33 @@ static void f77_scan_shapes(int u) {
     }
 }
 
+/* The names (tokens) in the text of unit u's internal procedures, into
+ * f77_hc_name; none when u is no host, or a module (whose variables are
+ * static, f77_me_bind). */
+static void f77_host_cands(int u) {
+    int v;
+    f77_hc_n = 0;
+    f77_hc_host = -1;
+    if (f77_ukind[u] == F77_UNIT_MODULE) return;
+    for (v = 0; v < f77_nunit; v++) {
+        if (f77_uhost[v] != u || f77_uentry_parent[v] >= 0) continue;
+        f77_hc_host = u;
+        lx_pos = f77_upos[v];
+        lx_line = f77_uline[v];
+        while (f77_next_stmt()) {
+            f77_scan_from(0);
+            while (lx_t != T_EOF) {
+                if (lx_t == T_NAME && !f77_hc_has(lex_name) && f77_hc_n < F77_MAX_HC) {
+                    strcpy(f77_hc_name[f77_hc_n], lex_name);
+                    f77_hc_n = f77_hc_n + 1;
+                }
+                f77_tok();
+            }
+            if (f77_is_unit_end()) break;
+        }
+    }
+}
+
 static void f77_scan_units(void) {
     int pos;
     int line;
@@ -811,6 +838,12 @@ static void hl_func(Node *fn) {
 
     b_entry = hir_new_block();
     f77_begin_blk(b_entry);
+
+    /* A host of internal procedures (Fortran 90): the names its
+     * procedures' text uses, before its own text is compiled -- those of
+     * its variables are host associated, and must be where an internal
+     * procedure can reach them (f77_host_table, f77_host_save). */
+    f77_host_cands(u);
 
     /* Rewind to this unit's first statement and bind its header. */
     lx_pos = f77_upos[u];
