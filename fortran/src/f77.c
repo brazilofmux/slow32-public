@@ -438,7 +438,10 @@ static void f77_scan_units(void) {
             line = lx_line;
             continue;
         }
-        if (started && !ended && f77_starts("INTERFACE") && f77_toplevel('=', 0) < 0) in_iface = 1;
+        if (started && !ended && f77_starts("INTERFACE") && f77_toplevel('=', 0) < 0) {
+            in_iface = 1;
+            if (f77_nunit > 0) f77_unosplice[f77_nunit - 1] = 1;     /* its bodies are its own scope's */
+        }
         if (f77_is_contains()) {
             if (!started || ended) { f77_error("CONTAINS outside a program unit"); return; }
             if (hn >= 3) { f77_error("procedures nested too deep"); return; }
@@ -879,9 +882,10 @@ static void hl_func(Node *fn) {
          * match here swallowed everything after the first ENDIF -- the
          * unit ended there, fell off returning 0, and slice2 passed
          * vacuously against the oracle for a full day. */
-        if (f77_is_unit_end() || f77_is_contains()) break;
+        /* (an interface body's header and END are no unit's) */
+        if ((f77_is_unit_end() && f77_iface_open == -1) || f77_is_contains()) break;
         if (!f77_next_stmt()) break;
-        if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) break;
+        if ((f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) && f77_iface_open == -1) break;
     }
     /* fort370: a block left open at END */
     while (ctl_n > 0) {

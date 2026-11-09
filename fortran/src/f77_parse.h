@@ -790,6 +790,7 @@ static int    f77_me_lenslot[F77_MAX_MODENT];    /* HVAR: an assumed length's sl
 static int    f77_me_assoc = 2;                  /* f77_me_bind's: 1 host association, 2 USE */
 static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, not a USE's */
 static char  *f77_me_dnames[F77_MAX_MODENT];     /* a procedure's dummies' names, space-separated */
+static int    f77_me_iface[F77_MAX_MODENT];      /* a procedure an interface body describes */
 #define F77_ARG_OPT 65536                        /* f77_me_argty: an OPTIONAL dummy */
 /* PUBLIC and PRIVATE (Fortran 90 5.2.3): the module being compiled says
  * them in its specification part (f77_vis_*); its snapshot keeps them per
@@ -2596,6 +2597,13 @@ static int f77_primary(void) {
          * -- its host FUNCTION's result among them -- is no reference to
          * a procedure of the name (it had been called, with no actuals) */
         if (u >= 0 && f77_assoc_var(nm)) u = -1;
+        {
+            /* an interface body of the name describes it (an external of
+             * this file too): the call goes by it */
+            int ib;
+            ib = f77_sym_find(nm);
+            if (u >= 0 && ib >= 0 && f77_sme[ib] >= 0 && f77_me_iface[f77_sme[ib]]) u = -1;
+        }
 
         /* Inside a FUNCTION its name -- and an ENTRY's -- is the result
          * variable (F77 15.5.1; F90 12.5.2.2 without RESULT), so F(N-1)
@@ -9411,6 +9419,12 @@ static int f77_sym_decl(char *nm) {
         return s;
     }
     if (s >= 0 && f77_sassoc[s] == 1) f77_sname[s][0] = '%';      /* hidden: no Fortran name */
+    if (s >= 0 && f77_sme[s] >= 0 && f77_me_iface[f77_sme[s]]) {
+        char m[F77_MAX_NAME + 60];
+        sprintf(m, "%s has an interface body: it is not declared again", nm);
+        f77_error(m);
+        return s;
+    }
     return f77_sym(nm);
 }
 
@@ -12065,6 +12079,7 @@ static void f77_stmt_call1(int skip) {
         ds = f77_sym_find(nm);
         if (!(ds >= 0 && f77_sarg[ds] && f77_srank[ds] == 0)) {
             fu = f77_find_unit(nm);
+            if (fu >= 0 && ds >= 0 && f77_sme[ds] >= 0 && f77_me_iface[f77_sme[ds]]) fu = -1;   /* by its interface body */
             if (fu < 0 && ds >= 0 && f77_sme[ds] >= 0) {
                 fe = f77_sme[ds];
                 if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick_kw(fe, tys, kws, nargs > 64 ? 64 : nargs);
@@ -12469,7 +12484,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0;
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -12540,6 +12555,23 @@ static void f77_mod_snapshot(int u) {
     m = f77_mod_find(f77_uname[u]);
     if (m < 0) m = f77_mod_new(f77_uname[u], u);
     if (m < 0) return;
+    {
+        /* its interface bodies, for its users */
+        int ib; int o;
+        char key[24];
+        sprintf(key, "@%d", u);
+        ib = f77_mod_find(key);
+        for (o = 0; ib >= 0 && o < f77_nme; o++) {
+            int e;
+            if (f77_me_mod[o] != ib) continue;
+            e = f77_me_new(m, f77_me_name[o], F77_ME_PROC);
+            if (e < 0) return;
+            f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o]; f77_me_ty[e] = f77_me_ty[o];
+            f77_me_log[e] = f77_me_log[o]; f77_me_rrank[e] = f77_me_rrank[o]; f77_me_ival[e] = f77_me_ival[o];
+            f77_me_nargs[e] = f77_me_nargs[o]; f77_me_dnames[e] = f77_me_dnames[o]; f77_me_iface[e] = 1;
+            memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
+        }
+    }
     for (s = f77_scope_base; s < f77_nsym; s++) {
         int e;
         if (!f77_sparam[s]) {
@@ -13159,19 +13191,150 @@ static void f77_stmt_use(int skip) {
     }
 }
 
-/* INTERFACE: a generic name for module procedures,
- *   INTERFACE name / MODULE PROCEDURE a, b / END INTERFACE,
- * in a module.  Interface bodies, operators and assignment are refused.
- * f77_iface_open is the generic being read, -1 when none is. */
+/* INTERFACE (Fortran 90 12.3.2.1).  A generic name for module procedures
+ * and interface bodies, INTERFACE name ... END INTERFACE, in a module; an
+ * interface block of interface bodies, INTERFACE ... END INTERFACE, in
+ * any unit.  f77_iface_open is the generic being read, -2 an unnamed
+ * block, -1 none.  Operators and assignment are refused. */
 static int f77_iface_open = -1;
+/* An interface body being read (f77_ib_in): its declarations go through
+ * the ordinary declaration code in a scope of their own, its dummies
+ * bound to nothing; at its END what a caller needs is taken from them --
+ * a procedure entity like a module procedure's (f77_ib_end) -- and the
+ * scope dropped. */
+static int f77_ib_in;
+static int f77_ib_base; static int f77_ib_frame; static int f77_ib_scope;
+static int f77_ib_kind; static int f77_ib_rty; static int f77_ib_rlog; static int f77_ib_rlen;
+static char f77_ib_name[F77_MAX_NAME];
+static char f77_ib_rname[F77_MAX_NAME];
+static char f77_ib_dn[16][F77_MAX_NAME];
+static int f77_ib_nd;
+static int f77_ib_imap[26]; static int f77_ib_ilen[26]; static int f77_ib_ilog[26]; static int f77_ib_inar[26];
+static int f77_ib_inone; static int f77_ib_isaid;
+static int f77_ib_tab = -1;                   /* this unit's interface bodies' table ("@u") */
+static int f77_ib_tab_unit = -1;
+
+static void f77_ib_begin(void) {
+    int c; int skip; int ty;
+    f77_ib_in = 1;
+    f77_ib_base = f77_nsym;
+    f77_ib_scope = f77_scope_base;
+    f77_ib_frame = f77_frame;
+    f77_scope_base = f77_nsym;
+    /* no host association in an interface body (F90 12.3.2.1): the
+     * default implicit typing, unless it says otherwise */
+    memcpy(f77_ib_imap, f77_imp_map, sizeof f77_ib_imap); memcpy(f77_ib_ilen, f77_imp_len, sizeof f77_ib_ilen);
+    memcpy(f77_ib_ilog, f77_imp_log, sizeof f77_ib_ilog); memcpy(f77_ib_inar, f77_imp_nar, sizeof f77_ib_inar);
+    f77_ib_inone = f77_imp_none; f77_ib_isaid = f77_imp_said;
+    for (c = 0; c < 26; c++) {
+        f77_imp_map[c] = (c >= 'I' - 'A' && c <= 'N' - 'A') ? TY_INT : TY_FLOAT;
+        f77_imp_len[c] = 1; f77_imp_log[c] = 0; f77_imp_nar[c] = 0;
+    }
+    f77_imp_none = 0; f77_imp_said = 0;
+    ty = f77_unit_header_ty();
+    f77_ib_kind = ty >= 0 ? F77_UNIT_FUNC : F77_UNIT_SUBR;
+    skip = ty >= 0 ? f77_function_skip() : 10;
+    f77_ib_rty = ty >= 0 && !f77_starts("FUNCTION") ? ty : -1;
+    f77_ib_rlog = f77_hdr_log;
+    f77_ib_rlen = ty == TY_CHAR ? f77_hdr_clen : 1;
+    if (ty == TY_CHAR && f77_hdr_clen == -2) { f77_scan_from(f77_hdr_clen_off); f77_ib_rlen = f77_char_len(); }
+    strcpy(f77_ib_rname, lx_stmt_result);
+    f77_scan_from(skip);
+    if (lx_t != T_NAME) { f77_error("an interface body needs a name"); return; }
+    strcpy(f77_ib_name, lex_name);
+    if (!f77_ib_rname[0]) strcpy(f77_ib_rname, lex_name);
+    f77_tok();
+    f77_hdr_skip_len();
+    f77_ib_nd = 0;
+    if (lx_t == T_LP) {
+        f77_tok();
+        while (lx_t == T_NAME) {
+            int d;
+            if (f77_ib_nd >= 16) { f77_error("too many dummy arguments in an interface body"); return; }
+            strcpy(f77_ib_dn[f77_ib_nd++], lex_name);
+            d = f77_sym(lex_name);
+            f77_sarg[d] = 1;
+            f77_sval[d] = f77_iconst(0);         /* nothing: only its type and shape are read */
+            f77_tok();
+            if (lx_t != T_COMMA) break;
+            f77_tok();
+        }
+        if (lx_t == T_STAR) { f77_error("an alternate return in an interface body is not supported"); return; }
+        if (lx_t == T_RP) f77_tok();
+    }
+    lx_t = T_EOF;
+}
+
+static void f77_ib_end(void) {
+    int e; int k; int rs;
+    if (f77_ib_tab < 0 || f77_ib_tab_unit != f77_cur_unit) {
+        char key[24];
+        sprintf(key, "@%d", f77_cur_unit);
+        f77_ib_tab = f77_mod_find(key);
+        if (f77_ib_tab < 0) f77_ib_tab = f77_mod_new(key, f77_cur_unit);
+        f77_ib_tab_unit = f77_cur_unit;
+    }
+    e = f77_me_new(f77_ib_tab, f77_ib_name, F77_ME_PROC);
+    if (e < 0) return;
+    f77_me_iface[e] = 1;
+    f77_me_str[e] = strdup(f77_ib_name);             /* an external's link name */
+    f77_me_pkind[e] = f77_ib_kind;
+    f77_me_nargs[e] = f77_ib_nd;
+    for (k = 0; k < f77_ib_nd; k++) {
+        int d; int l; char *o;
+        d = f77_sym_find(f77_ib_dn[k]);
+        f77_me_argty[e][k] = f77_sty[d] + (f77_srank[d] > 0 ? 16 : 0) + (f77_sashape[d] ? 256 * f77_srank[d] : 0)
+                             + 4096 * f77_srank[d] + (f77_sopt[d] ? F77_ARG_OPT : 0);
+        o = f77_me_dnames[e];
+        l = o ? (int)strlen(o) : 0;
+        f77_me_dnames[e] = (char *)realloc(o, (size_t)l + strlen(f77_ib_dn[k]) + 2);
+        if (l) f77_me_dnames[e][l++] = ' ';
+        strcpy(f77_me_dnames[e] + l, f77_ib_dn[k]);
+    }
+    if (f77_ib_kind == F77_UNIT_FUNC) {
+        /* the result: the header's type, or its variable's declaration,
+         * or its letter's */
+        rs = f77_sym(f77_ib_rname);
+        f77_me_ty[e] = f77_ib_rty >= 0 ? f77_ib_rty : f77_sty[rs];
+        f77_me_log[e] = f77_ib_rty >= 0 ? f77_ib_rlog : f77_slog[rs];
+        f77_me_rrank[e] = f77_srank[rs];
+        f77_me_ival[e] = f77_me_ty[e] == TY_CHAR ? (f77_ib_rty >= 0 ? f77_ib_rlen : f77_slen[rs]) : 0;
+        if (f77_me_ty[e] == TY_CHAR && f77_me_ival[e] < 0) f77_error("an interface body of assumed CHARACTER length is not supported");
+        if (f77_snar[rs]) f77_error("an INTEGER*2 or LOGICAL*1 FUNCTION's interface body is not supported");
+    } else f77_me_ty[e] = TY_INT;
+    /* the scope dropped, the unit's own back */
+    f77_nsym = f77_ib_base;
+    f77_scope_base = f77_ib_scope;
+    f77_frame = f77_ib_frame;
+    memcpy(f77_imp_map, f77_ib_imap, sizeof f77_ib_imap); memcpy(f77_imp_len, f77_ib_ilen, sizeof f77_ib_ilen);
+    memcpy(f77_imp_log, f77_ib_ilog, sizeof f77_ib_ilog); memcpy(f77_imp_nar, f77_ib_inar, sizeof f77_ib_inar);
+    f77_imp_none = f77_ib_inone; f77_imp_said = f77_ib_isaid;
+    f77_ib_in = 0;
+    if (f77_sym_find(f77_ib_name) >= 0) {
+        char m[F77_MAX_NAME + 60];
+        sprintf(m, "%s has an interface body: it is not declared again", f77_ib_name);
+        f77_error(m);
+        return;
+    }
+    f77_me_bind(e, f77_ib_name);
+    if (f77_iface_open >= 0) {
+        char *sp;
+        sp = f77_gi_spec[f77_iface_open];
+        if (strlen(sp) + strlen(f77_ib_name) + 2 >= 512) { f77_error("too many procedures in a generic"); return; }
+        if (sp[0]) strcat(sp, " ");
+        strcat(sp, f77_ib_name);
+    }
+}
+
 static void f77_stmt_interface(void) {
     f77_scan_from(9);
-    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("an INTERFACE outside a module's specification part is not supported yet"); return; }
-    if (lx_t != T_NAME) { f77_error("an INTERFACE block of interface bodies is not supported yet"); return; }
+    if (lx_t == T_EOF) { f77_iface_open = -2; return; }        /* a block of interface bodies */
+    if (lx_t != T_NAME) { f77_error("expected a name after INTERFACE"); return; }
     if ((strcmp(lex_name, "OPERATOR") == 0 || strcmp(lex_name, "ASSIGNMENT") == 0) && lx_rp < lx_rpe && *lx_rp == '(') {
         f77_error("INTERFACE OPERATOR and ASSIGNMENT are not supported yet");
         return;
     }
+    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("a generic INTERFACE outside a module's specification part is not supported yet"); return; }
     if (f77_gi_n >= 32) { f77_error("too many generic interfaces"); return; }
     strcpy(f77_gi_name[f77_gi_n], lex_name);
     f77_gi_spec[f77_gi_n][0] = 0;
@@ -13179,21 +13342,33 @@ static void f77_stmt_interface(void) {
     f77_gi_n = f77_gi_n + 1;
     f77_tok();
 }
-/* A statement inside an INTERFACE block: 1 when it was one. */
+/* A statement inside an INTERFACE block: 1 when it was one (0: a
+ * declaration of an interface body, for the ordinary code). */
 static int f77_iface_stmt(void) {
     int n;
-    if (f77_iface_open < 0) return 0;
+    if (f77_iface_open == -1) return 0;
+    if (f77_ib_in) {
+        if (f77_is_unit_end()) { f77_ib_end(); lx_t = T_EOF; return 1; }
+        if (!f77_stmt_is_declaration(f77_classify()) || f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) {
+            f77_error("an interface body holds declarations only");
+            lx_t = T_EOF;
+            return 1;
+        }
+        return 0;
+    }
     if (lx_stmt_len >= 12 && strncmp(lx_stmt, "ENDINTERFACE", 12) == 0) {
         f77_scan_from(12);
         if (lx_t == T_NAME) {
-            if (strcmp(lex_name, f77_gi_name[f77_iface_open]) != 0) f77_error("END INTERFACE names another interface");
+            if (f77_iface_open < 0 || strcmp(lex_name, f77_gi_name[f77_iface_open]) != 0) f77_error("END INTERFACE names another interface");
             f77_tok();
         }
-        if (f77_gi_spec[f77_iface_open][0] == 0) f77_error("a generic interface with no MODULE PROCEDURE");
+        if (f77_iface_open >= 0 && f77_gi_spec[f77_iface_open][0] == 0) f77_error("a generic interface with no procedure");
         f77_iface_open = -1;
         return 1;
     }
+    if (f77_unit_header_ty() >= 0 || f77_starts("SUBROUTINE")) { f77_ib_begin(); return 1; }
     if ((n = f77_starts("MODULEPROCEDURE")) != 0) {
+        if (f77_iface_open < 0) { f77_error("MODULE PROCEDURE is a generic interface's"); lx_t = T_EOF; return 1; }
         f77_scan_from(n);
         while (lx_t == T_NAME) {
             char *sp;
@@ -13207,7 +13382,7 @@ static int f77_iface_stmt(void) {
         }
         return 1;
     }
-    f77_error("an interface body is not supported yet");
+    f77_error("an INTERFACE block holds interface bodies and MODULE PROCEDURE statements");
     lx_t = T_EOF;
     return 1;
 }

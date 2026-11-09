@@ -288,7 +288,8 @@ if [ -x "$F77" ]; then
     printf 'integer(8) :: i8\nend\n' > "$W/kindi8.f90"
     printf 'x = 1.0_k\nend\n' > "$W/kindlit.f90"
     printf 'y = 2.0_16\nend\n' > "$W/kindlit16.f90"
-    printf 'module mi\ninterface\nsubroutine s(x)\nend subroutine s\nend interface\nend module mi\n' > "$W/modibody.f90"
+    printf 'program p\ninterface\nsubroutine s(x)\nx = 1.0\nend subroutine\nend interface\nend\n' > "$W/ibexec.f90"
+    printf 'program p\ninterface\nreal function f(x)\nend function\nend interface\nreal :: f\nend\n' > "$W/ibredecl.f90"
     printf 'use nosuch\nend\n' > "$W/usenone.f90"
     printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
     printf 'recursive subroutine r(n)\ninteger :: n, t\nt = n\ncall q()\ncontains\nsubroutine q()\nprint *, t\nend subroutine\nend\n' > "$W/hostrec.f90"
@@ -460,7 +461,8 @@ if [ -x "$F77" ]; then
              "kindi8:line 1: kind 8 of this type is not supported" \
              "kindlit:line 1: the kind of a constant must be digits or an INTEGER named constant, not K" \
              "kindlit16:line 1: REAL kind 16 is not supported" \
-             "modibody:line 2: an INTERFACE block of interface bodies is not supported yet" \
+             "ibexec:line 4: an interface body holds declarations only" \
+             "ibredecl:line 6: F has an interface body: it is not declared again" \
              "usenone:line 1: no module NOSUCH: neither in this file before the USE, nor a .mod file of it here" \
              "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
              "hostrec:line 3: T: a RECURSIVE procedure's local in its internal procedures is not supported yet" \
