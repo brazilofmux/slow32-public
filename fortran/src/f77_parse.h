@@ -12510,6 +12510,8 @@ static int f77_desig_hoist(int from, int *to) {
             if (e < *to && lx_stmt[e] == '(') e = f77_match_paren(e);
             if (!(e < *to && lx_stmt[e] == '%')) continue;
             if (!f77_desig_text_array(sy, i, &e)) { i = e; continue; }     /* a scalar: where it is */
+            if ((b >= 11 && strncmp(lx_stmt + b - 11, "ASSOCIATED(", 11) == 0) ||
+                (b >= 10 && strncmp(lx_stmt + b - 10, "ALLOCATED(", 10) == 0)) { i = e; continue; }   /* the pointer itself */
             {
                 int t; int end; int aa; int nt; int saved; int h; int q;
                 int ext[F77_MAX_RANK];
@@ -12528,6 +12530,20 @@ static int f77_desig_hoist(int from, int *to) {
                     n = n + 1;
                     continue;
                 }
+                if (f77_sptr[t] && f77_sashape[t] && lx_t != T_LP) {
+                    /* a whole pointer component: its own descriptor, its
+                     * bounds with it (LBOUND of it is its lower bound) */
+                    h = f77_hidden_array(f77_sty[t], f77_slog[t], f77_snar[t], f77_srank[t], f77_sval[t]);
+                    f77_sptr[h] = 1;
+                    f77_char_like(h, t);
+                    f77_sdt[h] = f77_sdt[t];
+                    k = lx_stmt_len;
+                    f77_text_replace(b, end, h);
+                    *to = *to + (lx_stmt_len - k);
+                    i = b + (int)strlen(f77_sname[h]);
+                    n = n + 1;
+                    continue;
+                }
                 saved = f77_naa;
                 if (lx_t == T_LP) {
                     f77_tok();
@@ -12540,7 +12556,14 @@ static int f77_desig_hoist(int from, int *to) {
                 if (aa < 0) return n;
                 nt = 0;
                 for (q = 0; q < f77_srank[t]; q++)
-                    if (!f77_aa_sec[aa] || f77_aa_trip[aa][q]) ext[nt++] = f77_aa_sec[aa] ? f77_aa_ext[aa][q] : f77_iconst(f77_sext[t][q]);
+                    if (!f77_aa_sec[aa] || f77_aa_trip[aa][q]) {
+                        int lo; int hi;
+                        if (f77_aa_sec[aa]) ext[nt++] = f77_aa_ext[aa][q];
+                        else if (f77_sashape[t]) {            /* a pointer component's: its descriptor's */
+                            f77_dim_bounds(t, q, &lo, &hi);
+                            ext[nt++] = f77_extent(lo, hi, f77_iconst(1));
+                        } else ext[nt++] = f77_iconst(f77_sext[t][q]);
+                    }
                 h = f77_hidden_array(f77_sty[t], f77_slog[t], f77_snar[t], nt, f77_aa_desc(aa, nt));
                 f77_naa = saved;
                 f77_char_like(h, t);
@@ -14228,7 +14251,7 @@ static int f77_mod_read(char *nm) {
     close(fd);
     if (n < 0) n = 0;
     buf[n] = 0;
-    if (strncmp(buf, "F77MOD 3 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
+    if (strncmp(buf, "F77MOD 4 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
     m = f77_mod_new(nm, -1);
     if (m < 0) { free(buf); return -2; }
     p = strchr(buf, '\n');
@@ -14305,8 +14328,8 @@ static int f77_mod_read(char *nm) {
                     int used; int r;
                     c = f77_ndc++;
                     used = 0;
-                    sscanf(q, "%63s %d %d %d %d %63s %63s %d %d%n", cn, &f77_dc_ty[c], &f77_dc_log[c], &f77_dc_nar[c],
-                           &f77_dc_len[c], rn, rm, &f77_dc_off[c], &f77_dc_rank[c], &used);
+                    sscanf(q, "%63s %d %d %d %d %63s %63s %d %d %d%n", cn, &f77_dc_ty[c], &f77_dc_log[c], &f77_dc_nar[c],
+                           &f77_dc_len[c], rn, rm, &f77_dc_off[c], &f77_dc_rank[c], &f77_dc_ptr[c], &used);
                     q = q + used;
                     strcpy(f77_dc_name[c], cn);
                     f77_dc_dt[c] = strcmp(rn, "-") == 0 ? -1 : f77_dt_lookup(rn, strcmp(rm, "-") == 0 ? "" : rm);
@@ -14404,7 +14427,7 @@ static void f77_mod_write(void) {
         strcpy(path + k, ".mod");
         f = fopen(path, "w");
         if (!f) { f77_error("cannot write a .mod file"); return; }
-        fprintf(f, "F77MOD 3 %s\n", f77_mod_name[m]);
+        fprintf(f, "F77MOD 4 %s\n", f77_mod_name[m]);
         {
             /* its derived types, each after those its components are of
              * (definition order), by name and defining module */
@@ -14419,10 +14442,10 @@ static void f77_mod_write(void) {
                         f77_dt_size[dt], f77_dt_align[dt], f77_dt_seq[dt], f77_dt_nc[dt]);
                 for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
                     int q;
-                    fprintf(f, " %s %d %d %d %d %s %s %d %d", f77_dc_name[c], f77_dc_ty[c], f77_dc_log[c], f77_dc_nar[c],
+                    fprintf(f, " %s %d %d %d %d %s %s %d %d %d", f77_dc_name[c], f77_dc_ty[c], f77_dc_log[c], f77_dc_nar[c],
                             f77_dc_len[c], f77_dc_dt[c] >= 0 ? f77_dt_name[f77_dc_dt[c]] : "-",
                             f77_dc_dt[c] >= 0 && f77_dt_mod[f77_dc_dt[c]][0] ? f77_dt_mod[f77_dc_dt[c]] : "-",
-                            f77_dc_off[c], f77_dc_rank[c]);
+                            f77_dc_off[c], f77_dc_rank[c], f77_dc_ptr[c]);
                     for (q = 0; q < f77_dc_rank[c]; q++) fprintf(f, " %d %d", f77_dc_lo[c][q], f77_dc_ext[c][q]);
                 }
                 fputc('\n', f);
