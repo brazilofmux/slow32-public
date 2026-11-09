@@ -757,6 +757,17 @@ static int    f77_me_alloc[F77_MAX_MODENT];      /* ... ALLOCATABLE */
 static int    f77_me_lo[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_ext[F77_MAX_MODENT][F77_MAX_RANK];
 static int    f77_me_assoc = 2;                  /* f77_me_bind's: 1 host association, 2 USE */
+static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, not a USE's */
+/* PUBLIC and PRIVATE (Fortran 90 5.2.3): the module being compiled says
+ * them in its specification part (f77_vis_*); its snapshot keeps them per
+ * module (f77_mvis_*) for its procedures, entered after it. */
+#define F77_MAX_VIS 2048
+static char   f77_vis_name[F77_MAX_VIS][F77_MAX_NAME];
+static int    f77_vis_priv[F77_MAX_VIS];
+static int    f77_vis_mod[F77_MAX_VIS];          /* -1 while its module is being compiled */
+static int    f77_nvis;
+static int    f77_vis_default;                   /* the module being compiled: PRIVATE alone said */
+static int    f77_mvis_default[64];
 /* the generics a unit's INTERFACE blocks name, until its snapshot */
 static char   f77_gi_name[32][F77_MAX_NAME];
 static char   f77_gi_spec[32][512];
@@ -2179,6 +2190,7 @@ static int f77_stf_find(char *nm);
 static int f77_stf_expand(int si);
 static int f77_sym_find(char *nm);
 static int f77_sym_decl(char *nm);
+static void f77_vis_note(char *nm, int priv);
 static void f77_hide_assoc(char *nm);
 
 /* A call to a runtime routine taking `n` word arguments, result in r1. */
@@ -6726,9 +6738,11 @@ static void f77_stmt_decl(int ty, int skip) {
     int a_ext;
     int a_intr;
     int a_alloc;
+    int a_vis;              /* PUBLIC 1, PRIVATE 2 */
     int dim_off;
     clen = 1;
     a_alloc = 0;
+    a_vis = 0;
     tnar = 0;
     dcolon = 0;
     a_param = 0; a_save = 0; a_ext = 0; a_intr = 0;
@@ -6794,9 +6808,10 @@ static void f77_stmt_decl(int ty, int skip) {
                 f77_tok();
             } else if (strcmp(at, "ALLOCATABLE") == 0) {
                 a_alloc = 1;
+            } else if (strcmp(at, "PUBLIC") == 0 || strcmp(at, "PRIVATE") == 0) {
+                a_vis = at[1] == 'R' ? 2 : 1;
             } else if (strcmp(at, "POINTER") == 0 ||
-                       strcmp(at, "TARGET") == 0 || strcmp(at, "OPTIONAL") == 0 ||
-                       strcmp(at, "PUBLIC") == 0 || strcmp(at, "PRIVATE") == 0) {
+                       strcmp(at, "TARGET") == 0 || strcmp(at, "OPTIONAL") == 0) {
                 char m[96];
                 sprintf(m, "the %s attribute is not supported yet", at);
                 f77_error(m);
@@ -6816,6 +6831,7 @@ static void f77_stmt_decl(int ty, int skip) {
     }
     for (;;) {
         if (lx_t != T_NAME) break;
+        if (a_vis) f77_vis_note(lex_name, a_vis == 2);
         s = f77_sym_decl(lex_name);
         if (ty >= 0) {                  /* declaration overrides implicit typing */
             f77_sty[s] = ty;
@@ -12113,7 +12129,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0;
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -12126,6 +12142,57 @@ static int f77_me_find(int m, char *nm) {
 /* The specification part of the module compiled as unit u, at its
  * CONTAINS or END: its PARAMETERs, and the generics its INTERFACE blocks
  * named. */
+/* Is nm PRIVATE in module m: said so, or not said PUBLIC under PRIVATE alone? */
+static int f77_mod_private(int m, char *nm) {
+    int k;
+    for (k = 0; k < f77_nvis; k++)
+        if (f77_vis_mod[k] == m && strcmp(f77_vis_name[k], nm) == 0) return f77_vis_priv[k];
+    return m < 64 ? f77_mvis_default[m] : 0;
+}
+
+/* nm said PUBLIC (priv 0) or PRIVATE in the module being compiled. */
+static void f77_vis_note(char *nm, int priv) {
+    int k;
+    char m[F77_MAX_NAME + 60];
+    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("PUBLIC and PRIVATE are a module's"); return; }
+    for (k = 0; k < f77_nvis; k++)
+        if (f77_vis_mod[k] < 0 && strcmp(f77_vis_name[k], nm) == 0) {
+            sprintf(m, "%s is said PUBLIC or PRIVATE twice", nm);
+            f77_error(m);
+            return;
+        }
+    if (f77_nvis >= F77_MAX_VIS) { f77_error("too many PUBLIC and PRIVATE names"); return; }
+    strcpy(f77_vis_name[f77_nvis], nm);
+    f77_vis_priv[f77_nvis] = priv;
+    f77_vis_mod[f77_nvis] = -1;
+    f77_nvis = f77_nvis + 1;
+}
+
+/* PUBLIC or PRIVATE, alone (the module's default) or with a list of its
+ * entities, [::] before it. */
+static void f77_stmt_access(int priv, int skip) {
+    if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("PUBLIC and PRIVATE are a module's"); return; }
+    if (!f77_decls_open) { f77_error("PUBLIC and PRIVATE are specification statements"); return; }
+    if (skip >= lx_stmt_len) {
+        f77_vis_default = priv;
+        return;
+    }
+    if (strncmp(lx_stmt + skip, "::", 2) == 0) skip = skip + 2;
+    f77_scan_from(skip);
+    for (;;) {
+        if (lx_t != T_NAME) { f77_error("expected a name in PUBLIC or PRIVATE"); return; }
+        if ((strcmp(lex_name, "OPERATOR") == 0 || strcmp(lex_name, "ASSIGNMENT") == 0) && lx_rp < lx_rpe && *lx_rp == '(') {
+            f77_error("PUBLIC or PRIVATE of an operator is not supported yet");
+            lx_t = T_EOF;
+            return;
+        }
+        f77_vis_note(lex_name, priv);
+        f77_tok();
+        if (lx_t != T_COMMA) break;
+        f77_tok();
+    }
+}
+
 static void f77_mod_snapshot(int u) {
     int m;
     int s;
@@ -12179,6 +12246,15 @@ static void f77_mod_snapshot(int u) {
         f77_me_str[e] = strdup(f77_gi_spec[g]);
     }
     f77_gi_n = 0;
+    /* PUBLIC and PRIVATE: kept for the module's procedures, entered after
+     * it; its entities so far marked */
+    if (m < 64) f77_mvis_default[m] = f77_vis_default;
+    for (g = 0; g < f77_nvis; g++) if (f77_vis_mod[g] < 0) f77_vis_mod[g] = m;
+    f77_vis_default = 0;
+    {
+        int e;
+        for (e = 0; e < f77_nme; e++) if (f77_me_mod[e] == m) f77_me_private[e] = f77_mod_private(m, f77_me_name[e]);
+    }
 }
 
 /* A module procedure, unit u, compiled: its entry in its module's
@@ -12197,6 +12273,7 @@ static void f77_mod_proc(int u) {
     f77_me_ty[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urty[u] : TY_INT;
     f77_me_log[e] = f77_urlog[u];
     f77_me_rrank[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urrank[u] : 0;
+    f77_me_private[e] = f77_mod_private(m, f77_uname[u]);
     if (f77_ukind[u] == F77_UNIT_FUNC && (f77_urty[u] == TY_CHAR || f77_urty[u] == TY_DCPLX)) {
         f77_error("a CHARACTER or COMPLEX*16 module FUNCTION is not supported yet");
         return;
@@ -12412,6 +12489,8 @@ static int f77_mod_read(char *nm) {
     int cap;
     int m;
     int k;
+    int hide_next;
+    hide_next = 0;
     for (k = 0; nm[k]; k++) path[k] = (char)(nm[k] >= 'A' && nm[k] <= 'Z' ? nm[k] - 'A' + 'a' : nm[k]);
     strcpy(path + k, ".mod");
     fd = open(path, 0);
@@ -12433,6 +12512,7 @@ static int f77_mod_read(char *nm) {
         p = p + 1;
         if (!*p) break;
         kind = *p;
+        e = -1;
         if (sscanf(p + 2, "%63s", name) != 1) break;
         if (kind == 'P') {
             int ty; int lg; int iv; int len;
@@ -12464,6 +12544,8 @@ static int f77_mod_read(char *nm) {
             for (a = 0; a < na && a < 16; a++) {
                 f77_me_argty[e][a] = (int)strtol(q, &q, 10);
             }
+        } else if (kind == 'H') {
+            hide_next = 1;                       /* the entity on the next line is PRIVATE */
         } else if (kind == 'V') {
             char blk[F77_MAX_LINK];
             char *q;
@@ -12493,6 +12575,7 @@ static int f77_mod_read(char *nm) {
             memcpy(f77_me_str[e], q, (size_t)(eol - q));
             f77_me_str[e][eol - q] = 0;
         }
+        if (kind != 'H' && hide_next) { if (e >= 0) f77_me_private[e] = 1; hide_next = 0; }
         p = strchr(p, '\n');
     }
     free(buf);
@@ -12519,6 +12602,7 @@ static void f77_mod_write(void) {
         fprintf(f, "F77MOD 2 %s\n", f77_mod_name[m]);
         for (e = 0; e < f77_nme; e++) {
             if (f77_me_mod[e] != m) continue;
+            if (f77_me_private[e]) fprintf(f, "H %s\n", f77_me_name[e]);    /* before the entity it hides */
             if (f77_me_kind[e] == F77_ME_PARAM) {
                 fprintf(f, "P %s %d %d %d %a %a %d", f77_me_name[e], f77_me_ty[e], f77_me_log[e], f77_me_ival[e],
                         f77_me_d[e], f77_me_d2[e], f77_me_ty[e] == TY_CHAR ? f77_me_ival[e] : 0);
@@ -12605,9 +12689,10 @@ static void f77_stmt_use(int skip) {
     if (lx_t != T_EOF) { f77_error("unexpected text in a USE"); return; }
     for (k = 0; k < nr; k++) {
         e = f77_me_find(m, rem[k]);
-        if (e < 0) {
+        if (e < 0 || f77_me_private[e]) {
             char msg[200];
-            sprintf(msg, "module %s has no %s", mname, rem[k]);
+            if (e < 0) sprintf(msg, "module %s has no %s", mname, rem[k]);
+            else sprintf(msg, "%s is PRIVATE in module %s", rem[k], mname);
             f77_error(msg);
             return;
         }
@@ -12616,7 +12701,7 @@ static void f77_stmt_use(int skip) {
     if (!only) {
         for (e = 0; e < f77_nme; e++) {
             int renamed;
-            if (f77_me_mod[e] != m) continue;
+            if (f77_me_mod[e] != m || f77_me_private[e]) continue;
             renamed = 0;
             for (k = 0; k < nr; k++) if (strcmp(rem[k], f77_me_name[e]) == 0) renamed = 1;
             if (!renamed) f77_me_bind(e, f77_me_name[e]);
@@ -14712,6 +14797,8 @@ static int f77_stmt_is_declaration(int cls) {
     if (f77_starts("ENDINTERFACE")) return 1;
     if (f77_starts("MODULEPROCEDURE")) return 1;
     if (f77_starts("MODULE")) return 1;
+    if (f77_starts("PUBLIC")) return 1;
+    if (f77_starts("PRIVATE")) return 1;
     return 0;
 }
 
@@ -15069,6 +15156,8 @@ static void f77_statement(void) {
         goto done;
     }
     if ((n = f77_starts("PARAMETER")) != 0) { f77_stmt_parameter(n); goto done; }
+    if (cls == S_KEYWORD && (n = f77_starts("PUBLIC")) != 0) { f77_stmt_access(0, n); goto done; }
+    if (cls == S_KEYWORD && (n = f77_starts("PRIVATE")) != 0) { f77_stmt_access(1, n); goto done; }
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
 

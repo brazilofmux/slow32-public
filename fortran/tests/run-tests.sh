@@ -349,6 +349,9 @@ if [ -x "$F77" ]; then
     printf 'integer m(9)\nm = 0\nm(1:5) = (/ (/ 1, 2 /), 3 /)\nend\n' > "$W/aconshp.f90"
     printf 'print *, f(3)\nend\nfunction f(n) result(r)\nr = f(n - 1)\nend\n' > "$W/recnot.f90"
     printf 'module m\ninteger :: x\nend module\nuse m\nreal :: x\nend\n' > "$W/modvredecl.f90"
+    printf 'module m\nprivate\ninteger :: x\nend module\nuse m, only: x\nend\n' > "$W/privuse.f90"
+    printf 'module m\npublic :: x\ninteger, private :: x\nend module\n' > "$W/privtwice.f90"
+    printf 'private\nend\n' > "$W/privprog.f90"
     printf 'subroutine s\ncall s\nend\n' > "$W/recsub.f90"
     printf 'function f(n) result(f)\nf = n\nend\n' > "$W/resname.f90"
     printf 'implicit none\nimplicit integer (i)\nend\n' > "$W/impmix.f90"
@@ -417,6 +420,9 @@ if [ -x "$F77" ]; then
              "recfn:line 4: a FUNCTION's name is its result here: a recursive reference needs RESULT" \
              "recnot:line 4: F is not RECURSIVE: it cannot reference itself" \
              "modvredecl:line 5: X is a module's, by USE: it cannot be declared again" \
+             "privuse:line 5: X is PRIVATE in module M" \
+             "privtwice:line 3: X is said PUBLIC or PRIVATE twice" \
+             "privprog:line 1: PUBLIC and PRIVATE are a module's" \
              "recsub:line 2: S is not RECURSIVE: it cannot call itself" \
              "resname:line 1: a FUNCTION's RESULT has a name of its own" \
              "impmix:line 2: IMPLICIT NONE is the only IMPLICIT statement of its unit" \
