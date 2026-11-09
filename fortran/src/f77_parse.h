@@ -266,6 +266,15 @@ static void f77_aex_leave(F77AexSave *sv) {
     for (j = 0; j < 8; j++) { f77_aex_cnt[j] = sv->cnt[j]; f77_aex_ext[j] = sv->ext[j]; }
 }
 static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
+/* An array-valued FUNCTION (Fortran 90).  Its result is a local array of
+ * the declared shape; at each return it is copied to the heap and the
+ * caller's descriptor, hidden argument 0, filled in (f77_afn_copyout): base,
+ * then (extent, stride) per dimension, a hidden array's.  The caller frees
+ * the copy with its statement's temporaries (f77_av_eval, AV_UFUNC). */
+static int f77_result_desc = -1;    /* the callee's: the descriptor's address */
+static int f77_afn_desc = -1;       /* the caller's: the descriptor the next such call fills */
+static int f77_afn_rank;            /* ... and the rank the call found */
+static int f77_afn_len;             /* ... and a CHARACTER result's length */
 static void f77_assign_params(int n);
 
 /* COMPLEX: a parser-level type id (never the type of an HIR
@@ -728,6 +737,7 @@ static char  *f77_me_str[F77_MAX_MODENT];        /* CHARACTER value; link name; 
 static int    f77_me_pkind[F77_MAX_MODENT];      /* F77_UNIT_SUBR or F77_UNIT_FUNC */
 static int    f77_me_nargs[F77_MAX_MODENT];
 static int    f77_me_argty[F77_MAX_MODENT][16];  /* a dummy's type, +16 for an array, +256*rank assumed-shape */
+static int    f77_me_rrank[F77_MAX_MODENT];      /* an array-valued FUNCTION: its result's rank */
 /* the generics a unit's INTERFACE blocks name, until its snapshot */
 static char   f77_gi_name[32][F77_MAX_NAME];
 static char   f77_gi_spec[32][512];
@@ -748,6 +758,7 @@ static int  f77_urpend[F77_MAX_UNIT];  /* ... its kind not told by the scan (REA
 static int  f77_urlen[F77_MAX_UNIT];   /* CHARACTER FUNCTION result length, -1 = (*) */
 static int  f77_urlog[F77_MAX_UNIT];   /* LOGICAL FUNCTION */
 static int  f77_urnar[F77_MAX_UNIT];   /* INTEGER*2 or LOGICAL*1 FUNCTION: f77_snar of the result */
+static int  f77_urrank[F77_MAX_UNIT];  /* an array-valued FUNCTION: its result's rank (the scan's) */
 /* ENTRY: a secondary entry into a subprogram is compiled as a unit of
  * its own -- the parent's declarations, then the statements from the
  * ENTRY to END -- with f77_uentry_parent naming the parent (-1 for an
@@ -2307,6 +2318,35 @@ static int f77_dcx_fcall(char *name, int fptr, int *addrs, int *lens, int nargs)
     return f77_dcx_mark(out);
 }
 
+/* A call to an array-valued FUNCTION (Fortran 90) of result rank `rank`:
+ * the descriptor the hoist made for it (f77_afn_desc) as hidden argument
+ * 0, filled in by the callee (f77_afn_copyout).  Outside the hoist -- a
+ * scalar's place -- it is refused. */
+static int f77_afn_call(char *name, int rank, int rty, int rlog, int rlen, int *addrs, int *lens, int nargs) {
+    int cb; int nc; int ai; int r;
+    ex_ty = rty; ex_hi = -1; ex_log = rlog;
+    if (f77_afn_desc < 0) {
+        f77_error("an array-valued FUNCTION where a scalar is wanted");
+        return f77_iconst(0);
+    }
+    cb = h_ncarg;
+    f77_carg(f77_afn_desc, 0);
+    nc = 1;
+    for (ai = 0; ai < nargs; ai++) { f77_carg(addrs[ai], 0); nc = nc + 1; }
+    for (ai = 0; ai < nargs; ai++) {
+        if (lens[ai] < 0) continue;
+        f77_carg(lens[ai], 0);
+        nc = nc + 1;
+    }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, name);
+    h_cbase[r] = cb;
+    f77_afn_desc = -1;                     /* this call's */
+    f77_afn_rank = rank;
+    f77_afn_len = rlen;
+    ex_ty = rty; ex_hi = -1; ex_log = rlog;
+    return f77_iconst(0);
+}
+
 static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs) {
     int tmp;
     int cb;
@@ -2446,7 +2486,7 @@ static int f77_primary(void) {
          * there subscripts a scalar: F77 has no recursion, and F90's
          * direct recursion needs RESULT (milestone 4).  It had compiled
          * as a recursive call. */
-        if (u >= 0 && f77_result_sym >= 0 && f77_inline_depth == 0 &&
+        if (u >= 0 && f77_result_sym >= 0 && f77_inline_depth == 0 && f77_srank[f77_result_sym] == 0 &&
             lx_rp < lx_rpe && *lx_rp == '(') {
             int k;
             int is_res;
@@ -3058,6 +3098,16 @@ static int f77_primary(void) {
                 }
             }
         typed:
+            if (f77_urrank[u] > 0) {
+                if (f77_uhost[u] < 0) {
+                    char m[200];
+                    sprintf(m, "%s is array-valued: it needs an explicit interface", nm);
+                    f77_error(m);
+                }
+                r = f77_afn_call(f77_ulink[u], f77_urrank[u], rty, f77_urlog[u], f77_urlen[u], addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
+            }
             if (rty == TY_CHAR) {
                 int rl;
                 rl = f77_urlen[u];
@@ -3197,6 +3247,17 @@ static int f77_primary(void) {
             } else if (f77_slink[s]) cname = f77_slink[s];
             f77_actuals_final(addrs, aas, nargs, -1, fptr >= 0 ? -1 : me);
             f77_naa = aamk;
+            if (me >= 0 && f77_me_rrank[me] > 0) {
+                if (f77_sme[s] >= 0 && f77_me_kind[f77_sme[s]] == F77_ME_GENERIC) {
+                    f77_error("an array-valued FUNCTION through a generic interface is not supported yet");
+                    ex_ty = rty; ex_hi = -1;
+                    f77_tfree_to(mk);
+                    return f77_iconst(0);
+                }
+                r = f77_afn_call(cname, f77_me_rrank[me], rty, rlog, 1, addrs, lens, nargs);
+                f77_tfree_to(mk);
+                return r;
+            }
             if (rty == TY_CHAR || rty == TY_DCPLX) {
                 r = rty == TY_CHAR ? f77_char_fcall(cname, f77_slen[s], addrs, lens, nargs)
                                    : f77_dcx_fcall(cname, fptr, addrs, lens, nargs);
@@ -8631,6 +8692,32 @@ static int f77_function_skip(void) {
  * it, which F77 code assigns to; a SUBROUTINE and the main PROGRAM
  * return an int (the exit status, for the PROGRAM). */
 static int f77_ret_code = -1;    /* RETURN e: the alternate-return index */
+
+/* An array-valued FUNCTION's return: its result copied to the heap, the
+ * caller's descriptor filled in (its strides in elements). */
+static void f77_afn_copyout(void) {
+    int s; int r; int k; int n; int str; int base; int nb; int args[3];
+    s = f77_result_sym;
+    r = f77_srank[s];
+    n = f77_iconst(1);
+    str = f77_iconst(1);
+    for (k = 0; k < r; k++) {
+        int lo; int hi; int e;
+        f77_dim_bounds(s, k, &lo, &hi);
+        e = f77_extent(lo, hi, f77_iconst(1));
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_result_desc, -1, 4 + 8 * k, NULL), e, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_result_desc, -1, 8 + 8 * k, NULL), str, 0, NULL);
+        str = hi_emit(HI_MUL, TY_INT, str, e, 0, NULL);
+        n = hi_emit(HI_MUL, TY_INT, n, e, 0, NULL);
+    }
+    nb = hi_emit(HI_MUL, TY_INT, n, f77_iconst(f77_esize(s)), 0, NULL);
+    args[0] = f77_iconst(0); args[1] = nb; args[2] = f77_iconst(0);
+    base = f77_call_i("f77_allocate", 3, args);
+    hi_emit(HI_STORE, TY_INT, f77_result_desc, base, 0, NULL);
+    args[0] = base; args[1] = f77_sval[s]; args[2] = nb;
+    f77_call_i("memcpy", 3, args);
+}
+
 static void f77_emit_return(void) {
     int v;
     if (!f77_cur_blk_live) return;
@@ -8642,7 +8729,14 @@ static void f77_emit_return(void) {
         f77_goto_blk(f77_inline_ret_blk);
         return;
     }
+    /* the result is copied out before an automatic one's storage is freed */
+    if (f77_result_desc >= 0 && f77_result_sym >= 0) f77_afn_copyout();
     f77_alloc_free_all();
+    if (f77_result_desc >= 0 && f77_result_sym >= 0) {
+        hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+        f77_cur_blk_live = 0;
+        return;
+    }
     if (f77_ukind[f77_cur_unit] == F77_UNIT_FUNC && f77_result_sym >= 0 &&
         f77_sty[f77_result_sym] == TY_DCPLX) {
         /* the result is in the caller's temporary already (hidden arg 0) */
@@ -9244,6 +9338,7 @@ static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e) {
 #define AV_CSHIFT   11
 #define AV_EOSHIFT  12
 #define AV_REDDIM   13   /* a reduction with DIM of rank 2 or more; MAXLOC, MINLOC without DIM */
+#define AV_UFUNC    14   /* a reference to an array-valued FUNCTION */
 
 static int f77_hid_count;
 
@@ -9765,6 +9860,19 @@ static int f77_av_kind(int b, int open) {
     memcpy(nm, lx_stmt + b, (size_t)n);
     nm[n] = 0;
     sy = f77_sym_find(nm);
+    if (sy >= 0 && f77_srank[sy] == 0 && f77_sme[sy] >= 0) {
+        /* a USEd FUNCTION, array-valued (through a generic it is
+         * refused at the call: which specific is picked is known only
+         * once the actuals are parsed) */
+        int e;
+        e = f77_sme[sy];
+        if (f77_me_kind[e] == F77_ME_PROC && f77_me_rrank[e] > 0) return AV_UFUNC;
+    }
+    if (sy < 0 || (f77_srank[sy] == 0 && !f77_sarg[sy])) {
+        int u;
+        u = f77_find_func(nm);
+        if (u >= 0 && u != f77_cur_unit && f77_urrank[u] > 0) return AV_UFUNC;
+    }
     if (sy >= 0 && (f77_srank[sy] > 0 || f77_sarg[sy] || f77_sexternal[sy] || f77_sty[sy] == TY_CHAR ||
                     f77_sme[sy] >= 0 || f77_slink[sy])) return AV_NONE;
     if (f77_find_func(nm) >= 0 || f77_find_unit(nm) >= 0 || f77_stf_find(nm) >= 0) return AV_NONE;
@@ -10284,6 +10392,28 @@ static int f77_av_eval(int av, int b, int close) {
     int open; int k; int s; int r;
     int ext[F77_MAX_RANK];
     if (av == AV_ACON) return f77_av_acon(b, close);
+    if (av == AV_UFUNC) {
+        /* the call, its descriptor in the frame (room for any rank), the
+         * result freed with the statement's temporaries */
+        int desc; int saved; int nerr0;
+        desc = f77_char_temp(4 + 8 * F77_MAX_RANK);
+        saved = f77_afn_desc;
+        f77_afn_desc = desc;
+        f77_afn_rank = 0;
+        nerr0 = f77_nerr;
+        f77_scan_from(b);
+        (void)f77_primary();                 /* the reference alone, not what follows it */
+        if (f77_nerr == nerr0 && (int)(lx_rts - lx_stmt) != close && !(lx_t == T_EOF && close == lx_stmt_len))
+            f77_error("an array-valued FUNCTION reference the compiler could not place");
+        k = f77_afn_desc;
+        f77_afn_desc = saved;
+        if (f77_nerr > nerr0) return -1;
+        if (k >= 0 || f77_afn_rank <= 0) { f77_error("an array-valued FUNCTION reference the compiler could not place"); return -1; }
+        f77_tfree_push(hi_emit(HI_LOAD, TY_INT, desc, -1, 0, NULL));
+        k = f77_hidden_array(ex_ty, ex_log, 0, f77_afn_rank, desc);
+        if (ex_ty == TY_CHAR) f77_slen[k] = f77_afn_len;
+        return k;
+    }
     open = b;
     while (lx_stmt[open] != '(') open = open + 1;
     if (!f77_args_at(open, &A)) return -1;
@@ -11111,8 +11241,16 @@ static void f77_emit_copyin(void) {
     f77_layout_static();
     /* An array-valued FUNCTION: callers took its value for a scalar and
      * stored it to every element of the target (found 2026-11-09). */
-    if (f77_result_sym >= 0 && f77_srank[f77_result_sym] > 0)
-        f77_error("an array-valued FUNCTION is not supported yet");
+    if (f77_result_sym >= 0 && f77_inline_depth == 0) {
+        int rr;
+        rr = f77_urrank[f77_cur_unit];
+        if (f77_srank[f77_result_sym] > 0 && rr == 0)
+            f77_error("an array-valued FUNCTION is not supported yet");
+        else if (rr > 0 && (f77_salloc[f77_result_sym] || f77_sashape[f77_result_sym]))
+            f77_error("an ALLOCATABLE or POINTER FUNCTION result is not supported");
+        else if (rr > 0 && f77_srank[f77_result_sym] != rr)
+            f77_error("the FUNCTION result's rank is not what its declarations said");
+    }
     if (f77_copyin_on < 0) f77_copyin_on = getenv("F77_COPYIN") ? 1 : 0;
     if (!f77_copyin_on) { f77_decls_open = 0; f77_ci_n = 0; return; }
     int s;
@@ -11253,7 +11391,7 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_kind[e] = kind;
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
-    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0;
+    f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0;
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -11323,6 +11461,7 @@ static void f77_mod_proc(int u) {
     f77_me_pkind[e] = f77_ukind[u];
     f77_me_ty[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urty[u] : TY_INT;
     f77_me_log[e] = f77_urlog[u];
+    f77_me_rrank[e] = f77_ukind[u] == F77_UNIT_FUNC ? f77_urrank[u] : 0;
     if (f77_ukind[u] == F77_UNIT_FUNC && (f77_urty[u] == TY_CHAR || f77_urty[u] == TY_DCPLX)) {
         f77_error("a CHARACTER or COMPLEX*16 module FUNCTION is not supported yet");
         return;
@@ -11515,7 +11654,7 @@ static int f77_mod_read(char *nm) {
     close(fd);
     if (n < 0) n = 0;
     buf[n] = 0;
-    if (strncmp(buf, "F77MOD 1 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
+    if (strncmp(buf, "F77MOD 2 ", 9) != 0) { free(buf); f77_error("this .mod file is not f77's"); return -2; }
     m = f77_mod_new(nm, -1);
     if (m < 0) { free(buf); return -2; }
     p = strchr(buf, '\n');
@@ -11544,16 +11683,16 @@ static int f77_mod_read(char *nm) {
                 p = q ? q + 1 + len : p;
             }
         } else if (kind == 'R') {
-            int pk; int ty; int lg; int na; int a;
+            int pk; int ty; int lg; int rr; int na; int a;
             char link[F77_MAX_LINK];
             char *q;
             e = f77_me_new(m, name, F77_ME_PROC);
             if (e < 0) break;
-            sscanf(p + 2, "%*s %255s %d %d %d %d", link, &pk, &ty, &lg, &na);
+            sscanf(p + 2, "%*s %255s %d %d %d %d %d", link, &pk, &ty, &lg, &rr, &na);
             f77_me_str[e] = strdup(link);
-            f77_me_pkind[e] = pk; f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_nargs[e] = na;
+            f77_me_pkind[e] = pk; f77_me_ty[e] = ty; f77_me_log[e] = lg; f77_me_rrank[e] = rr; f77_me_nargs[e] = na;
             q = p + 2;
-            for (a = 0; a < 6; a++) { while (*q && *q != ' ') q++; while (*q == ' ') q++; }
+            for (a = 0; a < 7; a++) { while (*q && *q != ' ') q++; while (*q == ' ') q++; }
             for (a = 0; a < na && a < 16; a++) {
                 f77_me_argty[e][a] = (int)strtol(q, &q, 10);
             }
@@ -11593,7 +11732,7 @@ static void f77_mod_write(void) {
         strcpy(path + k, ".mod");
         f = fopen(path, "w");
         if (!f) { f77_error("cannot write a .mod file"); return; }
-        fprintf(f, "F77MOD 1 %s\n", f77_mod_name[m]);
+        fprintf(f, "F77MOD 2 %s\n", f77_mod_name[m]);
         for (e = 0; e < f77_nme; e++) {
             if (f77_me_mod[e] != m) continue;
             if (f77_me_kind[e] == F77_ME_PARAM) {
@@ -11603,8 +11742,8 @@ static void f77_mod_write(void) {
                 fputc('\n', f);
             } else if (f77_me_kind[e] == F77_ME_PROC) {
                 int a;
-                fprintf(f, "R %s %s %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
-                        f77_me_log[e], f77_me_nargs[e]);
+                fprintf(f, "R %s %s %d %d %d %d %d", f77_me_name[e], f77_me_str[e], f77_me_pkind[e], f77_me_ty[e],
+                        f77_me_log[e], f77_me_rrank[e], f77_me_nargs[e]);
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
                 fputc('\n', f);
             } else {
@@ -11825,6 +11964,7 @@ static void f77_bind_unit(int u) {
 
     f77_cur_unit = u;
     f77_result_sym = -1;
+    f77_result_desc = -1;
     nparam = 0;
     f77_unit_nparams = 0;
     f77_ci_n = 0;
@@ -11894,6 +12034,20 @@ static void f77_bind_unit(int u) {
      * hidden leading arguments; the dummies follow. */
     if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) nparam = 2;
     if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_DCPLX) nparam = 1;
+    if (f77_ukind[u] == F77_UNIT_FUNC &&
+        (f77_urrank[u] > 0 || (f77_uentry_parent[u] >= 0 && f77_urrank[f77_uentry_parent[u]] > 0))) {
+        int e;
+        int ent;
+        ent = f77_uentry_parent[u] >= 0;
+        for (e = 0; e < f77_nunit; e++) if (f77_uentry_parent[e] == u) ent = 1;
+        if (f77_urty[u] == TY_CHAR && f77_urlen[u] < 0) {
+            f77_error("an array-valued FUNCTION of assumed CHARACTER length is not supported");
+            return;
+        }
+        if (f77_urnar[u]) { f77_error("an INTEGER*2 or LOGICAL*1 array-valued FUNCTION is not supported yet"); return; }
+        if (ent) { f77_error("ENTRY in an array-valued FUNCTION is not supported"); return; }
+        nparam = 1;                              /* the caller's descriptor */
+    }
 
     if (lx_t == T_LP) {
         f77_tok();
@@ -11925,7 +12079,17 @@ static void f77_bind_unit(int u) {
     f77_unit_nparams = nparam;
     f77_assign_params(nparam);
 
-    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
+    if (f77_ukind[u] == F77_UNIT_FUNC && f77_urrank[u] > 0) {
+        /* an array: a local of the declared shape, the caller's
+         * descriptor hidden param 0 (f77_afn_copyout) */
+        f77_result_desc = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
+        f77_result_sym = f77_sym(f77_uname[u]);
+        f77_sty[f77_result_sym] = f77_urty[u];
+        f77_slog[f77_result_sym] = f77_urlog[u];
+        if (f77_urty[u] == TY_CHAR) f77_slen[f77_result_sym] = f77_urlen[u];
+        f77_styped[f77_result_sym] = (skip != 8 && skip != 5) ? 1 : 0;
+        f77_realloc_sym(f77_result_sym);
+    } else if (f77_ukind[u] == F77_UNIT_FUNC && f77_urty[u] == TY_CHAR) {
         /* The result is the caller's buffer: a by-reference CHARACTER
          * dummy in all but name, with its length in hidden param 1. */
         f77_result_sym = f77_sym_param(f77_uname[u], 0);

@@ -246,8 +246,9 @@ fi
 # refused).  TRIM's argument is a scalar (it was trimmed elementwise);
 # a constructor's values have one length; the shapes in an array
 # expression conform where gfortran can tell they do not (shp*: N =
-# N(1:2) compiled, reading past the section); an array-valued FUNCTION
-# was stored to every element as if a scalar (arrfunc).  The array-valued intrinsics' limits: RESHAPE's ORDER and a
+# N(1:2) compiled, reading past the section).  Array-valued functions
+# (afn*): not in a scalar's place, with an explicit interface, of a known
+# CHARACTER length, without ENTRY, not through a generic yet.  The array-valued intrinsics' limits: RESHAPE's ORDER and a
 # SHAPE of no constant size, MATMUL's and TRANSPOSE's ranks, SPREAD's DIM,
 # an array inside a constructor, MERGE's sources of two types.
 # WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
@@ -330,7 +331,11 @@ if [ -x "$F77" ]; then
     printf 'integer n(3)\nn = 1\nn = n(1:2)\nend\n' > "$W/shpasg.f90"
     printf 'integer n(3)\nn = 1\nprint *, sum(n(1:2) + n)\nend\n' > "$W/shpop.f90"
     printf 'integer n(3)\nn = 1\nwhere (n(1:2) > 0) n = 2\nend\n' > "$W/shpwhere.f90"
-    printf 'function f()\ninteger f(3)\nf = 1\nend\n' > "$W/arrfunc.f90"
+    printf 'program p\nx = f()\ncontains\nfunction f()\ninteger f(3)\nf = 1\nend function\nend\n' > "$W/afnscal.f90"
+    printf 'integer k(3)\nk = f()\nend\nfunction f()\ninteger f(3)\nf = 1\nend\n' > "$W/afnext.f90"
+    printf 'function f(n)\ncharacter(len=*) f(2)\nf = "a"\nend\n' > "$W/afnclen.f90"
+    printf 'function f()\ninteger f(2)\nf = 1\nentry g()\nf = 2\nend\n' > "$W/afnent.f90"
+    printf 'module m\ninterface g\nmodule procedure f\nend interface\ncontains\nfunction f(x)\nreal x\nreal f(2)\nf = x\nend function\nend module\nuse m\nreal a(2)\na = g(1.0)\nend\n' > "$W/afngen.f90"
     printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1/))\nend\n' > "$W/rshord.f90"
     printf 'integer n(2)\nreal a(4), b(2,2)\nn = 2\na = 1.0\nb = reshape(a, n(1:2))\nend\n' > "$W/rshdyn.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = 1.0\nprint *, matmul(a, b)\nend\n' > "$W/mmrank.f90"
@@ -451,7 +456,11 @@ if [ -x "$F77" ]; then
              "shpasg:line 3: the shapes in an array expression do not conform" \
              "shpop:line 3: the shapes in an array expression do not conform" \
              "shpwhere:line 3: the shapes of a WHERE's mask and its assignment do not conform" \
-             "arrfunc:line 3: an array-valued FUNCTION is not supported yet" \
+             "afnscal:line 2: an array-valued FUNCTION where a scalar is wanted" \
+             "afnext:line 2: F is array-valued: it needs an explicit interface" \
+             "afnclen:line 1: an array-valued FUNCTION of assumed CHARACTER length is not supported" \
+             "afnent:line 1: ENTRY in an array-valued FUNCTION is not supported" \
+             "afngen:line 14: an array-valued FUNCTION through a generic interface is not supported yet" \
              "rshord:line 3: ORDER= of RESHAPE is not supported yet" \
              "rshdyn:line 5: RESHAPE's SHAPE must be an array of constant size, 1 to 7" \
              "mmrank:line 4: MATMUL needs a matrix and a matrix, or a matrix and a vector" \

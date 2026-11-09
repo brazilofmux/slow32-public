@@ -315,6 +315,86 @@ static void f77_scan_ashape(int u) {
     }
 }
 
+/* The rank of the array spec whose '(' is at text offset i: its items at
+ * the top level. */
+static int f77_text_spec_rank(int i) {
+    int d; int rank;
+    if (i >= lx_stmt_len || lx_stmt[i] != '(') return 0;
+    d = 0; rank = 1;
+    for (; i < lx_stmt_len; i++) {
+        if (lx_stmt[i] == '(') d++;
+        else if (lx_stmt[i] == ')') { if (--d == 0) return rank; }
+        else if (lx_stmt[i] == ',' && d == 1) rank++;
+    }
+    return 0;
+}
+
+/* Note the rank of FUNCTION u's result when a declaration of unit u
+ * makes it an array -- F(3), a DIMENSION attribute, DIMENSION F(3) --
+ * so that a reference compiled before the unit passes the descriptor
+ * its value comes back in (f77_afn_call).  Text-level, as the scan is. */
+static void f77_scan_rarray(int u) {
+    int i; int skip; int dflt; int dc;
+    if (f77_ukind[u] != F77_UNIT_FUNC) return;
+    if (f77_starts("DIMENSION")) skip = 9;
+    else if (f77_starts("DOUBLEPRECISION")) skip = 15;
+    else if (f77_starts("DOUBLECOMPLEX")) skip = 13;
+    else if (f77_starts("CHARACTER")) skip = 9;
+    else if (f77_starts("INTEGER") || f77_starts("LOGICAL") || f77_starts("COMPLEX")) skip = 7;
+    else if (f77_starts("REAL")) skip = 4;
+    else return;
+    dflt = 0;
+    i = skip;
+    dc = f77_toplevel(':', 0);
+    if (dc >= 0 && dc + 1 < lx_stmt_len && lx_stmt[dc + 1] == ':') {
+        int j;
+        for (j = 0; j + 10 < dc; j++)
+            if (lx_stmt[j] == ',' && strncmp(lx_stmt + j + 1, "DIMENSION(", 10) == 0) dflt = f77_text_spec_rank(j + 10);
+        i = dc + 2;
+    } else if (i < lx_stmt_len && lx_stmt[i] == '(') {
+        int d = 0;
+        for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
+    } else if (i < lx_stmt_len && lx_stmt[i] == '*') {
+        i++;
+        if (i < lx_stmt_len && lx_stmt[i] == '(') {
+            int d = 0;
+            for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
+        }
+        while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
+        if (i < lx_stmt_len && lx_stmt[i] == ',') i++;
+    }
+    while (i < lx_stmt_len) {
+        char nm[F77_MAX_NAME];
+        int n; int r;
+        n = 0;
+        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+            if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
+            i++;
+        }
+        nm[n] = 0;
+        if (n == 0) { i++; continue; }
+        r = dflt;
+        if (i < lx_stmt_len && lx_stmt[i] == '*') {          /* CHARACTER F*8(3) */
+            i++;
+            if (i < lx_stmt_len && lx_stmt[i] == '(') {
+                int d = 0;
+                for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) { i++; break; } }
+            }
+            while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
+        }
+        if (i < lx_stmt_len && lx_stmt[i] == '(') r = f77_text_spec_rank(i);
+        if (r > 0 && strcmp(nm, f77_uname[u]) == 0) {
+            f77_urrank[u] = r;
+            f77_unosplice[u] = 1;
+        }
+        while (i < lx_stmt_len && lx_stmt[i] != ',') {
+            if (lx_stmt[i] == '(') { int d = 0; for (; i < lx_stmt_len; i++) { if (lx_stmt[i] == '(') d++; else if (lx_stmt[i] == ')' && --d == 0) break; } }
+            i++;
+        }
+        i++;
+    }
+}
+
 static void f77_scan_units(void) {
     int pos;
     int line;
@@ -462,6 +542,7 @@ static void f77_scan_units(void) {
             if (f77_starts("USE")) f77_unosplice[f77_nunit - 1] = 1;
             if (f77_scan_may_auto(f77_nunit - 1)) f77_unosplice[f77_nunit - 1] = 1;
             f77_scan_ashape(f77_nunit - 1);
+            f77_scan_rarray(f77_nunit - 1);
             if ((f77_starts("INTEGER") || f77_starts("REAL") ||
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)
