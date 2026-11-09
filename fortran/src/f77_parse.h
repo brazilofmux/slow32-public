@@ -1270,6 +1270,7 @@ static int f77_op_try1(int tok, int *x, int *res);
 static int f77_op_try2(int tok, int *x, int *y, int *res);
 static int f77_op_defined(char *nm, int n, int *x, int *y);
 static int f77_find_func(char *nm);
+static int f77_transfer_expr(int nm_at);
 static int f77_actual_addr(void);
 static void f77_hoist_actuals(void);
 static int f77_naa;            /* array actuals recorded (f77_aa_*) */
@@ -1380,6 +1381,20 @@ static int f77_fp64_call1(char *name, int alo, int *rhi) {
  * __fp64_* pseudo-calls the backend inlines, they carry real ABI tags
  * (aligned pairs for doubles). */
 
+/* A runtime function of a double a, a double b (b < 0: none) and ni
+ * INTEGERs i1, i2, returning a double (its high word *rhi). */
+static int f77_rt_d(char *name, int a, int ahi, int b, int bhi, int ni, int i1, int i2, int *rhi) {
+    int cb; int r; int n;
+    cb = h_ncarg;
+    f77_carg(a, 1); f77_carg(ahi, 2); n = 2;
+    if (b >= 0) { f77_carg(b, 1); f77_carg(bhi, 2); n = n + 2; }
+    if (ni > 0) { f77_carg(i1, 0); n = n + 1; }
+    if (ni > 1) { f77_carg(i2, 0); n = n + 1; }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, n, name);
+    h_cbase[r] = cb; f77_dtf_after(r);
+    *rhi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
 static int f77_libm_d1(char *name, int a, int ahi, int *rhi) {
     int cb;
     int r;
@@ -2135,6 +2150,14 @@ static int f77_select(int cond, int a, int b) {
 #define IN_SCAN     80
 #define IN_VERIFY   81
 #define IN_REPEAT   82    /* Fortran 90 CHARACTER, its arguments scalars */
+#define IN_MODULO   83    /* Fortran 90 numeric, elemental (the runtime's) */
+#define IN_FRACTION 84
+#define IN_SETEXP   85
+#define IN_SCALE    86
+#define IN_NEAREST  87
+#define IN_SPACING  88
+#define IN_RRSPACING 89
+#define IN_LOGICAL  90
 /* MIL-STD-1753's bit functions, in line (its 2.6 hopes so) */
 #define IN_IAND   44
 #define IN_IOR    45
@@ -2291,6 +2314,14 @@ static int f77_intrinsic(char *nm) {
     if (strcmp(nm, "CEILING") == 0) return IN_CEILING;
     if (strcmp(nm, "FLOOR") == 0) return IN_FLOOR;
     if (strcmp(nm, "EXPONENT") == 0) return IN_EXPONENT;
+    if (strcmp(nm, "MODULO") == 0) return IN_MODULO;
+    if (strcmp(nm, "FRACTION") == 0) return IN_FRACTION;
+    if (strcmp(nm, "SET_EXPONENT") == 0) return IN_SETEXP;
+    if (strcmp(nm, "SCALE") == 0) return IN_SCALE;
+    if (strcmp(nm, "NEAREST") == 0) return IN_NEAREST;
+    if (strcmp(nm, "SPACING") == 0) return IN_SPACING;
+    if (strcmp(nm, "RRSPACING") == 0) return IN_RRSPACING;
+    if (strcmp(nm, "LOGICAL") == 0) return IN_LOGICAL;
     if (strcmp(nm, "MAXLOC") == 0) return IN_MAXLOC;
     if (strcmp(nm, "MINLOC") == 0) return IN_MINLOC;
     if (strcmp(nm, "MAXVAL") == 0) return IN_MAXVAL;
@@ -2907,18 +2938,16 @@ static int f77_primary(void) {
             int b; int bhi; int bty;
             int rty;
             int qzero_hi;
+            int nm_at;
             qzero_hi = -1;
+            nm_at = (int)(lx_rts - lx_stmt);
             f77_tok();
             if (lx_t != T_LP) { f77_error("intrinsic needs arguments"); return f77_iconst(0); }
             f77_tok();
             if ((in >= IN_MAXLOC && in <= IN_MINVAL) || (in >= IN_SUM && in <= IN_DOTP)) return f77_reduce(in);
             if (in >= IN_SIZE && in <= IN_UBOUND) return f77_arr_inquiry(in);
             if (in == IN_MERGE) return f77_merge();
-            if (in == IN_TRANSFER) {
-                f77_error("TRANSFER is supported only as an actual argument");
-                ex_ty = TY_INT;
-                return f77_iconst(0);
-            }
+            if (in == IN_TRANSFER) return f77_transfer_expr(nm_at);
             if (in == IN_INQUIRY) {
                 /* a constant of the argument's type: an array names its
                  * elements' type, and an expression's value is unused */
@@ -3308,6 +3337,60 @@ static int f77_primary(void) {
                 r = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "f77_exponent");
                 h_cbase[r] = cb; f77_dtf_after(r);
                 ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                return r;
+            }
+            if (in == IN_LOGICAL) {
+                /* LOGICAL(L [, KIND]): one kind of LOGICAL here */
+                if (!ex_log) { f77_error("LOGICAL needs a LOGICAL argument"); return f77_iconst(0); }
+                if (lx_t == T_COMMA) {
+                    int k;
+                    f77_tok();
+                    if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') { f77_tok(); f77_tok(); }
+                    if (!f77_const_int(&k) || k != 4) { f77_error("LOGICAL's KIND is 4 here"); return f77_iconst(0); }
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
+                return a;
+            }
+            if (in == IN_MODULO || in == IN_FRACTION || in == IN_SETEXP || in == IN_SCALE || in == IN_NEAREST ||
+                in == IN_SPACING || in == IN_RRSPACING) {
+                /* the numeric model's (13.13): in the runtime, in double,
+                 * a REAL's answer a float's (the last argument says) */
+                static char *fn[] = { "f77_modulo_d", "f77_fraction", "f77_set_exponent", "f77_scale", "f77_nearest",
+                                      "f77_spacing", "f77_rrspacing" };
+                int which; int isd; int r; int rhi;
+                which = in == IN_MODULO ? 0 : in == IN_FRACTION ? 1 : in == IN_SETEXP ? 2 : in == IN_SCALE ? 3 :
+                        in == IN_NEAREST ? 4 : in == IN_SPACING ? 5 : 6;
+                b = -1; bhi = -1; bty = -1;
+                if (which == 0 || which == 2 || which == 3 || which == 4) {
+                    if (lx_t != T_COMMA) { f77_error("this intrinsic needs two arguments"); return f77_iconst(0); }
+                    f77_tok();
+                    b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                }
+                if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
+                if (which == 0 && aty == TY_INT && bty == TY_INT) {
+                    int args[2];
+                    args[0] = a; args[1] = b;
+                    r = f77_call_i("f77_modulo_i", 2, args);
+                    ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+                    return r;
+                }
+                if (which == 0) {
+                    if ((aty != TY_FLOAT && aty != TY_DOUBLE) || aty != bty) { f77_error("MODULO's arguments are both INTEGER or both REAL of one kind"); return f77_iconst(0); }
+                } else if (aty != TY_FLOAT && aty != TY_DOUBLE) { f77_error("this intrinsic needs a REAL or DOUBLE PRECISION argument"); return f77_iconst(0); }
+                if ((which == 2 || which == 3) && bty != TY_INT) { f77_error("SET_EXPONENT and SCALE take an INTEGER second argument"); return f77_iconst(0); }
+                if (which == 4 && bty != TY_FLOAT && bty != TY_DOUBLE) { f77_error("NEAREST's S is REAL"); return f77_iconst(0); }
+                isd = aty == TY_DOUBLE;
+                a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
+                if (which == 0 || which == 4) {
+                    b = f77_cvt(b, &bhi, bty, TY_DOUBLE);
+                    r = f77_rt_d(fn[which], a, ahi, b, bhi, 1, f77_iconst(isd), -1, &rhi);
+                } else if (which == 2) r = f77_rt_d(fn[which], a, ahi, -1, -1, 1, b, -1, &rhi);
+                else if (which == 3) r = f77_rt_d(fn[which], a, ahi, -1, -1, 2, b, f77_iconst(isd), &rhi);
+                else if (which == 1) r = f77_rt_d(fn[which], a, ahi, -1, -1, 0, -1, -1, &rhi);
+                else r = f77_rt_d(fn[which], a, ahi, -1, -1, 1, f77_iconst(isd), -1, &rhi);
+                r = f77_cvt(r, &rhi, TY_DOUBLE, aty);
+                ex_ty = aty; ex_hi = aty == TY_DOUBLE ? rhi : -1; ex_log = 0;
                 return r;
             }
             if (in == IN_INT || in == IN_REAL || in == IN_DBLE) {
@@ -6961,7 +7044,7 @@ static int f77_scan_kind_sel(int ty) {
  * error.  The constant evaluator and expressions share it. */
 static int f77_is_inquiry(char *nm) {
     static const char *names[] = { "HUGE", "TINY", "EPSILON", "KIND", "RADIX", "DIGITS", "MINEXPONENT",
-                                   "MAXEXPONENT", "PRECISION", "RANGE", 0 };
+                                   "MAXEXPONENT", "PRECISION", "RANGE", "BIT_SIZE", 0 };
     int k;
     for (k = 0; names[k]; k++) if (strcmp(nm, names[k]) == 0) return 1;
     return 0;
@@ -6982,6 +7065,10 @@ static int f77_inquiry(char *nm, int t, int *iv, double *dv) {
         return t;
     }
     if (strcmp(nm, "KIND") == 0) *iv = f77_ty_kind(t);
+    else if (strcmp(nm, "BIT_SIZE") == 0) {
+        if (t != TY_INT) { f77_error("BIT_SIZE needs an INTEGER argument"); return -2; }
+        *iv = 32;
+    }
     else if (t == TY_CHAR) { f77_error("this inquiry needs a numeric argument"); return -2; }
     else if (strcmp(nm, "RADIX") == 0) *iv = 2;
     else if (t == TY_INT) {
@@ -11068,6 +11155,9 @@ static void f77_copy_bytes(int dst, int src, int esz) {
  * the call frees it.  SOURCE is a scalar, a whole array or a section;
  * MOLD a scalar, an array or an array constructor, only its type read.
  * Bytes past SOURCE's are left undefined, as the standard leaves them. */
+static int f77_tr_arr;     /* the last TRANSFER's result an array (MOLD one, or SIZE=) */
+static int f77_tr_mty;     /* ... its MOLD's type, and size in bytes */
+static int f77_tr_msz;
 static int f77_transfer_actual(void) {
     int srcb;          /* SOURCE's bytes */
     int resb;          /* the result's */
@@ -11080,6 +11170,7 @@ static int f77_transfer_actual(void) {
     mchar = 0;
     f77_tok();                                   /* TRANSFER */
     f77_tok();                                   /* ( */
+    f77_tr_arr = 0; f77_tr_mty = -1;
     /* SOURCE: copied below, once the temporary exists; parsed first, so
      * its value or its section's bounds are evaluated here. */
     {
@@ -11180,6 +11271,7 @@ static int f77_transfer_actual(void) {
                 msz = ex_clen;
                 mchar = 1;
             } else msz = f77_tysize(ty0);
+            f77_tr_mty = ty0;
             marr = 1;
         } else {
             int ms;
@@ -11189,9 +11281,12 @@ static int f77_transfer_actual(void) {
                 if (f77_sty[ms] == TY_CHAR && f77_slen[ms] < 0) { f77_error("TRANSFER's CHARACTER MOLD needs a length known here"); return f77_iconst(0); }
                 mchar = f77_sty[ms] == TY_CHAR;
                 msz = f77_esize(ms);
+                f77_tr_mty = f77_sty[ms];
                 marr = 1;
             } else {
                 f77_expr();
+                f77_tr_mty = ex_ty;
+                if (ex_ty == TY_DERIVED) { f77_error("TRANSFER to a structure is not supported"); return f77_iconst(0); }
                 if (ex_ty == TY_CHAR) {
                     if (ex_clen < 0) { f77_error("TRANSFER's CHARACTER MOLD needs a length known here"); return f77_iconst(0); }
                     msz = ex_clen;
@@ -11206,8 +11301,10 @@ static int f77_transfer_actual(void) {
             v = f77_expr();
             v = f77_cvt(v, &ex_hi, ex_ty, TY_INT);
             resb = hi_emit(HI_MUL, TY_INT, v, f77_iconst(msz), 0, NULL);
+            f77_tr_arr = 1;
         } else if (marr) {
             /* as many elements as SOURCE fills, the last one partly */
+            f77_tr_arr = 1;
             resb = hi_emit(HI_ADDI, TY_INT, srcb, -1, msz - 1, NULL);
             resb = hi_emit(HI_DIV, TY_INT, resb, f77_iconst(msz), 0, NULL);
             resb = hi_emit(HI_MUL, TY_INT, resb, f77_iconst(msz), 0, NULL);
@@ -11249,8 +11346,52 @@ static int f77_transfer_actual(void) {
     f77_tfree_unpack[f77_ntfree] = 0;
     f77_ntfree = f77_ntfree + 1;
     f77_act_len = mchar ? f77_iconst(msz) : -1;
+    f77_tr_msz = msz;
     return tmp;
 }
+
+/* TRANSFER in an expression, its name at text offset nm_at: a scalar MOLD's
+ * value -- SOURCE's bytes read as its type (F90 13.13.110) -- from the
+ * actual-argument code's temporary, read and freed here. */
+static int f77_transfer_expr(int nm_at) {
+    /* a scalar MOLD: SOURCE's bytes read as its type (F90
+     * 13.13.110) -- the actual-argument code's temporary,
+     * read and freed here */
+    int tmp; int v; int args[1]; int mty; int mk; int open; int end;
+    mk = f77_tfree_mark();
+    open = nm_at + 8;                    /* TRANSFER( */
+    end = f77_match_paren(open) - 1;
+    f77_hoist(open + 1, &end);           /* a constructor or array-valued SOURCE, evaluated first */
+    f77_scan_from(nm_at);                /* back to the name: f77_transfer_actual takes it */
+    tmp = f77_transfer_actual();
+    if (f77_tr_arr) { f77_error("TRANSFER with an array result is supported only as an actual argument"); ex_ty = TY_INT; return f77_iconst(0); }
+    mty = f77_tr_mty;
+    if (f77_ntfree > 0 && f77_tfree_list[f77_ntfree - 1] == tmp) f77_ntfree = f77_ntfree - 1;
+    if (mty == TY_CHAR) {
+        v = f77_char_temp(f77_tr_msz);
+        f77_copy_n(v, tmp, f77_iconst(f77_tr_msz));
+        ex_len = f77_iconst(f77_tr_msz); ex_clen = f77_tr_msz;
+        ex_hi = -1;
+    } else if (mty == TY_DCPLX) {
+        v = f77_dcx_temp();
+        f77_copy_n(v, tmp, f77_iconst(16));
+        v = f77_dcx_mark(v);
+        ex_hi = -1;
+    } else v = f77_load_at(tmp, mty);
+    {
+        int vhi;
+        vhi = ex_hi;
+        args[0] = tmp;
+        f77_call_i("f77_dealloc_auto", 1, args);
+        ex_hi = vhi;
+        f77_tfree_to(mk);
+        ex_hi = vhi;
+    }
+    ex_ty = mty; ex_log = 0;
+    if (mty == TY_CHAR) { ex_len = f77_iconst(f77_tr_msz); ex_clen = f77_tr_msz; ex_hi = -1; }
+    return v;
+}
+
 
 /* Copy between a section and a contiguous temporary of its elements in
  * array element order (out: temporary to section), through subscripts
@@ -13791,6 +13932,77 @@ static int f77_inline_unit_body(int u, int *addrs, int nargs) {
 /* CALL name(a1, a2, ...) */
 static int f77_call_mk;
 
+/* The intrinsic subroutines of Fortran 90 13.13 that live in the
+ * runtime: DATE_AND_TIME, SYSTEM_CLOCK, RANDOM_NUMBER, RANDOM_SEED --
+ * unless the program has a procedure of the name.  Their arguments by
+ * position or keyword, each optional but RANDOM_NUMBER's; an array one
+ * by descriptor.  1 when nm was one of them. */
+static int f77_intr_sub(char *nm, int nargs, int *addrs, int *lens, int *tys, char kws[][F77_MAX_NAME], int *aas) {
+    static char *dn[][5] = { { "DATE_AND_TIME", "DATE", "TIME", "ZONE", "VALUES" },
+                             { "SYSTEM_CLOCK", "COUNT", "COUNT_RATE", "COUNT_MAX", 0 },
+                             { "RANDOM_SEED", "SIZE", "PUT", "GET", 0 },
+                             { "RANDOM_NUMBER", "HARVEST", 0, 0, 0 } };
+    int w; int nd; int i; int got[4]; int ds;
+    char m[F77_MAX_NAME + 80];
+    for (w = 0; w < 4; w++) if (strcmp(nm, dn[w][0]) == 0) break;
+    if (w == 4) return 0;
+    ds = f77_sym_find(nm);
+    if (f77_find_unit(nm) >= 0 || (ds >= 0 && (f77_sexternal[ds] || f77_slink[ds] || f77_sme[ds] >= 0 || f77_sarg[ds]))) return 0;
+    for (nd = 0; nd < 4 && dn[w][nd + 1]; nd++) got[nd] = -1;
+    for (i = 0; i < nargs && i < 64; i++) {
+        int j;
+        if (kws[i][0]) { for (j = 0; j < nd; j++) if (strcmp(kws[i], dn[w][j + 1]) == 0) break; }
+        else j = i;
+        if (j >= nd || got[j] >= 0) { sprintf(m, "the arguments of %s are not ones it takes", nm); f77_error(m); return 1; }
+        got[j] = i;
+    }
+    if (w == 3) {
+        /* RANDOM_NUMBER(HARVEST): a REAL or DOUBLE PRECISION scalar or array */
+        int t; int args[3];
+        i = got[0];
+        if (i < 0) { f77_error("RANDOM_NUMBER needs its HARVEST"); return 1; }
+        t = tys[i] & 15;
+        if (t != TY_FLOAT && t != TY_DOUBLE) { f77_error("RANDOM_NUMBER's HARVEST is REAL or DOUBLE PRECISION"); return 1; }
+        if (aas[i] >= 0) {
+            int r;
+            r = (tys[i] >> 12) & 15;
+            args[0] = f77_aa_desc(aas[i], r); args[1] = f77_iconst(r); args[2] = f77_iconst(t == TY_DOUBLE);
+            f77_call_i("f77_random_desc", 3, args);
+        } else {
+            args[0] = addrs[i];
+            f77_call_i(t == TY_DOUBLE ? "f77_random_d" : "f77_random_r", 1, args);
+        }
+        return 1;
+    }
+    {
+        int args[7]; int k; int n;
+        n = 0;
+        for (k = 0; k < nd; k++) {
+            int isarr; int ischar;
+            i = got[k];
+            isarr = (w == 0 && k == 3) || (w == 2 && k > 0);
+            ischar = w == 0 && k < 3;
+            if (i < 0) {
+                args[n++] = f77_iconst(0);
+                if (ischar) args[n++] = f77_iconst(0);
+                continue;
+            }
+            if (ischar) {
+                if ((tys[i] & 15) != TY_CHAR || aas[i] >= 0) { sprintf(m, "%s's %s is a CHARACTER scalar", nm, dn[w][k + 1]); f77_error(m); return 1; }
+                args[n++] = addrs[i]; args[n++] = lens[i];
+            } else if (isarr) {
+                if ((tys[i] & 15) != TY_INT || aas[i] < 0 || ((tys[i] >> 12) & 15) != 1) { sprintf(m, "%s's %s is an INTEGER array of rank 1", nm, dn[w][k + 1]); f77_error(m); return 1; }
+                args[n++] = f77_aa_desc(aas[i], 1);
+            } else {
+                if ((tys[i] & 15) != TY_INT || aas[i] >= 0) { sprintf(m, "%s's %s is an INTEGER scalar", nm, dn[w][k + 1]); f77_error(m); return 1; }
+                args[n++] = addrs[i];
+            }
+        }
+        f77_call_i(w == 0 ? "f77_date_and_time_d" : w == 1 ? "f77_system_clock" : "f77_random_seed_d", n, args);
+    }
+    return 1;
+}
+
 static void f77_stmt_call1(int skip) {
     char nm[F77_MAX_NAME];
     int addrs[64];
@@ -13850,6 +14062,7 @@ static void f77_stmt_call1(int skip) {
         if (lx_t != T_RP) f77_error("expected ) after arguments");
         else f77_tok();
     }
+    if (nalt == 0 && f77_intr_sub(nm, nargs, addrs, lens, tys, kws, aas)) { f77_naa = aamk; return; }
     {
         /* the callee, for its dummies: a unit of this file, else a module
          * procedure (a generic's specific), else an implicit interface */

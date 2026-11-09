@@ -279,7 +279,6 @@ if [ -x "$F77" ]; then
     printf '      SUBROUTINE S(A)\n      REAL, ALLOCATABLE :: A(:)\n      END\n' > "$W/allocarg.f"
     printf '      REAL, ALLOCATABLE :: A(10)\n      END\n' > "$W/allocshape.f"
     printf '      INTEGER K(3)\n      K(1:3) = (/ 1, 2 /)\n      END\n' > "$W/aconshape.f"
-    printf '      INTEGER K(2), J\n      J = TRANSFER(1.0, 0)\n      END\n' > "$W/xferexpr.f"
     printf '#define N 3\n      X = N\n      END\n' > "$W/cppdef.F"
     printf '#if 1\n      X = 1\n      END\n' > "$W/cppopen.F"
     printf 'x = 1 & y = 2\nend\n' > "$W/freeamp.f90"
@@ -366,6 +365,10 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal :: x, y\nend type\ntype(pt) :: p\np = pt(1.0)\nend\n' > "$W/dtcons.f90"
     printf 'type pt\nreal :: x = 1.0\nend type\nend\n' > "$W/dtinit.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
+    printf 'integer :: v(2)\nv = transfer(1.0d0, v)\nprint *, transfer(1.0d0, (/ 0 /))\nend\n' > "$W/trarr.f90"
+    printf 'integer :: k\ncall random_number(k)\nend\n' > "$W/rndint.f90"
+    printf 'print *, modulo(7, 2.0)\nend\n' > "$W/modmix.f90"
+    printf 'integer :: v(2)\ncall date_and_time(values=v, zone=v)\nend\n' > "$W/dtkw.f90"
     printf 'integer, parameter :: v(3) = (/ 1, 2, 3 /)\nv(2) = 5\nend\n' > "$W/parrasg.f90"
     printf 'integer :: v(3) = (/ 1, 2 /)\nend\n' > "$W/initcnt.f90"
     printf 'integer :: k = (/ 1, 2 /)\nend\n' > "$W/initscal.f90"
@@ -497,6 +500,10 @@ if [ -x "$F77" ]; then
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "trarr:line 3: TRANSFER with an array result is supported only as an actual argument" \
+             "rndint:line 2: RANDOM_NUMBER's HARVEST is REAL or DOUBLE PRECISION" \
+             "modmix:line 1: MODULO's arguments are both INTEGER or both REAL of one kind" \
+             "dtkw:line 2: DATE_AND_TIME's ZONE is a CHARACTER scalar" \
              "parrasg:line 2: cannot assign to a PARAMETER" \
              "initcnt:line 1: an initial value with another number of elements than the array" \
              "initscal:line 1: an array value for a scalar" \
@@ -548,7 +555,6 @@ if [ -x "$F77" ]; then
              "allocarg:line 2: an ALLOCATABLE dummy argument is not supported" \
              "allocshape:line 1: an ALLOCATABLE or POINTER array's shape is (:), (:,:) ..., its bounds given by ALLOCATE or =>" \
              "aconshape:line 2: the array constructor has 2 values for 3 elements" \
-             "xferexpr:line 2: TRANSFER is supported only as an actual argument" \
              "cppdef:line 1: only the preprocessor's conditionals are supported (#if, #ifdef, #ifndef, #elif, #else, #endif)" \
              "cppopen:line 3: #if without #endif" \
              "freeamp:line 1: & in the middle of a line" \

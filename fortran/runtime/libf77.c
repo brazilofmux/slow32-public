@@ -21,6 +21,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/time.h>
 #include <ctype.h>
 
 #define FIO_MAXFMT   1024
@@ -1725,6 +1726,158 @@ void f77_as_unpack(const int *d, int rank, int esz, void *run) {
 /* CPU_TIME (Fortran 95): the processor time used, in seconds. */
 void f77_cpu_time_r(float *t) { *t = (float)((double)clock() / CLOCKS_PER_SEC); }
 void f77_cpu_time_d(double *t) { *t = (double)clock() / CLOCKS_PER_SEC; }
+
+/* The Fortran 90 numeric model's manipulations (13.13): x arrives as a
+ * double, isd says whether it is DOUBLE PRECISION (else REAL, whose
+ * answer is a float's, returned widened). */
+double f77_fraction(double x) {
+    int e;
+    if (x == 0.0) return 0.0;
+    return frexp(x, &e);
+}
+double f77_set_exponent(double x, int i) {
+    int e;
+    if (x == 0.0) return 0.0;
+    return ldexp(frexp(x, &e), i);
+}
+double f77_scale(double x, int i, int isd) {
+    return isd ? ldexp(x, i) : (double)ldexpf((float)x, i);
+}
+double f77_nearest(double x, double s, int isd) {
+    if (s == 0.0) { fprintf(stderr, "f77: NEAREST with S = 0\n"); exit(2); }
+    if (isd) return nextafter(x, s > 0.0 ? HUGE_VAL : -HUGE_VAL);
+    return (double)nextafterf((float)x, s > 0.0 ? HUGE_VALF : -HUGE_VALF);
+}
+double f77_spacing(double x, int isd) {
+    int e; int p = isd ? 53 : 24; int emin = isd ? -1021 : -125;
+    if (x == 0.0) return isd ? 2.2250738585072014e-308 : 1.1754943508222875e-38;
+    (void)frexp(x, &e);
+    if (e - p < emin - 1) return isd ? 2.2250738585072014e-308 : 1.1754943508222875e-38;
+    return ldexp(1.0, e - p);
+}
+double f77_rrspacing(double x, int isd) {
+    int e;
+    if (x == 0.0) return 0.0;
+    return ldexp(fabs(frexp(x, &e)), isd ? 53 : 24);
+}
+/* MODULO (13.13.68): A - FLOOR(A/P)*P, the sign of P's */
+int f77_modulo_i(int a, int p) {
+    int r;
+    if (p == 0) { fprintf(stderr, "f77: MODULO with P = 0\n"); exit(2); }
+    r = a % p;
+    if (r != 0 && ((r < 0) != (p < 0))) r += p;
+    return r;
+}
+double f77_modulo_d(double a, double p, int isd) {
+    if (isd) {
+        double r = fmod(a, p);
+        if (r != 0.0 && ((r < 0.0) != (p < 0.0))) r += p;
+        return r;
+    } else {
+        float r = fmodf((float)a, (float)p);
+        if (r != 0.0f && ((r < 0.0f) != ((float)p < 0.0f))) r += (float)p;
+        return (double)r;
+    }
+}
+
+/* DATE_AND_TIME (13.13.25): each argument's address, or 0 when absent;
+ * the CHARACTER ones with their lengths.  No time zone is known: UTC. */
+void f77_date_and_time(char *d, int dl, char *t, int tl, char *z, int zl, int *v) {
+    struct timeval tv;
+    time_t now;
+    struct tm *tm;
+    char buf[16];
+    int k;
+    gettimeofday(&tv, 0);
+    now = (time_t)tv.tv_sec;
+    tm = gmtime(&now);
+    if (d) {
+        snprintf(buf, sizeof buf, "%04d%02d%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+        for (k = 0; k < dl; k++) d[k] = k < 8 ? buf[k] : ' ';
+    }
+    if (t) {
+        snprintf(buf, sizeof buf, "%02d%02d%02d.%03d", tm->tm_hour, tm->tm_min, tm->tm_sec, (int)(tv.tv_usec / 1000));
+        for (k = 0; k < tl; k++) t[k] = k < 10 ? buf[k] : ' ';
+    }
+    if (z) for (k = 0; k < zl; k++) z[k] = k < 5 ? "+0000"[k] : ' ';
+    if (v) {
+        v[0] = tm->tm_year + 1900; v[1] = tm->tm_mon + 1; v[2] = tm->tm_mday; v[3] = 0;
+        v[4] = tm->tm_hour; v[5] = tm->tm_min; v[6] = tm->tm_sec; v[7] = (int)(tv.tv_usec / 1000);
+    }
+}
+/* SYSTEM_CLOCK (13.13.105): milliseconds of wall time, modulo COUNT_MAX+1. */
+void f77_system_clock(int *c, int *r, int *m) {
+    struct timeval tv;
+    gettimeofday(&tv, 0);
+    if (c) *c = (int)((((long long)tv.tv_sec * 1000) + tv.tv_usec / 1000) % 2147483647LL);
+    if (r) *r = 1000;
+    if (m) *m = 2147483647;
+}
+
+/* RANDOM_NUMBER and RANDOM_SEED (13.13.84-85): xoshiro128**, its state
+ * the seed, four INTEGERs. */
+static unsigned int f77_rng[4] = { 0x9e3779b9u, 0x243f6a88u, 0xb7e15162u, 0x85a308d3u };
+static unsigned int f77_rng_next(void) {
+    unsigned int *s = f77_rng;
+    unsigned int r = s[1] * 5u;
+    unsigned int t = s[1] << 9;
+    r = ((r << 7) | (r >> 25)) * 9u;
+    s[2] ^= s[0]; s[3] ^= s[1]; s[1] ^= s[2]; s[0] ^= s[3];
+    s[2] ^= t;
+    s[3] = (s[3] << 11) | (s[3] >> 21);
+    return r;
+}
+void f77_random_seed(int *size, int *put, int *get) {
+    int k;
+    if (size) *size = 4;
+    if (get) for (k = 0; k < 4; k++) get[k] = (int)f77_rng[k];
+    if (put) {
+        for (k = 0; k < 4; k++) f77_rng[k] = (unsigned int)put[k];
+        if (!(f77_rng[0] | f77_rng[1] | f77_rng[2] | f77_rng[3])) f77_rng[0] = 1;
+    }
+    if (!size && !put && !get) {
+        /* no argument: a seed of the processor's choosing, from the clock */
+        struct timeval tv;
+        gettimeofday(&tv, 0);
+        f77_rng[0] ^= (unsigned int)tv.tv_sec; f77_rng[1] ^= (unsigned int)tv.tv_usec;
+        if (!(f77_rng[0] | f77_rng[1] | f77_rng[2] | f77_rng[3])) f77_rng[0] = 1;
+    }
+}
+static float f77_rng_r(void) { return (float)(f77_rng_next() >> 8) * (1.0f / 16777216.0f); }
+static double f77_rng_d(void) {
+    unsigned int a = f77_rng_next() >> 5, b = f77_rng_next() >> 6;
+    return ((double)a * 67108864.0 + (double)b) * (1.0 / 9007199254740992.0);
+}
+/* ... their array arguments by descriptor (base, extent, stride) */
+void f77_random_seed_d(int *size, int *pd, int *gd) {
+    int k; int put[4]; int get[4];
+    if ((pd && pd[1] < 4) || (gd && gd[1] < 4)) { fprintf(stderr, "f77: RANDOM_SEED's PUT and GET have 4 elements at least\n"); exit(2); }
+    if (pd) for (k = 0; k < 4; k++) put[k] = ((int *)pd[0])[k * pd[2]];
+    f77_random_seed(size, pd ? put : 0, gd ? get : 0);
+    if (gd) for (k = 0; k < 4; k++) ((int *)gd[0])[k * gd[2]] = get[k];
+}
+void f77_date_and_time_d(char *d, int dl, char *t, int tl, char *z, int zl, int *vd) {
+    int v[8]; int k;
+    if (vd && vd[1] < 8) { fprintf(stderr, "f77: DATE_AND_TIME's VALUES has 8 elements at least\n"); exit(2); }
+    f77_date_and_time(d, dl, t, tl, z, zl, vd ? v : 0);
+    if (vd) for (k = 0; k < 8; k++) ((int *)vd[0])[k * vd[2]] = v[k];
+}
+void f77_random_r(float *x) { *x = f77_rng_r(); }
+void f77_random_d(double *x) { *x = f77_rng_d(); }
+/* ... an array's elements, through its descriptor (base, then extent and
+ * stride, in elements, per dimension), in array element order */
+void f77_random_desc(int *d, int rank, int isd) {
+    int idx[7] = {0, 0, 0, 0, 0, 0, 0};
+    int n = 1, k, e;
+    for (k = 0; k < rank; k++) n *= d[1 + 2 * k] > 0 ? d[1 + 2 * k] : 0;
+    for (e = 0; e < n; e++) {
+        int off = 0;
+        for (k = 0; k < rank; k++) off += idx[k] * d[2 + 2 * k];
+        if (isd) ((double *)d[0])[off] = f77_rng_d();
+        else ((float *)d[0])[off] = f77_rng_r();
+        for (k = 0; k < rank; k++) { if (++idx[k] < d[1 + 2 * k]) break; idx[k] = 0; }
+    }
+}
 
 /* LEN_TRIM (Fortran 90), and with it TRIM: the length less trailing
  * blanks. */
