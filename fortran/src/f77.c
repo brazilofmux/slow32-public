@@ -178,6 +178,8 @@ static void f77_collect_dummies(int skip, int unit) {
             f77_famd_opt[f77_nfamd] = 0;
             f77_famd_ptr[f77_nfamd] = 0;
             f77_famd_char[f77_nfamd] = 0;
+            f77_famd_tytext[f77_nfamd] = NULL;
+            f77_famd_rank[f77_nfamd] = 0;
             f77_nfamd = f77_nfamd + 1;
         }
         f77_tok();
@@ -290,7 +292,7 @@ static int f77_skip_parens(int i) {
     return i;
 }
 static void f77_scan_shapes(int u) {
-    int i; int skip; int dattr; int dc; int alloc; int opt; int isch; int ptr;
+    int i; int skip; int dattr; int dc; int alloc; int opt; int isch; int ptr; int tend;
     if (f77_starts("OPTIONAL") || f77_starts("POINTER")) {
         /* OPTIONAL [::] names: the dummies a caller may leave out;
          * POINTER [::] names: those whose slots it passes */
@@ -338,14 +340,25 @@ static void f77_scan_shapes(int u) {
         for (j = 0; j + 10 < dc; j++)
             if (lx_stmt[j] == ',' && strncmp(lx_stmt + j + 1, "DIMENSION(", 10) == 0) dattr = j + 10;
         i = dc + 2;
+        /* the type: up to its first attribute, or the :: */
+        tend = skip;
+        if (tend < dc && lx_stmt[tend] == '(') tend = f77_skip_parens(tend);
+        else if (tend < dc && lx_stmt[tend] == '*') {
+            tend++;
+            if (tend < dc && lx_stmt[tend] == '(') tend = f77_skip_parens(tend);
+            while (tend < dc && lx_isdigit(lx_stmt[tend])) tend++;
+        }
     } else if (i < lx_stmt_len && lx_stmt[i] == '(') {
         i = f77_skip_parens(i);                         /* REAL(8), CHARACTER(LEN=4) */
+        tend = i;
     } else if (i < lx_stmt_len && lx_stmt[i] == '*') {
         i++;                                            /* REAL*8, CHARACTER*(*), CHARACTER*4 */
         if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_skip_parens(i);
         while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i++;
+        tend = i;
         if (i < lx_stmt_len && lx_stmt[i] == ',') i++;
-    }
+    } else tend = i;
+    if (skip == 9 && lx_stmt[0] == 'D') tend = 0;           /* DIMENSION: no type */
     while (i < lx_stmt_len) {
         char nm[F77_MAX_NAME];
         int n; int q; int so; int ra; int rs;
@@ -370,6 +383,12 @@ static void f77_scan_shapes(int u) {
             if (opt) { f77_famd_opt[q] = 1; f77_unosplice[u] = 1; }
             if (ptr) { f77_famd_ptr[q] = 1; f77_unosplice[u] = 1; }
             if (isch) f77_famd_char[q] = 1;
+            if (rs > 0) f77_famd_rank[q] = rs;
+            if (tend > 0 && !f77_famd_tytext[q]) {
+                f77_famd_tytext[q] = (char *)malloc((size_t)tend + 1);
+                memcpy(f77_famd_tytext[q], lx_stmt, (size_t)tend);
+                f77_famd_tytext[q][tend] = 0;
+            }
         }
         if (rs > 0 && f77_ukind[u] == F77_UNIT_FUNC && strcmp(nm, f77_unit_rname(u)) == 0) {
             f77_urrank[u] = rs;

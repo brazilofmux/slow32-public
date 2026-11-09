@@ -245,6 +245,8 @@ static int  ex_len;
 static int  ex_clen;
 static int  f77_act_len;               /* length of the last f77_actual_addr, or -1 */
 static int  f77_act_ty;                /* ... its type, +16 for a whole array, -1 a procedure (generic resolution) */
+static int  f77_act_dt;                /* ... a structure's derived type, else -1 */
+static int *f77_gp_dts;                /* the actuals' derived types, for f77_generic_pick; NULL none */
 
 /* The unit's dummies in order (also the copy-in list), the count of
  * its incoming words, and the length of the last CHARACTER READ
@@ -882,6 +884,7 @@ static int    f77_me_assoc = 2;                  /* f77_me_bind's: 1 host associ
 static int    f77_me_private[F77_MAX_MODENT];    /* PRIVATE: its module's own, not a USE's */
 static char  *f77_me_dnames[F77_MAX_MODENT];     /* a procedure's dummies' names, space-separated */
 static int    f77_me_iface[F77_MAX_MODENT];      /* a procedure an interface body describes */
+static int    f77_me_argdt[F77_MAX_MODENT][16];  /* a dummy's derived type, or -1 */
 #define F77_ARG_OPT 65536                        /* f77_me_argty: an OPTIONAL dummy */
 #define F77_ARG_PTR 131072                       /* ... a POINTER one */
 /* PUBLIC and PRIVATE (Fortran 90 5.2.3): the module being compiled says
@@ -947,6 +950,8 @@ static int  f77_famd_as[F77_MAX_FAMD];     /* its rank, when an assumed-shape ar
 static int  f77_famd_opt[F77_MAX_FAMD];    /* OPTIONAL (the scan) */
 static int  f77_famd_char[F77_MAX_FAMD];   /* CHARACTER: a hidden length travels for it (the scan) */
 static int  f77_famd_ptr[F77_MAX_FAMD];    /* POINTER: its slot is passed (the scan) */
+static char *f77_famd_tytext[F77_MAX_FAMD]; /* its type statement's type, as text (the scan), or NULL */
+static int  f77_famd_rank[F77_MAX_FAMD];   /* its rank, any shape (the scan) */
 static int  f77_act_pslot;                 /* an actual that is a POINTER: its slot, or -1 */
 static int  f77_nfamd;
 static int  f77_hdr_clen;              /* length seen by f77_function_kw_end; -2 = at f77_hdr_clen_off */
@@ -1203,6 +1208,11 @@ static int ex_hi;     /* its hi word, when ex_ty is TY_DOUBLE */
 
 static int f77_expr(void);
 static int f77_power(void);
+/* An operand as f77_expr left it, for a defined operation. */
+#define F77_OPND(o, val) do { (o)[0] = (val); (o)[1] = ex_ty; (o)[2] = ex_hi; (o)[3] = ex_len; (o)[4] = ex_ty == TY_DERIVED ? ex_dt : -1; } while (0)
+static int f77_op_try1(int tok, int *x, int *res);
+static int f77_op_try2(int tok, int *x, int *y, int *res);
+static int f77_op_defined(char *nm, int n, int *x, int *y);
 static int f77_find_func(char *nm);
 static int f77_actual_addr(void);
 static void f77_hoist_actuals(void);
@@ -2706,6 +2716,12 @@ static int f77_primary(void) {
         v = f77_power();
         save = ex_ty;
         vhi = ex_hi;
+        if (save == TY_DERIVED) {
+            int xo[5]; int r;
+            F77_OPND(xo, v);
+            f77_op_try1(T_MINUS, xo, &r);
+            return r;
+        }
         if (save == TY_DOUBLE) {
             ex_ty = TY_DOUBLE;
             return f77_fp64_pair1("__fp64_neg", v, vhi, &ex_hi);
@@ -2727,7 +2743,24 @@ static int f77_primary(void) {
         if (save == TY_FLOAT) return hi_emit(HI_FNEG, TY_FLOAT, v, -1, 0, NULL);
         return hi_emit(HI_NEG, TY_INT, v, -1, 0, NULL);
     }
-    if (lx_t == T_PLUS) { f77_tok(); return f77_power(); }
+    if (lx_t == T_PLUS) {
+        int xo[5]; int r;
+        f77_tok();
+        v = f77_power();
+        if (ex_ty != TY_DERIVED) return v;
+        F77_OPND(xo, v);
+        f77_op_try1(T_PLUS, xo, &r);
+        return r;
+    }
+    if (lx_t == T_DOTOP) {
+        /* a defined unary operator: it binds tightest (F90 7.1.1.1) */
+        char nm[F77_MAX_NAME]; int xo[5];
+        strcpy(nm, lex_name);
+        f77_tok();
+        v = f77_primary();
+        F77_OPND(xo, v);
+        return f77_op_defined(nm, 1, xo, NULL);
+    }
     if (lx_t == T_NAME) {
         char nm[F77_MAX_NAME];
         int u;
@@ -3607,6 +3640,7 @@ static int f77_primary(void) {
             int fptr;
             int mk;
             int tys[64];
+            int dts[64];
             int aas[64];
             char kws[64][F77_MAX_NAME];
             int pss[64];
@@ -3626,6 +3660,7 @@ static int f77_primary(void) {
                     if (nargs < 64) {
                         f77_kw_take(kws[nargs]);
                         addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
+                        dts[nargs] = f77_act_dt;
                     }
                     else f77_actual_addr();
                     nargs = nargs + 1;
@@ -3646,7 +3681,7 @@ static int f77_primary(void) {
             if (f77_sme[s] >= 0) {
                 int e;
                 e = f77_sme[s];
-                if (f77_me_kind[e] == F77_ME_GENERIC) e = f77_generic_pick_kw(e, tys, kws, nargs > 64 ? 64 : nargs);
+                if (f77_me_kind[e] == F77_ME_GENERIC) { f77_gp_dts = dts; e = f77_generic_pick_kw(e, tys, kws, nargs > 64 ? 64 : nargs); f77_gp_dts = NULL; }
                 if (e >= 0 && f77_me_pkind[e] != F77_UNIT_FUNC) { f77_error("a SUBROUTINE referenced as a FUNCTION"); e = -1; }
                 if (e >= 0) { rty = f77_me_ty[e]; rlog = f77_me_log[e]; cname = f77_me_str[e]; }
                 me = e;
@@ -3741,15 +3776,19 @@ static int f77_power(void) {
     int ahi;
     int cb;
     int r;
+    int xo[5];
     a = f77_primary();
     aty = ex_ty;
     ahi = ex_hi;
+    F77_OPND(xo, a);
     if (lx_t == T_POWER) {
-        int bhi;
+        int bhi; int yo[5];
         f77_tok();
         b = f77_power();
         bty = ex_ty;
         bhi = ex_hi;
+        F77_OPND(yo, b);
+        if (f77_op_try2(T_POWER, xo, yo, &r)) return r;
         if (aty == TY_DCPLX || bty == TY_DCPLX ||
             (aty == TY_CPLX && bty == TY_DOUBLE) || (aty == TY_DOUBLE && bty == TY_CPLX)) {
             /* COMPLEX*16: z**n by binary exponentiation in libgfortran's
@@ -3829,6 +3868,299 @@ static int f77_power(void) {
  * one type first: the result, its type in ex_ty and hi word in ex_hi.
  * What f77_term and f77_arith do for each operator, and the reductions
  * (SUM, PRODUCT, DOT_PRODUCT) for each element. */
+/* Defined operators (Fortran 90 7.1.3, 12.3.2.1.1): INTERFACE OPERATOR(op)
+ * is a generic named "OP:op" -- op an intrinsic operator's canonical
+ * spelling (== for .EQ. ...) or a defined one's, .NAME. -- and an operator
+ * with a structure operand, or a defined one, calls the specific its
+ * operands' types and ranks pick (derived types compared too). */
+static char *f77_op_name(int tok) {
+    switch (tok) {
+    case T_PLUS: return "+"; case T_MINUS: return "-"; case T_STAR: return "*"; case T_SLASH: return "/";
+    case T_POWER: return "**"; case T_CONCAT: return "//";
+    case T_EQ: return "=="; case T_NE: return "/="; case T_LT: return "<"; case T_LE: return "<=";
+    case T_GT: return ">"; case T_GE: return ">=";
+    case T_AND: return ".AND."; case T_OR: return ".OR."; case T_NOT: return ".NOT.";
+    case T_EQV: return ".EQV."; case T_NEQV: return ".NEQV.";
+    }
+    return "?";
+}
+static int f77_call_i(char *name, int nargs, int *args);
+static int f77_dt_fcall(char *name, int fptr, int *addrs, int *lens, int nargs, int dt, char *tname);
+static int f77_char_fcall(char *name, int rlen, int *addrs, int *lens, int nargs);
+static int f77_dcx_fcall(char *name, int fptr, int *addrs, int *lens, int nargs);
+static int f77_me_find(int m, char *nm);
+static int f77_mod_find(char *nm);
+static int f77_mod_new(char *nm, int unit);
+static int f77_me_new(int m, char *nm, int kind);
+
+/* The generic of operator opn this unit sees, or -1. */
+static int f77_op_generic(char *opn) {
+    char nm[F77_MAX_NAME + 8];
+    int s;
+    sprintf(nm, "OP:%s", opn);
+    s = f77_sym_find(nm);
+    if (s < 0 || f77_sme[s] < 0 || f77_me_kind[f77_sme[s]] != F77_ME_GENERIC) return -1;
+    return f77_sme[s];
+}
+
+/* A dummy's type from its type statement's text (f77_famd_tytext), *dt
+ * a derived type's index, or -1 when the text says no type this can
+ * tell (a kind it cannot evaluate). */
+static int f77_tytext_kind(char *k) {
+    int s;
+    if (strncmp(k, "KIND=", 5) == 0) k = k + 5;
+    if (lx_isdigit(*k)) return atoi(k);
+    if (strncmp(k, "KIND(", 5) == 0) return strstr(k, "D") ? 8 : 4;
+    s = f77_sym_find(k);
+    if (s >= 0 && f77_sparam[s] && f77_sty[s] == TY_INT) return f77_spival[s];
+    return -1;
+}
+static int f77_tytext_ty(char *t, int *dt) {
+    char k[F77_MAX_NAME];
+    int n; int kind;
+    *dt = -1;
+    k[0] = 0;
+    {
+        char *p;
+        p = strchr(t, '(');
+        if (p) {
+            n = 0; p++;
+            while (*p && *p != ')' && n < F77_MAX_NAME - 1) k[n++] = *p++;
+            k[n] = 0;
+        } else if ((p = strchr(t, '*')) != NULL) strcpy(k, p + 1);
+    }
+    if (strncmp(t, "TYPE(", 5) == 0) { *dt = f77_dt_find(k); return *dt >= 0 ? TY_DERIVED : -1; }
+    if (strncmp(t, "DOUBLEPRECISION", 15) == 0) return TY_DOUBLE;
+    if (strncmp(t, "DOUBLECOMPLEX", 13) == 0) return TY_DCPLX;
+    if (strncmp(t, "CHARACTER", 9) == 0) return TY_CHAR;
+    if (strncmp(t, "INTEGER", 7) == 0 || strncmp(t, "LOGICAL", 7) == 0) return TY_INT;
+    kind = k[0] ? f77_tytext_kind(k) : 4;
+    if (strncmp(t, "REAL", 4) == 0) return kind == 4 ? TY_FLOAT : kind == 8 ? TY_DOUBLE : -1;
+    if (strncmp(t, "COMPLEX", 7) == 0) {
+        if (t[7] == '*') return kind == 8 ? TY_CPLX : kind == 16 ? TY_DCPLX : -1;
+        return kind == 4 ? TY_CPLX : kind == 8 ? TY_DCPLX : -1;
+    }
+    return -1;
+}
+
+/* A procedure of module m named nm that is not compiled yet -- the
+ * module's own, being compiled, a sibling later in it or the procedure
+ * in progress -- as an entity of a scratch table built from what the
+ * scan saw of it (its dummies' types and ranks, its result), so that an
+ * operator inside the module reaches it; -1 if there is none. */
+static int f77_me_pending(int m, char *nm) {
+    int v; int pm; int e; int q; int n;
+    for (v = 0; v < f77_nunit; v++) {
+        int h;
+        h = f77_uhost[v];
+        if (h < 0 || f77_ukind[h] != F77_UNIT_MODULE || strcmp(f77_uname[v], nm) != 0) continue;
+        if (f77_mod_find(f77_uname[h]) == m) break;
+    }
+    if (v == f77_nunit) return -1;
+    pm = f77_mod_find("@pending");
+    if (pm < 0) pm = f77_mod_new("@pending", -1);
+    if (pm < 0) return -1;
+    e = f77_me_find(pm, f77_ulink[v]);
+    if (e >= 0) return e;
+    e = f77_me_new(pm, f77_ulink[v], F77_ME_PROC);
+    if (e < 0) return -1;
+    f77_me_str[e] = strdup(f77_ulink[v]);
+    f77_me_pkind[e] = f77_ukind[v];
+    f77_me_ty[e] = f77_ukind[v] == F77_UNIT_FUNC ? f77_urty[v] : TY_INT;
+    f77_me_log[e] = f77_urlog[v];
+    f77_me_rrank[e] = f77_ukind[v] == F77_UNIT_FUNC ? f77_urrank[v] : 0;
+    f77_me_ival[e] = 0;
+    if (f77_me_ty[e] == TY_DERIVED) f77_me_ival[e] = f77_dt_find(f77_urtn[v]);
+    if (f77_me_ty[e] == TY_CHAR) f77_me_ival[e] = f77_urlen[v];
+    n = 0;
+    for (q = 0; q < f77_nfamd; q++) {
+        int ty; int dt; int rk;
+        if (f77_famd_unit[q] != v) continue;
+        if (n >= 16) break;
+        dt = -1;
+        if (f77_famd_tytext[q]) ty = f77_tytext_ty(f77_famd_tytext[q], &dt);
+        else ty = f77_uimp_map[f77_uhost[v]][f77_famd_name[q][0] - 'A'];
+        if (ty < 0) ty = 15;                         /* untellable: matches nothing */
+        rk = f77_famd_as[q] > 0 ? f77_famd_as[q] : f77_famd_rank[q];
+        f77_me_argty[e][n] = ty + (rk > 0 ? 16 : 0) + (f77_famd_as[q] > 0 ? 256 * rk : 0) + 4096 * rk
+                             + (f77_famd_opt[q] ? F77_ARG_OPT : 0) + (f77_famd_ptr[q] ? F77_ARG_PTR : 0);
+        f77_me_argdt[e][n] = dt;
+        {
+            /* its name, for keywords */
+            char *o; int l;
+            o = f77_me_dnames[e];
+            l = o ? (int)strlen(o) : 0;
+            f77_me_dnames[e] = (char *)realloc(o, (size_t)l + strlen(f77_famd_name[q]) + 2);
+            if (l) f77_me_dnames[e][l++] = ' ';
+            strcpy(f77_me_dnames[e] + l, f77_famd_name[q]);
+        }
+        n = n + 1;
+    }
+    f77_me_nargs[e] = n;
+    return e;
+}
+
+/* The next specific of a generic's list at *pp (advanced past it), its
+ * name in nm: the entity of module home of that name, or of the module
+ * an item NAME@m names (a generic merged from two modules' -- F90
+ * 11.3.2: generics of one name from two USEs are one generic); -1 none. */
+static int f77_gen_item(char **pp, int home, char *nm) {
+    char *p; char *at; int k; int m; int e;
+    p = *pp;
+    k = 0;
+    while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
+    nm[k] = 0;
+    while (*p == ' ') p++;
+    *pp = p;
+    m = home;
+    at = strchr(nm, '@');
+    if (at) { *at = 0; m = atoi(at + 1); }
+    if (m < 0) return -1;
+    e = f77_me_find(m, nm);
+    if (e < 0) e = f77_me_pending(m, nm);
+    return e;
+}
+
+/* The specific of generic g whose n dummies take operands of types ty[],
+ * ranks rk[], derived types dt[]; -1 if none. */
+static int f77_op_pick(int g, int n, int *ty, int *rk, int *dt) {
+    char *p;
+    p = f77_me_str[g];
+    while (*p) {
+        char nm[F77_MAX_NAME];
+        int e; int a;
+        e = f77_gen_item(&p, f77_me_home[g], nm);
+        if (e < 0 || f77_me_kind[e] != F77_ME_PROC || f77_me_nargs[e] != n) continue;
+        for (a = 0; a < n; a++) {
+            int t;
+            t = f77_me_argty[e][a];
+            if ((t & 15) != ty[a] || ((t >> 12) & 15) != rk[a]) break;
+            if (ty[a] == TY_DERIVED && f77_me_argdt[e][a] != dt[a]) break;
+        }
+        if (a == n) return e;
+    }
+    return -1;
+}
+
+/* An operand as an actual argument: a structure's, a CHARACTER's, a
+ * COMPLEX*16's address, or another value stored to a temporary (its
+ * length, *len, -1 but a CHARACTER's). */
+static int f77_op_actual(int v, int ty, int hi, int vlen, int *len) {
+    int tmp;
+    *len = -1;
+    if (ty == TY_DERIVED || ty == TY_DCPLX) return f77_dcx_arg(v);
+    if (ty == TY_CHAR) { *len = vlen; return v; }
+    f77_frame = f77_frame + f77_tysize(ty);
+    tmp = hi_emit(HI_ALLOCA, f77_aty(ty), -1, -1, 0 - f77_frame, NULL);
+    f77_alloca_add(tmp, 0 - f77_frame);
+    f77_store_at(tmp, ty, v, ty, hi);
+    return tmp;
+}
+
+/* A call to FUNCTION e of module or interface table, its actuals
+ * addresses, lens their hidden lengths (-1 none). */
+static int f77_call_me(int e, int *addrs, int *lens, int nargs) {
+    int rty; int cb; int nc; int ai; int r;
+    rty = f77_me_ty[e];
+    if (f77_me_pkind[e] != F77_UNIT_FUNC) { f77_error("an operator's procedure is a FUNCTION"); ex_ty = TY_INT; return f77_iconst(0); }
+    if (f77_me_rrank[e] > 0) { f77_error("an operator's array-valued FUNCTION is not supported yet"); ex_ty = TY_INT; return f77_iconst(0); }
+    if (rty == TY_DERIVED) return f77_dt_fcall(f77_me_str[e], -1, addrs, lens, nargs, f77_me_ival[e], f77_me_name[e]);
+    if (rty == TY_CHAR) return f77_char_fcall(f77_me_str[e], f77_me_ival[e], addrs, lens, nargs);
+    if (rty == TY_DCPLX) return f77_dcx_fcall(f77_me_str[e], -1, addrs, lens, nargs);
+    cb = h_ncarg;
+    nc = 0;
+    for (ai = 0; ai < nargs; ai++) { f77_carg(addrs[ai], 0); nc = nc + 1; }
+    for (ai = 0; ai < nargs; ai++) if (lens[ai] >= 0) { f77_carg(lens[ai], 0); nc = nc + 1; }
+    r = hi_emit(HI_CALL, rty == TY_DOUBLE ? TY_INT : rty == TY_CPLX ? TY_FLOAT : rty, -1, -1, nc, f77_me_str[e]);
+    h_cbase[r] = cb;
+    ex_ty = rty; ex_log = f77_me_log[e]; ex_hi = -1;
+    if (rty == TY_DOUBLE) ex_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    else if (rty == TY_CPLX) ex_hi = hi_emit(HI_CALLHI, TY_FLOAT, r, -1, 0, NULL);
+    return r;
+}
+
+/* Operator opn on n operands (values v[] as f77_expr left them: types,
+ * high words, lengths, derived types): the specific its generic picks,
+ * called -- or -1, said, when there is none. */
+static int f77_op_apply(char *opn, int n, int *v, int *ty, int *hi, int *len, int *dt) {
+    int g; int e; int k; int rk[2]; int addrs[2]; int lens[2];
+    g = f77_op_generic(opn);
+    for (k = 0; k < n; k++) rk[k] = 0;
+    e = g >= 0 ? f77_op_pick(g, n, ty, rk, dt) : -1;
+    if (e < 0) {
+        char m[96];
+        sprintf(m, "no OPERATOR(%s) here for these operands", opn);
+        f77_error(m);
+        ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+        return -1;
+    }
+    for (k = 0; k < n; k++) addrs[k] = f77_op_actual(v[k], ty[k], hi[k], len[k], &lens[k]);
+    return f77_call_me(e, addrs, lens, n);
+}
+
+/* Defined assignment (F90 12.3.2.1.2): the ASSIGNMENT(=) specific for a
+ * target of type tty (tdt its derived type) and a value x (F77_OPND),
+ * called on the target's address taddr (tlen a CHARACTER's length):
+ * 1 when there was one, else 0 and nothing done. */
+static int f77_asg_try(int taddr, int tty, int tdt, int tlen, int *x) {
+    int g; int e; int ty[2]; int rk[2]; int dt[2]; int addrs[2]; int lens[2]; int cb; int nc; int k; int r;
+    {
+        int sy;
+        sy = f77_sym_find("ASG:");
+        g = sy >= 0 && f77_sme[sy] >= 0 && f77_me_kind[f77_sme[sy]] == F77_ME_GENERIC ? f77_sme[sy] : -1;
+    }
+    if (g < 0) return 0;
+    ty[0] = tty; ty[1] = x[1]; rk[0] = 0; rk[1] = 0; dt[0] = tdt; dt[1] = x[4];
+    e = f77_op_pick(g, 2, ty, rk, dt);
+    if (e < 0) return 0;
+    if (f77_me_pkind[e] != F77_UNIT_SUBR) { f77_error("an ASSIGNMENT(=)'s procedure is a SUBROUTINE"); return 1; }
+    addrs[0] = taddr; lens[0] = tty == TY_CHAR ? tlen : -1;
+    addrs[1] = f77_op_actual(x[0], x[1], x[2], x[3], &lens[1]);
+    cb = h_ncarg;
+    nc = 0;
+    for (k = 0; k < 2; k++) { f77_carg(addrs[k], 0); nc = nc + 1; }
+    for (k = 0; k < 2; k++) if (lens[k] >= 0) { f77_carg(lens[k], 0); nc = nc + 1; }
+    r = hi_emit(HI_CALL, TY_INT, -1, -1, nc, f77_me_str[e]);
+    h_cbase[r] = cb;
+    return 1;
+}
+
+/* A binary operator on operands one of which is a structure: its
+ * defined operation (f77_op_apply), or said. */
+static int f77_op_binary(int tok, char *opn, int a, int aty, int ahi, int alen, int adt, int b, int bty, int bhi, int blen, int bdt) {
+    int v[2]; int ty[2]; int hi[2]; int len[2]; int dt[2]; int r;
+    (void)tok;
+    v[0] = a; v[1] = b; ty[0] = aty; ty[1] = bty; hi[0] = ahi; hi[1] = bhi;
+    len[0] = alen; len[1] = blen; dt[0] = adt; dt[1] = bdt;
+    r = f77_op_apply(opn, 2, v, ty, hi, len, dt);
+    if (r < 0) { ex_ty = TY_INT; ex_hi = -1; return f77_iconst(0); }
+    return r;
+}
+
+/* Intrinsic operator tok on operands x and y (F77_OPND), one of them a
+ * structure: its defined operation, 1 and *res; 0 when neither is. */
+static int f77_op_try2(int tok, int *x, int *y, int *res) {
+    if (x[1] != TY_DERIVED && y[1] != TY_DERIVED) return 0;
+    if (f77_aex_k > 0) {
+        f77_error("a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)");
+        ex_ty = TY_INT; ex_hi = -1; *res = f77_iconst(0); return 1;
+    }
+    *res = f77_op_binary(tok, f77_op_name(tok), x[0], x[1], x[2], x[3], x[4], y[0], y[1], y[2], y[3], y[4]);
+    return 1;
+}
+static int f77_op_try1(int tok, int *x, int *res) {
+    int v[1]; int ty[1]; int hi[1]; int len[1]; int dt[1];
+    if (x[1] != TY_DERIVED) return 0;
+    if (f77_aex_k > 0) {
+        f77_error("a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)");
+        ex_ty = TY_INT; ex_hi = -1; *res = f77_iconst(0); return 1;
+    }
+    v[0] = x[0]; ty[0] = x[1]; hi[0] = x[2]; len[0] = x[3]; dt[0] = x[4];
+    *res = f77_op_apply(f77_op_name(tok), 1, v, ty, hi, len, dt);
+    if (*res < 0) { ex_ty = TY_INT; ex_hi = -1; *res = f77_iconst(0); }
+    return 1;
+}
+
 static int f77_binop(int op, int a, int aty, int ahi, int b, int bty, int bhi) {
     int rty;
     if (aty == TY_DERIVED || bty == TY_DERIVED) {
@@ -3885,9 +4217,10 @@ static int f77_binop(int op, int a, int aty, int ahi, int b, int bty, int bhi) {
 }
 
 static int f77_term(void) {
-    int a; int b; int aty; int bty; int ahi; int bhi;
+    int a; int b; int aty; int bty; int ahi; int bhi; int xo[5]; int yo[5];
     a = f77_power();
     aty = ex_ty; ahi = ex_hi;
+    F77_OPND(xo, a);
     /* a '/' before ')' closes an array constructor (/ ... /), no division */
     while (lx_t == T_STAR || (lx_t == T_SLASH && !(lx_rp < lx_rpe && *lx_rp == ')'))) {
         int op;
@@ -3895,27 +4228,34 @@ static int f77_term(void) {
         f77_tok();
         b = f77_power();
         bty = ex_ty; bhi = ex_hi;
-        a = f77_binop(op, a, aty, ahi, b, bty, bhi);
+        F77_OPND(yo, b);
+        if (!f77_op_try2(op, xo, yo, &a)) a = f77_binop(op, a, aty, ahi, b, bty, bhi);
         aty = ex_ty; ahi = ex_hi;
+        F77_OPND(xo, a);
     }
     ex_ty = aty; ex_hi = ahi;
+    if (aty == TY_DERIVED) ex_dt = xo[4];
     return a;
 }
 
 static int f77_arith(void) {
-    int a; int b; int aty; int bty; int ahi; int bhi;
+    int a; int b; int aty; int bty; int ahi; int bhi; int xo[5]; int yo[5];
     a = f77_term();
     aty = ex_ty; ahi = ex_hi;
+    F77_OPND(xo, a);
     while (lx_t == T_PLUS || lx_t == T_MINUS) {
         int op;
         op = lx_t;
         f77_tok();
         b = f77_term();
         bty = ex_ty; bhi = ex_hi;
-        a = f77_binop(op, a, aty, ahi, b, bty, bhi);
+        F77_OPND(yo, b);
+        if (!f77_op_try2(op, xo, yo, &a)) a = f77_binop(op, a, aty, ahi, b, bty, bhi);
         aty = ex_ty; ahi = ex_hi;
+        F77_OPND(xo, a);
     }
     ex_ty = aty; ex_hi = ahi;
+    if (aty == TY_DERIVED) ex_dt = xo[4];
     return a;
 }
 
@@ -3927,11 +4267,19 @@ static int f77_arith(void) {
  * only on the right of an assignment, which this does not special-case). */
 static int f77_concat(void) {
     int a; int b; int aty; int alen; int aclen; int bclen; int tmp; int t;
+    int xo[5]; int yo[5];
     a = f77_arith();
     aty = ex_ty; alen = ex_len; aclen = ex_clen;
+    F77_OPND(xo, a);
     while (lx_t == T_CONCAT) {
         f77_tok();
         b = f77_arith();
+        F77_OPND(yo, b);
+        if (f77_op_try2(T_CONCAT, xo, yo, &a)) {
+            aty = ex_ty; alen = ex_len; aclen = ex_clen;
+            F77_OPND(xo, a);
+            continue;
+        }
         if (aty != TY_CHAR || ex_ty != TY_CHAR) {
             f77_error("// needs CHARACTER operands");
             return a;
@@ -3957,26 +4305,25 @@ static int f77_concat(void) {
     }
     ex_ty = aty; ex_len = alen; ex_clen = aclen;
     if (aty == TY_CHAR) ex_hi = -1;
+    if (aty == TY_DERIVED) { ex_dt = xo[4]; ex_hi = -1; }
     return a;
 }
 
 static int f77_relat(void) {
     int a; int b; int aty; int bty; int rty; int op; int r; int ahi; int bhi;
-    int alen;
+    int alen; int xo[5]; int yo[5];
     a = f77_concat();
     aty = ex_ty; ahi = ex_hi; alen = ex_len;
+    F77_OPND(xo, a);
     if (lx_t == T_EQ || lx_t == T_NE || lx_t == T_LT ||
         lx_t == T_LE || lx_t == T_GT || lx_t == T_GE) {
         op = lx_t;
         f77_tok();
         b = f77_concat();
         bty = ex_ty; bhi = ex_hi;
+        F77_OPND(yo, b);
+        if (f77_op_try2(op, xo, yo, &r)) return r;
         ex_log = 1;
-        if (aty == TY_DERIVED || bty == TY_DERIVED) {
-            f77_error("a comparison of structures needs an operator defined for their type (not supported yet)");
-            ex_ty = TY_INT;
-            return f77_iconst(0);
-        }
         if (aty == TY_CHAR || bty == TY_CHAR) {
             int args[4];
             if (aty != bty) { f77_error("CHARACTER compared with a numeric"); ex_ty = TY_INT; return f77_iconst(0); }
@@ -4046,14 +4393,17 @@ static int f77_relat(void) {
         return hi_emit(HI_SGE, TY_INT, a, b, 0, NULL);
     }
     ex_ty = aty; ex_hi = ahi;
+    if (aty == TY_DERIVED) ex_dt = xo[4];
     return a;
 }
 
 static int f77_not(void) {
-    int v;
+    int v; int xo[5]; int r;
     if (lx_t == T_NOT) {
         f77_tok();
         v = f77_not();
+        F77_OPND(xo, v);
+        if (f77_op_try1(T_NOT, xo, &r)) return r;
         ex_ty = TY_INT;
         ex_log = 1;
         return hi_emit(HI_NOT, TY_INT, v, -1, 0, NULL);
@@ -4063,11 +4413,14 @@ static int f77_not(void) {
 
 static int f77_and(void) {
     int a;
-    int b;
+    int b; int xo[5]; int yo[5];
     a = f77_not();
     while (lx_t == T_AND) {
+        F77_OPND(xo, a);
         f77_tok();
         b = f77_not();
+        F77_OPND(yo, b);
+        if (f77_op_try2(T_AND, xo, yo, &a)) continue;
         a = hi_emit(HI_AND, TY_INT, a, b, 0, NULL);
         ex_ty = TY_INT;
         ex_log = 1;
@@ -4077,11 +4430,14 @@ static int f77_and(void) {
 
 static int f77_or(void) {
     int a;
-    int b;
+    int b; int xo[5]; int yo[5];
     a = f77_and();
     while (lx_t == T_OR) {
+        F77_OPND(xo, a);
         f77_tok();
         b = f77_and();
+        F77_OPND(yo, b);
+        if (f77_op_try2(T_OR, xo, yo, &a)) continue;
         a = hi_emit(HI_OR, TY_INT, a, b, 0, NULL);
         ex_ty = TY_INT;
         ex_log = 1;
@@ -4089,19 +4445,57 @@ static int f77_or(void) {
     return a;
 }
 
-static int f77_expr(void) {
+static int f77_expr_eqv(void) {
     int a;
-    int b;
+    int b; int xo[5]; int yo[5];
     a = f77_or();
     while (lx_t == T_EQV || lx_t == T_NEQV) {
         int op;
         op = lx_t;
+        F77_OPND(xo, a);
         f77_tok();
         b = f77_or();
+        F77_OPND(yo, b);
+        if (f77_op_try2(op, xo, yo, &a)) continue;
         a = hi_emit(HI_XOR, TY_INT, a, b, 0, NULL);
         if (op == T_EQV) a = hi_emit(HI_NOT, TY_INT, a, -1, 0, NULL);
         ex_ty = TY_INT;
         ex_log = 1;
+    }
+    return a;
+}
+
+/* A defined operator's operation, .NAME. on n operands (F77_OPND). */
+static int f77_op_defined(char *nm, int n, int *x, int *y) {
+    char opn[F77_MAX_NAME + 4];
+    int v[2]; int ty[2]; int hi[2]; int len[2]; int dt[2]; int k; int r;
+    sprintf(opn, ".%s.", nm);
+    if (f77_aex_k > 0) {
+        f77_error("a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)");
+        ex_ty = TY_INT; ex_hi = -1; return f77_iconst(0);
+    }
+    for (k = 0; k < n; k++) {
+        int *o;
+        o = k == 0 ? x : y;
+        v[k] = o[0]; ty[k] = o[1]; hi[k] = o[2]; len[k] = o[3]; dt[k] = o[4];
+    }
+    r = f77_op_apply(opn, n, v, ty, hi, len, dt);
+    if (r < 0) { ex_ty = TY_INT; ex_hi = -1; return f77_iconst(0); }
+    return r;
+}
+
+/* An expression (F90 7.1.1.7): a defined binary operator binds loosest. */
+static int f77_expr(void) {
+    int a; int b; int xo[5]; int yo[5];
+    a = f77_expr_eqv();
+    while (lx_t == T_DOTOP) {
+        char nm[F77_MAX_NAME];
+        strcpy(nm, lex_name);
+        F77_OPND(xo, a);
+        f77_tok();
+        b = f77_expr_eqv();
+        F77_OPND(yo, b);
+        a = f77_op_defined(nm, 2, xo, yo);
     }
     return a;
 }
@@ -5988,6 +6382,11 @@ static void f77_stmt_assign(void) {
             end = lx_stmt_len;
             if (f77_hoist(rhs, &end)) f77_scan_from(rhs);
             v = f77_expr();
+            {
+                int xo[5];
+                F77_OPND(xo, v);
+                if (f77_asg_try(addr, TY_DERIVED, dt, -1, xo)) { f77_tfree_to(mk); return; }
+            }
             if (ex_ty != TY_DERIVED || ex_dt != dt) { f77_error("a value of another type for a structure"); f77_tfree_to(mk); return; }
             f77_copy_n(addr, f77_dcx_arg(v), f77_iconst(f77_dt_size[dt]));
             f77_tfree_to(mk);
@@ -6004,6 +6403,12 @@ static void f77_stmt_assign(void) {
         if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
         f77_tok();
         v = f77_expr();
+        if (ex_ty == TY_DERIVED) {
+            int xo[5];
+            F77_OPND(xo, v);
+            f77_sstored[s] = 1;
+            if (f77_asg_try(addr, TY_CHAR, -1, dlen, xo)) return;
+        }
         if (ex_ty != TY_CHAR) { f77_error("a CHARACTER variable needs a CHARACTER value"); return; }
         f77_sstored[s] = 1;
         f77_char_assign(addr, dlen, v, ex_len);
@@ -6028,6 +6433,19 @@ static void f77_stmt_assign(void) {
     f77_tok();
     v = f77_expr();
     vty = ex_ty;
+    if (vty == TY_DERIVED) {
+        /* a defined assignment's: into a temporary, then stored */
+        int xo[5]; int tmp; int ty;
+        F77_OPND(xo, v);
+        ty = f77_mty(s);
+        f77_frame = f77_frame + f77_tysize(ty);
+        tmp = hi_emit(HI_ALLOCA, f77_aty(ty), -1, -1, 0 - f77_frame, NULL);
+        f77_alloca_add(tmp, 0 - f77_frame);
+        if (!f77_asg_try(tmp, f77_sty[s], -1, -1, xo)) { f77_error("a structure's value for a variable of another type"); return; }
+        v = f77_load_at(tmp, ty);
+        vty = ty;
+        f77_sstored[s] = 1;
+    }
     if (addr == f77_sval[s] && f77_srank[s] == 0)
         f77_store_sym_val(s, v, vty, ex_hi);
     else
@@ -10463,12 +10881,8 @@ static int f77_generic_all_afn(int g) {
     any = 0;
     p = f77_me_str[g];
     while (*p) {
-        char nm[F77_MAX_NAME]; int k; int e;
-        k = 0;
-        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
-        nm[k] = 0;
-        while (*p == ' ') p++;
-        e = f77_me_find(f77_me_home[g], nm);
+        char nm[F77_MAX_NAME]; int e;
+        e = f77_gen_item(&p, f77_me_home[g], nm);
         if (e < 0 || f77_me_kind[e] != F77_ME_PROC || f77_me_rrank[e] == 0) return 0;
         any = 1;
     }
@@ -10493,11 +10907,7 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
         static char names[64][F77_MAX_NAME];
         int opt[64]; int isch[64]; int got[16];
         int k; int e; int nd; int ok;
-        k = 0;
-        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
-        nm[k] = 0;
-        while (*p == ' ') p++;
-        e = f77_me_find(m, nm);
+        e = f77_gen_item(&p, m, nm);
         if (e < 0 || f77_me_kind[e] != F77_ME_PROC) continue;
         nd = f77_callee_dummies(-1, e, names, opt, isch);
         if (nd < n || nd > 16) continue;
@@ -10511,6 +10921,7 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
             got[j] = 1;
             t = f77_me_argty[e][j];
             if ((t & 255) != (tys[i] & 255) || ((t >> 12) & 15) != ((tys[i] >> 12) & 15)) ok = 0;
+            if ((tys[i] & 15) == TY_DERIVED && f77_gp_dts && f77_gp_dts[i] != f77_me_argdt[e][j]) ok = 0;
         }
         for (k = 0; k < nd && ok; k++) if (!got[k] && !opt[k]) ok = 0;
         if (ok) return e;
@@ -12217,6 +12628,7 @@ static int f77_actual_addr(void) {
     int tmp;
 
     f77_act_ty = -1;
+    f77_act_dt = -1;
     f77_act_aa = -1;
     f77_act_pslot = -1;
 
@@ -12333,8 +12745,10 @@ static int f77_actual_addr(void) {
                 f77_tok();
                 v = f77_aa_section(s);
                 f77_act_ty = f77_sty[s] + 16 + 4096 * f77_nsec_rank;
+                f77_act_dt = f77_sty[s] == TY_DERIVED ? f77_sdt[s] : -1;
                 return v;
             }
+            f77_act_dt = f77_sty[s] == TY_DERIVED ? f77_sdt[s] : -1;
             if (lx_t == T_LP && f77_srank[s] > 0) {
                 f77_tok();
                 f77_act_ty = f77_sty[s];
@@ -12365,6 +12779,7 @@ static int f77_actual_addr(void) {
     vty = ex_ty;
     vhi = ex_hi;
     f77_act_ty = vty;
+    f77_act_dt = vty == TY_DERIVED ? ex_dt : -1;
     if (vty == TY_CHAR) {
         /* A character value is already an address. */
         f77_act_len = ex_len;
@@ -12712,6 +13127,7 @@ static void f77_stmt_call1(int skip) {
     int addrs[64];
     int lens[64];
     int tys[64];
+    int dts[64];
     char kws[64][F77_MAX_NAME];
             int pss[64];
     int aas[64];
@@ -12754,6 +13170,7 @@ static void f77_stmt_call1(int skip) {
                 if (nargs < 64) {
                     f77_kw_take(kws[nargs]);
                     addrs[nargs] = f77_actual_addr(); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
+                    dts[nargs] = f77_act_dt;
                 }
                 else f77_actual_addr();
                 nargs = nargs + 1;
@@ -12775,7 +13192,7 @@ static void f77_stmt_call1(int skip) {
             if (fu >= 0 && ds >= 0 && f77_sme[ds] >= 0 && f77_me_iface[f77_sme[ds]]) fu = -1;   /* by its interface body */
             if (fu < 0 && ds >= 0 && f77_sme[ds] >= 0) {
                 fe = f77_sme[ds];
-                if (f77_me_kind[fe] == F77_ME_GENERIC) fe = f77_generic_pick_kw(fe, tys, kws, nargs > 64 ? 64 : nargs);
+                if (f77_me_kind[fe] == F77_ME_GENERIC) { f77_gp_dts = dts; fe = f77_generic_pick_kw(fe, tys, kws, nargs > 64 ? 64 : nargs); f77_gp_dts = NULL; }
             }
         }
         if (!f77_actuals_order(fu, fe, nm, addrs, lens, tys, aas, kws, &nargs, pss)) return;
@@ -13187,6 +13604,23 @@ static int f77_me_new(int m, char *nm, int kind) {
     f77_me_ty[e] = TY_INT; f77_me_log[e] = 0; f77_me_ival[e] = 0;
     f77_me_d[e] = 0.0; f77_me_d2[e] = 0.0; f77_me_str[e] = NULL;
     f77_me_pkind[e] = 0; f77_me_nargs[e] = 0; f77_me_rrank[e] = 0; f77_me_private[e] = 0; f77_me_dnames[e] = NULL; f77_me_iface[e] = 0; f77_me_vdt[e] = -1;
+    { int q; for (q = 0; q < 16; q++) f77_me_argdt[e][q] = -1; }
+    return e;
+}
+
+/* A copy in module m, named nm, of procedure or generic entity o. */
+static int f77_me_copy(int m, char *nm, int o) {
+    int e;
+    e = f77_me_new(m, nm, f77_me_kind[o]);
+    if (e < 0) return -1;
+    f77_me_home[e] = f77_me_home[o];
+    f77_me_ty[e] = f77_me_ty[o]; f77_me_log[e] = f77_me_log[o];
+    f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o];
+    f77_me_nargs[e] = f77_me_nargs[o];
+    f77_me_ival[e] = f77_me_ival[o]; f77_me_rrank[e] = f77_me_rrank[o]; f77_me_dnames[e] = f77_me_dnames[o];
+    f77_me_iface[e] = f77_me_iface[o];
+    memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
+    memcpy(f77_me_argdt[e], f77_me_argdt[o], sizeof(f77_me_argdt[o]));
     return e;
 }
 static int f77_me_find(int m, char *nm) {
@@ -13207,6 +13641,18 @@ static int f77_mod_private(int m, char *nm) {
     return m < 64 ? f77_mvis_default[m] : 0;
 }
 
+/* An entity's name as its source spells it: OPERATOR(op) and
+ * ASSIGNMENT(=) for the generics f77_op_spec names. */
+static char *f77_ent_disp(char *nm) {
+    static char b[2][F77_MAX_NAME + 16];
+    static int w;
+    w = !w;
+    if (strncmp(nm, "OP:", 3) == 0) sprintf(b[w], "OPERATOR(%s)", nm + 3);
+    else if (strcmp(nm, "ASG:") == 0) strcpy(b[w], "ASSIGNMENT(=)");
+    else return nm;
+    return b[w];
+}
+
 /* nm said PUBLIC (priv 0) or PRIVATE in the module being compiled. */
 static void f77_vis_note(char *nm, int priv) {
     int k;
@@ -13214,7 +13660,7 @@ static void f77_vis_note(char *nm, int priv) {
     if (f77_ukind[f77_cur_unit] != F77_UNIT_MODULE) { f77_error("PUBLIC and PRIVATE are a module's"); return; }
     for (k = 0; k < f77_nvis; k++)
         if (f77_vis_mod[k] < 0 && strcmp(f77_vis_name[k], nm) == 0) {
-            sprintf(m, "%s is said PUBLIC or PRIVATE twice", nm);
+            sprintf(m, "%s is said PUBLIC or PRIVATE twice", f77_ent_disp(nm));
             f77_error(m);
             return;
         }
@@ -13225,6 +13671,7 @@ static void f77_vis_note(char *nm, int priv) {
     f77_nvis = f77_nvis + 1;
 }
 
+static int f77_op_spec(char *out);
 /* PUBLIC or PRIVATE, alone (the module's default) or with a list of its
  * entities, [::] before it. */
 static void f77_stmt_access(int priv, int skip) {
@@ -13237,14 +13684,10 @@ static void f77_stmt_access(int priv, int skip) {
     if (strncmp(lx_stmt + skip, "::", 2) == 0) skip = skip + 2;
     f77_scan_from(skip);
     for (;;) {
+        char nm[F77_MAX_NAME];
         if (lx_t != T_NAME) { f77_error("expected a name in PUBLIC or PRIVATE"); return; }
-        if ((strcmp(lex_name, "OPERATOR") == 0 || strcmp(lex_name, "ASSIGNMENT") == 0) && lx_rp < lx_rpe && *lx_rp == '(') {
-            f77_error("PUBLIC or PRIVATE of an operator is not supported yet");
-            lx_t = T_EOF;
-            return;
-        }
-        f77_vis_note(lex_name, priv);
-        f77_tok();
+        if (f77_op_spec(nm)) f77_vis_note(nm, priv);
+        else { f77_vis_note(lex_name, priv); f77_tok(); }
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
@@ -13266,12 +13709,50 @@ static void f77_mod_snapshot(int u) {
         for (o = 0; ib >= 0 && o < f77_nme; o++) {
             int e;
             if (f77_me_mod[o] != ib) continue;
-            e = f77_me_new(m, f77_me_name[o], F77_ME_PROC);
+            e = f77_me_copy(m, f77_me_name[o], o);
             if (e < 0) return;
-            f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o]; f77_me_ty[e] = f77_me_ty[o];
-            f77_me_log[e] = f77_me_log[o]; f77_me_rrank[e] = f77_me_rrank[o]; f77_me_ival[e] = f77_me_ival[o];
-            f77_me_nargs[e] = f77_me_nargs[o]; f77_me_dnames[e] = f77_me_dnames[o]; f77_me_iface[e] = 1;
-            memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
+            f77_me_home[e] = m;
+            f77_me_iface[e] = 1;
+        }
+    }
+    {
+        /* the procedures and generics it has by USE, for its users too
+         * (F90 11.3.2): a generic's specifics copied under hidden names
+         * ($n), so that its list names entities of this module */
+        int nh;
+        nh = 0;
+        for (s = f77_scope_base; s < f77_nsym; s++) {
+            int o; int e;
+            o = f77_sme[s];
+            if (o < 0 || f77_me_iface[o] || f77_me_mod[o] == m) continue;
+            if (f77_me_kind[o] == F77_ME_PROC) {
+                e = f77_me_copy(m, f77_sname[s], o);
+                if (e < 0) return;
+                f77_me_home[e] = m;
+                f77_me_private[e] = f77_mod_private(m, f77_sname[s]);
+            } else if (f77_me_kind[o] == F77_ME_GENERIC) {
+                char *p; char *lst; size_t l;
+                lst = (char *)malloc(16 * (strlen(f77_me_str[o]) + 16));
+                lst[0] = 0; l = 0;
+                p = f77_me_str[o];
+                while (*p) {
+                    char nm[F77_MAX_NAME]; char hn[24]; int sp; int h;
+                    sp = f77_gen_item(&p, f77_me_home[o], nm);
+                    if (sp < 0) continue;
+                    sprintf(hn, "$%d", ++nh);
+                    h = f77_me_copy(m, hn, sp);
+                    if (h < 0) return;
+                    f77_me_home[h] = m;
+                    f77_me_private[h] = 1;
+                    if (l) lst[l++] = ' ';
+                    strcpy(lst + l, hn);
+                    l = l + strlen(hn);
+                }
+                e = f77_me_new(m, f77_sname[s], F77_ME_GENERIC);
+                if (e < 0) return;
+                f77_me_str[e] = lst;
+                f77_me_private[e] = f77_mod_private(m, f77_sname[s]);
+            }
         }
     }
     for (s = f77_scope_base; s < f77_nsym; s++) {
@@ -13335,7 +13816,8 @@ static void f77_mod_snapshot(int u) {
     f77_vis_default = 0;
     {
         int e;
-        for (e = 0; e < f77_nme; e++) if (f77_me_mod[e] == m) f77_me_private[e] = f77_mod_private(m, f77_me_name[e]);
+        for (e = 0; e < f77_nme; e++)
+            if (f77_me_mod[e] == m && f77_me_name[e][0] != '$') f77_me_private[e] = f77_mod_private(m, f77_me_name[e]);
     }
 }
 
@@ -13379,6 +13861,7 @@ static void f77_mod_proc(int u) {
                     s = f77_sym_find(lex_name);
                     if (s >= 0) t = f77_sty[s] + (f77_srank[s] > 0 ? 16 : 0) + (f77_sashape[s] ? 256 * f77_srank[s] : 0)
                                     + 4096 * f77_srank[s] + (f77_sopt[s] ? F77_ARG_OPT : 0) + (f77_sptr[s] ? F77_ARG_PTR : 0);
+                    if (s >= 0 && n < 16 && f77_sty[s] == TY_DERIVED) f77_me_argdt[e][n] = f77_sdt[s];
                     if (n < 16) {
                         char *o;
                         int l;
@@ -13514,6 +13997,57 @@ static void f77_me_bind(int e, char *local) {
         return;
     }
     /* a generic: resolved where it is referenced */
+    s = f77_sym_find(local);
+    if (s >= 0 && f77_sme[s] >= 0 && f77_sme[s] != e && f77_me_kind[f77_sme[s]] == F77_ME_GENERIC) {
+        /* one of the name already: the two are one generic (F90 11.3.2),
+         * each item qualified by the module it is found in */
+        int o; int mm; int k; char *lst; size_t cap; size_t l;
+        int gg[2];
+        o = f77_sme[s];
+        mm = f77_mod_find("@merged");
+        if (mm < 0) mm = f77_mod_new("@merged", -1);
+        cap = strlen(f77_me_str[o]) + strlen(f77_me_str[e]) + 64;
+        lst = (char *)malloc(cap);
+        lst[0] = 0; l = 0;
+        gg[0] = o; gg[1] = e;
+        for (k = 0; k < 2; k++) {
+            char *p; char nm[F77_MAX_NAME + 16];
+            p = f77_me_str[gg[k]];
+            while (*p) {
+                int n;
+                n = 0;
+                while (*p && *p != ' ' && n < F77_MAX_NAME - 1) nm[n++] = *p++;
+                nm[n] = 0;
+                while (*p == ' ') p++;
+                if (!strchr(nm, '@')) sprintf(nm + n, "@%d", f77_me_home[gg[k]]);
+                {
+                    /* once, when both have it */
+                    char *q; size_t nl;
+                    nl = strlen(nm);
+                    q = strstr(lst, nm);
+                    while (q && !((q == lst || q[-1] == ' ') && (q[nl] == ' ' || q[nl] == 0))) q = strstr(q + 1, nm);
+                    if (q) continue;
+                    if (l + nl + 2 > cap) { cap = cap * 2 + nl; lst = (char *)realloc(lst, cap); }
+                    if (l) lst[l++] = ' ';
+                    strcpy(lst + l, nm);
+                    l = l + nl;
+                }
+            }
+        }
+        if (mm >= 0) {
+            int ne;
+            for (ne = 0; ne < f77_nme; ne++)            /* made so before: that one */
+                if (f77_me_mod[ne] == mm && strcmp(f77_me_name[ne], local) == 0 && strcmp(f77_me_str[ne], lst) == 0) break;
+            if (ne < f77_nme) { free(lst); f77_sme[s] = ne; return; }
+            ne = f77_me_new(mm, local, F77_ME_GENERIC);
+            if (ne >= 0) {
+                f77_me_str[ne] = lst;
+                f77_me_home[ne] = -1;
+                f77_sme[s] = ne;
+            }
+        }
+        return;
+    }
     s = f77_sym(local);
     f77_sexternal[s] = 1;
     f77_styped[s] = 1;
@@ -13571,16 +14105,8 @@ static void f77_host_save(int u) {
         if (f77_sme[s] >= 0) {
             /* a procedure or generic the host has by USE: its internal
              * procedures have it too */
-            int o;
-            o = f77_sme[s];
-            e = f77_me_new(m, f77_sname[s], f77_me_kind[o]);
+            e = f77_me_copy(m, f77_sname[s], f77_sme[s]);
             if (e < 0) return;
-            f77_me_home[e] = f77_me_home[o];
-            f77_me_ty[e] = f77_me_ty[o]; f77_me_log[e] = f77_me_log[o];
-            f77_me_str[e] = f77_me_str[o]; f77_me_pkind[e] = f77_me_pkind[o];
-            f77_me_nargs[e] = f77_me_nargs[o];
-            f77_me_ival[e] = f77_me_ival[o]; f77_me_rrank[e] = f77_me_rrank[o]; f77_me_dnames[e] = f77_me_dnames[o];
-            memcpy(f77_me_argty[e], f77_me_argty[o], sizeof(f77_me_argty[o]));
             continue;
         }
         if (!f77_sparam[s] && f77_hc_host == u && f77_hc_has(f77_sname[s]) && !f77_sexternal[s] && !f77_sintrinsic[s] &&
@@ -13792,6 +14318,18 @@ static int f77_mod_read(char *nm) {
                     while (*q == ' ') q++;
                 }
             }
+        } else if (kind == 'A') {
+            int pe; int q;
+            char *qq;
+            pe = f77_me_find(m, name);
+            qq = p + 2 + strlen(name);
+            for (q = 0; pe >= 0 && q < f77_me_nargs[pe] && q < 16; q++) {
+                char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME]; int used;
+                used = 0;
+                if (sscanf(qq, " %63s %63s%n", tn, tm, &used) != 2) break;
+                qq = qq + used;
+                f77_me_argdt[pe][q] = strcmp(tn, "-") == 0 ? -1 : f77_dt_lookup(tn, strcmp(tm, "-") == 0 ? "" : tm);
+            }
         } else if (kind == 'W') {
             char tn[F77_MAX_NAME]; char tm[F77_MAX_NAME];
             int pe;
@@ -13857,7 +14395,7 @@ static void f77_mod_write(void) {
         FILE *f;
         int k;
         int e;
-        if (f77_mod_unit[m] < 0 || f77_mod_name[m][0] == '#') continue;
+        if (f77_mod_unit[m] < 0 || f77_mod_name[m][0] == '#' || f77_mod_name[m][0] == '@') continue;
         for (k = 0; f77_mod_name[m][k]; k++) {
             char c;
             c = f77_mod_name[m][k];
@@ -13905,6 +14443,22 @@ static void f77_mod_write(void) {
                 for (a = 0; a < f77_me_nargs[e] && a < 16; a++) fprintf(f, " %d", f77_me_argty[e][a]);
                 if (f77_me_dnames[e]) fprintf(f, " = %s", f77_me_dnames[e]);
                 fputc('\n', f);
+                {
+                    /* its dummies' derived types, by name and module */
+                    int q; int any;
+                    any = 0;
+                    for (q = 0; q < f77_me_nargs[e] && q < 16; q++) if (f77_me_argdt[e][q] >= 0) any = 1;
+                    if (any) {
+                        fprintf(f, "A %s", f77_me_name[e]);
+                        for (q = 0; q < f77_me_nargs[e] && q < 16; q++) {
+                            int d;
+                            d = f77_me_argdt[e][q];
+                            if (d < 0) fprintf(f, " - -");
+                            else fprintf(f, " %s %s", f77_dt_name[d], f77_dt_mod[d][0] ? f77_dt_mod[d] : "-");
+                        }
+                        fputc('\n', f);
+                    }
+                }
                 if (f77_me_ty[e] == TY_DERIVED && f77_me_ival[e] >= 0)        /* its result's type */
                     fprintf(f, "D %s %s %s\n", f77_me_name[e], f77_dt_name[f77_me_ival[e]],
                             f77_dt_mod[f77_me_ival[e]][0] ? f77_dt_mod[f77_me_ival[e]] : "-");
@@ -13970,6 +14524,16 @@ static void f77_stmt_use(int skip) {
         }
         while (lx_t == T_NAME) {
             if (nr >= 64) { f77_error("too many names in a USE"); return; }
+            if (f77_op_spec(loc[nr])) {
+                /* OPERATOR(op) or ASSIGNMENT(=): never renamed in
+                 * Fortran 90 */
+                if (!only) { f77_error("an operator is named in a USE's ONLY list, not renamed"); return; }
+                strcpy(rem[nr], loc[nr]);
+                nr = nr + 1;
+                if (lx_t != T_COMMA) break;
+                f77_tok();
+                continue;
+            }
             strcpy(loc[nr], lex_name);
             strcpy(rem[nr], lex_name);
             f77_tok();
@@ -13992,8 +14556,8 @@ static void f77_stmt_use(int skip) {
         e = f77_me_find(m, rem[k]);
         if (e < 0 || f77_me_private[e]) {
             char msg[200];
-            if (e < 0) sprintf(msg, "module %s has no %s", mname, rem[k]);
-            else sprintf(msg, "%s is PRIVATE in module %s", rem[k], mname);
+            if (e < 0) sprintf(msg, "module %s has no %s", mname, f77_ent_disp(rem[k]));
+            else sprintf(msg, "%s is PRIVATE in module %s", f77_ent_disp(rem[k]), mname);
             f77_error(msg);
             return;
         }
@@ -14013,8 +14577,9 @@ static void f77_stmt_use(int skip) {
 /* INTERFACE (Fortran 90 12.3.2.1).  A generic name for module procedures
  * and interface bodies, INTERFACE name ... END INTERFACE, in a module; an
  * interface block of interface bodies, INTERFACE ... END INTERFACE, in
- * any unit.  f77_iface_open is the generic being read, -2 an unnamed
- * block, -1 none.  Operators and assignment are refused. */
+ * any unit; INTERFACE OPERATOR(op) and ASSIGNMENT(=) the generics
+ * "OP:op" and "ASG:" (f77_op_spec).  f77_iface_open is the generic being
+ * read, -2 an unnamed block, -1 none. */
 static int f77_iface_open = -1;
 /* An interface body being read (f77_ib_in): its declarations go through
  * the ordinary declaration code in a scope of their own, its dummies
@@ -14112,6 +14677,7 @@ static void f77_ib_end(void) {
         d = f77_sym_find(f77_ib_dn[k]);
         f77_me_argty[e][k] = f77_sty[d] + (f77_srank[d] > 0 ? 16 : 0) + (f77_sashape[d] ? 256 * f77_srank[d] : 0)
                              + 4096 * f77_srank[d] + (f77_sopt[d] ? F77_ARG_OPT : 0) + (f77_sptr[d] ? F77_ARG_PTR : 0);
+        if (f77_sty[d] == TY_DERIVED) f77_me_argdt[e][k] = f77_sdt[d];
         o = f77_me_dnames[e];
         l = o ? (int)strlen(o) : 0;
         f77_me_dnames[e] = (char *)realloc(o, (size_t)l + strlen(f77_ib_dn[k]) + 2);
@@ -14154,20 +14720,49 @@ static void f77_ib_end(void) {
     }
 }
 
+/* OPERATOR(op) or ASSIGNMENT(=), the current token its first name: the
+ * generic's internal name in out ("OP:op", "ASG:") and 1, the tokens
+ * taken; 0, nothing taken, when it is neither. */
+static int f77_op_spec(char *out) {
+    int t;
+    if (lx_t != T_NAME || lx_rp >= lx_rpe || *lx_rp != '(') return 0;
+    if (strcmp(lex_name, "ASSIGNMENT") == 0) {
+        f77_tok(); f77_tok();
+        if (lx_t != T_ASSIGN) { f77_error("ASSIGNMENT(=) is the only assignment"); strcpy(out, "ASG:"); return 1; }
+        f77_tok();
+        if (lx_t != T_RP) f77_error("expected ) after ASSIGNMENT(=");
+        else f77_tok();
+        strcpy(out, "ASG:");
+        return 1;
+    }
+    if (strcmp(lex_name, "OPERATOR") != 0) return 0;
+    f77_tok(); f77_tok();
+    t = lx_t;
+    if (t == T_DOTOP) {
+        if (strlen(lex_name) > 31) f77_error("a defined operator's name is 31 letters at most");
+        sprintf(out, "OP:.%s.", lex_name);
+    } else if (t >= T_PLUS && t <= T_NEQV && t != T_COLON) sprintf(out, "OP:%s", f77_op_name(t));
+    else { f77_error("expected an operator in OPERATOR( )"); strcpy(out, "OP:?"); return 1; }
+    f77_tok();
+    if (lx_t != T_RP) f77_error("expected ) after OPERATOR(op");
+    else f77_tok();
+    return 1;
+}
+
 static void f77_stmt_interface(void) {
+    char nm[F77_MAX_NAME];
+    int g;
     f77_scan_from(9);
     if (lx_t == T_EOF) { f77_iface_open = -2; return; }        /* a block of interface bodies */
     if (lx_t != T_NAME) { f77_error("expected a name after INTERFACE"); return; }
-    if ((strcmp(lex_name, "OPERATOR") == 0 || strcmp(lex_name, "ASSIGNMENT") == 0) && lx_rp < lx_rpe && *lx_rp == '(') {
-        f77_error("INTERFACE OPERATOR and ASSIGNMENT are not supported yet");
-        return;
-    }
+    if (!f77_op_spec(nm)) { strcpy(nm, lex_name); f77_tok(); }
+    /* a second block of one generic extends it (F90 14.1.2.3) */
+    for (g = 0; g < f77_gi_n; g++) if (strcmp(f77_gi_name[g], nm) == 0) { f77_iface_open = g; return; }
     if (f77_gi_n >= 32) { f77_error("too many generic interfaces"); return; }
-    strcpy(f77_gi_name[f77_gi_n], lex_name);
+    strcpy(f77_gi_name[f77_gi_n], nm);
     f77_gi_spec[f77_gi_n][0] = 0;
     f77_iface_open = f77_gi_n;
     f77_gi_n = f77_gi_n + 1;
-    f77_tok();
 }
 /* A statement inside an INTERFACE block: 1 when it was one (0: a
  * declaration of an interface body, for the ordinary code). */
@@ -14186,8 +14781,9 @@ static int f77_iface_stmt(void) {
     if (lx_stmt_len >= 12 && strncmp(lx_stmt, "ENDINTERFACE", 12) == 0) {
         f77_scan_from(12);
         if (lx_t == T_NAME) {
-            if (f77_iface_open < 0 || strcmp(lex_name, f77_gi_name[f77_iface_open]) != 0) f77_error("END INTERFACE names another interface");
-            f77_tok();
+            char nm[F77_MAX_NAME];
+            if (!f77_op_spec(nm)) { strcpy(nm, lex_name); f77_tok(); }
+            if (f77_iface_open < 0 || strcmp(nm, f77_gi_name[f77_iface_open]) != 0) f77_error("END INTERFACE names another interface");
         }
         if (f77_iface_open >= 0 && f77_gi_spec[f77_iface_open][0] == 0) f77_error("a generic interface with no procedure");
         if (f77_iface_open >= 0) {
@@ -14213,12 +14809,22 @@ static int f77_iface_stmt(void) {
              * specifics the interface bodies of its table */
             int e; int g;
             g = f77_iface_open;
-            e = f77_me_new(f77_ib_table(), f77_gi_name[g], F77_ME_GENERIC);
+            e = f77_me_find(f77_ib_table(), f77_gi_name[g]);
+            if (e >= 0 && f77_me_kind[e] == F77_ME_GENERIC) {
+                /* a second block of one generic: its specifics added */
+                char *o; size_t l;
+                o = f77_me_str[e];
+                l = strlen(o);
+                f77_me_str[e] = (char *)realloc(o, l + strlen(f77_gi_spec[g]) + 2);
+                if (l) f77_me_str[e][l++] = ' ';
+                strcpy(f77_me_str[e] + l, f77_gi_spec[g]);
+                e = -1;
+            } else e = f77_me_new(f77_ib_table(), f77_gi_name[g], F77_ME_GENERIC);
             if (e >= 0) {
                 f77_me_str[e] = strdup(f77_gi_spec[g]);
                 if (f77_sym_find(f77_gi_name[g]) >= 0) {
                     char m[F77_MAX_NAME + 60];
-                    sprintf(m, "%s, a generic name, is declared otherwise too", f77_gi_name[g]);
+                    sprintf(m, "%s, a generic name, is declared otherwise too", f77_ent_disp(f77_gi_name[g]));
                     f77_error(m);
                 } else f77_me_bind(e, f77_gi_name[g]);
             }
@@ -14263,19 +14869,16 @@ static int f77_generic_pick(int g, int *tys, int n) {
     p = f77_me_str[g];
     while (*p) {
         char nm[F77_MAX_NAME];
-        int k;
         int e;
-        k = 0;
-        while (*p && *p != ' ' && k < F77_MAX_NAME - 1) nm[k++] = *p++;
-        nm[k] = 0;
-        while (*p == ' ') p++;
-        e = f77_me_find(m, nm);
+        e = f77_gen_item(&p, m, nm);
         if (e >= 0 && f77_me_kind[e] == F77_ME_PROC && f77_me_nargs[e] >= n) {
             int a;
             /* by type and rank (F90 14.1.2.3; kinds are types here); the
              * dummies past the actuals OPTIONAL */
-            for (a = 0; a < n && a < 16; a++)
+            for (a = 0; a < n && a < 16; a++) {
                 if ((f77_me_argty[e][a] & 255) != (tys[a] & 255) || ((f77_me_argty[e][a] >> 12) & 15) != ((tys[a] >> 12) & 15)) break;
+                if ((tys[a] & 15) == TY_DERIVED && f77_gp_dts && f77_gp_dts[a] != f77_me_argdt[e][a]) break;     /* and the derived type */
+            }
             if (a == n || a == 16) {
                 for (a = n; a < f77_me_nargs[e] && a < 16; a++) if (!(f77_me_argty[e][a] & F77_ARG_OPT)) break;
                 if (a >= f77_me_nargs[e] || a == 16) return e;

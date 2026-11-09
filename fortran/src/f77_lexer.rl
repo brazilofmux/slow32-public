@@ -54,6 +54,7 @@
 #define T_TRUE   28
 #define T_FALSE  29
 #define T_PCT    30   /* % (Fortran 90: a component of a structure) */
+#define T_DOTOP  31   /* .NAME. -- Fortran 90's defined operator -> lex_name */
 
 /* === Current token === */
 
@@ -203,6 +204,9 @@ static int f77_number(char *ts, char *te, char *pe) {
         '.NEQV.'  => { lx_t = T_NEQV;  fbreak; };
         '.TRUE.'  => { lx_t = T_TRUE;  fbreak; };
         '.FALSE.' => { lx_t = T_FALSE; fbreak; };
+        # a defined operator (Fortran 90): the intrinsic ones above win
+        # by their order, a number's '.' by being longer
+        '.' [A-Za-z]+ '.' => { f77_name_tok(ts + 1, te - 1); lx_t = T_DOTOP; fbreak; };
 
         # --- Numeric literals (longest-match first) ---
         [0-9]+ '.' [0-9]* ([EeDd] [+\-]? [0-9]+)? => {

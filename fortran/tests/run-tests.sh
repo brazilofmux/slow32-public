@@ -368,6 +368,17 @@ if [ -x "$F77" ]; then
     printf 'type pt\nreal, allocatable :: x(:)\nend type\nend\n' > "$W/dtptr.f90"
     printf 'type(nope) :: r\nend\n' > "$W/dtnone.f90"
     printf 'type pt\ncharacter*3 :: c\ninteger :: i\nend type\ntype(pt) :: a(2)\nprint *, a%%c\nend\n' > "$W/dtcdiv.f90"
+    # defined operations: a module with OPERATOR(+) and ASSIGNMENT(=) on PT
+    opm='module m\ntype pt\nreal :: x\nend type\ninterface operator(+)\nmodule procedure padd\nend interface\ninterface assignment(=)\nmodule procedure pfromi\nend interface\ncontains\nfunction padd(a, b)\ntype(pt), intent(in) :: a, b\ntype(pt) :: padd\npadd%%x = a%%x + b%%x\nend function\nsubroutine pfromi(a, i)\ntype(pt), intent(out) :: a\ninteger, intent(in) :: i\na%%x = i\nend subroutine\nend module\n'
+    printf "${opm}program q\nuse m\ntype(pt) :: a(3), b(3)\na = b + b\nend\n" > "$W/opaex.f90"
+    printf "${opm}program q\nuse m\ntype(pt) :: a(3)\na = 1\nend\n" > "$W/opasgarr.f90"
+    printf "${opm}program q\nuse m, operator(+) => operator(-)\nend\n" > "$W/opren.f90"
+    printf "${opm}program q\nuse m, only: pt, operator(*)\nend\n" > "$W/opnone.f90"
+    printf "${opm}program q\nuse m\ntype(pt) :: a\na = 1.5\nend\n" > "$W/opasgty.f90"
+    printf 'module m\ntype pt\nreal :: x\nend type\ninterface operator(-)\nmodule procedure ps\nend interface\ncontains\nsubroutine ps(a)\ntype(pt) :: a\nend subroutine\nend module\nprogram q\nuse m\ntype(pt) :: a, b\na = -b\nend\n' > "$W/opsub.f90"
+    printf 'module m\ntype pt\nreal :: x\nend type\ninterface assignment(=)\nmodule procedure pf\nend interface\ncontains\ninteger function pf(a, b)\ntype(pt) :: a, b\npf = 0\nend function\nend module\nprogram q\nuse m\ntype(pt) :: a, b\nb = a\nend\n' > "$W/opasgfn.f90"
+    printf 'module m\ninterface operator(.x.)\nend interface\nend module\n' > "$W/opempty.f90"
+    printf 'module m\ninterface assignment(+)\nend interface\nend module\n' > "$W/opasgplus.f90"
     printf 'program p\ninterface g\nreal function f(x)\nend function\nsubroutine s(i)\nend subroutine\nend interface\nend\n' > "$W/genmix.f90"
     printf 'program p\ninterface g\nmodule procedure f\nend interface\nend\n' > "$W/genmodp.f90"
     printf 'subroutine s(c)\ncharacter*(*) c\ncall t(transfer(1, c))\nend\n' > "$W/trclen.f90"
@@ -460,14 +471,23 @@ if [ -x "$F77" ]; then
              "ptrdum:line 3: a POINTER dummy argument needs a POINTER actual" \
              "ptrshape:line 1: an ALLOCATABLE or POINTER array's shape is (:), (:,:) ..., its bounds given by ALLOCATE or =>" \
              "dtself:line 3: a component of its own type is a POINTER" \
-             "dtcmp:line 7: a comparison of structures needs an operator defined for their type (not supported yet)" \
-             "dtadd:line 5: an operator on a structure needs one defined for its type (not supported yet)" \
+             "dtcmp:line 7: no OPERATOR(==) here for these operands" \
+             "dtadd:line 5: no OPERATOR(+) here for these operands" \
              "dtnocomp:line 5: the type PT has no component Z" \
              "dtasgty:line 5: a value of another type for a structure" \
              "dtcons:line 5: the structure constructor PT needs 2 values" \
              "dtinit:line 2: a component's default initialization is Fortran 95's, not supported yet" \
              "dtptr:line 2: an ALLOCATABLE component is not supported yet" \
              "dtnone:line 1: no derived type NOPE here" \
+             "opaex:line 26: a defined operation in an array expression is not supported (it would be Fortran 95's ELEMENTAL)" \
+             "opasgarr:line 26: a value of another type for an array of structures" \
+             "opren:line 24: an operator is named in a USE's ONLY list, not renamed" \
+             "opnone:line 24: module M has no OPERATOR(*)" \
+             "opasgty:line 26: a value of another type for a structure" \
+             "opsub:line 16: an operator's procedure is a FUNCTION" \
+             "opasgfn:line 17: an ASSIGNMENT(=)'s procedure is a SUBROUTINE" \
+             "opempty:line 3: a generic interface with no procedure" \
+             "opasgplus:line 2: ASSIGNMENT(=) is the only assignment" \
              "dtcdiv:line 6: a component of an array of structures whose size does not divide the structure's is not supported yet" \
              "genmix:line 7: a generic's procedures are all FUNCTIONs or all SUBROUTINEs" \
              "genmodp:line 3: MODULE PROCEDURE is in a module's generic interface (F90 12.3.2.1)" \
