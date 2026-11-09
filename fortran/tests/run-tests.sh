@@ -248,9 +248,12 @@ fi
 # expression conform where gfortran can tell they do not (shp*: N =
 # N(1:2) compiled, reading past the section).  Array-valued functions
 # (afn*): not in a scalar's place, with an explicit interface, of a known
-# CHARACTER length, without ENTRY, not through a generic yet.  The array-valued intrinsics' limits: RESHAPE's ORDER and a
-# SHAPE of no constant size, MATMUL's and TRANSPOSE's ranks, SPREAD's DIM,
-# an array inside a constructor, MERGE's sources of two types.
+# CHARACTER length, without ENTRY, not through a generic yet.
+# The array-valued intrinsics' limits: a SHAPE of no constant size and an
+# ORDER of the wrong size, MATMUL's and TRANSPOSE's ranks, SPREAD's DIM,
+# MERGE's sources of two types, an array SHIFT of the wrong rank or
+# shape, a BOUNDARY of another length; a constructor flattening its
+# arrays to a count the target's shape does not have (aconshp).
 # WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
 # Fortran 95's; its body is array assignments; its mask is a LOGICAL array
 # of the assignments' rank (where*).
@@ -334,16 +337,17 @@ if [ -x "$F77" ]; then
     printf 'function f(n)\ncharacter(len=*) f(2)\nf = "a"\nend\n' > "$W/afnclen.f90"
     printf 'function f()\ninteger f(2)\nf = 1\nentry g()\nf = 2\nend\n' > "$W/afnent.f90"
     printf 'module m\ninterface g\nmodule procedure f\nend interface\ncontains\nfunction f(x)\nreal x\nreal f(2)\nf = x\nend function\nend module\nuse m\nreal a(2)\na = g(1.0)\nend\n' > "$W/afngen.f90"
-    printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1/))\nend\n' > "$W/rshord.f90"
     printf 'integer n(2)\nreal a(4), b(2,2)\nn = 2\na = 1.0\nb = reshape(a, n(1:2))\nend\n' > "$W/rshdyn.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = 1.0\nprint *, matmul(a, b)\nend\n' > "$W/mmrank.f90"
     printf 'real a(2), b(2)\na = 1.0\nb = transpose(a)\nend\n' > "$W/trrank.f90"
     printf 'integer k(2), m(2,2)\nk = 1\nn = 1\nm = spread(k, n, 2)\nend\n' > "$W/sprdim.f90"
-    printf 'integer k(2), m(4)\nk = 1\nm = 2 * (/ k, k /)\nend\n' > "$W/aconarr.f90"
     printf 'real a(2)\na = merge(1.0, 2, .true.)\nend\n' > "$W/mrgty.f90"
-    printf 'integer m(2,2), s(2)\nm = 1\ns = 1\nm = cshift(m, s, 2)\nend\n' > "$W/csharr.f90"
-    printf 'integer m(2,2), b(2)\nm = 1\nb = 0\nm = eoshift(m, 1, b)\nend\n' > "$W/eobnd.f90"
     printf 'integer m(2,2), s(2)\nm = 1\nn = 1\ns = sum(m, n)\nend\n' > "$W/rddim.f90"
+    printf 'integer m(9)\nm = 0\nm(1:5) = (/ (/ 1, 2 /), 3 /)\nend\n' > "$W/aconshp.f90"
+    printf 'real a(4), b(2,2)\na = 1.0\nb = reshape(a, (/2,2/), order=(/2,1,3/))\nend\n' > "$W/rshord.f90"
+    printf 'integer k(3), s(3)\nk = 1\ns = 1\nk = cshift(k, s)\nend\n' > "$W/csharr.f90"
+    printf 'integer m(2,3), s(2)\nm = 1\ns = 1\nm = cshift(m, s)\nend\n' > "$W/cshshp.f90"
+    printf "character*2 c(3)\nc = 'ab'\nc = eoshift(c, 1, 'xyz')\nend\n" > "$W/eolen.f90"
     printf 'integer m(2,2)\nm = 1\ni = maxloc(m)\nend\n' > "$W/mlscal.f90"
     printf 'integer m(2,2)\nm = 1\ni = sum(m, 1)\nend\n' > "$W/sumscal2.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
@@ -457,16 +461,17 @@ if [ -x "$F77" ]; then
              "afnclen:line 1: an array-valued FUNCTION of assumed CHARACTER length is not supported" \
              "afnent:line 1: ENTRY in an array-valued FUNCTION is not supported" \
              "afngen:line 14: an array-valued FUNCTION through a generic interface is not supported yet" \
-             "rshord:line 3: ORDER= of RESHAPE is not supported yet" \
              "rshdyn:line 5: RESHAPE's SHAPE must be an array of constant size, 1 to 7" \
              "mmrank:line 4: MATMUL needs a matrix and a matrix, or a matrix and a vector" \
              "trrank:line 3: TRANSPOSE needs an array of rank 2" \
              "sprdim:line 4: DIM= of SPREAD is supported only as a constant" \
-             "aconarr:line 3: an array inside an array constructor is not supported yet" \
              "mrgty:line 2: MERGE's TSOURCE and FSOURCE differ in type" \
-             "csharr:line 4: an array SHIFT is not supported yet" \
-             "eobnd:line 4: an array BOUNDARY is not supported yet" \
              "rddim:line 4: DIM= of a reduction of an array of rank above 1 is supported only as a constant" \
+             "aconshp:line 3: the shapes in an array expression do not conform" \
+             "rshord:line 3: RESHAPE's ORDER has a value for each dimension of the result" \
+             "csharr:line 4: SHIFT is a scalar, or an array of rank one less than the array's" \
+             "cshshp:line 4: SHIFT's shape is not the array's without dimension DIM" \
+             "eolen:line 3: EOSHIFT's BOUNDARY differs in length from its ARRAY" \
              "mlscal:line 3: MAXLOC without DIM= gives an array, not a scalar" \
              "sumscal2:line 3: SUM with DIM= of an array of rank above 1 gives an array, not a scalar" \
              "opendo:DO without END DO" \
