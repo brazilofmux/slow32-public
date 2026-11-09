@@ -109,6 +109,13 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    Open: the opt-in copy-in mode (`F77_COPYIN=1`, off by default and in no
    gate) faults on LAPACK's DTRSYL3.
 2. **Free-form source** (`.f90`), long names, `&` continuation, `;`.
+
+   **Done 2026-11-08**, with milestone 1's run: free form, then construct
+   names on DO, DO WHILE and block IF (END DO, END IF, ELSE, ELSE IF,
+   EXIT and CYCLE carry them, held to gfortran's rules), and DO with no
+   loop control.  Checking the names found three things Fortran 77's IF
+   blocks took silently: a second ELSE, ELSE IF after ELSE, and text
+   after END IF.  EXIT from a named IF is Fortran 2008's, refused.
 3. **Arrays**: whole-array and section expressions and assignment, strides,
    array constructors, assumed-shape dummies, automatic arrays, WHERE, and
    the array intrinsics (SUM, PRODUCT, MAXVAL, MINVAL, DOT_PRODUCT, MATMUL,

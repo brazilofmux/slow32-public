@@ -296,6 +296,26 @@ static void lx_stmt_cut(int at, int n) {
     lx_stmt_len = lx_stmt_len - n;
 }
 
+/* A construct name (Fortran 90), NAME: before DO or IF (...) THEN, is
+ * taken off the text into lx_stmt_cname, so the unit scan and the
+ * classifier see the statement they know; f77_statement says whether the
+ * statement may carry one.  A name then one ':' -- not '::', and no
+ * statement of Fortran 77 begins that way (a substring has its '(' first). */
+static char lx_stmt_cname[64];
+static void lx_strip_cname(void) {
+    int i;
+    lx_stmt_cname[0] = 0;
+    if (lx_stmt_len < 3 || !lx_isalpha(lx_stmt[0])) return;
+    i = 1;
+    while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) i = i + 1;
+    if (i + 1 >= lx_stmt_len || lx_stmt[i] != ':' || lx_stmt[i + 1] == ':') return;
+    if (i >= (int)sizeof lx_stmt_cname) return;   /* left whole: unrecognised */
+    memcpy(lx_stmt_cname, lx_stmt, (size_t)i);
+    lx_stmt_cname[i] = 0;
+    lx_stmt_cut(0, i + 1);
+    lx_brk[0] = 0;
+}
+
 /* RECURSIVE (Fortran 90) on a SUBROUTINE or FUNCTION header -- RECURSIVE
  * SUBROUTINE S, RECURSIVE [type] FUNCTION F, type RECURSIVE FUNCTION F -- is
  * dropped from the text, so the unit scan and the parser see the header
@@ -588,7 +608,8 @@ static int lx_next_stmt_free(void) {
             }
             if (c == ';') {
                 /* the next statement begins after it, on this line */
-                lx_strip_recursive();
+                lx_strip_cname();
+    lx_strip_recursive();
                 lx_stmt[lx_stmt_len] = 0;
                 lx_pos = p + 1;
                 if (lx_stmt_len > 0 || lx_stmt_label >= 0) return 1;
@@ -609,6 +630,7 @@ static int lx_next_stmt_free(void) {
         }
         first = 0;
     }
+    lx_strip_cname();
     lx_strip_recursive();
     lx_stmt[lx_stmt_len] = 0;
     return lx_stmt_len > 0 || lx_stmt_label >= 0;
@@ -982,6 +1004,7 @@ static int f77_next_stmt(void) {
         }
     }
 
+    lx_strip_cname();
     lx_strip_recursive();
     lx_stmt[lx_stmt_len] = 0;
     return lx_stmt_len > 0 || lx_stmt_label >= 0;

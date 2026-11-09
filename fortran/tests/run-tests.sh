@@ -234,6 +234,11 @@ fi
 # asterisks).  The runtime used to read each some other way.  A list after
 # PRINT f or READ f needs its comma (prcomma, rdcomma): blanks do not count,
 # so PRINT * 1234 was PRINT*1234 and printed 1234 (from fort370, MV410).
+# Construct names (Fortran 90; cn*): each names one construct and no
+# variable; END DO, END IF, ELSE and ELSE IF carry the construct's name or
+# none, as it has one or not; EXIT and CYCLE name a DO around them (EXIT
+# from an IF is Fortran 2008's).  Two ELSEs, ELSE IF after ELSE, and text
+# after END IF were taken silently before (else2, elseelif, endifjunk).
 if [ -x "$F77" ]; then
     printf '      SUBROUTINE PRINTIT\n      RETURN\n      PROGRAM HELLO\n      CALL PRINTIT\n      END\n' > "$W/noend.f"
     printf '      PROGRAM A\n      END\n      PROGRAM B\n      END\n' > "$W/twomain.f"
@@ -263,6 +268,22 @@ if [ -x "$F77" ]; then
     printf 'use, intrinsic :: iso_fortran_env\nend\n' > "$W/useintr.f90"
     printf 'x = 1.0\ncall s\ncontains\nsubroutine s\ny = x\nend subroutine s\nend\n' > "$W/hostvar.f90"
     printf 'module mg\ninterface g\nmodule procedure a\nend interface\ncontains\nsubroutine a(x)\nreal x\nend subroutine a\nend module mg\nuse mg\ncall g(1)\nend\n' > "$W/genmiss.f90"
+    printf 'a: do i=1,2\nend do a\na: do i=1,2\nend do a\nend\n' > "$W/cndup.f90"
+    printf 'integer a\na=1\na: do i=1,2\nend do a\nend\n' > "$W/cnvar.f90"
+    printf 'a: do i=1,2\nend do a\na=1\nend\n' > "$W/cnvar2.f90"
+    printf 'a: do 10 i=1,2\n10 continue\nend\n' > "$W/cnlab.f90"
+    printf 'do i=1,2\nend do a\nend\n' > "$W/cnendx.f90"
+    printf 'a: do i=1,2\nend do\nend\n' > "$W/cnendnone.f90"
+    printf 'a: if (.true.) then\nelse b\nend if a\nend\n' > "$W/cnelse.f90"
+    printf 'a: if (.true.) then\nelse if (.false.) then b\nend if a\nend\n' > "$W/cnelif.f90"
+    printf 'a: if (.true.) then\nexit a\nend if a\nend\n' > "$W/cnexitif.f90"
+    printf 'do i=1,2\na: if (.true.) then\ncycle a\nend if a\nend do\nend\n' > "$W/cncycif.f90"
+    printf 'do i=1,2\nexit q\nend do\nend\n' > "$W/cnexitno.f90"
+    printf 'a: if (.true.) i=1\nend\n' > "$W/cnlogif.f90"
+    printf 'q: integer i\nend\n' > "$W/cndecl.f90"
+    printf 'if (.true.) then\nelse\nelse\nend if\nend\n' > "$W/else2.f90"
+    printf 'if (.true.) then\nelse\nelse if (.true.) then\nend if\nend\n' > "$W/elseelif.f90"
+    printf 'if (.true.) then\nendif(3)\nend\n' > "$W/endifjunk.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -328,6 +349,22 @@ if [ -x "$F77" ]; then
              "useintr:line 1: USE, INTRINSIC and USE :: are Fortran 2003, not supported" \
              "hostvar:line 6: X: host association with a variable is not supported yet" \
              "genmiss:line 11: no procedure of the generic G takes these arguments" \
+             "cndup:line 3: the construct name A is used twice" \
+             "cnvar:line 3: A is a variable; it cannot name a construct" \
+             "cnvar2:line 3: A is a construct name, not a variable" \
+             "cnlab:line 2: the end of a named DO needs the construct name A" \
+             "cnendx:line 2: END DO names A; the construct has no name" \
+             "cnendnone:line 2: END DO needs the construct name A" \
+             "cnelse:line 2: ELSE names B; the construct is A" \
+             "cnelif:line 2: ELSE IF names B; the construct is A" \
+             "cnexitif:line 2: EXIT names A, an IF construct, not a DO (EXIT from an IF is Fortran 2008)" \
+             "cncycif:line 3: CYCLE names A, an IF construct, not a DO" \
+             "cnexitno:line 2: EXIT names Q, which is no construct around it" \
+             "cnlogif:line 1: a construct name is on a block IF, not a logical IF" \
+             "cndecl:line 1: a construct name is on DO or IF (...) THEN only" \
+             "else2:line 3: a second ELSE in one IF construct" \
+             "elseelif:line 3: ELSE IF after ELSE" \
+             "endifjunk:line 2: unexpected text after END IF" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

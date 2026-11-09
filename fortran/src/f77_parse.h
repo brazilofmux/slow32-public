@@ -527,6 +527,7 @@ static void f77_need_type(int s, char *nm) {
     }
 }
 
+static int f77_is_cname(char *nm);
 static int f77_sym(char *nm) {
     int i;
     i = f77_stfb_n;
@@ -540,6 +541,12 @@ static int f77_sym(char *nm) {
         i = i + 1;
     }
     if (f77_nsym >= F77_MAX_SYM) { f77_error("too many symbols"); return 0; }
+    if (f77_inline_depth == 0 && f77_is_cname(nm)) {
+        static char cmsg[F77_MAX_NAME + 40];
+        strcpy(cmsg, nm);
+        strcat(cmsg, " is a construct name, not a variable");
+        f77_error(cmsg);
+    }
     if (f77_imp_none && !f77_decls_open) {
         /* A name first seen in executable code has no declaration. */
         static char msg[F77_MAX_NAME + 40];
@@ -919,7 +926,22 @@ static int ctl_body[F77_MAX_CTL];    /* DO: body head, the rotated back edge */
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_cont[F77_MAX_CTL];    /* DO: the step, made by the first CYCLE (-1: none) */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
+static char ctl_name[F77_MAX_CTL][64]; /* DO/IF: its construct name, or "" */
 static int ctl_n;
+
+/* The unit's construct names (Fortran 90): each names one construct and
+ * nothing else in the unit -- no other construct, no variable (gfortran
+ * refuses both).  Not kept for a spliced callee's text, which was
+ * checked when its own unit was compiled, and whose names are not the
+ * caller's. */
+#define F77_MAX_CNAME 256
+static char f77_cnames[F77_MAX_CNAME][64];
+static int f77_ncname;
+static int f77_is_cname(char *nm) {
+    int i;
+    for (i = 0; i < f77_ncname; i++) if (strcmp(f77_cnames[i], nm) == 0) return 1;
+    return 0;
+}
 
 /* Floor for f77_close_do.  A spliced callee raises it so that a label
  * in the callee can never close a DO belonging to the caller: DGEFA has
@@ -928,7 +950,7 @@ static int ctl_n;
  * loop off the control stack. */
 static int f77_ctl_base;
 
-static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; }
+static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; f77_ncname = 0; }
 
 /* --- expression lowering -------------------------------------------- */
 
@@ -7057,16 +7079,28 @@ static void f77_close_top_do(void) {
 }
 
 /* Close every DO whose terminal label is the one just executed. */
+static char *f77_name_tail(int off);
+static void f77_cname_match(int k, char *nm, char *what);
 static void f77_close_do(int lab) {
     while (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
-           ctl_label[ctl_n - 1] == lab)
+           ctl_label[ctl_n - 1] == lab) {
+        /* A named DO ends in END DO and its name, labelled or not
+         * (gfortran: "requires matching ENDDO name"). */
+        if (ctl_name[ctl_n - 1][0]) {
+            char *nm;
+            nm = f77_starts("ENDDO") ? f77_name_tail(5) : 0;
+            f77_cname_match(ctl_n - 1, nm ? nm : "", "the end of a named DO");
+        }
         f77_close_top_do();
+    }
 }
 
 /* fort370: DO [label [,]] WHILE (e), MIL-STD-1753's: the test block
  * evaluates e and enters the body or leaves; the loop's end, its label
- * or END DO, goes back to the test. */
-static void f77_open_dowhile(void) {
+ * or END DO, goes back to the test.  forever: Fortran 90's DO [label]
+ * with no control, whose test block goes straight to the body (b_exit is
+ * reached by EXIT alone). */
+static void f77_open_dowhile(int forever) {
     int lab;
     int b_test;
     int b_body;
@@ -7079,15 +7113,18 @@ static void f77_open_dowhile(void) {
         f77_tok();
         if (lx_t == T_COMMA) f77_tok();
     }
-    f77_tok();                               /* WHILE */
+    if (!forever) f77_tok();                 /* WHILE */
     b_test = hir_new_block();
     b_body = hir_new_block();
     b_exit = hir_new_block();
     f77_goto_blk(b_test);
     f77_begin_blk(b_test);
-    c = f77_expr();
-    if (ex_ty != TY_INT || !ex_log) f77_error("DO WHILE needs a logical expression");
-    hi_emit(HI_BRC, TY_VOID, c, b_body, b_exit, NULL);
+    if (forever) hi_emit(HI_BR, TY_VOID, -1, -1, b_body, NULL);
+    else {
+        c = f77_expr();
+        if (ex_ty != TY_INT || !ex_log) f77_error("DO WHILE needs a logical expression");
+        hi_emit(HI_BRC, TY_VOID, c, b_body, b_exit, NULL);
+    }
     f77_cur_blk_live = 0;
     f77_begin_blk(b_body);
     if (ctl_n >= F77_MAX_CTL) { f77_error("control nesting too deep"); return; }
@@ -7267,16 +7304,35 @@ static void f77_desc_guard(void) {
     }
 }
 
-/* EXIT and CYCLE (Fortran 90), of the innermost DO: EXIT to the block
- * after it, CYCLE to its step (a counted DO; made here the first time,
- * f77_close_top_do runs the step in it) or its test (DO WHILE).  A
- * construct name after either is milestone 2's. */
+/* EXIT and CYCLE (Fortran 90), of the innermost DO or of the DO the
+ * construct name names: EXIT to the block after it, CYCLE to its step (a
+ * counted DO; made here the first time, f77_close_top_do runs the step in
+ * it) or its test (DO WHILE, DO forever).  EXIT from a named IF is
+ * Fortran 2008's. */
 static void f77_stmt_exit_cycle(int cycle) {
     int k;
-    if (lx_stmt_len != (cycle ? 5 : 4)) { f77_error("a construct name on EXIT or CYCLE is not supported yet"); return; }
+    char *nm;
+    static char m[120];
+    nm = f77_name_tail(cycle ? 5 : 4);
+    if (!nm) { f77_error(cycle ? "unexpected text after CYCLE" : "unexpected text after EXIT"); return; }
     k = ctl_n - 1;
-    while (k >= f77_ctl_base && ctl_kind[k] != F77_CTL_DO) k = k - 1;
-    if (k < f77_ctl_base) { f77_error(cycle ? "CYCLE outside a DO loop" : "EXIT outside a DO loop"); return; }
+    if (nm[0]) {
+        while (k >= f77_ctl_base && strcmp(ctl_name[k], nm) != 0) k = k - 1;
+        if (k < f77_ctl_base) {
+            sprintf(m, "%s names %s, which is no construct around it", cycle ? "CYCLE" : "EXIT", nm);
+            f77_error(m);
+            return;
+        }
+        if (ctl_kind[k] != F77_CTL_DO) {
+            sprintf(m, "%s names %s, an IF construct, not a DO%s", cycle ? "CYCLE" : "EXIT", nm,
+                    cycle ? "" : " (EXIT from an IF is Fortran 2008)");
+            f77_error(m);
+            return;
+        }
+    } else {
+        while (k >= f77_ctl_base && ctl_kind[k] != F77_CTL_DO) k = k - 1;
+        if (k < f77_ctl_base) { f77_error(cycle ? "CYCLE outside a DO loop" : "EXIT outside a DO loop"); return; }
+    }
     if (!cycle) { f77_goto_blk(ctl_exit[k]); return; }
     if (ctl_var[k] < 0) { f77_goto_blk(ctl_test[k]); return; }
     if (ctl_cont[k] < 0) ctl_cont[k] = hir_new_block();
@@ -7292,6 +7348,53 @@ static int f77_is_dowhile(void) {
     if (i > 2 && i < lx_stmt_len && lx_stmt[i] == ',') i = i + 1;
     if (i + 6 > lx_stmt_len || strncmp(lx_stmt + i, "WHILE(", 6) != 0) return 0;
     return f77_match_paren(i + 5) == lx_stmt_len;
+}
+
+/* Is the statement DO [label], with no loop control (Fortran 90): a loop
+ * left only by EXIT, GO TO, RETURN or STOP? */
+static int f77_is_doforever(void) {
+    int i;
+    if (!f77_starts("DO")) return 0;
+    i = 2;
+    while (i < lx_stmt_len && lx_isdigit(lx_stmt[i])) i = i + 1;
+    return i == lx_stmt_len;
+}
+
+/* The text from off to the statement's end, when it is empty or one name
+ * (a construct name after END DO, END IF, ELSE, EXIT, CYCLE); else 0. */
+static char *f77_name_tail(int off) {
+    int i;
+    if (off >= lx_stmt_len) return lx_stmt + lx_stmt_len;
+    if (!lx_isalpha(lx_stmt[off])) return 0;
+    for (i = off + 1; i < lx_stmt_len; i++)
+        if (!lx_isalpha(lx_stmt[i]) && !lx_isdigit(lx_stmt[i]) && lx_stmt[i] != '_') return 0;
+    return lx_stmt + off;
+}
+
+/* The name (nm, possibly "") that what closes or continues construct k
+ * (what: "END DO", "END IF", "ELSE") carries against the construct's own:
+ * the same name, or none on both. */
+static void f77_cname_match(int k, char *nm, char *what) {
+    static char m[200];
+    if (strcmp(ctl_name[k], nm) == 0) return;
+    if (!ctl_name[k][0]) sprintf(m, "%s names %s; the construct has no name", what, nm);
+    else if (!nm[0]) sprintf(m, "%s needs the construct name %s", what, ctl_name[k]);
+    else sprintf(m, "%s names %s; the construct is %s", what, nm, ctl_name[k]);
+    f77_error(m);
+}
+
+/* A construct name on the statement now starting a construct: one per
+ * construct in the unit, and no variable's. */
+static void f77_cname_define(char *nm) {
+    static char m[120];
+    int i;
+    if (f77_inline_depth > 0) return;
+    if (f77_is_cname(nm)) { sprintf(m, "the construct name %s is used twice", nm); f77_error(m); return; }
+    for (i = f77_scope_base; i < f77_nsym; i++)
+        if (strcmp(f77_sname[i], nm) == 0) { sprintf(m, "%s is a variable; it cannot name a construct", nm); f77_error(m); return; }
+    if (f77_ncname >= F77_MAX_CNAME) { f77_error("too many construct names"); return; }
+    strcpy(f77_cnames[f77_ncname], nm);
+    f77_ncname = f77_ncname + 1;
 }
 
 /* --- subprograms ------------------------------------------------------ */
@@ -11030,12 +11133,28 @@ static void f77_statement(void) {
     int b_end;
     int lab;
     int nerr0;
+    int ctl_n0;
+    char cname[64];
 
     /* A statement no handler scans leaves no tokens; one that
      * is scanned must be used up (see done:) */
     lx_t = T_EOF;
     nerr0 = f77_nerr;
     cls = f77_classify();
+
+    /* A construct name (the card reader took it off the text) is on a
+     * DO or a block IF; the construct pushed is given it at done: */
+    strcpy(cname, lx_stmt_cname);
+    lx_stmt_cname[0] = 0;
+    ctl_n0 = ctl_n;
+    if (cname[0]) {
+        if (cls == S_IF_LOGIC) { f77_error("a construct name is on a block IF, not a logical IF"); goto done; }
+        if (!(cls == S_DO || cls == S_IF_BLOCK || f77_is_dowhile() || f77_is_doforever())) {
+            f77_error("a construct name is on DO or IF (...) THEN only");
+            goto done;
+        }
+        f77_cname_define(cname);
+    }
 
     /* Fortran 90: the statements of an INTERFACE block, and USE */
     if (f77_iface_stmt()) goto done;
@@ -11346,25 +11465,33 @@ static void f77_statement(void) {
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
 
-    if (f77_starts("ELSEIF")) {
-        /* ELSE IF (e) THEN -- close the current arm, open a new test in
-         * the pending else block. */
+    if (f77_starts("ELSEIF(")) {
+        /* ELSE IF (e) THEN [name] -- close the current arm, open a new
+         * test in the pending else block.  (ELSE IFX, the construct
+         * named IFX, is the ELSE below.) */
         if (ctl_n == 0 || ctl_kind[ctl_n - 1] != F77_CTL_IF) {
             f77_error("ELSE IF without IF");
             goto done;
         }
+        if (ctl_else[ctl_n - 1] < 0) { f77_error("ELSE IF after ELSE"); goto done; }
+        {
+            /* THEN and the name are one token once the blanks are
+             * gone (THENOUTER): read from the text */
+            int after;
+            char *nm;
+            after = f77_match_paren(6);
+            nm = 0;
+            if (after + 4 <= lx_stmt_len && strncmp(lx_stmt + after, "THEN", 4) == 0)
+                nm = f77_name_tail(after + 4);
+            if (!nm) { f77_error("ELSE IF (e) needs THEN, and nothing after it but a construct name"); goto done; }
+            f77_cname_match(ctl_n - 1, nm, "ELSE IF");
+        }
         f77_goto_blk(ctl_exit[ctl_n - 1]);
         f77_begin_blk(ctl_else[ctl_n - 1]);
-        f77_scan_from(8);                       /* past "ELSEIF(" minus the ( */
-        {
-            int save;
-            save = f77_match_paren(6);
-            (void)save;
-        }
         f77_scan_from(7);
         c = f77_expr();
-        if (lx_t == T_RP) f77_tok();
-        if (lx_t == T_NAME && strcmp(lex_name, "THEN") == 0) f77_tok();
+        if (lx_t != T_RP) { f77_error("expected ) in ELSE IF"); goto done; }
+        lx_t = T_EOF;                           /* THEN [name]: checked above */
         b_then = hir_new_block();
         b_else = hir_new_block();
         hi_emit(HI_BRC, TY_VOID, c, b_then, b_else, NULL);
@@ -11375,34 +11502,48 @@ static void f77_statement(void) {
     }
 
     if (f77_starts("ELSE")) {
+        char *nm;
         if (ctl_n == 0 || ctl_kind[ctl_n - 1] != F77_CTL_IF) {
             f77_error("ELSE without IF");
             goto done;
         }
+        if ((nm = f77_name_tail(4)) == 0) { f77_error("unexpected text after ELSE"); goto done; }
+        if (ctl_else[ctl_n - 1] < 0) { f77_error("a second ELSE in one IF construct"); goto done; }
+        f77_cname_match(ctl_n - 1, nm, "ELSE");
         f77_goto_blk(ctl_exit[ctl_n - 1]);
         f77_begin_blk(ctl_else[ctl_n - 1]);
         ctl_else[ctl_n - 1] = -1;
         goto done;
     }
 
-    if (f77_starts("ENDDO") && lx_stmt_len == 5) {
-        /* fort370: END DO closes the innermost unlabelled DO; with the
-         * label a labelled DO names, it is that DO's terminal statement
-         * (and closed with the label, below) */
-        if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO && ctl_label[ctl_n - 1] == -1)
+    if (f77_starts("ENDDO") && f77_name_tail(5)) {
+        /* fort370: END DO [name] closes the innermost unlabelled DO;
+         * with the label a labelled DO names, it is that DO's terminal
+         * statement (and closed with the label, below, where a named
+         * DO's name is checked) */
+        char *nm;
+        nm = f77_name_tail(5);
+        if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO && ctl_label[ctl_n - 1] == -1) {
+            f77_cname_match(ctl_n - 1, nm, "END DO");
             f77_close_top_do();
-        else if (!(ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
-                   lx_stmt_label >= 0 && ctl_label[ctl_n - 1] == lx_stmt_label))
+        } else if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_DO &&
+                   lx_stmt_label >= 0 && ctl_label[ctl_n - 1] == lx_stmt_label) {
+            if (!ctl_name[ctl_n - 1][0] && nm[0]) f77_cname_match(ctl_n - 1, nm, "END DO");
+        } else
             f77_error("END DO without DO");
         goto done;
     }
-    if (f77_is_dowhile()) { f77_open_dowhile(); goto done; }
+    if (f77_is_dowhile()) { f77_open_dowhile(0); goto done; }
+    if (f77_is_doforever()) { f77_open_dowhile(1); goto done; }
 
     if (f77_starts("ENDIF")) {
+        char *nm;
         if (ctl_n == 0 || ctl_kind[ctl_n - 1] != F77_CTL_IF) {
             f77_error("ENDIF without IF");
             goto done;
         }
+        if ((nm = f77_name_tail(5)) == 0) { f77_error("unexpected text after END IF"); goto done; }
+        f77_cname_match(ctl_n - 1, nm, "END IF");
         ctl_n = ctl_n - 1;
         f77_goto_blk(ctl_exit[ctl_n]);
         if (ctl_else[ctl_n] >= 0) {
@@ -11568,6 +11709,7 @@ done:
      * INTEGER N/9000/, LEN/30000/ lost both values and every name after
      * them.  A statement that already reported an error is left be. */
     if (lx_t != T_EOF && f77_nerr == nerr0) f77_error("unexpected text after the statement");
+    if (ctl_n == ctl_n0 + 1) strcpy(ctl_name[ctl_n - 1], cname);
     /* If this statement carried a label that closes one or more DO
      * loops, close them now -- the terminal statement is part of the
      * loop body and has just been emitted. */
