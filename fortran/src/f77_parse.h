@@ -221,6 +221,16 @@ static int f77_arr_inquiry(int in);
  * (from 0); an array operand there -- a section or a whole array -- is
  * the element those counts reach (f77_aex_elem).  0 elsewhere. */
 static int f77_aex_k;
+/* WHERE (Fortran 90): the mask, evaluated once into a heap temporary of
+ * its shape (its elements 0 or 1, as INTEGERs, in array element order),
+ * and whether the assignments are ELSEWHERE's.  Active for the array
+ * assignments of the text the WHERE is in, not a spliced callee's
+ * (f77_where_depth).  -1: none. */
+static int f77_where_tmp = -1;
+static int f77_where_neg;
+static int f77_where_depth;
+static int f77_where_nt;
+static int f77_where_ext[8];
 static int f77_aex_cnt[8];
 static int f77_aex_elem(int s, int whole);
 static int f77_result_sym;          /* FUNCTION: its result variable (f77_bind_unit) */
@@ -913,6 +923,7 @@ static int f77_find_format(int label) {
 
 #define F77_CTL_DO 1
 #define F77_CTL_IF 2
+#define F77_CTL_WHERE 3   /* a WHERE construct: its mask is f77_where_* */
 #define F77_MAX_CTL 64
 
 static int ctl_kind[F77_MAX_CTL];
@@ -951,7 +962,7 @@ static int f77_is_cname(char *nm) {
  * loop off the control stack. */
 static int f77_ctl_base;
 
-static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; f77_ncname = 0; }
+static void f77_ctl_reset(void) { ctl_n = 0; f77_ctl_base = 0; f77_ncname = 0; f77_where_tmp = -1; }
 
 /* --- expression lowering -------------------------------------------- */
 
@@ -3604,6 +3615,19 @@ static int f77_classify(void) {
         return S_IF_LOGIC;
     }
 
+    /* WHERE (mask) [assignment]: the mask's ')' followed by the end of
+     * the statement or by a name -- WHERE(I) = 3 is an array named WHERE */
+    if (f77_starts("WHERE(")) {
+        int ws;
+        ws = f77_sym_find("WHERE");
+        after = f77_match_paren(5);
+        if (!(ws >= 0 && f77_srank[ws] > 0) &&
+            (after == lx_stmt_len || (after < lx_stmt_len && lx_isalpha(lx_stmt[after])))) {
+            f77_if_tail = after;
+            return S_KEYWORD;
+        }
+    }
+
     if (f77_starts("DO")) {
         eq = f77_toplevel('=', 2);
         if (eq >= 0 && f77_toplevel(',', eq + 1) >= 0) {
@@ -4102,6 +4126,34 @@ static void f77_acon_assign(int s, int *idx, int *trip, int *lo, int *hi, int *s
     }
 }
 
+/* Is a WHERE's mask in force for the assignment being compiled? */
+static int f77_where_on(void) {
+    return f77_where_tmp >= 0 && f77_where_depth == f77_inline_depth;
+}
+
+/* In an array assignment's loops (cnt the counts, first fastest): branch
+ * past the element unless the mask holds for it (ELSEWHERE: unless it
+ * does not), leaving the element's block current.  The block to go on
+ * in, which the caller enters after the element. */
+static int f77_where_guard(int *cnt, int nt) {
+    int off; int c; int j; int b_do; int b_skip;
+    if (nt != f77_where_nt) { f77_error("the shapes of a WHERE's mask and its assignment do not conform"); return -1; }
+    off = cnt[nt - 1];
+    for (j = nt - 2; j >= 0; j--) {
+        off = hi_emit(HI_MUL, TY_INT, off, f77_where_ext[j], 0, NULL);
+        off = hi_emit(HI_ADD, TY_INT, off, cnt[j], 0, NULL);
+    }
+    off = hi_emit(HI_MUL, TY_INT, off, f77_iconst(4), 0, NULL);
+    c = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADD, HL_ADDR_TY, f77_where_tmp, off, 0, NULL), -1, 0, NULL);
+    c = hi_emit(f77_where_neg ? HI_SEQ : HI_SNE, TY_INT, c, f77_iconst(0), 0, NULL);
+    b_do = hir_new_block();
+    b_skip = hir_new_block();
+    hi_emit(HI_BRC, TY_VOID, c, b_do, b_skip, NULL);
+    f77_cur_blk_live = 0;
+    f77_begin_blk(b_do);
+    return b_skip;
+}
+
 /* An array assignment (Fortran 90): A(section) = e, or A = e for the whole
  * array (whole; lx_t past the name, else past the section's '(').
  * - e a scalar: it and the scalar subscripts are evaluated once, before
@@ -4143,10 +4195,13 @@ static void f77_array_assign(int s, int whole) {
     f77_tok();
     f77_sstored[s] = 1;
     if (lx_t == T_LP && lx_rp < lx_rpe && *lx_rp == '/' && f77_match_paren((int)(lx_rts - lx_stmt)) >= lx_stmt_len) {
+        if (f77_where_on()) { f77_error("an array constructor in a WHERE is not supported yet"); return; }
         f77_acon_assign(s, idx, trip, lo, hi, st, nt);
         return;
     }
-    if (!f77_text_has_array_expr((int)(lx_rts - lx_stmt))) {
+    /* under a WHERE a scalar too goes through the loops below, which
+     * test the mask */
+    if (!f77_text_has_array_expr((int)(lx_rts - lx_stmt)) && !f77_where_on()) {
         /* a scalar to every element */
         v = f77_expr();
         vty = ex_ty; vhi = ex_hi;
@@ -4172,6 +4227,7 @@ static void f77_array_assign(int s, int whole) {
         int esz;
         int saved_k;
         int saved_cnt[F77_MAX_RANK];
+        int b_wskip;
         F77Loop cl[F77_MAX_RANK];
         int cnt[F77_MAX_RANK];
         if (nt > 8) { f77_error("too many dimensions in an array expression"); return; }
@@ -4205,6 +4261,7 @@ static void f77_array_assign(int s, int whole) {
         for (j = nt - 1; j >= 0; j--)
             f77_loop_begin(&cl[j], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[j], -1, -1, NULL), f77_iconst(1));
         for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
+        b_wskip = f77_where_on() ? f77_where_guard(cnt, nt) : -1;
         saved_k = f77_aex_k;
         for (j = 0; j < 8 && j < F77_MAX_RANK; j++) saved_cnt[j] = f77_aex_cnt[j];
         f77_aex_k = nt;
@@ -4232,6 +4289,7 @@ static void f77_array_assign(int s, int whole) {
                                        hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
             f77_store_at(f77_elem_addr(s, cur, rank), mty, v, vty, vhi);
         }
+        if (b_wskip >= 0) { f77_goto_blk(b_wskip); f77_begin_blk(b_wskip); }
         for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
         if (overlap) {
             /* then the copy, in the same order, and the temporary freed */
@@ -4242,6 +4300,7 @@ static void f77_array_assign(int s, int whole) {
                 int cur[F77_MAX_RANK];
                 int off;
                 for (j = 0; j < nt; j++) cnt[j] = hi_emit(HI_LOAD, TY_INT, cl[j].idx, -1, 0, NULL);
+                b_wskip = f77_where_on() ? f77_where_guard(cnt, nt) : -1;
                 off = cnt[nt - 1];
                 for (j = nt - 2; j >= 0; j--) {
                     off = hi_emit(HI_MUL, TY_INT, off, ext[j], 0, NULL);
@@ -4255,6 +4314,7 @@ static void f77_array_assign(int s, int whole) {
                     cur[tdim[j]] = hi_emit(HI_ADD, TY_INT, lo[tdim[j]],
                                            hi_emit(HI_MUL, TY_INT, cnt[j], st[tdim[j]], 0, NULL), 0, NULL);
                 f77_store_at(f77_elem_addr(s, cur, rank), mty, v, mty == TY_SHORT || mty == F77_TY_BYTE ? TY_INT : ty, vhi);
+                if (b_wskip >= 0) { f77_goto_blk(b_wskip); f77_begin_blk(b_wskip); }
             }
             for (j = 0; j < nt; j++) f77_loop_end(&cl[j]);
             args[0] = tmp;
@@ -4773,6 +4833,98 @@ badarg:
     return f77_iconst(0);
 }
 
+/* WHERE (Fortran 90).  The mask, the text [from, to), is evaluated once,
+ * before any assignment (F90 7.5.3.2), into a heap temporary of its shape
+ * (f77_where_tmp); each assignment then loops over its own shape, which
+ * must be the mask's rank, and stores only the elements the mask holds
+ * for -- ELSEWHERE's those it does not.  The right side is evaluated for
+ * those elements only.  F90's WHERE: no WHERE inside one, no masked
+ * ELSEWHERE (Fortran 95's), assignments alone in its body. */
+static void f77_where_begin(int from, int to) {
+    int sy; int at; int nt; int k; int n; int tmp; int pos;
+    int ext[F77_MAX_RANK];
+    int saved_k; int saved_cnt[8];
+    int args[3];
+    F77Loop lp[F77_MAX_RANK];
+    sy = f77_aex_first(from, to, &at);
+    if (sy < 0) { f77_error("WHERE needs a LOGICAL array for its mask"); return; }
+    nt = f77_aex_shape(sy, at, ext);
+    if (nt <= 0) return;
+    if (nt > 8) { f77_error("too many dimensions in an array expression"); return; }
+    n = ext[0];
+    for (k = 1; k < nt; k++) n = hi_emit(HI_MUL, TY_INT, n, ext[k], 0, NULL);
+    args[0] = f77_iconst(0);
+    args[1] = hi_emit(HI_MUL, TY_INT, n, f77_iconst(4), 0, NULL);
+    args[2] = f77_iconst(0);
+    tmp = f77_call_i("f77_allocate", 3, args);
+    pos = f77_int_temp();
+    hi_emit(HI_STORE, TY_INT, pos, f77_iconst(0), 0, NULL);
+    for (k = nt - 1; k >= 0; k--)
+        f77_loop_begin(&lp[k], f77_iconst(0), hi_emit(HI_ADDI, TY_INT, ext[k], -1, -1, NULL), f77_iconst(1));
+    saved_k = f77_aex_k;
+    for (k = 0; k < 8; k++) saved_cnt[k] = f77_aex_cnt[k];
+    f77_aex_k = nt;
+    for (k = 0; k < nt; k++) f77_aex_cnt[k] = hi_emit(HI_LOAD, TY_INT, lp[k].idx, -1, 0, NULL);
+    {
+        int v; int p;
+        v = f77_expr_at(from, to);
+        if (ex_ty != TY_INT || !ex_log) f77_error("WHERE needs a LOGICAL array for its mask");
+        p = hi_emit(HI_LOAD, TY_INT, pos, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADD, HL_ADDR_TY, tmp, hi_emit(HI_MUL, TY_INT, p, f77_iconst(4), 0, NULL), 0, NULL),
+                hi_emit(HI_SNE, TY_INT, v, f77_iconst(0), 0, NULL), 0, NULL);
+        hi_emit(HI_STORE, TY_INT, pos, hi_emit(HI_ADDI, TY_INT, p, -1, 1, NULL), 0, NULL);
+    }
+    f77_aex_k = saved_k;
+    for (k = 0; k < 8; k++) f77_aex_cnt[k] = saved_cnt[k];
+    for (k = 0; k < nt; k++) f77_loop_end(&lp[k]);
+    f77_where_tmp = tmp;
+    f77_where_neg = 0;
+    f77_where_depth = f77_inline_depth;
+    f77_where_nt = nt;
+    for (k = 0; k < nt; k++) f77_where_ext[k] = ext[k];
+}
+
+static void f77_where_end(void) {
+    int args[1];
+    if (f77_where_tmp < 0) return;
+    args[0] = f77_where_tmp;
+    f77_call_i("f77_dealloc_auto", 1, args);
+    f77_where_tmp = -1;
+}
+
+static void f77_stmt_assign(void);
+
+/* WHERE (mask) assignment, or WHERE (mask) opening the construct its
+ * ELSEWHERE and END WHERE close. */
+static void f77_stmt_where(void) {
+    int after;
+    after = f77_match_paren(5);
+    if (f77_where_on()) { f77_error("a WHERE inside a WHERE is Fortran 95's, not supported"); return; }
+    f77_where_begin(6, after - 1);
+    if (f77_where_tmp < 0) return;
+    if (after == lx_stmt_len) {
+        if (ctl_n >= F77_MAX_CTL) { f77_error("control nesting too deep"); return; }
+        ctl_kind[ctl_n] = F77_CTL_WHERE;
+        ctl_else[ctl_n] = 0;
+        ctl_name[ctl_n][0] = 0;
+        ctl_n = ctl_n + 1;
+        lx_t = T_EOF;
+        return;
+    }
+    {
+        /* the assignment, moved to the front of the buffer, as a logical
+         * IF's statement is */
+        int i;
+        i = 0;
+        while (after + i < lx_stmt_len) { lx_stmt[i] = lx_stmt[after + i]; i = i + 1; }
+        lx_stmt_len = i;
+        lx_stmt[i] = 0;
+        if (f77_classify() != S_ASSIGN) f77_error("a WHERE statement's statement is an array assignment");
+        else f77_stmt_assign();
+    }
+    f77_where_end();
+}
+
 static void f77_stmt_assign(void) {
     int s;
     int v;
@@ -4785,6 +4937,7 @@ static void f77_stmt_assign(void) {
     f77_tok();
     if (f77_sty[s] == TY_CHAR) {
         int dlen;
+        if (f77_where_on()) { f77_error("a CHARACTER assignment in a WHERE is not supported"); return; }
         addr = f77_char_ref(s);
         dlen = ex_len;
         if (lx_t != T_ASSIGN) { f77_error("expected ="); return; }
@@ -4805,6 +4958,7 @@ static void f77_stmt_assign(void) {
         f77_array_assign(s, 1);
         return;
     }
+    if (f77_where_on()) { f77_error("a WHERE assigns to arrays, not to a scalar or an element"); return; }
     if (lx_t == T_LP && f77_srank[s] > 0) {
         f77_tok();
         addr = f77_subscript_addr(s);
@@ -11606,6 +11760,11 @@ static void f77_statement(void) {
     if (!f77_cur_blk_live && !f77_stmt_is_declaration(cls))
         f77_begin_blk(hir_new_block());
 
+    if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE && cls != S_ASSIGN &&
+        !f77_starts("ELSEWHERE") && !f77_starts("ENDWHERE") && !f77_starts("WHERE(")) {
+        f77_error("a WHERE construct holds array assignments only");
+        goto done;
+    }
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
     if (cls == S_DO)       { f77_open_do();     goto done; }
 
@@ -11863,6 +12022,23 @@ static void f77_statement(void) {
     if ((n = f77_starts("DATA")) != 0)   { f77_stmt_data(n);   goto done; }
     if ((n = f77_starts("IMPLICIT")) != 0) { f77_stmt_implicit(n); goto done; }
 
+    if (f77_starts("WHERE(") && cls == S_KEYWORD) { f77_stmt_where(); goto done; }
+    if (f77_starts("ELSEWHERE") && lx_stmt_len == 9 && ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE) {
+        if (ctl_else[ctl_n - 1]) { f77_error("a second ELSEWHERE in one WHERE construct"); goto done; }
+        ctl_else[ctl_n - 1] = 1;
+        f77_where_neg = 1;
+        goto done;
+    }
+    if (f77_starts("ELSEWHERE(") && ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE) {
+        f77_error("ELSEWHERE (mask) is Fortran 95's, not supported");
+        goto done;
+    }
+    if (f77_starts("ENDWHERE") && lx_stmt_len == 8) {
+        if (!(ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE)) { f77_error("END WHERE without WHERE"); goto done; }
+        ctl_n = ctl_n - 1;
+        f77_where_end();
+        goto done;
+    }
     if (f77_starts("ELSEIF(")) {
         /* ELSE IF (e) THEN [name] -- close the current arm, open a new
          * test in the pending else block.  (ELSE IFX, the construct

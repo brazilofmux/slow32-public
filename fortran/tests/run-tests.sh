@@ -237,6 +237,9 @@ fi
 # The reductions (Fortran 90) of an array expression: DIM= that would give
 # an array, an argument that is no array or of the wrong type, a keyword
 # the intrinsic does not take, a DIM outside the rank (sumdim .. sizedim).
+# WHERE (Fortran 90): one inside another and the masked ELSEWHERE are
+# Fortran 95's; its body is array assignments; its mask is a LOGICAL array
+# of the assignments' rank (where*).
 # Construct names (Fortran 90; cn*): each names one construct and no
 # variable; END DO, END IF, ELSE and ELSE IF carry the construct's name or
 # none, as it has one or not; EXIT and CYCLE name a DO around them (EXIT
@@ -296,6 +299,15 @@ if [ -x "$F77" ]; then
     printf 'integer k(2)\nk = 1\nprint *, lbound(k)\nend\n' > "$W/lbnodim.f90"
     printf 'integer k(2)\nk = 1\nprint *, maxloc(k)\nend\n' > "$W/mlnodim.f90"
     printf 'integer k(2)\nk = 1\nprint *, size(k, 3)\nend\n' > "$W/sizedim.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\nwhere (a > 1.0) a = 2.0\nend where\nend\n' > "$W/wherenest.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\nif (a(1) > 0.0) a(2) = 1.0\nend where\nend\n' > "$W/whereif.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0) x = 2.0\nend\n' > "$W/wherescal.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nelsewhere (a < 0.0)\na = 3.0\nend where\nend\n' > "$W/wheremask.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nelsewhere\na = 3.0\nelsewhere\na = 4.0\nend where\nend\n' > "$W/where2else.f90"
+    printf 'real a(2)\na = 1.0\nend where\nend\n' > "$W/wherestray.f90"
+    printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nend\n' > "$W/whereopen.f90"
+    printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
+    printf 'real a(2), m(2,2)\na = 1.0\nm = 1.0\nwhere (m > 0.0) a = 2.0\nend\n' > "$W/whereshape.f90"
     printf '      DO I = 1, 3\n      X = I\n      END\n' > "$W/opendo.f"
     printf '      IF (X .GT. 0.0) THEN\n      X = 1.0\n      END\n' > "$W/openif.f"
     printf '      X = 1.0\n      END DO\n      END\n' > "$W/straydo.f"
@@ -386,6 +398,15 @@ if [ -x "$F77" ]; then
              "lbnodim:line 3: LBOUND without DIM= gives an array, which is not supported yet" \
              "mlnodim:line 3: MAXLOC without DIM= gives an array, which is not supported yet" \
              "sizedim:line 3: DIM= of SIZE is outside the array's rank" \
+             "wherenest:line 4: a WHERE inside a WHERE is Fortran 95's, not supported" \
+             "whereif:line 4: a WHERE construct holds array assignments only" \
+             "wherescal:line 3: a WHERE assigns to arrays, not to a scalar or an element" \
+             "wheremask:line 5: ELSEWHERE (mask) is Fortran 95's, not supported" \
+             "where2else:line 7: a second ELSEWHERE in one WHERE construct" \
+             "wherestray:line 3: END WHERE without WHERE" \
+             "whereopen:WHERE without END WHERE" \
+             "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \
+             "whereshape:line 4: the shapes of a WHERE's mask and its assignment do not conform" \
              "opendo:DO without END DO" \
              "openif:IF block without END IF" \
              "straydo:line 2: END DO without DO" \

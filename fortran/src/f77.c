@@ -719,6 +719,7 @@ static void hl_func(Node *fn) {
     while (ctl_n > 0) {
         ctl_n = ctl_n - 1;
         if (ctl_kind[ctl_n] == F77_CTL_IF) f77_error("IF block without END IF");
+        else if (ctl_kind[ctl_n] == F77_CTL_WHERE) f77_error("WHERE without END WHERE");
         else if (ctl_label[ctl_n] < 0) f77_error("DO without END DO");
         else {
             /* a labelled DO whose terminal statement never came: no
