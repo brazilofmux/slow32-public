@@ -80,6 +80,33 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    That is the order now: milestone 2 and the conditionals, then that
    slice of 4, then the suites.  Linking flang's objects instead is the
    shortcut ruled out.
+
+   **Done 2026-11-08 (b577e857): LAPACK built by f77 passes its suites.**
+   `regression/run-lapack.sh --f77` builds reference LAPACK, BLAS and the
+   test programs with f77 and runs every suite but DMD.  The result:
+   - 90 of 90 suites print what gfortran's build prints;
+   - 5,199,980 tests, the same count as the host;
+   - one over the threshold, which the host has too;
+   - 4.5 minutes on the M5.
+
+   On the way, from milestone 2 and the slice of 4: free form, the
+   conditionals, kinds, modules (`.mod` files), USE, generic interfaces,
+   internal procedures, automatic arrays, CPU_TIME.
+
+   It found defects, all fixed, each with a gate:
+   - COMMON blocks were private to each file: tests/multi/, the new
+     gate for programs of several files;
+   - automatic arrays were taken silently, on a slot of one element;
+   - Infinity and NaN were formatted as numbers;
+   - two wrong-code bugs in the HIR backend all four compilers share
+     (selfhost ISSUES-116 and 117).  117 is reachable from C, so stage08
+     had it too.
+
+   Left out until a ruling: the DMD routines and their four suites, which
+   USE ISO_FORTRAN_ENV (Fortran 2003, REAL64 from F2008).
+
+   Open: the opt-in copy-in mode (`F77_COPYIN=1`, off by default and in no
+   gate) faults on LAPACK's DTRSYL3.
 2. **Free-form source** (`.f90`), long names, `&` continuation, `;`.
 3. **Arrays**: whole-array and section expressions and assignment, strides,
    array constructors, assumed-shape dummies, automatic arrays, WHERE, and

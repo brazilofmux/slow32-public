@@ -431,8 +431,11 @@ python3 ~/slow-32/flang/tests/gfortran-axes.py OUT [--variants]
 # no more over the threshold than the host, and it reports which suites print otherwise.
 # After a change to flang, flang-rt, the backend or the C library.  Mac only, like the
 # corpus (~/refs/lapack; run.py has the pin).  Exit 2 if anything it needs is missing.
-# ~5 min.
+# ~5 min.  --f77 builds SLOW-32's side with fortran/'s f77 instead (all but the
+# DMD routines, which USE ISO_FORTRAN_ENV): after a change to fortran/ or the HIR
+# backends.  90 of 90 suites print what gfortran's build prints.  ~5 min.
 cd ~/slow-32/regression && ./run-lapack.sh
+cd ~/slow-32/regression && ./run-lapack.sh --f77
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour
