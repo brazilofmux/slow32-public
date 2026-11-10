@@ -263,6 +263,17 @@ static int f77_ci_n;
 static int f77_unit_nparams;
 static int f77_rd_len;
 static int f77_inline_depth;
+
+/* What Fortran 95 deleted (its Annex B.1) is compiled as before, and in
+ * free form said: a fixed-form file may be FORTRAN 77, where each of
+ * them is the standard's own and FCVS asks for it. */
+static void f77_deleted(char *what) {
+    char m[128];
+    if (!lx_free) return;
+    strcpy(m, what);
+    strcat(m, " is a feature Fortran 95 deleted");
+    f77_warn(m);
+}
 static int f77_reduce(int in);
 static int f77_merge(void);
 static int f77_arr_inquiry(int in);
@@ -1205,20 +1216,26 @@ static void f77_realloc_sym(int s) {
 static int f77_lnum[F77_MAX_LABEL];
 static int f77_lblk[F77_MAX_LABEL];
 static signed char f77_ldef[F77_MAX_LABEL];   /* a statement carries it */
+static signed char f77_lendif[F77_MAX_LABEL]; /* ... an END IF, now behind: its IF construct is closed */
 static int f77_nlabel;
 
 /* Block for a label, created on first mention so forward GOTOs work. */
+#define F77_DEL_ENDIF "a branch to an END IF from outside its IF construct"
 static int f77_label_blk(int n) {
     int i;
     i = f77_label_base;
     while (i < f77_nlabel) {
-        if (f77_lnum[i] == n) return f77_lblk[i];
+        if (f77_lnum[i] == n) {
+            if (f77_lendif[i]) f77_deleted(F77_DEL_ENDIF);
+            return f77_lblk[i];
+        }
         i = i + 1;
     }
     if (f77_nlabel >= F77_MAX_LABEL) { f77_error("too many labels"); return 0; }
     f77_lnum[f77_nlabel] = n;
     f77_lblk[f77_nlabel] = hir_new_block();
     f77_ldef[f77_nlabel] = 0;
+    f77_lendif[f77_nlabel] = 0;
     f77_nlabel = f77_nlabel + 1;
     return f77_lblk[f77_nlabel - 1];
 }
@@ -1285,6 +1302,7 @@ static int ctl_body[F77_MAX_CTL];    /* DO: body head, the rotated back edge */
 static int ctl_exit[F77_MAX_CTL];    /* DO/IF: block after the construct */
 static int ctl_cont[F77_MAX_CTL];    /* DO: the step, made by the first CYCLE (-1: none) */
 static int ctl_else[F77_MAX_CTL];    /* IF: pending else block */
+static int ctl_lab0[F77_MAX_CTL];    /* IF: the labels the unit knew when it opened (f77_nlabel) */
 static char ctl_name[F77_MAX_CTL][64]; /* DO/IF: its construct name, or "" */
 /* SELECT CASE: the selector (ctl_var its value, ctl_stephi a CHARACTER
  * one's length), its kind (0 INTEGER, 1 LOGICAL, 2 CHARACTER), the
@@ -7426,6 +7444,7 @@ static void f77_stmt_assign_label(int skip) {
     }
     f77_tok();
     f77_store_sym_val(s, f77_iconst(lab), TY_INT, -1);
+    f77_deleted("ASSIGN");
 }
 
 /* A FORMAT named by an ASSIGNed variable: pick the format text at run
@@ -10781,7 +10800,7 @@ static int f77_const_zero(int v, int hi, int ty) {
 /* One of a loop control's first value, limit and step, in the DO
  * variable's type vty: 0, said, when it is not one.  ac: an array
  * constructor's, which are INTEGER (F90 R436-R438). */
-static int f77_do_operand(int vty, int ac, int *v, int *hi) {
+static int f77_do_operand(int vty, int ac, int *v, int *hi, int *nonint) {
     int e; int ty; int nerr0;
     nerr0 = f77_nerr;
     e = f77_expr();
@@ -10793,6 +10812,7 @@ static int f77_do_operand(int vty, int ac, int *v, int *hi) {
                      : "a loop control's first value, limit and step are INTEGER, REAL or DOUBLE PRECISION expressions");
         return 0;
     }
+    if (ty != TY_INT) *nonint = 1;
     *v = f77_cvt(e, hi, ty, vty);
     return 1;
 }
@@ -10811,7 +10831,7 @@ static int f77_do_operand(int vty, int ac, int *v, int *hi) {
  * value waits in.  Otherwise V is the unit's variable, and INTEGER,
  * REAL or DOUBLE PRECISION. */
 static int f77_do_control(int *var, int *step, int *step_hi, int *keep) {
-    int s; int vty; int nerr0;
+    int s; int vty; int nerr0; int nonint;
     int m1, m2, m3;
     int m1hi, m2hi, m3hi;
     int t;
@@ -10830,19 +10850,21 @@ static int f77_do_control(int *var, int *step, int *step_hi, int *keep) {
     }
     if (f77_sptr[s]) { f77_error("a POINTER as a DO variable is not supported"); return -1; }
 
-    if (!f77_do_operand(vty, keep != 0, &m1, &m1hi)) return -1;
+    nonint = 0;
+    if (!f77_do_operand(vty, keep != 0, &m1, &m1hi, &nonint)) return -1;
     if (lx_t != T_COMMA) { f77_error(F77_DO_SYNTAX); return -1; }
     f77_tok();
-    if (!f77_do_operand(vty, keep != 0, &m2, &m2hi)) return -1;
+    if (!f77_do_operand(vty, keep != 0, &m2, &m2hi, &nonint)) return -1;
     m3hi = 0;
     if (lx_t == T_COMMA) {
         f77_tok();
-        if (!f77_do_operand(vty, keep != 0, &m3, &m3hi)) return -1;
+        if (!f77_do_operand(vty, keep != 0, &m3, &m3hi, &nonint)) return -1;
     } else {
         m3 = (vty == TY_FLOAT) ? f77_rconst(1.0) :
              (vty == TY_DOUBLE) ? f77_dconst(1.0, &m3hi) : f77_iconst(1);
     }
     if (f77_const_zero(m3, m3hi, vty)) { f77_error(F77_DO_ZERO); return -1; }
+    if (vty != TY_INT || nonint) f77_deleted("a DO variable or a loop control expression that is not INTEGER");
 
     if (keep) {
         int old;
@@ -18314,6 +18336,8 @@ static void f77_fmt_bad(const char *what) {
 }
 static void f77_check_format(const char *s, int n) {
     int i, depth, c, k, cnt;
+    int nh;
+    nh = 0;
     while (n > 0 && s[n - 1] == ' ') n = n - 1;
     i = 0;
     while (i < n && s[i] == ' ') i = i + 1;
@@ -18367,6 +18391,8 @@ static void f77_check_format(const char *s, int n) {
                 return;
             }
             i = i + 1 + cnt;
+            if (nh == 0) f77_deleted("the H edit descriptor");
+            nh = nh + 1;
             continue;
         }
         if (cnt >= 0 && c == '(') { depth = depth + 1; i = i + 1; continue; }   /* a group repeated */
@@ -18527,6 +18553,7 @@ static int f77_io_fmt_spec1(void) {
         f77_fmt_dyn = f77_load_sym(f77_sym(lex_name));
         f77_fmt_dyn = f77_cvt(f77_fmt_dyn, &ex_hi, ex_ty, TY_INT);
         f77_tok();
+        f77_deleted("an assigned FORMAT");
         return -2;
     }
     f77_error("bad FORMAT specifier");
@@ -20975,6 +21002,7 @@ static void f77_statement(void) {
         ctl_kind[ctl_n] = F77_CTL_IF;
         ctl_else[ctl_n] = b_else;
         ctl_exit[ctl_n] = b_end;
+        ctl_lab0[ctl_n] = f77_nlabel;
         ctl_n = ctl_n + 1;
         goto done;
     }
@@ -21049,6 +21077,7 @@ static void f77_statement(void) {
     if ((n = f77_starts("ASSIGN")) != 0) { f77_stmt_assign_label(n); goto done; }
     if ((n = f77_starts("PAUSE")) != 0) {
         int args[2];
+        f77_deleted("PAUSE");
         f77_scan_from(n);
         if (lx_t == T_SCON) {
             args[0] = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, lex_sidx, NULL);
@@ -21247,6 +21276,16 @@ static void f77_statement(void) {
         if ((nm = f77_name_tail(5)) == 0) { f77_error("unexpected text after END IF"); goto done; }
         f77_cname_match(ctl_n - 1, nm, "END IF");
         ctl_n = ctl_n - 1;
+        if (lx_stmt_label >= 0) {
+            /* a label the unit knew before the IF was named out there;
+             * and whoever names it from here on is out there too */
+            int q;
+            for (q = f77_label_base; q < f77_nlabel; q++)
+                if (f77_lnum[q] == lx_stmt_label) {
+                    if (q < ctl_lab0[ctl_n]) f77_deleted(F77_DEL_ENDIF);
+                    f77_lendif[q] = 1;
+                }
+        }
         f77_goto_blk(ctl_exit[ctl_n]);
         if (ctl_else[ctl_n] >= 0) {
             /* No ELSE arm: the false edge falls straight through. */
@@ -21309,6 +21348,7 @@ static void f77_statement(void) {
             int i;
             int v;
             int s;
+            f77_deleted("the assigned GO TO");
             s = f77_sym(lex_name);
             v = f77_load_sym(s);
             v = f77_cvt(v, &ex_hi, ex_ty, TY_INT);

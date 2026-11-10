@@ -864,6 +864,63 @@ if [ -x "$F77" ]; then
     done
 fi
 
+# --- Gate: what Fortran 95 deleted ------------------------------------
+# Its Annex B.1 -- a DO variable or loop control that is not INTEGER, a
+# branch to an END IF from outside its IF construct, PAUSE, ASSIGN with
+# the assigned GO TO and the assigned FORMAT, the H edit descriptor -- is
+# compiled as before, and in free form each is said once, as a warning.
+# The same statements in fixed form, where the file may be FORTRAN 77 and
+# each of them the standard's own, compile without a word.  The programs
+# are written to be both: one statement a line, a label at its start.
+if [ -x "$F77" ]; then
+    printf 'do x = 1.0, 2.0\nend do\nend\n' > "$W/wdoreal.f90"
+    printf 'double precision d\ndo d = 1, 2\nend do\nend\n' > "$W/wdodble.f90"
+    printf 'do i = 1, 2.5\nend do\nend\n' > "$W/wdolim.f90"
+    printf 'print *, (x, x = 1.0, 2.0)\nend\n' > "$W/wiodo.f90"
+    printf 'go to 10\nif (i .gt. 0) then\ni = 1\n10 end if\nend\n' > "$W/wendiffwd.f90"
+    printf 'if (i .gt. 0) then\ni = 1\n10 end if\ni = i + 1\nif (i .lt. 5) go to 10\nend\n' > "$W/wendifback.f90"
+    printf 'pause\nend\n' > "$W/wpause.f90"
+    printf 'assign 10 to l\n10 continue\nend\n' > "$W/wassign.f90"
+    printf 'l = 0\ngo to l, (10)\n10 continue\nend\n' > "$W/wagoto.f90"
+    printf 'l = 0\nprint l, 5\n10 format (i5)\nend\n' > "$W/wafmt.f90"
+    printf 'print 10\n10 format (2Hab, 2Hcd)\nend\n' > "$W/whedit.f90"
+    printf 'print '\''(2Hab)'\''\nend\n' > "$W/whchar.f90"
+    # none of these is one: a branch to an END IF from inside its
+    # construct, INTEGER loop controls, an X after a count
+    printf 'if (i .gt. 0) then\nif (i .gt. 1) go to 10\ni = 1\n10 end if\ndo i = 1, 3\nend do\nprint 20, (i, i = 1, 2)\n20 format (2(1x, i5))\nend\n' > "$W/wnone.f90"
+    for c in "wdoreal:line 1: warning: a DO variable or a loop control expression that is not INTEGER is a feature Fortran 95 deleted" \
+             "wdodble:line 2: warning: a DO variable or a loop control expression that is not INTEGER is a feature Fortran 95 deleted" \
+             "wdolim:line 1: warning: a DO variable or a loop control expression that is not INTEGER is a feature Fortran 95 deleted" \
+             "wiodo:line 1: warning: a DO variable or a loop control expression that is not INTEGER is a feature Fortran 95 deleted" \
+             "wendiffwd:line 4: warning: a branch to an END IF from outside its IF construct is a feature Fortran 95 deleted" \
+             "wendifback:line 5: warning: a branch to an END IF from outside its IF construct is a feature Fortran 95 deleted" \
+             "wpause:line 1: warning: PAUSE is a feature Fortran 95 deleted" \
+             "wassign:line 1: warning: ASSIGN is a feature Fortran 95 deleted" \
+             "wagoto:line 2: warning: the assigned GO TO is a feature Fortran 95 deleted" \
+             "wafmt:line 2: warning: an assigned FORMAT is a feature Fortran 95 deleted" \
+             "whedit:line 2: warning: the H edit descriptor is a feature Fortran 95 deleted" \
+             "whchar:line 1: warning: the H edit descriptor is a feature Fortran 95 deleted" \
+             "wnone:"; do
+        b="${c%%:*}"; msg="${c#*:}"; want=1
+        [ -z "$msg" ] && want=0
+        # the fixed-form twin: the statement from column 7, the label before it
+        sed -E -e 's/^([0-9]+) /\1      /' -e 't' -e 's/^/      /' "$W/$b.f90" > "$W/$b.f"
+        if ! (cd "$W" && "$F77" "$W/$b.f90" "$W/$b.s") >"$W/$b.err" 2>&1; then
+            report "warn:$b" 1 "did not compile: $(head -1 "$W/$b.err")"
+        elif [ "$(grep -c "warning:" "$W/$b.err")" != "$want" ]; then
+            report "warn:$b" 1 "$(grep -c "warning:" "$W/$b.err") warnings"
+        elif [ "$want" = 1 ] && ! grep -qF "$msg" "$W/$b.err"; then
+            report "warn:$b" 1 "said: $(head -1 "$W/$b.err")"
+        elif ! (cd "$W" && "$F77" "$W/$b.f" "$W/$b.s") >"$W/$b.err" 2>&1; then
+            report "warn:$b" 1 "fixed form did not compile: $(head -1 "$W/$b.err")"
+        elif [ -s "$W/$b.err" ]; then
+            report "warn:$b" 1 "fixed form said: $(head -1 "$W/$b.err")"
+        else
+            report "warn:$b" 0
+        fi
+    done
+fi
+
 # --- Gate: programs the runtime must stop ----------------------------
 # tests/stop/<name>.f must print exactly <name>.expected, then stop with
 # exit status 2 and <name>.msg on stderr (stdin: <name>.in, if any).  Not

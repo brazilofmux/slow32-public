@@ -21,6 +21,7 @@
 #include "f77_contract.h"
 
 static void f77_error(char *msg);
+static void f77_warn(char *msg);
 static int f77_nerr;      /* errors reported; the parser checks it per statement */
 static int f77_scan_mode; /* 1: the unit scan evaluating a kind or a length; 2: f77_len_text */
 static int f77_scan_bad;  /* ... and something it could not tell */
@@ -47,6 +48,19 @@ static void f77_error(char *msg) {
     fdputs(lx_stmt, 2);
     fdputc('\n', 2);
     f77_nerr = f77_nerr + 1;
+}
+
+/* Not an error: the statement stands, and this is said of it.  Once --
+ * not again where a spliced callee's text is read a second time. */
+static void f77_warn(char *msg) {
+    if (f77_scan_mode || f77_inline_depth > 0) return;
+    lx_put_where(lx_stmt_line);
+    fdputs("warning: ", 2);
+    fdputs(msg, 2);
+    fdputc('\n', 2);
+    fdputs("  in: ", 2);
+    fdputs(lx_stmt, 2);
+    fdputc('\n', 2);
 }
 
 /* fort370: two subprograms (or ENTRY points) of one name -- the CALL
