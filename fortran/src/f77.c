@@ -456,11 +456,38 @@ static void f77_scan_shapes(int u) {
     }
 }
 
+/* Where, in a token that is a name, the name begins that a statement
+ * keyword runs into, or 0: with the blanks gone DO X = 1, 9 is DOX=1,9
+ * and PRINT FMT, K is PRINTFMT,K, each beginning with one name.  It is
+ * asked of every name and not of statements, so a variable DOT offers a
+ * T as well; a candidate too many costs its host a register, no more. */
+static int f77_kw_operand(char *nm) {
+    static char *kw[] = { "DO", "GOTO", "PRINT", "READ", "REWIND", "BACKSPACE", "ENDFILE", "RETURN", "ASSIGN", 0 };
+    int q; int k;
+    for (q = 0; kw[q]; q++) {
+        k = (int)strlen(kw[q]);
+        if (strncmp(nm, kw[q], (size_t)k) != 0) continue;
+        while (lx_isdigit(nm[k])) k = k + 1;                    /* DO 10 X, ASSIGN 10 TO X */
+        if (kw[q][0] == 'A') {
+            if (strncmp(nm + k, "TO", 2) != 0) continue;
+            k = k + 2;
+        }
+        if (lx_isalpha(nm[k])) return k;
+    }
+    return 0;
+}
+
+static void f77_hc_add(char *nm) {
+    if (f77_hc_has(nm) || f77_hc_n >= F77_MAX_HC) return;
+    strcpy(f77_hc_name[f77_hc_n], nm);
+    f77_hc_n = f77_hc_n + 1;
+}
+
 /* The names (tokens) in the text of unit u's internal procedures, into
  * f77_hc_name; none when u is no host, or a module (whose variables are
  * static, f77_me_bind). */
 static void f77_host_cands(int u) {
-    int v;
+    int v; int k;
     f77_hc_n = 0;
     f77_hc_host = -1;
     if (f77_ukind[u] == F77_UNIT_MODULE) return;
@@ -472,9 +499,10 @@ static void f77_host_cands(int u) {
         while (f77_next_stmt()) {
             f77_scan_from(0);
             while (lx_t != T_EOF) {
-                if (lx_t == T_NAME && !f77_hc_has(lex_name) && f77_hc_n < F77_MAX_HC) {
-                    strcpy(f77_hc_name[f77_hc_n], lex_name);
-                    f77_hc_n = f77_hc_n + 1;
+                if (lx_t == T_NAME) {
+                    f77_hc_add(lex_name);
+                    k = f77_kw_operand(lex_name);
+                    if (k) f77_hc_add(lex_name + k);
                 }
                 f77_tok();
             }

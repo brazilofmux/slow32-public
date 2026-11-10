@@ -1235,16 +1235,20 @@ static void fio_hol_out(const void *item, int n) {
     fio_consumed();
 }
 
+/* A list-directed integer, in the width of its kind: 12 columns for a
+ * fullword, 7 for a halfword -- gfortran's layout, like the rest. */
+static void fio_list_int(int v, int w) {
+    char buf[32];
+    snprintf(buf, sizeof buf, "%*d", w, v);
+    fio_puts(buf);
+    fio_first_item = 0;
+    fio_prev_char = 0;
+}
+
 void f77_wr_i(int v) {
     char buf[32];
     int d;
-    if (fio_listed) {
-        snprintf(buf, sizeof buf, "%12d", v);
-        fio_puts(buf);
-        fio_first_item = 0;
-        fio_prev_char = 0;
-        return;
-    }
+    if (fio_listed) { fio_list_int(v, 12); return; }
     d = fio_want();
     if (d == 0) return;
     if (d == 'A') { fio_hol_out(&v, (int)sizeof v); return; }
@@ -2625,6 +2629,7 @@ void f77_rd_in(void *p, int n) {
 
 void f77_wr_i(int v);
 void f77_wr_in(int v, int n) {
+    if (fio_listed && n == 2) { fio_list_int(v, 7); return; }
     if (!fio_listed && fio_want() == 'A') {
         short h = (short)v;
         unsigned char c = (unsigned char)v;

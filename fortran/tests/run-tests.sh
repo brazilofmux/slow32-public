@@ -304,6 +304,31 @@ if [ -x "$F77" ]; then
     printf 'do i=1,2\na: if (.true.) then\ncycle a\nend if a\nend do\nend\n' > "$W/cncycif.f90"
     printf 'do i=1,2\nexit q\nend do\nend\n' > "$W/cnexitno.f90"
     printf 'a: if (.true.) i=1\nend\n' > "$W/cnlogif.f90"
+    printf '      CHARACTER*4 C\n      DO 10 C = 1, 3\n10    CONTINUE\n      END\n' > "$W/dovchar.f"
+    printf '      LOGICAL L\n      DO 10 L = 1, 3\n10    CONTINUE\n      END\n' > "$W/dovlog.f"
+    printf '      COMPLEX Z\n      DO 10 Z = 1, 3\n10    CONTINUE\n      END\n' > "$W/dovcmplx.f"
+    printf '      INTEGER A(3)\n      DO 10 A = 1, 3\n10    CONTINUE\n      END\n' > "$W/dovarr.f"
+    printf '      INTEGER N\n      PARAMETER (N = 2)\n      DO 10 N = 1, 3\n10    CONTINUE\n      END\n' > "$W/dovparam.f"
+    printf 'integer, pointer :: p\ninteger, target :: t\np => t\ndo p = 1, 3\nend do\nend\n' > "$W/dovptr.f90"
+    printf '      INTEGER I\n      LOGICAL L\n      L = .TRUE.\n      DO 10 I = 1, L\n10    CONTINUE\n      END\n' > "$W/dolimlog.f"
+    printf '      INTEGER I\n      DO 10 I = 1, (3.0, 1.0)\n10    CONTINUE\n      END\n' > "$W/dolimcmplx.f"
+    printf 'integer :: i\ndo i = 1, '\''abc'\''\nend do\nend\n' > "$W/dolimchar.f90"
+    printf '      INTEGER I\n      DO 10 I = 1, 3, 0\n10    CONTINUE\n      END\n' > "$W/dostep0.f"
+    printf 'real :: x\ndo x = 1.0, 3.0, 0.0\nend do\nend\n' > "$W/dostep0r.f90"
+    printf '      INTEGER I\n      WRITE (*, *) (I, I = 1, .TRUE.)\n      END\n' > "$W/iodolog.f"
+    printf '      CHARACTER*4 C\n      WRITE (*, *) (C, C = 1, 3)\n      END\n' > "$W/iodochar.f"
+    printf '      INTEGER I\n      WRITE (*, *) (I, I = 1, 3, 0)\n      END\n' > "$W/iodostep0.f"
+    printf 'integer :: i, n\nn = 3\nprint *, (i, i = 1, n, 1, 1)\nend\n' > "$W/iodosyn4.f90"
+    printf 'integer :: i, n\nn = 3\nprint *, (i, i = n)\nend\n' > "$W/iodosyn1.f90"
+    printf 'real :: x\ninteger :: a(3)\na = (/ (int(x), x = 1.0, 3.0) /)\nprint *, a\nend\n' > "$W/acdoreal.f90"
+    printf 'integer :: i, a(3)\na = (/ (i, i = 1, 3.0) /)\nprint *, a\nend\n' > "$W/acdobound.f90"
+    printf 'integer :: i, n\nn = 3\nprint *, (/ (i, i = 1, n, 1, 1) /)\nend\n' > "$W/acdosyn.f90"
+    printf 'integer :: i, n\nreal :: x\nn = 3\nprint *, (/ (i, x = 1, n) /)\nend\n' > "$W/acdoprint.f90"
+    printf 'integer :: i\ninteger, parameter :: q(3) = (/ (i, i = 1, 3, 0) /)\nprint *, q\nend\n' > "$W/acdostep0.f90"
+    printf 'integer :: i\ninteger, parameter :: q(3) = (/ (i, i = 1.0, 3) /)\nprint *, q\nend\n' > "$W/acdocreal.f90"
+    printf 'integer :: i, a(3)\ndata (a(i), i = 1, 3.0) / 3 * 0 /\nend\n' > "$W/datadoreal.f90"
+    printf 'integer :: i, a(3)\ndata (a(i), i = 1, 3, 0) / 3 * 0 /\nend\n' > "$W/datadostep0.f90"
+    printf 'integer :: i, a(3)\ndata (a(i), i = 1, 3, 1, 1) / 3 * 0 /\nend\n' > "$W/datadosyn.f90"
     printf 'q: integer i\nend\n' > "$W/cndecl.f90"
     printf 'if (.true.) then\nelse\nelse\nend if\nend\n' > "$W/else2.f90"
     printf 'if (.true.) then\nelse\nelse if (.true.) then\nend if\nend\n' > "$W/elseelif.f90"
@@ -797,6 +822,31 @@ if [ -x "$F77" ]; then
              "bitnarg:line 1: wrong number of arguments to a bit intrinsic" \
              "mvbnarg:line 2: MVBITS needs five arguments" \
              "incnone:f77: line 1: INCLUDE: no file nosuch" \
+             "dovchar:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "dovlog:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "dovcmplx:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "dovarr:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "dovparam:line 3: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "dovptr:line 4: a POINTER as a DO variable is not supported" \
+             "dolimlog:line 4: a loop control's first value, limit and step are INTEGER, REAL or DOUBLE PRECISION expressions" \
+             "dolimcmplx:line 2: a loop control's first value, limit and step are INTEGER, REAL or DOUBLE PRECISION expressions" \
+             "dolimchar:line 2: a loop control's first value, limit and step are INTEGER, REAL or DOUBLE PRECISION expressions" \
+             "dostep0:line 2: a loop control's step is not zero" \
+             "dostep0r:line 2: a loop control's step is not zero" \
+             "iodolog:line 2: a loop control's first value, limit and step are INTEGER, REAL or DOUBLE PRECISION expressions" \
+             "iodochar:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
+             "iodostep0:line 2: a loop control's step is not zero" \
+             "iodosyn4:line 3: a loop control is variable = first, last [, step]" \
+             "iodosyn1:line 3: a loop control is variable = first, last [, step]" \
+             "acdoreal:line 3: an array constructor's implied-DO variable is a scalar INTEGER variable" \
+             "acdobound:line 2: an array constructor's implied DO has INTEGER expressions for its first value, limit and step" \
+             "acdosyn:line 3: a loop control is variable = first, last [, step]" \
+             "acdoprint:line 4: an array constructor's implied-DO variable is a scalar INTEGER variable" \
+             "acdostep0:line 2: a loop control's step is not zero" \
+             "acdocreal:line 2: an implied DO among constants has INTEGER constants for its first value, limit and step" \
+             "datadoreal:line 2: an implied DO among constants has INTEGER constants for its first value, limit and step" \
+             "datadostep0:line 2: a loop control's step is not zero" \
+             "datadosyn:line 2: a loop control is variable = first, last [, step]" \
              "incself:f77: incloop line 2: INCLUDE of a text being read: incloop" \
              "incerr:f77: INCBAD line 2: unexpected text after the statement" \
              "incafter:f77: line 3: statement label 99 is referred to but never defined"; do
