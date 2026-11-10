@@ -39,6 +39,8 @@ static int   fio_rep;            /* repeats left on the active descriptor */
 static int   fio_desc;           /* active descriptor letter, 0 = none */
 #define FIO_ESN 0x100            /* fio_desc of ES is FIO_ESN+'S', of EN FIO_ESN+'N' */
 static int   fio_w, fio_d;       /* width and digits of the active one */
+static int   fio_dgiven;         /* it has its .d (G0 need not) */
+static int   fio_single;         /* the real being written is a REAL, not DOUBLE PRECISION */
 
 /* Group stack: start position and remaining count of each open ( ). */
 static int   fio_gstart[FIO_MAXGROUP];
@@ -223,18 +225,26 @@ static void fio_plus(char *buf) {
     buf[0] = '+';
 }
 
+static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
+
 /* A numeric field one column too wide whose first character is the
  * optional zero before the decimal point drops that zero (F77
  * 13.5.9.2: the zero is optional, and gfortran omits it exactly then). */
 static void fio_drop_zero(char *buf, int w) {
     int n = (int)strlen(buf);
     if (w <= 0 || n != w + 1) return;
+    /* the zero is optional only beside another digit: F1.0 of 0.01 is
+     * "*", not "." */
+    if (!fio_isdigit(buf[n - 1])) return;
     if (buf[0] == '0' && buf[1] == '.') memmove(buf, buf + 1, (size_t)n);
     else if ((buf[0] == '-' || buf[0] == '+') && buf[1] == '0' && buf[2] == '.') memmove(buf + 1, buf + 2, (size_t)(n - 1));
 }
 
+/* nX moves on and writes nothing: what a T went back over stays. */
 static void fio_pad(int n) { if (n > 0) fio_col += n; }
-/* Blanks that are part of a field (G editing's trailer) are written. */
+/* Blanks that are part of a field are written -- a field's leading
+ * blanks, G editing's trailer: (A,T1,A,I2) left the old record's
+ * character where I2's blank belonged. */
 static void fio_blanks(int n) { while (n-- > 0) fio_putc(' '); }
 
 /* Right-justify `s` in a field of `w`; a field too narrow is filled
@@ -243,11 +253,9 @@ static void fio_field(const char *s, int w) {
     int n = (int)strlen(s);
     if (w <= 0) { fio_puts(s); return; }
     if (n > w) { while (w-- > 0) fio_putc('*'); return; }
-    fio_pad(w - n);
+    fio_blanks(w - n);
     fio_puts(s);
 }
-
-static int fio_isdigit(int c) { return c >= '0' && c <= '9'; }
 
 /* Fetch the next input record.  Returns 1 at end of file.  A record
  * shorter than the fields read from it behaves as if blank-padded,
@@ -751,7 +759,8 @@ static int fio_next_desc(void) {
             }
             fio_w = fio_isdigit(fio_fmt[fio_pos]) ? fio_number() : 0;
             fio_d = 0;
-            if (fio_fmt[fio_pos] == '.') { fio_pos++; fio_d = fio_number(); }
+            fio_dgiven = 0;
+            if (fio_fmt[fio_pos] == '.') { fio_pos++; fio_d = fio_number(); fio_dgiven = 1; }
             /* Ew.dEe -- e digits in the exponent */
             fio_e = 0;
             if (fio_fmt[fio_pos] == 'E' || fio_fmt[fio_pos] == 'e') {
@@ -877,8 +886,15 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
     int k;
     int nsig;
 
-    if (nd <= 0) nd = 6;
     k = fio_scale;
+    if (nd <= 0 && k <= 0) {
+        /* Ew.0 has no digit to show unless a scale factor puts one
+         * ahead of the point (1PE9.0 is 4.E-02); six were printed */
+        fio_flush_line();
+        fprintf(stderr, "f77: FORMAT: E, D and G with no digits (d = 0) need a positive scale factor\n");
+        exit(2);
+    }
+    if (nd < 0) nd = 0;
     if (k <= -nd || k >= nd + 2) k = 0;             /* out of 13.5.9's range: no effect */
     nsig = k > 0 ? nd + 1 : nd + k;                 /* significant digits shown */
     if (nsig < 1) nsig = 1;
@@ -927,21 +943,18 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
  * (20) columns followed by 4 (5) blanks, when 0.1 <= |v| < 10^9
  * (10^17) or v is zero, or an ES form d.ddddddddE+ee (3-digit
  * exponent for DOUBLE) right-justified in the whole field. */
-static void fio_list_out_real(double v, int dbl) {
-    char buf[64];
+/* The digits of a list-directed real, no blanks around them; returns 1
+ * for the F form, which sits fblanks short of the field's right edge. */
+static int fio_list_real_text(char *buf, int bufsz, double v, int dbl) {
     char cf[16];
     double a = v < 0 ? -v : v;
     int sig = dbl ? 17 : 9;
-    int width = dbl ? 25 : 16;
-    int fblanks = dbl ? 5 : 4;
     double lim = dbl ? 1e17 : 1e9;
-    fio_putc(' ');
+    char *e;
     if (v != v || v - v != 0.0) {
-        /* gfortran's Infinity, -Infinity, NaN, right in the full field */
-        fio_field(v != v ? "NaN" : v < 0 ? "-Infinity" : "Infinity", width);
-        fio_first_item = 0;
-        fio_prev_char = 0;
-        return;
+        /* gfortran's Infinity, -Infinity, NaN */
+        strcpy(buf, v != v ? "NaN" : v < 0 ? "-Infinity" : "Infinity");
+        return 0;
     }
     if (v == 0.0 || (a >= 0.1 && a < lim)) {
         int intd = 0;
@@ -949,20 +962,30 @@ static void fio_list_out_real(double v, int dbl) {
         while (t >= 1.0) { t /= 10.0; intd++; }
         if (intd == 0) intd = 1;                 /* the 0 before the point */
         snprintf(cf, sizeof cf, "%%.%df", sig - ((a < 1.0 && a != 0.0) ? 0 : intd));
-        snprintf(buf, sizeof buf, cf, v);
+        snprintf(buf, (size_t)bufsz, cf, v);
         if (a < 1.0 && a != 0.0 && strlen(buf) > (size_t)(sig + 2 + (v < 0))) buf[sig + 2 + (v < 0)] = 0;
+        return 1;
+    }
+    snprintf(cf, sizeof cf, "%%.%dE", sig - 1);
+    snprintf(buf, (size_t)bufsz, cf, v);
+    e = strchr(buf, 'E');
+    if (e && dbl) {
+        /* three exponent digits */
+        int n = (int)strlen(e + 2);
+        if (n < 3) { memmove(e + 2 + (3 - n), e + 2, (size_t)n + 1); memset(e + 2, '0', (size_t)(3 - n)); }
+    }
+    return 0;
+}
+
+static void fio_list_out_real(double v, int dbl) {
+    char buf[64];
+    int width = dbl ? 25 : 16;
+    int fblanks = dbl ? 5 : 4;
+    fio_putc(' ');
+    if (fio_list_real_text(buf, sizeof buf, v, dbl)) {
         fio_field(buf, width - fblanks);
         fio_blanks(fblanks);               /* part of the field: written */
     } else {
-        char *e;
-        snprintf(cf, sizeof cf, "%%.%dE", sig - 1);
-        snprintf(buf, sizeof buf, cf, v);
-        e = strchr(buf, 'E');
-        if (e && dbl) {
-            /* three exponent digits */
-            int n = (int)strlen(e + 2);
-            if (n < 3) { memmove(e + 2 + (3 - n), e + 2, (size_t)n + 1); memset(e + 2, '0', (size_t)(3 - n)); }
-        }
         fio_field(buf, width);
     }
     fio_first_item = 0;
@@ -1230,7 +1253,7 @@ static void fio_hol_out(const void *item, int n) {
     int len = n;
     int i;
     if (fio_w > 0 && fio_w < len) len = fio_w;
-    else if (fio_w > len) fio_pad(fio_w - len);
+    else if (fio_w > len) fio_blanks(fio_w - len);
     for (i = 0; i < len; i++) fio_putc(b[i]);
     fio_consumed();
 }
@@ -1253,7 +1276,7 @@ void f77_wr_i(int v) {
     if (d == 0) return;
     if (d == 'A') { fio_hol_out(&v, (int)sizeof v); return; }
     if (d == 'L') {
-        if (fio_w > 1) fio_pad(fio_w - 1);
+        if (fio_w > 1) fio_blanks(fio_w - 1);
         fio_putc(v ? 'T' : 'F');
         fio_consumed();
         return;
@@ -1331,36 +1354,55 @@ void f77_wr_d(double v) {
         if (fio_d == 0) strcat(buf, ".");
         fio_plus(buf);
         fio_drop_zero(buf, fio_w);
+    } else if (d == 'G' && fio_w == 0 && !fio_dgiven) {
+        /* G0: the number as list-directed output has it, and no blanks */
+        if (!fio_list_real_text(buf, sizeof buf, v, !fio_single) && v == v && v - v == 0.0) {
+            /* its E form is 0.dddE+ee, every digit after the point */
+            int k = fio_scale, e = fio_e;
+            fio_scale = 0;
+            fio_e = fio_single ? 0 : 3;
+            fio_efmt(buf, sizeof buf, v, fio_single ? 9 : 17, 'E');
+            fio_scale = k;
+            fio_e = e;
+        }
     } else if (d == 'G') {
-        /* Gw.d: F form when 0.1 <= |v| < 10^d, else E. The F form
-         * occupies w-4 columns and is followed by four blanks. */
+        /* Gw.d: F form when the value, ROUNDED to d digits, is in
+         * [0.1, 10^d), else E; the F form occupies w-4 columns and is
+         * followed by four blanks.  The rounding decides: 0.099996 in
+         * G12.4 is 0.1000, 9999.6 is 0.1000E+05 -- so the decimal
+         * exponent is read off the value printed to d digits. */
         double a = v < 0 ? -v : v;
-        double lim = 1.0;
-        int i;
         int use_f = 0;
         int nd = fio_d > 0 ? fio_d : 1;
-        for (i = 0; i < nd; i++) lim *= 10.0;
-        if (a == 0.0 || (a >= 0.1 && a < lim)) use_f = 1;
+        int k = 1;                      /* digits before the point; zero is F(w-n).(d-1) */
+        if (fio_d == 0) use_f = 0;      /* Gw.0 is Ew.0 */
+        else if (a == 0.0) use_f = 1;
+        else if (a == a && a - a == 0.0) {
+            char eb[48];
+            int e10;
+            snprintf(eb, sizeof eb, "%.*E", nd - 1, a);
+            e10 = atoi(strchr(eb, 'E') + 1);
+            if (e10 >= -1 && e10 < nd) { use_f = 1; k = e10 + 1; }
+        }
         if (use_f) {
             int tb = fio_e > 0 ? fio_e + 2 : 4;
-            int fw = fio_w >= tb ? fio_w - tb : fio_w;
-            int k = 0;
-            double t = a;
-            if (t >= 1.0) {
-                while (t >= 10.0 && k < nd) { t /= 10.0; k++; }
-                k++;
-            }
+            int fw = fio_w > 0 ? fio_w - tb : 0;        /* G0.d: as wide as it is */
             snprintf(cf, sizeof cf, "%%.%df", nd - k > 0 ? nd - k : 0);
             snprintf(buf, sizeof buf, cf, v);
             if (nd - k <= 0) strcat(buf, ".");
             fio_plus(buf);
             fio_drop_zero(buf, fw);
-            fio_field(buf, fw);
-            fio_blanks(fio_w >= tb ? tb : 0);
+            if (fio_w > 0 && (int)strlen(buf) > fw) {
+                int j;                      /* too wide for w-n: w asterisks, no blanks */
+                for (j = 0; j < fio_w; j++) fio_putc('*');
+            } else {
+                fio_field(buf, fw);
+                fio_blanks(fio_w > 0 ? tb : 0);
+            }
             fio_consumed();
             return;
         }
-        fio_efmt(buf, sizeof buf, v, nd, 'E');
+        fio_efmt(buf, sizeof buf, v, fio_d, 'E');
         fio_plus(buf);
         fio_drop_zero(buf, fio_w);
     } else if (d == 'E' || d == 'D') {
@@ -1380,7 +1422,9 @@ void f77_wr_d(double v) {
 void f77_wr_r(float v) {
     if (fio_listed) { fio_list_out_real((double)v, 0); return; }
     if (fio_want() == 'A') { fio_hol_out(&v, (int)sizeof v); return; }   /* REAL text, 4 bytes */
+    fio_single = 1;
     f77_wr_d((double)v);
+    fio_single = 0;
 }
 
 /* A COMPLEX item: two edit descriptors, or "(re,im)" list-directed. */
@@ -1390,38 +1434,16 @@ void f77_wr_r(float v) {
  * COMPLEX, 53 for COMPLEX*16, gfortran's layout. */
 static void fio_list_cplx(double re, double im, int dbl) {
     {
-        int save;
+        char buf[64];
         int start0;
         fio_putc(' ');
         start0 = fio_len;
         fio_putc('(');
-        save = fio_len;
-        fio_list_out_real(re, dbl);
-        /* trim the field to the number: drop the leading blank and the padding */
-        {
-            int i, j;
-            int start = save;
-            while (start < fio_len && fio_line[start] == ' ') start++;
-            j = fio_len;
-            while (j > start && fio_line[j - 1] == ' ') j--;
-            for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
-            fio_len = save + (j - start);
-            fio_col = fio_len;
-        }
+        fio_list_real_text(buf, sizeof buf, re, dbl);
+        fio_puts(buf);
         fio_putc(',');
-        save = fio_len;
-        fio_list_out_real(im, dbl);
-        {
-            int i, j;
-            int start = save;
-            while (start < fio_len && fio_line[start] == ' ') start++;
-            j = fio_len;
-            while (j > start && fio_line[j - 1] == ' ') j--;
-            for (i = 0; i < j - start; i++) fio_line[save + i] = fio_line[start + i];
-            fio_len = save + (j - start);
-            fio_col = fio_len;
-        }
-        fio_col = fio_len;
+        fio_list_real_text(buf, sizeof buf, im, dbl);
+        fio_puts(buf);
         fio_putc(')');
         /* gfortran right-justifies the pair after the blank */
         {
@@ -1480,7 +1502,7 @@ void f77_wr_a(const char *s, int len) {
     d = fio_want();
     if (d == 0) return;
     if (fio_w > 0 && fio_w < len) len = fio_w;
-    else if (fio_w > len) fio_pad(fio_w - len);
+    else if (fio_w > len) fio_blanks(fio_w - len);
     for (i = 0; i < len; i++) fio_putc(s[i]);
     fio_consumed();
 }
@@ -1820,12 +1842,12 @@ void f77_cpu_time_d(double *t) { *t = (double)clock() / CLOCKS_PER_SEC; }
  * answer is a float's, returned widened). */
 double f77_fraction(double x) {
     int e;
-    if (x == 0.0) return 0.0;
+    if (x == 0.0) return x;             /* a zero keeps its sign */
     return frexp(x, &e);
 }
 double f77_set_exponent(double x, int i) {
     int e;
-    if (x == 0.0) return 0.0;
+    if (x == 0.0) return x;
     return ldexp(frexp(x, &e), i);
 }
 double f77_scale(double x, int i, int isd) {
@@ -1859,11 +1881,13 @@ int f77_modulo_i(int a, int p) {
 double f77_modulo_d(double a, double p, int isd) {
     if (isd) {
         double r = fmod(a, p);
-        if (r != 0.0 && ((r < 0.0) != (p < 0.0))) r += p;
+        if (r == 0.0) return copysign(0.0, p);     /* P's sign, a zero's too */
+        if ((r < 0.0) != (p < 0.0)) r += p;
         return r;
     } else {
         float r = fmodf((float)a, (float)p);
-        if (r != 0.0f && ((r < 0.0f) != ((float)p < 0.0f))) r += (float)p;
+        if (r == 0.0f) return copysign(0.0, p);
+        if ((r < 0.0f) != ((float)p < 0.0f)) r += (float)p;
         return (double)r;
     }
 }
@@ -2212,7 +2236,7 @@ void f77_wr_l(int v) {
     }
     d = fio_want();
     if (d == 0) { return; }
-    if (fio_w > 1) fio_pad(fio_w - 1);
+    if (fio_w > 1) fio_blanks(fio_w - 1);
     fio_putc(v ? 'T' : 'F');
     fio_consumed();
 }

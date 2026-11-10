@@ -470,6 +470,28 @@ static void f77_scan_shapes(int u) {
     }
 }
 
+/* Does this declaration give a variable static storage -- `, SAVE ::`,
+ * or `:: V = value` (Fortran 90: an initial value is SAVE), or
+ * `:: P => NULL()`?  Its unit is then never spliced, as with a DATA or
+ * SAVE statement: spliced, V was the caller's temporary, never set
+ * (gfortran's arithmetic_if.f90 counted down from a SAVEd 2 and got -1
+ * every time).  A PARAMETER's `=` is no storage. */
+static int f77_scan_decl_static(void) {
+    int p;
+    p = 0;
+    for (;;) {
+        p = f77_toplevel(':', p);
+        if (p < 0) return 0;
+        if (lx_stmt[p + 1] == ':') break;
+        p = p + 1;
+    }
+    lx_stmt[p] = 0;
+    if (strstr(lx_stmt, ",PARAMETER")) { lx_stmt[p] = ':'; return 0; }
+    if (strstr(lx_stmt, ",SAVE")) { lx_stmt[p] = ':'; return 1; }
+    lx_stmt[p] = ':';
+    return f77_toplevel('=', p + 2) >= 0 || strstr(lx_stmt + p, "=>") != NULL;
+}
+
 /* Where, in a token that is a name, the name begins that a statement
  * keyword runs into, or 0: with the blanks gone DO X = 1, 9 is DOX=1,9
  * and PRINT FMT, K is PRINTFMT,K, each beginning with one name.  It is
@@ -730,6 +752,7 @@ static void f77_scan_units(void) {
                  f77_starts("LOGICAL") || f77_starts("DOUBLE") ||
                  f77_starts("COMPLEX")) && f77_toplevel('/', 0) >= 0)
                 f77_unosplice[f77_nunit - 1] = 1;
+            if (f77_scan_decl_static()) f77_unosplice[f77_nunit - 1] = 1;
         }
         if (started && f77_nunit > 0 && f77_starts("ENTRY") &&
             f77_ukind[f77_nunit - 1] != F77_UNIT_PROGRAM && f77_nent < F77_MAX_ENTRY) {

@@ -598,6 +598,7 @@ static int  f77_stf_nargs[F77_MAX_STF];
 static char f77_stf_arg[F77_MAX_STF][F77_MAX_STF_ARGS][F77_MAX_NAME];
 static int  f77_stf_argty[F77_MAX_STF][F77_MAX_STF_ARGS];
 static int  f77_stf_arglen[F77_MAX_STF][F77_MAX_STF_ARGS];   /* a CHARACTER dummy's length */
+static int  f77_stf_arglog[F77_MAX_STF][F77_MAX_STF_ARGS];   /* a LOGICAL dummy */
 static int  f77_stf_text[F77_MAX_STF];
 static int  f77_stf_len[F77_MAX_STF];
 static int  f77_stf_n;
@@ -1349,6 +1350,7 @@ static int f77_power(void);
 #define F77_OPND(o, val) do { (o)[0] = (val); (o)[1] = ex_ty; (o)[2] = ex_hi; (o)[3] = ex_len; \
                               (o)[4] = ex_ty == TY_DERIVED ? ex_dt : -1; (o)[5] = ex_log; } while (0)
 static int f77_op_try1(int tok, int *x, int *res);
+static void f77_opnd_check(int *x, int *y, int want);
 static int f77_op_try2(int tok, int *x, int *y, int *res);
 static int f77_op_defined(char *nm, int n, int *x, int *y);
 static int f77_find_func(char *nm);
@@ -2878,6 +2880,62 @@ static int f77_primary(void) {
     return v;
 }
 
+/* The one argument type of a specific intrinsic name, or -1 for a
+ * generic name (or one this does not know). */
+static int f77_specific_arg_ty(char *nm) {
+    static char *ints = " IABS ISIGN IDIM FLOAT MAX0 MIN0 AMAX0 AMIN0 ";
+    static char *reals = " IFIX AMOD ALOG ALOG10 AMAX1 AMIN1 MAX1 MIN1 DPROD ";
+    static char *dbls = " IDINT DINT DNINT IDNINT DABS DMOD DSIGN DDIM DMAX1 DMIN1 DSQRT DEXP DLOG DLOG10 "
+                        "DSIN DCOS DTAN DASIN DACOS DATAN DATAN2 DSINH DCOSH DTANH ";
+    static char *cplxs = " CABS CSQRT CEXP CLOG CSIN CCOS ";
+    char key[F77_MAX_NAME + 3];
+    sprintf(key, " %s ", nm);
+    if (strstr(ints, key)) return TY_INT;
+    if (strstr(reals, key)) return TY_FLOAT;
+    if (strstr(dbls, key)) return TY_DOUBLE;
+    if (strstr(cplxs, key)) return TY_CPLX;
+    return -1;
+}
+
+/* An intrinsic's argument just evaluated is of the kind it takes: a
+ * number (not CHARACTER, not LOGICAL) for the numeric ones, COMPLEX for
+ * AIMAG and CONJG, an INTEGER for the bit ones.  They compiled whatever
+ * came: MIN('FOO', 'BAR') compared two addresses, ABS(.TRUE.) was 1. */
+static int f77_in_arg_ok(char *nm, int in) {
+    char m[F77_MAX_NAME + 60];
+    int log;
+    log = ex_ty == TY_INT && ex_log;
+    if (ex_ty == TY_DERIVED) return 1;      /* refused where it is used */
+    {
+        /* a specific name takes its one type (F77 table 5): IABS(1.5)
+         * was 1, DSQRT(2.0) a REAL's root */
+        int want;
+        want = f77_specific_arg_ty(nm);
+        if (want >= 0 && (ex_ty != want || log)) {
+            sprintf(m, "%s needs %s arguments", nm, want == TY_INT ? "INTEGER" : want == TY_FLOAT ? "REAL" :
+                    want == TY_DOUBLE ? "DOUBLE PRECISION" : "COMPLEX");
+            if (!f77_nerr) f77_error(m);
+            return 0;
+        }
+    }
+    if (in == IN_AIMAG || in == IN_CONJG) {
+        if (ex_ty == TY_CPLX || ex_ty == TY_DCPLX) return 1;
+        sprintf(m, "%s needs a COMPLEX argument", nm);
+    } else if (in >= IN_IAND && in <= IN_IBCLR) {
+        if (ex_ty == TY_INT && !log) return 1;
+        sprintf(m, "%s needs INTEGER arguments", nm);
+    } else if (in == IN_ABS || in == IN_MAX || in == IN_MIN || in == IN_MOD || in == IN_INT || in == IN_REAL ||
+               in == IN_DBLE || in == IN_SQRT || in == IN_SIGN || in == IN_MAX1 || in == IN_MIN1 ||
+               in == IN_AMAX0 || in == IN_AMIN0 || (in >= IN_SIN && in <= IN_TANH) || in == IN_AINT ||
+               in == IN_ANINT || in == IN_NINT || in == IN_DIM || in == IN_DPROD || in == IN_CMPLX ||
+               in == IN_DCMPLX || in == IN_CEILING || in == IN_FLOOR || in == IN_MODULO) {
+        if (ex_ty != TY_CHAR && !log) return 1;
+        sprintf(m, "%s needs numeric arguments, not %s", nm, log ? "LOGICAL" : "CHARACTER");
+    } else return 1;
+    if (!f77_nerr) f77_error(m);
+    return 0;
+}
+
 static int f77_primary1(int *intr) {
     int v;
     int s;
@@ -2956,6 +3014,7 @@ static int f77_primary1(int *intr) {
             f77_op_try1(T_MINUS, xo, &r);
             return r;
         }
+        { int xo[F77_OPND_N]; F77_OPND(xo, v); f77_opnd_check(xo, NULL, 0); }
         if (save == TY_DOUBLE) {
             ex_ty = TY_DOUBLE;
             return f77_fp64_pair1("__fp64_neg", v, vhi, &ex_hi);
@@ -3175,6 +3234,7 @@ static int f77_primary1(int *intr) {
                 }
                 a = f77_expr(); aty = ex_ty; ahi = ex_hi;
                 f77_char_whole_ok = saved;
+                if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
             }
 
             if (in == IN_ADJUSTL || in == IN_ADJUSTR || in == IN_REPEAT || in == IN_SCAN || in == IN_VERIFY) {
@@ -3232,7 +3292,7 @@ static int f77_primary1(int *intr) {
                 while (lx_t == T_COMMA && n < 3) {
                     f77_tok();
                     v[n] = f77_expr();
-                    if (ex_ty != TY_INT) f77_error("this intrinsic needs INTEGER arguments");
+                    if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                     n = n + 1;
                 }
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
@@ -3253,6 +3313,7 @@ static int f77_primary1(int *intr) {
                     if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') kn = 1;
                     else {
                         im = f77_expr(); imhi = ex_hi; imty = ex_ty;
+                        if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                         has_y = 1;
                         if (lx_t == T_COMMA) { f77_tok(); kn = 1; }
                     }
@@ -3546,6 +3607,7 @@ static int f77_primary1(int *intr) {
                     if (lx_t != T_COMMA) { f77_error("this intrinsic needs two arguments"); return f77_iconst(0); }
                     f77_tok();
                     b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                 }
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 if (which == 0 && aty == TY_INT && bty == TY_INT) {
@@ -3666,6 +3728,7 @@ static int f77_primary1(int *intr) {
                     }
                     f77_tok();
                     b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                     if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                     if (dbl || bty == TY_DOUBLE) {
                         a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
@@ -3694,6 +3757,7 @@ static int f77_primary1(int *intr) {
                 if (lx_t != T_COMMA) break;
                 f77_tok();
                 b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                 rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
                 if (in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0 ||
                     in == IN_MIN || in == IN_MIN1 || in == IN_AMIN0) {
@@ -3703,22 +3767,12 @@ static int f77_primary1(int *intr) {
                     if (rty == TY_INT) {
                         a = hi_emit(HI_REM, TY_INT, a, b, 0, NULL);
                     } else {
-                        /* a - INT(a/b)*b, in the operands' own type */
-                        int q; int qhi; int t;
-                        qhi = -1;
-                        if (rty == TY_DOUBLE) {
-                            q = f77_fp64_call2("__fp64_div", a, ahi, b, bhi, &qhi);
-                            t = f77_cvt(q, &qhi, TY_DOUBLE, TY_INT);
-                            q = f77_cvt(t, &qhi, TY_INT, TY_DOUBLE);
-                            q = f77_fp64_call2("__fp64_mul", q, qhi, b, bhi, &qhi);
-                            a = f77_fp64_call2("__fp64_sub", a, ahi, q, qhi, &ahi);
-                        } else {
-                            q = hi_emit(HI_FDIV, TY_FLOAT, a, b, 0, NULL);
-                            t = hi_emit(HI_FCVT_FtoI, TY_INT, q, -1, 0, NULL);
-                            q = hi_emit(HI_FCVT_ItoF, TY_FLOAT, t, -1, 0, NULL);
-                            q = hi_emit(HI_FMUL, TY_FLOAT, q, b, 0, NULL);
-                            a = hi_emit(HI_FSUB, TY_FLOAT, a, q, 0, NULL);
-                        }
+                        /* fmod: exact, A's sign (a zero's too), and any
+                         * quotient -- A - INT(A/P)*P, as this was, lost
+                         * -0.0 and went through an INTEGER that MOD(1E20,
+                         * 3.0)'s quotient does not fit */
+                        if (rty == TY_DOUBLE) a = f77_libm_d2("fmod", a, ahi, b, bhi, &ahi);
+                        else a = f77_libm_f2("fmodf", a, b);
                     }
                 } else if (in == IN_DIM) {
                     /* max(a - b, 0) in the operands' type */
@@ -4134,6 +4188,31 @@ static int f77_primary1(int *intr) {
  * f77_dpow_i -- real calls, unlike the __fp64_* names the backend
  * inlines, so the arguments carry real ABI tags).  A real exponent
  * is pow / powf, by the libm names the DBT intercepts. */
+/* An intrinsic operator's operands are of the kind it works on (7.1.2):
+ * numbers for the arithmetic ones, LOGICALs for .NOT. .AND. .OR. .EQV.
+ * .NEQV., and for the relationals numbers or CHARACTER, never LOGICAL.
+ * `want` is 0 for numbers, 1 for LOGICALs, 2 for a relational's; y is
+ * NULL for a unary operator.  A defined operation has had its chance
+ * (f77_op_try1/2).  All of these compiled: 1 + 'A' added an address,
+ * MIN('FOO', 'BAR') compared two. */
+static int f77_opnd_is(int *x, int want) {
+    int log;
+    log = x[1] == TY_INT && x[5];
+    if (x[1] == TY_DERIVED) return 1;             /* refused by name where it is used */
+    if (want == 1) return log;
+    if (log) return 0;
+    return want == 2 || x[1] != TY_CHAR;
+}
+static void f77_opnd_check(int *x, int *y, int want) {
+    int *bad;
+    bad = !f77_opnd_is(x, want) ? x : y && !f77_opnd_is(y, want) ? y : NULL;
+    if (!bad || f77_nerr) return;
+    if (want == 1) f77_error("a logical operator's operand is not LOGICAL");
+    else if (bad[1] == TY_CHAR) f77_error("an arithmetic operator's operand is CHARACTER");
+    else if (want == 2) f77_error("a relational operator's operand is LOGICAL: .EQV. and .NEQV. compare those");
+    else f77_error("an arithmetic operator's operand is LOGICAL");
+}
+
 static int f77_power(void) {
     int a;
     int b;
@@ -4155,6 +4234,7 @@ static int f77_power(void) {
         bhi = ex_hi;
         F77_OPND(yo, b);
         if (f77_op_try2(T_POWER, xo, yo, &r)) return r;
+        f77_opnd_check(xo, yo, 0);
         if (aty == TY_DCPLX || bty == TY_DCPLX ||
             (aty == TY_CPLX && bty == TY_DOUBLE) || (aty == TY_DOUBLE && bty == TY_CPLX)) {
             /* COMPLEX*16: z**n by binary exponentiation in libgfortran's
@@ -4620,7 +4700,7 @@ static int f77_term(void) {
         b = f77_power();
         bty = ex_ty; bhi = ex_hi;
         F77_OPND(yo, b);
-        if (!f77_op_try2(op, xo, yo, &a)) a = f77_binop(op, a, aty, ahi, b, bty, bhi);
+        if (!f77_op_try2(op, xo, yo, &a)) { f77_opnd_check(xo, yo, 0); a = f77_binop(op, a, aty, ahi, b, bty, bhi); }
         aty = ex_ty; ahi = ex_hi;
         F77_OPND(xo, a);
     }
@@ -4641,7 +4721,7 @@ static int f77_arith(void) {
         b = f77_term();
         bty = ex_ty; bhi = ex_hi;
         F77_OPND(yo, b);
-        if (!f77_op_try2(op, xo, yo, &a)) a = f77_binop(op, a, aty, ahi, b, bty, bhi);
+        if (!f77_op_try2(op, xo, yo, &a)) { f77_opnd_check(xo, yo, 0); a = f77_binop(op, a, aty, ahi, b, bty, bhi); }
         aty = ex_ty; ahi = ex_hi;
         F77_OPND(xo, a);
     }
@@ -4714,6 +4794,7 @@ static int f77_relat(void) {
         bty = ex_ty; bhi = ex_hi;
         F77_OPND(yo, b);
         if (f77_op_try2(op, xo, yo, &r)) return r;
+        f77_opnd_check(xo, yo, 2);
         ex_log = 1;
         if (aty == TY_CHAR || bty == TY_CHAR) {
             int args[4];
@@ -4795,6 +4876,7 @@ static int f77_not(void) {
         v = f77_not();
         F77_OPND(xo, v);
         if (f77_op_try1(T_NOT, xo, &r)) return r;
+        f77_opnd_check(xo, NULL, 1);
         ex_ty = TY_INT;
         ex_log = 1;
         return hi_emit(HI_NOT, TY_INT, v, -1, 0, NULL);
@@ -4812,6 +4894,7 @@ static int f77_and(void) {
         b = f77_not();
         F77_OPND(yo, b);
         if (f77_op_try2(T_AND, xo, yo, &a)) continue;
+        f77_opnd_check(xo, yo, 1);
         a = hi_emit(HI_AND, TY_INT, a, b, 0, NULL);
         ex_ty = TY_INT;
         ex_log = 1;
@@ -4829,6 +4912,7 @@ static int f77_or(void) {
         b = f77_and();
         F77_OPND(yo, b);
         if (f77_op_try2(T_OR, xo, yo, &a)) continue;
+        f77_opnd_check(xo, yo, 1);
         a = hi_emit(HI_OR, TY_INT, a, b, 0, NULL);
         ex_ty = TY_INT;
         ex_log = 1;
@@ -4848,6 +4932,7 @@ static int f77_expr_eqv(void) {
         b = f77_or();
         F77_OPND(yo, b);
         if (f77_op_try2(op, xo, yo, &a)) continue;
+        f77_opnd_check(xo, yo, 1);
         a = hi_emit(HI_XOR, TY_INT, a, b, 0, NULL);
         if (op == T_EQV) a = hi_emit(HI_NOT, TY_INT, a, -1, 0, NULL);
         ex_ty = TY_INT;
@@ -6422,7 +6507,10 @@ static void f77_red_begin(F77Red *R, int in, char *fname) {
     hi_emit(HI_STORE, TY_INT, R->found, f77_iconst(0), 0, NULL);
     hi_emit(HI_STORE, TY_INT, R->pos, f77_iconst(0), 0, NULL);
     hi_emit(HI_STORE, TY_INT, R->loc, f77_iconst(0), 0, NULL);
-    if (in == IN_COUNT || in == IN_ANY || in == IN_ALL)
+    /* DOT_PRODUCT too: of LOGICAL arrays it is ANY of the .AND.s, which
+     * began from whatever the temporary held (a numeric one sets its own
+     * first element) */
+    if (in == IN_COUNT || in == IN_ANY || in == IN_ALL || in == IN_DOTP)
         hi_emit(HI_STORE, TY_INT, R->acc, f77_iconst(in == IN_ALL ? 1 : 0), 0, NULL);
     R->ty = -1;
     R->rlog = 0;
@@ -7270,6 +7358,7 @@ static int f77_stf_define(void) {
             strcpy(f77_stf_arg[f77_stf_n][n], lex_name);
             f77_stf_argty[f77_stf_n][n] = f77_sty[f77_sym(lex_name)];
             f77_stf_arglen[f77_stf_n][n] = f77_slen[f77_sym(lex_name)];
+            f77_stf_arglog[f77_stf_n][n] = f77_slog[f77_sym(lex_name)];
         }
         n = n + 1;
         f77_tok();
@@ -7380,6 +7469,7 @@ static int f77_stf_expand(int si) {
                 targs[n] = f77_stf_char_arg(f77_stf_arglen[si][n], v, ex_len);
             } else if (n < f77_stf_nargs[si]) {
                 targs[n] = f77_sym_temp(f77_stf_argty[si][n]);
+                f77_slog[targs[n]] = f77_stf_arglog[si][n];
                 f77_store_sym_val(targs[n], v, vty, vhi);
             }
             n = n + 1;
@@ -15872,15 +15962,22 @@ static int f77_find_unit(char *nm) {
     return found;
 }
 
+/* The FUNCTION called nm, or -1: of several, the nearest the current
+ * unit sees -- its own internal procedure (or its host's) before its
+ * module's, that before an external, and those before a FUNCTION some
+ * other module holds.  (The first of the name was taken: S1() in a
+ * procedure with an internal S1 called a module's S1 that came earlier
+ * in the file.) */
 static int f77_find_func(char *nm) {
-    int i;
-    i = 0;
-    while (i < f77_nunit) {
-        if (f77_ukind[i] == F77_UNIT_FUNC && strcmp(f77_uname[i], nm) == 0)
-            return i;
-        i = i + 1;
+    int i; int found; int best; int r;
+    found = -1; best = -1;
+    for (i = 0; i < f77_nunit; i++) {
+        if (f77_ukind[i] != F77_UNIT_FUNC || strcmp(f77_uname[i], nm) != 0) continue;
+        r = f77_uhost[i] < 0 ? 1 : !f77_unit_sees(f77_cur_unit, i) ? 0 :
+            f77_ukind[f77_uhost[i]] == F77_UNIT_MODULE ? 2 : 3;
+        if (r > best) { best = r; found = i; }
     }
-    return -1;
+    return found;
 }
 
 /* --- modules (Fortran 90) ---------------------------------------------
@@ -16200,9 +16297,21 @@ static void f77_mod_proc(int u) {
     f77_me_nargs[e] = n;
 }
 
+/* Is nm an internal procedure the current unit sees -- its own, or, in
+ * an internal procedure, its host's?  The name is then that procedure
+ * there, whatever a module or the host calls by it (14.6.1.3). */
+static int f77_internal_named(char *nm) {
+    int i;
+    for (i = 0; i < f77_nunit; i++)
+        if (f77_uhost[i] >= 0 && f77_ukind[f77_uhost[i]] != F77_UNIT_MODULE &&
+            strcmp(f77_uname[i], nm) == 0 && f77_unit_sees(f77_cur_unit, i)) return 1;
+    return 0;
+}
+
 /* Entity e of a module under the name `local` in the current unit. */
 static void f77_me_bind(int e, char *local) {
     int s;
+    if (f77_internal_named(local)) return;
     if (f77_me_kind[e] == F77_ME_PARAM) {
         s = f77_sym(local);
         f77_sassoc[s] = f77_me_assoc;

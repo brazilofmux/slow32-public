@@ -554,6 +554,25 @@ if [ -x "$F77" ]; then
     printf "      K = IBITS(5, 1)\n      END\n" > "$W/bitnarg.f"
     printf "      K = 1\n      CALL MVBITS(K, 0, 1, K)\n      END\n" > "$W/mvbnarg.f"
     printf "      INCLUDE 'nosuch'\n      END\n" > "$W/incnone.f"
+    printf "      K = 1 + 'A'\n      END\n" > "$W/opchar.f"
+    printf "      K = -'A'\n      END\n" > "$W/opnegch.f"
+    printf "      LOGICAL L\n      K = 2 ** L\n      END\n" > "$W/oplogar.f"
+    printf "      LOGICAL L\n      L = .NOT. 5\n      END\n" > "$W/opnotint.f"
+    printf "      LOGICAL L\n      L = 1 .AND. 2\n      END\n" > "$W/opandint.f"
+    printf "      LOGICAL L\n      L = L .EQV. 1\n      END\n" > "$W/opeqvint.f"
+    printf "      LOGICAL L, M\n      L = L .LT. M\n      END\n" > "$W/oprellog.f"
+    printf "      K = ABS('AB')\n      END\n" > "$W/inabsch.f"
+    printf "      CHARACTER*3 C\n      C = MIN('FOO', 'BAR')\n      END\n" > "$W/inminch.f"
+    printf "      K = MAX(1, .TRUE.)\n      END\n" > "$W/inmaxlog.f"
+    printf "      K = MAX(1, 2, 'A')\n      END\n" > "$W/inmax3ch.f"
+    printf "      COMPLEX C\n      C = CONJG(1)\n      END\n" > "$W/inconjg.f"
+    printf "      X = AIMAG(1.0)\n      END\n" > "$W/inaimag.f"
+    printf "      K = ISHFT(.TRUE., 1)\n      END\n" > "$W/inbitlog.f"
+    printf "      K = IABS(1.5)\n      END\n" > "$W/iniabs.f"
+    printf "      DOUBLE PRECISION D\n      D = DSQRT(2.0)\n      END\n" > "$W/indsqrt.f"
+    printf "      X = AMAX1(1, 2)\n      END\n" > "$W/inamax1.f"
+    printf "      X = FLOAT(1.5)\n      END\n" > "$W/infloat.f"
+    printf "      DOUBLE PRECISION D\n      D = DMOD(1.0, 2.0)\n      END\n" > "$W/indmod.f"
     printf "      INCLUDE 'incloop'\n      END\n" > "$W/incself.f"
     printf "C     the text includes itself\n      INCLUDE 'incloop'\n" > "$W/incloop.inc"
     printf "      X = 1.0\n      INCLUDE (INCBAD)\n      END\n" > "$W/incerr.f"
@@ -814,10 +833,29 @@ if [ -x "$F77" ]; then
              "bozdig:line 2: bad hexadecimal constant" \
              "bozneg:line 2: a sign cannot precede a hexadecimal or octal constant" \
              "bozcx:a hexadecimal or octal constant cannot initialize a COMPLEX item" \
-             "bitty:line 1: this intrinsic needs INTEGER arguments" \
+             "bitty:line 1: IAND needs INTEGER arguments" \
              "bitnarg:line 1: wrong number of arguments to a bit intrinsic" \
              "mvbnarg:line 2: MVBITS needs five arguments" \
              "incnone:f77: line 1: INCLUDE: no file nosuch" \
+             "opchar:line 1: an arithmetic operator's operand is CHARACTER" \
+             "opnegch:line 1: an arithmetic operator's operand is CHARACTER" \
+             "oplogar:line 2: an arithmetic operator's operand is LOGICAL" \
+             "opnotint:line 2: a logical operator's operand is not LOGICAL" \
+             "opandint:line 2: a logical operator's operand is not LOGICAL" \
+             "opeqvint:line 2: a logical operator's operand is not LOGICAL" \
+             "oprellog:line 2: a relational operator's operand is LOGICAL: .EQV. and .NEQV. compare those" \
+             "inabsch:line 1: ABS needs numeric arguments, not CHARACTER" \
+             "inminch:line 2: MIN needs numeric arguments, not CHARACTER" \
+             "inmaxlog:line 1: MAX needs numeric arguments, not LOGICAL" \
+             "inmax3ch:line 1: MAX needs numeric arguments, not CHARACTER" \
+             "inconjg:line 2: CONJG needs a COMPLEX argument" \
+             "inaimag:line 1: AIMAG needs a COMPLEX argument" \
+             "inbitlog:line 1: ISHFT needs INTEGER arguments" \
+             "iniabs:line 1: IABS needs INTEGER arguments" \
+             "indsqrt:line 2: DSQRT needs DOUBLE PRECISION arguments" \
+             "inamax1:line 1: AMAX1 needs REAL arguments" \
+             "infloat:line 1: FLOAT needs INTEGER arguments" \
+             "indmod:line 2: DMOD needs DOUBLE PRECISION arguments" \
              "dovchar:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
              "dovlog:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
              "dovcmplx:line 2: a DO variable is a scalar INTEGER, REAL or DOUBLE PRECISION variable" \
