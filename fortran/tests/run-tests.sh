@@ -333,6 +333,37 @@ if [ -x "$F77" ]; then
     printf 'real a(2)\na = 1.0\nwhere (a > 0.0)\na = 2.0\nend\n' > "$W/whereopen.f90"
     printf 'real a(2)\nwhere (1.0 > 0.0) a = 2.0\nend\n' > "$W/wherenoarr.f90"
     printf 'real a(2), m(2,2)\na = 1.0\nm = 1.0\nwhere (m > 0.0) a = 2.0\nend\n' > "$W/whereshape.f90"
+    printf 'integer i\nforall (i = 1:5) i = 3\nend\n' > "$W/faidxasg.f90"
+    printf 'integer a(5), i\nforall (i = 1:5, i = 1:3) a(i) = 0\nend\n' > "$W/fatwice.f90"
+    printf 'integer m(3,3), i, j\nforall (i = 1:3, j = 1:i) m(i, j) = 0\nend\n' > "$W/faown.f90"
+    printf 'integer a(5), i, j\nforall (i = 1:5, a(i) > 0, j = 1:3) a(i) = 0\nend\n' > "$W/famasklast.f90"
+    printf 'integer a(5), i\nforall (i = 1:3,) a(i) = 0\nend\n' > "$W/fahdr.f90"
+    printf 'integer a(5)\nforall (a(1) > 0) a(1) = 0\nend\n' > "$W/fahdr2.f90"
+    printf 'integer a(5)\nforall (x = 1:5) a(1) = 0\nend\n' > "$W/fareal.f90"
+    printf 'integer a(5)\ninteger, parameter :: n = 3\nforall (n = 1:3) a(n) = 0\nend\n' > "$W/faparam.f90"
+    printf 'integer a(5), i\nforall (i = 1.0:5) a(i) = 0\nend\n' > "$W/fabound.f90"
+    printf 'integer a(5), i\nforall (i = 1:5, i) a(i) = 0\nend\n' > "$W/famask.f90"
+    printf 'integer i\nforall (i = 1:5) print *, i\nend\n' > "$W/fastmt.f90"
+    printf 'integer a(5), i\nforall (i = 1:5)\na(i) = 0\nprint *, i\nend forall\nend\n' > "$W/fabody.f90"
+    printf 'integer a(5), i\nforall (i = 1:5)\na(i) = 0\nend\n' > "$W/faopen.f90"
+    printf 'i = 1\nend forall\nend\n' > "$W/fastray.f90"
+    printf 'integer m(3,3), i\nforall (i = 1:3)\nforall (i = 1:3) m(i, i) = 0\nend forall\nend\n' > "$W/fanest.f90"
+    printf 'integer m(3,3), i\nforall (i = 1:3)\nwhere (m(i, :) > 0) m(i, :) = 0\nend forall\nend\n' > "$W/fawhere.f90"
+    printf 'integer a(3), i\nwhere (a > 0)\nforall (i = 1:3) a(i) = 0\nend where\nend\n' > "$W/wherefa.f90"
+    printf 'integer a(3), i\nwhere (a > 0)\nselect case (i)\nend where\nend\n' > "$W/wheresel.f90"
+    printf 'integer a(3), i\nnm: forall (i = 1:3)\na(i) = 0\nend forall other\nend\n' > "$W/faname.f90"
+    printf 'integer a(3), i\nforall (i = 1:3)\na(i) = 0\nend forall nm\nend\n' > "$W/fanoname.f90"
+    printf 'integer a(3), i\nnm: forall (i = 1:3) a(i) = 0\nend\n' > "$W/facname.f90"
+    printf 'integer a(3), i\nlogical l\nl = .true.\nif (l) forall (i = 1:3)\na(i) = 0\nend forall\nend\n' > "$W/falogif.f90"
+    printf 'logical l\nl = .true.\nif (l) do i = 1, 3\nend do\nend\n' > "$W/dologif.f90"
+    printf 'logical l\nl = .true.\nif (l) if (l) then\nend if\nend\n' > "$W/iflogif.f90"
+    printf 'logical l\nl = .true.\ndo i = 1, 3\nif (l) end do\nend\n' > "$W/endlogif.f90"
+    printf 'integer a(5), i, sf, k\nsf(k) = k + i\nforall (i = 1:5) a(i) = sf(1)\nend\n' > "$W/fastf.f90"
+    printf 'integer a(5), i1, i2, i3, i4, i5, i6, i7, i8, i9\nforall (i1 = 1:1, i2 = 1:1, i3 = 1:1, i4 = 1:1)\nforall (i5 = 1:1, i6 = 1:1, i7 = 1:1, i8 = 1:1)\nforall (i9 = 1:1) a(i9) = 0\nend forall\nend forall\nend\n' > "$W/fanine.f90"
+    printf 'type cell\ntype(cell), pointer :: next\nend type\ntype(cell), target :: x(4)\ninteger i\nforall (i = 1:3) x(i)%%next => x(i + 1)%%next\nend\n' > "$W/faptrovl.f90"
+    printf 'type cell\ninteger, pointer :: p\nend type\ntype(cell) :: x(4)\ninteger i\nforall (i = 1:3) x(i)%%p = x(i + 1)%%p\nend\n' > "$W/facompovl.f90"
+    printf 'type cell\ninteger, allocatable :: al(:)\nend type\ntype(cell) :: y(4)\ninteger i\nforall (i = 1:3) y(i) = y(i + 1)\nend\n' > "$W/faalovl.f90"
+    printf 'subroutine s(a, n)\ninteger a(*), n, i\nforall (i = 2:n) a(i) = a(i - 1)\nend\n' > "$W/faasz.f90"
     printf 'real a(3)\na = 1.0\ncall s(a)\nend\nsubroutine s(x)\nreal x(:)\nend\n' > "$W/asext.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:)\nend subroutine\nend module\nuse m\ny = 1.0\ncall s(y)\nend\n' > "$W/asscal.f90"
     printf 'module m\ncontains\nsubroutine s(x)\nreal x(:,:)\nend subroutine\nend module\nuse m\nreal a(3)\ncall s(a)\nend\n' > "$W/asrank.f90"
@@ -633,7 +664,7 @@ if [ -x "$F77" ]; then
              "cncycif:line 3: CYCLE names A, an IF construct, not a DO" \
              "cnexitno:line 2: EXIT names Q, which is no construct around it" \
              "cnlogif:line 1: a construct name is on a block IF, not a logical IF" \
-             "cndecl:line 1: a construct name is on DO, IF (...) THEN, SELECT CASE or WHERE (...) only" \
+             "cndecl:line 1: a construct name is on DO, IF (...) THEN, SELECT CASE, WHERE (...) or FORALL (...) only" \
              "else2:line 3: a second ELSE in one IF construct" \
              "elseelif:line 3: ELSE IF after ELSE" \
              "endifjunk:line 2: unexpected text after END IF" \
@@ -662,6 +693,37 @@ if [ -x "$F77" ]; then
              "whereopen:WHERE without END WHERE" \
              "wherenoarr:line 2: WHERE needs a LOGICAL array for its mask" \
              "whereshape:line 4: the shapes of a WHERE's mask and its assignment do not conform" \
+             "faidxasg:line 2: a FORALL's index is not assigned in it" \
+             "fatwice:line 2: a FORALL's header names an index once" \
+             "faown:line 2: a FORALL's bounds and strides name no index of its own header" \
+             "famasklast:line 2: a FORALL's mask is the last thing in its header" \
+             "fahdr:line 2: a FORALL's header is name = first : last [: stride], ... [, mask]" \
+             "fahdr2:line 2: a FORALL's header is name = first : last [: stride], ... [, mask]" \
+             "fareal:line 2: a FORALL index is a scalar INTEGER variable" \
+             "faparam:line 3: a FORALL index is a scalar INTEGER variable" \
+             "fabound:line 2: a FORALL's bounds and strides are scalar INTEGER expressions" \
+             "famask:line 2: a FORALL's mask is a scalar LOGICAL expression" \
+             "fastmt:line 2: a FORALL statement's statement is an assignment or a pointer assignment" \
+             "fabody:line 4: a FORALL construct holds assignments, pointer assignments and FORALLs only" \
+             "faopen:FORALL without END FORALL" \
+             "fastray:line 2: END FORALL without FORALL" \
+             "fanest:line 3: a FORALL's index names an index of the FORALL it is in" \
+             "fawhere:line 3: a WHERE in a FORALL is not supported" \
+             "wherefa:line 3: a WHERE construct holds array assignments only" \
+             "wheresel:line 3: a WHERE construct holds array assignments only" \
+             "faname:line 4: END FORALL names OTHER; the construct is NM" \
+             "fanoname:line 4: END FORALL names NM; the construct has no name" \
+             "facname:line 2: a construct name is on DO, IF (...) THEN, SELECT CASE, WHERE (...) or FORALL (...) only" \
+             "falogif:line 4: a logical IF's statement neither begins nor ends a construct" \
+             "dologif:line 3: a logical IF's statement neither begins nor ends a construct" \
+             "iflogif:line 3: a logical IF's statement neither begins nor ends a construct" \
+             "endlogif:line 4: a logical IF's statement neither begins nor ends a construct" \
+             "fastf:line 3: a FORALL index that a statement function of the unit names is not supported" \
+             "fanine:line 4: a FORALL has at most 8 indexes, those of the FORALLs around it counted" \
+             "faptrovl:line 6: a FORALL pointer assignment that reads what it assigns is not supported" \
+             "facompovl:line 6: a FORALL assignment through a POINTER or ALLOCATABLE component that reads what it assigns is not supported" \
+             "faalovl:line 6: a FORALL assignment of structures with ALLOCATABLE components that reads what it assigns is not supported" \
+             "faasz:line 3: a FORALL assignment to an assumed-size array that reads what it assigns is not supported" \
              "asext:line 3: S has an assumed-shape dummy argument: it needs an explicit interface" \
              "asscal:line 9: an assumed-shape dummy needs an array or a section as its actual" \
              "asrank:line 9: an actual of rank 1 for an assumed-shape dummy of rank 2" \

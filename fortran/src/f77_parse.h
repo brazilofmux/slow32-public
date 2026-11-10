@@ -1270,6 +1270,7 @@ static int f77_find_format(int label) {
 #define F77_CTL_IF 2
 #define F77_CTL_WHERE 3   /* a WHERE construct: its mask is f77_where_* */
 #define F77_CTL_SELECT 4  /* SELECT CASE: f77_stmt_select */
+#define F77_CTL_FORALL 5  /* FORALL, statement or construct: f77_fa_* */
 #define F77_MAX_CTL 64
 
 static int ctl_kind[F77_MAX_CTL];
@@ -4939,6 +4940,20 @@ static int f77_match_paren(int open) {
 static int f77_if_tail;   /* offset of what follows IF(...) */
 static int f77_do_body;   /* offset of the DO control text */
 
+/* FORALL (header) [assignment] (Fortran 95 7.5.4): the offset past the
+ * header of a statement that begins one -- the statement's end for the
+ * construct, the assignment's start for the FORALL statement -- or 0.
+ * An array named FORALL keeps its elements, as WHERE's does. */
+static int f77_forall_tail(void) {
+    int s; int after;
+    if (!f77_starts("FORALL(")) return 0;
+    s = f77_sym_find("FORALL");
+    if (s >= 0 && f77_srank[s] > 0) return 0;
+    after = f77_match_paren(6);
+    if (after == lx_stmt_len || lx_isalpha(lx_stmt[after])) return after;
+    return 0;
+}
+
 static int f77_classify(void) {
     int eq;
     int after;
@@ -4965,6 +4980,7 @@ static int f77_classify(void) {
             return S_KEYWORD;
         }
     }
+    if (f77_forall_tail()) return S_KEYWORD;
 
     if (f77_starts("DO")) {
         eq = f77_toplevel('=', 2);
@@ -5429,13 +5445,28 @@ static int f77_dot_intrinsic(int b, int e) {
  * everywhere, and so did X%A(2:6) = X%A(1:5), whose target's name is no
  * name.)  Asked before f77_hoist rewrites the text: a designator through
  * a structure becomes a hidden array there, a view of the same storage.
- * A hidden target is such a view, over an array of structures. */
-static int f77_asg_overlap(int from, int s) {
-    int i; int via; int eqv;
-    via = f77_sptr[s] || f77_starg[s] || f77_shidden[s] || f77_sname[s][0] == '%';
+ * A hidden target is such a view, over an array of structures.
+ *
+ * f77_overlap_scan asks it of the text [from, to), told whether s is
+ * reached that way (via).  A FORALL's assignment (f77_fa_body) asks it
+ * too, of a statement no hoist has touched and so with s the variable the
+ * text names: there a structure of another name is s only through a
+ * pointer -- or under an operator, which may be a function, when the
+ * scope defines any (dtany) -- and the designator the statement stores
+ * to, its first own characters, names in the value the one element this
+ * turn of the FORALL stores, which no other turn may. */
+static int f77_own_copy(int i, int own) {
+    int c;
+    if (i < own || i + own > lx_stmt_len || strncmp(lx_stmt + i, lx_stmt, (size_t)own) != 0) return 0;
+    c = i + own < lx_stmt_len ? lx_stmt[i + own] : 0;
+    if (lx_isalpha(c) || lx_isdigit(c) || c == '%') return 0;      /* more of a name, or of the designator */
+    return c != '(' || lx_stmt[own - 1] == ')';                    /* an element's substring is the element's */
+}
+static int f77_overlap_scan(int from, int to, int s, int via, int own, int dtany) {
+    int i; int eqv;
     eqv = f77_eq_member(s);
     i = from;
-    while (i < lx_stmt_len) {
+    while (i < to) {
         if (lx_stmt[i] == '\'') {
             i = i + 1;
             while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1;
@@ -5455,6 +5486,7 @@ static int f77_asg_overlap(int from, int s) {
         if (lx_isalpha(lx_stmt[i]) && f77_name_starts(i, from)) {
             char nm[F77_MAX_NAME];
             int n; int sy; int paren;
+            if (own > 0 && f77_own_copy(i, own)) { i = i + own; continue; }
             n = 0;
             while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
                 if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[i];
@@ -5464,7 +5496,7 @@ static int f77_asg_overlap(int from, int s) {
             paren = i < lx_stmt_len && lx_stmt[i] == '(';
             sy = f77_sym_find(nm);
             if (sy >= 0 && sy == s) return 1;
-            if (sy >= 0 && f77_sty[sy] == TY_DERIVED) return 1;
+            if (sy >= 0 && f77_sty[sy] == TY_DERIVED && (via || dtany)) return 1;
             if (sy >= 0 && via && (f77_sptr[sy] || f77_starg[sy])) return 1;
             if (sy >= 0 && eqv && f77_eq_member(sy)) return 1;
             if (!paren || (sy >= 0 && f77_srank[sy] > 0)) continue;
@@ -5482,6 +5514,10 @@ static int f77_asg_overlap(int from, int s) {
         i = i + 1;
     }
     return 0;
+}
+static int f77_asg_overlap(int from, int s) {
+    return f77_overlap_scan(from, lx_stmt_len, s,
+                            f77_sptr[s] || f77_starg[s] || f77_shidden[s] || f77_sname[s][0] == '%', 0, 1);
 }
 
 /* An array operand of an array expression, at the loops' current counts
@@ -7003,11 +7039,7 @@ static void f77_stmt_where(void) {
     {
         /* the assignment, moved to the front of the buffer, as a logical
          * IF's statement is */
-        int i;
-        i = 0;
-        while (after + i < lx_stmt_len) { lx_stmt[i] = lx_stmt[after + i]; i = i + 1; }
-        lx_stmt_len = i;
-        lx_stmt[i] = 0;
+        lx_stmt_keep_from(after);
         if (f77_classify() != S_ASSIGN) f77_error("a WHERE statement's statement is an array assignment");
         else f77_stmt_assign();
     }
@@ -12956,12 +12988,16 @@ static void f77_tfree_push(int tmp) {
 }
 
 /* A hidden array of type ty (log: LOGICAL; nar: f77_snar) and rank r,
- * its descriptor at desc, lower bounds 1. */
+ * its descriptor at desc, lower bounds 1.  Its name (f77_hid_name) is
+ * one the statement text can carry and no program's variable has. */
+static void f77_hid_name(char *nm) {
+    do { sprintf(nm, "F77T_%d_", f77_hid_count); f77_hid_count = f77_hid_count + 1; } while (f77_sym_find(nm) >= 0);
+}
 static int f77_hidden_array(int ty, int log, int nar, int r, int desc) {
     char nm[F77_MAX_NAME];
     int s;
     int k;
-    do { sprintf(nm, "F77T_%d_", f77_hid_count); f77_hid_count = f77_hid_count + 1; } while (f77_sym_find(nm) >= 0);
+    f77_hid_name(nm);
     s = f77_sym_temp(TY_INT);
     strcpy(f77_sname[s], nm);
     f77_sty[s] = ty;
@@ -14381,6 +14417,17 @@ static int f77_text_replace(int b, int e, int s) {
 /* Evaluate the array-valued references and constructors in the text
  * [from, *to), innermost first, each replaced by its hidden array's name;
  * *to follows the text.  How many there were.  The caller re-scans. */
+/* The component of type dt whose name is at text offset *i, past its
+ * '%': its index, or -1 for a name the type has not; *i past the name. */
+static int f77_text_comp(int dt, int *i) {
+    char nm[F77_MAX_NAME];
+    int k; int c;
+    k = 0;
+    while (*i < lx_stmt_len && (lx_isalpha(lx_stmt[*i]) || lx_isdigit(lx_stmt[*i]))) { if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[*i]; *i = *i + 1; }
+    nm[k] = 0;
+    for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) if (strcmp(f77_dc_name[c], nm) == 0) return c;
+    return -1;
+}
 /* Is the designator whose base sy's name ends at text offset i an array
  * (its last component an array without subscripts, or a section of
  * one)?  Read from the text and the types, nothing compiled; *end past
@@ -14392,14 +14439,10 @@ static int f77_desig_text_array(int sy, int i, int *end) {
     else arr = f77_srank[sy] > 0;
     dt = f77_sdt[sy];
     while (i < lx_stmt_len && lx_stmt[i] == '%' && dt >= 0) {
-        char nm[F77_MAX_NAME];
-        int k; int c;
+        int c;
         i = i + 1;
-        k = 0;
-        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) { if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[i]; i = i + 1; }
-        nm[k] = 0;
-        for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) if (strcmp(f77_dc_name[c], nm) == 0) break;
-        if (c == f77_dt_c0[dt] + f77_dt_nc[dt]) { *end = i; return 0; }     /* said where it is parsed */
+        c = f77_text_comp(dt, &i);
+        if (c < 0) { *end = i; return 0; }     /* said where it is parsed */
         if (i < lx_stmt_len && lx_stmt[i] == '(') {
             if (f77_dc_rank[c] > 0) arr = arr || f77_paren_has_colon_at(i);
             i = f77_match_paren(i);
@@ -19414,9 +19457,14 @@ static int f77_dt_temp_comp(int c, int addr) {
 
 /* A scalar pointer's target, at this reference: a temporary symbol of
  * its type, by reference at the address its slot holds now. */
+static int f77_alias_at(int s, int addr);
 static int f77_ptr_deref(int s) {
-    int t; int addr;
-    addr = hi_emit(HI_LOAD, HL_ADDR_TY, hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 0, NULL), -1, 0, NULL);
+    return f77_alias_at(s, hi_emit(HI_LOAD, HL_ADDR_TY, hi_emit(HI_ADDI, HL_ADDR_TY, f77_sval[s], -1, 0, NULL), -1, 0, NULL));
+}
+/* A scalar of s's type by reference at addr, under no name: a pointer's
+ * target, or the copy a FORALL's assignment stores to. */
+static int f77_alias_at(int s, int addr) {
+    int t;
     t = f77_dtt_get();
     f77_sty[t] = f77_sty[s]; f77_slog[t] = f77_slog[s]; f77_snar[t] = f77_snar[s];
     f77_slen[t] = f77_slen[s]; f77_slenv[t] = f77_slenv[s]; f77_sdt[t] = f77_sdt[s];
@@ -20102,6 +20150,538 @@ static void f77_ptr_assign_rhs(int ps) {
     }
 }
 
+/* --- FORALL (Fortran 95 7.5.4) ----------------------------------------
+ *
+ *     FORALL (I = 1:N, J = 1:M, A(I, J) /= 0) B(I, J) = 1 / A(I, J)
+ *     [name:] FORALL (header) ... END FORALL [name]
+ *
+ * Not a loop: the header's bounds are evaluated, then the mask for every
+ * combination of the indexes, and then each statement of the body is
+ * carried out in full for the combinations the mask kept -- every value
+ * before any is stored -- before the next begins.
+ *
+ * An index is the header's own, of the type a variable of its name has
+ * here and no more: a shadow INTEGER takes the name for the FORALL (the
+ * variable's, hidden, comes back with its value untouched).
+ *
+ * The combinations are a level's.  The outermost FORALL without a mask
+ * runs its indexes as loops, the first innermost, around each body
+ * statement.  A mask, or a FORALL inside a FORALL -- whose bounds and
+ * mask are evaluated for each combination of the outer one's, when the
+ * inner statement is reached -- has them listed first: the values of all
+ * the indexes in force, kept in a run-time vector that each body
+ * statement then walks.
+ *
+ * A body statement is compiled once, inside that iteration.  When what
+ * it reads may be what it stores (f77_overlap_scan), it stores to a copy
+ * of the whole variable its left side names, and the copy is stored back
+ * when every combination is done. */
+#define F77_FA_MAXIX 8
+static int f77_fa_n[F77_MAX_CTL];                   /* this level's indexes */
+static int f77_fa_w[F77_MAX_CTL];                   /* ... and with the levels' around it */
+static int f77_fa_sym[F77_MAX_CTL][F77_FA_MAXIX];   /* the w shadows, the outer levels' first */
+static int f77_fa_real[F77_MAX_CTL][F77_FA_MAXIX];  /* the variables this level's n names hide */
+static int f77_fa_lo[F77_MAX_CTL][F77_FA_MAXIX];    /* slots: this level's bounds and strides */
+static int f77_fa_hi[F77_MAX_CTL][F77_FA_MAXIX];
+static int f77_fa_st[F77_MAX_CTL][F77_FA_MAXIX];
+static int f77_fa_list[F77_MAX_CTL];                /* slot of the listed combinations, -1: loops */
+static int f77_fa_cnt[F77_MAX_CTL];                 /* slot of how many */
+
+static int f77_fa_top(void) {
+    return ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_FORALL ? ctl_n - 1 : -1;
+}
+
+/* The header's index names, read from the text before anything is
+ * compiled: how many (at most max), or -1 with the error said.  *mask:
+ * whether a mask follows them.  A bound or a stride names no index of
+ * its own header (7.5.4.1): J = 1:I would silently read the variable I
+ * the index I hides. */
+static int f77_fa_names(char nm[][F77_MAX_NAME], int max, int *mask) {
+    static char *shape = "a FORALL's header is name = first : last [: stride], ... [, mask]";
+    int eq[F77_FA_MAXIX]; int pe[F77_FA_MAXIX];
+    int end; int b; int e; int k; int j; int n; int depth; int i;
+    end = f77_match_paren(6) - 1;
+    n = 0;
+    *mask = 0;
+    b = 7;
+    while (b <= end) {
+        depth = 0;
+        e = b;
+        while (e < end) {
+            if (lx_stmt[e] == '\'') {
+                e = e + 1;
+                while (e < end && lx_stmt[e] != '\'') e = e + 1;
+            } else if (lx_stmt[e] == '(') depth = depth + 1;
+            else if (lx_stmt[e] == ')') depth = depth - 1;
+            else if (lx_stmt[e] == ',' && depth == 0) break;
+            e = e + 1;
+        }
+        if (e > end) e = end;
+        if (e == b) { f77_error(shape); return -1; }
+        if (*mask) { f77_error("a FORALL's mask is the last thing in its header"); return -1; }
+        k = b;
+        while (k < e && (lx_isalpha(lx_stmt[k]) || lx_isdigit(lx_stmt[k]))) k = k + 1;
+        if (lx_isalpha(lx_stmt[b]) && k < e && f77_eq_is_assign(k)) {
+            if (n >= max) { f77_error("a FORALL has at most 8 indexes, those of the FORALLs around it counted"); return -1; }
+            if (k - b >= F77_MAX_NAME) { f77_error(shape); return -1; }
+            memcpy(nm[n], lx_stmt + b, (size_t)(k - b));
+            nm[n][k - b] = 0;
+            for (j = 0; j < n; j++)
+                if (strcmp(nm[j], nm[n]) == 0) { f77_error("a FORALL's header names an index once"); return -1; }
+            eq[n] = k;
+            pe[n] = e;
+            n = n + 1;
+        } else {
+            if (n == 0) { f77_error(shape); return -1; }
+            *mask = 1;
+        }
+        b = e + 1;
+    }
+    if (n == 0) { f77_error(shape); return -1; }
+    for (j = 0; j < n; j++) {
+        i = eq[j] + 1;
+        while (i < pe[j]) {
+            if (lx_stmt[i] == '\'') {
+                i = i + 1;
+                while (i < pe[j] && lx_stmt[i] != '\'') i = i + 1;
+                i = i + 1;
+                continue;
+            }
+            if (lx_isalpha(lx_stmt[i]) && f77_name_starts(i, eq[j] + 1)) {
+                b = i;
+                while (i < pe[j] && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) i = i + 1;
+                for (k = 0; k < n; k++)
+                    if ((int)strlen(nm[k]) == i - b && strncmp(nm[k], lx_stmt + b, (size_t)(i - b)) == 0) {
+                        f77_error("a FORALL's bounds and strides name no index of its own header");
+                        return -1;
+                    }
+                continue;
+            }
+            i = i + 1;
+        }
+    }
+    return n;
+}
+
+/* Does a statement function of the unit name nm, other than as its
+ * dummy?  Its text is the unit's, where an index's name is the variable
+ * (14.1.3); expanded in the FORALL it would read the index. */
+static int f77_fa_stf_names(char *nm) {
+    int f; int i; int b; int e; int a; int n;
+    n = (int)strlen(nm);
+    for (f = 0; f < f77_stf_n; f++) {
+        for (a = 0; a < f77_stf_nargs[f]; a++)
+            if (strcmp(f77_stf_arg[f][a], nm) == 0) break;
+        if (a < f77_stf_nargs[f]) continue;
+        i = f77_stf_text[f];
+        e = i + f77_stf_len[f];
+        while (i < e) {
+            if (f77_stf_pool[i] == '\'') {
+                i = i + 1;
+                while (i < e && f77_stf_pool[i] != '\'') i = i + 1;
+                i = i + 1;
+                continue;
+            }
+            if (!lx_isalpha(f77_stf_pool[i]) && !lx_isdigit(f77_stf_pool[i])) { i = i + 1; continue; }
+            b = i;
+            while (i < e && (lx_isalpha(f77_stf_pool[i]) || lx_isdigit(f77_stf_pool[i]))) i = i + 1;
+            if (i - b == n && strncmp(f77_stf_pool + b, nm, (size_t)n) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
+/* A bound or a stride, the scanner at it, into its slot. */
+static void f77_fa_bound(int slot) {
+    int v;
+    v = f77_expr();
+    if (ex_ty != TY_INT || ex_log) { f77_error("a FORALL's bounds and strides are scalar INTEGER expressions"); return; }
+    hi_emit(HI_STORE, TY_INT, slot, v, 0, NULL);
+}
+
+/* Level k's own indexes as loops over their bounds, the first innermost. */
+static void f77_fa_loops_begin(int k, F77Loop *lp) {
+    int j; int w0; int lo; int hi; int st;
+    w0 = f77_fa_w[k] - f77_fa_n[k];
+    for (j = f77_fa_n[k] - 1; j >= 0; j--) {
+        lo = hi_emit(HI_LOAD, TY_INT, f77_fa_lo[k][j], -1, 0, NULL);
+        hi = hi_emit(HI_LOAD, TY_INT, f77_fa_hi[k][j], -1, 0, NULL);
+        st = hi_emit(HI_LOAD, TY_INT, f77_fa_st[k][j], -1, 0, NULL);
+        f77_loop_begin(&lp[j], lo, hi, st);
+        f77_store_sym_val(f77_fa_sym[k][w0 + j], hi_emit(HI_LOAD, TY_INT, lp[j].idx, -1, 0, NULL), TY_INT, -1);
+    }
+}
+static void f77_fa_loops_end(int k, F77Loop *lp) {
+    int j;
+    for (j = 0; j < f77_fa_n[k]; j++) f77_loop_end(&lp[j]);
+}
+
+/* Level k's combinations, each in turn with every index in force set:
+ * its loops, or a walk of its list. */
+static void f77_fa_iter_begin(int k, F77Loop *lp) {
+    int j; int at; int cnt; int v;
+    if (f77_fa_list[k] < 0) { f77_fa_loops_begin(k, lp); return; }
+    cnt = hi_emit(HI_LOAD, TY_INT, f77_fa_cnt[k], -1, 0, NULL);
+    cnt = hi_emit(HI_ADDI, TY_INT, cnt, -1, -1, NULL);
+    f77_loop_begin(&lp[0], f77_iconst(0), cnt, f77_iconst(1));
+    at = hi_emit(HI_LOAD, TY_INT, lp[0].idx, -1, 0, NULL);
+    at = hi_emit(HI_MUL, TY_INT, at, f77_iconst(4 * f77_fa_w[k]), 0, NULL);
+    at = hi_emit(HI_ADD, HL_ADDR_TY, hi_emit(HI_LOAD, HL_ADDR_TY, f77_fa_list[k], -1, 0, NULL), at, 0, NULL);
+    for (j = 0; j < f77_fa_w[k]; j++) {
+        v = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, at, -1, 4 * j, NULL), -1, 0, NULL);
+        f77_store_sym_val(f77_fa_sym[k][j], v, TY_INT, -1);
+    }
+}
+static void f77_fa_iter_end(int k, F77Loop *lp) {
+    if (f77_fa_list[k] < 0) f77_fa_loops_end(k, lp);
+    else f77_loop_end(&lp[0]);
+}
+
+/* The combination in force joins level k's list (the vector whose
+ * handle is in hslot), through the buffer buf. */
+static void f77_fa_push(int k, int hslot, int buf) {
+    int j; int v; int args[3];
+    for (j = 0; j < f77_fa_w[k]; j++) {
+        v = f77_load_sym(f77_fa_sym[k][j]);
+        hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, buf, -1, 4 * j, NULL), v, 0, NULL);
+    }
+    args[0] = hi_emit(HI_LOAD, HL_ADDR_TY, hslot, -1, 0, NULL);
+    args[1] = buf;
+    args[2] = f77_iconst(4 * f77_fa_w[k]);
+    f77_call_i("f77_vec_pushn", 3, args);
+}
+
+/* Level k is over: its list freed, its names the variables' again. */
+static void f77_fa_end(int k) {
+    int j; int w0;
+    if (f77_fa_list[k] >= 0) f77_tmp_free(hi_emit(HI_LOAD, HL_ADDR_TY, f77_fa_list[k], -1, 0, NULL));
+    w0 = f77_fa_w[k] - f77_fa_n[k];
+    for (j = 0; j < f77_fa_n[k]; j++) {
+        strcpy(f77_sname[f77_fa_real[k][j]], f77_sname[f77_fa_sym[k][w0 + j]]);
+        strcpy(f77_sname[f77_fa_sym[k][w0 + j]], "%T");
+    }
+}
+
+/* The components a designator names after its base sy, whose name ends
+ * at text offset i: how many before the last are POINTER or ALLOCATABLE,
+ * and in *last whether the last is (0 too when it names none). */
+static int f77_fa_path(int sy, int i, int *last) {
+    int dt; int c; int np;
+    np = 0;
+    *last = 0;
+    dt = f77_sty[sy] == TY_DERIVED ? f77_sdt[sy] : -1;
+    if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_match_paren(i);
+    while (i < lx_stmt_len && lx_stmt[i] == '%' && dt >= 0) {
+        i = i + 1;
+        c = f77_text_comp(dt, &i);
+        if (c < 0) break;                   /* said where it is parsed */
+        if (*last) np = np + 1;
+        *last = f77_dc_ptr[c];
+        if (i < lx_stmt_len && lx_stmt[i] == '(') i = f77_match_paren(i);
+        dt = f77_dc_dt[c];
+    }
+    return np;
+}
+
+/* Does the scope define an operator?  One on a structure may be a
+ * function then, whatever it is spelled. */
+static int f77_op_any(void) {
+    int i;
+    for (i = f77_scope_base; i < f77_nsym; i++)
+        if (strncmp(f77_sname[i], "OP:", 3) == 0) return 1;
+    return 0;
+}
+
+/* May a FORALL's pointer assignment (the statement text; its pointer's
+ * base s, whose name ends at e) read what it sets?  It sets pointers,
+ * and reads subscripts and -- when its target is a pointer, or reached
+ * through one -- pointers; a named target gives its address only, so
+ * X(I)%NEXT => X(I + 1) reads no more than I. */
+static int f77_fa_ptr_overlap(int s, int e, int via) {
+    char rn[F77_MAX_NAME];
+    int gt; int i; int n; int sy; int last; int depth; int m; int dtany;
+    dtany = f77_op_any();
+    gt = 0;
+    depth = 0;
+    while (gt + 1 < lx_stmt_len) {
+        if (lx_stmt[gt] == '(') depth = depth + 1;
+        else if (lx_stmt[gt] == ')') depth = depth - 1;
+        else if (depth == 0 && lx_stmt[gt] == '=' && lx_stmt[gt + 1] == '>') break;
+        gt = gt + 1;
+    }
+    i = gt + 2;
+    if (i < lx_stmt_len && strcmp(lx_stmt + i, "NULL()") != 0) {
+        n = 0;
+        while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]))) { if (n < F77_MAX_NAME - 1) rn[n++] = lx_stmt[i]; i = i + 1; }
+        rn[n] = 0;
+        sy = n > 0 && lx_isalpha(rn[0]) ? f77_sym_find(rn) : -1;
+        if (sy < 0 || f77_sptr[sy] || f77_sexternal[sy] || f77_sme[sy] >= 0 || f77_find_func(rn) >= 0 ||
+            f77_fa_path(sy, i, &last) > 0 || last)
+            return f77_overlap_scan(e, lx_stmt_len, s, via, 0, dtany);
+    }
+    /* the subscripts: every group at depth 0 */
+    i = e;
+    while (i < lx_stmt_len) {
+        if (lx_stmt[i] == '(') {
+            m = f77_match_paren(i);
+            if (f77_overlap_scan(i + 1, m - 1, s, via, 0, dtany)) return 1;
+            i = m;
+        } else i = i + 1;
+    }
+    return 0;
+}
+
+/* One statement of FORALL level k's body, in the statement text: an
+ * assignment, or (ptr) a pointer assignment. */
+static void f77_fa_body(int k, int ptr) {
+    F77Loop lp[F77_FA_MAXIX];
+    char nm[F77_MAX_NAME];
+    int e; int n; int s; int j; int nerr0; int over; int np; int last; int own; int via;
+    int clone; int at; int esz;
+    int lo[F77_MAX_RANK]; int ext[F77_MAX_RANK]; int trip[F77_MAX_RANK]; int one[F77_MAX_RANK];
+    int src;
+
+    nerr0 = f77_nerr;
+    e = 0;
+    n = 0;
+    while (e < lx_stmt_len && (lx_isalpha(lx_stmt[e]) || lx_isdigit(lx_stmt[e]))) { if (n < F77_MAX_NAME - 1) nm[n++] = lx_stmt[e]; e = e + 1; }
+    nm[n] = 0;
+    if (n == 0 || !lx_isalpha(nm[0])) {         /* no variable: the statement says so */
+        if (ptr) f77_stmt_ptrassign(); else f77_stmt_assign();
+        return;
+    }
+    s = f77_sym(nm);
+    if (f77_nerr != nerr0) return;
+    for (j = 0; j < f77_fa_w[k]; j++)
+        if (f77_fa_sym[k][j] == s) { f77_error("a FORALL's index is not assigned in it"); return; }
+
+    np = f77_fa_path(s, e, &last);
+    via = f77_sptr[s] || f77_starg[s] || np > 0;
+    over = 0;
+    if (ptr) {
+        if (f77_fa_ptr_overlap(s, e, via)) { f77_error("a FORALL pointer assignment that reads what it assigns is not supported"); return; }
+    } else if (!f77_sparam[s] && !f77_sparr[s] &&
+               (f77_srank[s] > 0 || f77_sty[s] == TY_DERIVED ||
+                (f77_sty[s] == TY_CHAR && e < lx_stmt_len && lx_stmt[e] == '('))) {
+        /* an implied DO's variable in an array constructor may be an
+         * index's name, and A(I) there another element */
+        own = strstr(lx_stmt, "(/") ? 0 : f77_toplevel('=', 0);
+        over = f77_overlap_scan(e, lx_stmt_len, s, via || last, own > 0 ? own : 0, f77_op_any());
+    }
+    if (!over) {
+        f77_fa_iter_begin(k, lp);
+        if (ptr) f77_stmt_ptrassign(); else f77_stmt_assign();
+        if (f77_dtp_n) f77_dtf_flush();
+        f77_fa_iter_end(k, lp);
+        return;
+    }
+
+    /* what is read may be what is stored: store to a copy of s */
+    if (np > 0 || last) {
+        f77_error("a FORALL assignment through a POINTER or ALLOCATABLE component that reads what it assigns is not supported");
+        return;
+    }
+    if (f77_sty[s] == TY_DERIVED && f77_dt_nalloc(f77_sdt[s]) != 0) {
+        f77_error("a FORALL assignment of structures with ALLOCATABLE components that reads what it assigns is not supported");
+        return;
+    }
+    if (f77_srank[s] > 0 && f77_sassz[s]) {
+        f77_error("a FORALL assignment to an assumed-size array that reads what it assigns is not supported");
+        return;
+    }
+    esz = f77_esize_v(s);
+    src = -1;
+    if (f77_srank[s] > 0) {
+        /* the whole array, at its own bounds: a pointer's descriptor
+         * over heap bytes */
+        int r; int d; int hi; int nel; int desc;
+        r = f77_srank[s];
+        desc = f77_char_temp(4 + 12 * r);
+        nel = f77_iconst(1);
+        for (d = 0; d < r; d++) {
+            f77_dim_bounds(s, d, &lo[d], &hi);
+            ext[d] = f77_extent(lo[d], hi, f77_iconst(1));
+            trip[d] = 1;
+            one[d] = f77_iconst(1);
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, desc, -1, 4 + 8 * d, NULL), ext[d], 0, NULL);
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, desc, -1, 8 + 8 * d, NULL), nel, 0, NULL);
+            hi_emit(HI_STORE, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, desc, -1, 4 + 8 * r + 4 * d, NULL), lo[d], 0, NULL);
+            nel = hi_emit(HI_MUL, TY_INT, nel, ext[d], 0, NULL);
+        }
+        at = f77_tmp_bytes(hi_emit(HI_MUL, TY_INT, nel, esz, 0, NULL));
+        hi_emit(HI_STORE, HL_ADDR_TY, desc, at, 0, NULL);
+        clone = f77_hidden_array(f77_sty[s], f77_slog[s], f77_snar[s], r, desc);
+        f77_sptr[clone] = 1;
+        f77_char_like(clone, s);
+        f77_sdt[clone] = f77_sdt[s];
+        f77_section_copy(s, at, lo, trip, lo, one, ext, 0, esz, -1);
+    } else {
+        src = f77_sptr[s] ? f77_sval[f77_ptr_deref(s)] : f77_sval[s];
+        at = f77_tmp_bytes(esz);
+        f77_copy_n(at, src, esz);
+        clone = f77_alias_at(s, at);
+        f77_hid_name(nm);               /* not in place: the search would find it */
+        strcpy(f77_sname[clone], nm);
+    }
+    f77_text_replace(0, e, clone);
+    if (f77_nerr == nerr0) {
+        f77_fa_iter_begin(k, lp);
+        f77_stmt_assign();
+        if (f77_dtp_n) f77_dtf_flush();
+        f77_fa_iter_end(k, lp);
+    }
+    if (f77_srank[s] > 0) {
+        f77_vec_n = 0;                  /* the statement's, done with */
+        f77_section_copy(s, at, lo, trip, lo, one, ext, 1, esz, -1);
+    } else {
+        f77_copy_n(src, at, esz);
+        strcpy(f77_sname[clone], "%D");
+    }
+    f77_tmp_free(at);
+    f77_sstored[s] = 1;
+}
+
+/* FORALL (header), statement or construct. */
+static void f77_stmt_forall(void) {
+    char nm[F77_FA_MAXIX][F77_MAX_NAME];
+    F77Loop lpu[F77_FA_MAXIX]; F77Loop lp[F77_FA_MAXIX];
+    int up; int k; int w0; int n; int w; int j; int u; int mask; int nerr0; int s; int mk; int c;
+    int hslot; int buf; int tail; int cls; int mty; int mlog; int args[1];
+    static char *shape = "a FORALL's header is name = first : last [: stride], ... [, mask]";
+
+    up = f77_fa_top();
+    k = ctl_n;
+    lx_t = T_EOF;
+    if (k >= F77_MAX_CTL) { f77_error("control nesting too deep"); return; }
+    w0 = up >= 0 ? f77_fa_w[up] : 0;
+    nerr0 = f77_nerr;
+    n = f77_fa_names(nm, F77_FA_MAXIX - w0, &mask);
+    if (n < 0) return;
+    w = w0 + n;
+    for (j = 0; j < n; j++) {
+        for (u = 0; u < w0; u++)
+            if (strcmp(f77_sname[f77_fa_sym[up][u]], nm[j]) == 0) { f77_error("a FORALL's index names an index of the FORALL it is in"); return; }
+        s = f77_sym(nm[j]);
+        if (f77_nerr != nerr0) return;
+        if (f77_sty[s] != TY_INT || f77_slog[s] || f77_srank[s] > 0 || f77_sparam[s] || f77_sparr[s] ||
+            f77_sexternal[s] || f77_sintrinsic[s] ||
+            (f77_sme[s] >= 0 && f77_me_kind[f77_sme[s]] != F77_ME_VAR && f77_me_kind[f77_sme[s]] != F77_ME_HVAR)) {
+            f77_error("a FORALL index is a scalar INTEGER variable");
+            return;
+        }
+        if (f77_fa_stf_names(nm[j])) { f77_error("a FORALL index that a statement function of the unit names is not supported"); return; }
+        f77_fa_real[k][j] = s;
+    }
+    if (f77_nsym + n > F77_MAX_SYM) { f77_error("too many symbols"); return; }
+
+    /* everything the level keeps, made before a loop opens */
+    f77_fa_n[k] = n;
+    f77_fa_w[k] = w;
+    f77_fa_list[k] = -1;
+    for (j = 0; j < w0; j++) f77_fa_sym[k][j] = f77_fa_sym[up][j];
+    for (j = 0; j < n; j++) {
+        s = f77_sym_temp(TY_INT);
+        f77_sstored[s] = 1;
+        f77_fa_sym[k][w0 + j] = s;
+        f77_fa_lo[k][j] = f77_int_temp();
+        f77_fa_hi[k][j] = f77_int_temp();
+        f77_fa_st[k][j] = f77_int_temp();
+    }
+    hslot = -1;
+    buf = -1;
+    if (up >= 0 || mask) {
+        f77_fa_cnt[k] = f77_int_temp();
+        hslot = f77_int_temp();
+        buf = f77_char_temp(4 * w);
+        hi_emit(HI_STORE, HL_ADDR_TY, hslot, f77_call_i("f77_vec_new", 0, args), 0, NULL);
+    }
+
+    /* the bounds, for each combination of the indexes around */
+    if (up >= 0) f77_fa_iter_begin(up, lpu);
+    mk = f77_tfree_mark();
+    f77_scan_from(7);
+    for (j = 0; j < n && f77_nerr == nerr0; j++) {
+        if (lx_t != T_NAME) { f77_error(shape); break; }
+        f77_tok();
+        if (lx_t != T_ASSIGN) { f77_error(shape); break; }
+        f77_tok();
+        f77_fa_bound(f77_fa_lo[k][j]);
+        if (f77_nerr != nerr0) break;
+        if (lx_t != T_COLON) { f77_error(shape); break; }
+        f77_tok();
+        f77_fa_bound(f77_fa_hi[k][j]);
+        if (f77_nerr != nerr0) break;
+        if (lx_t == T_COLON) {
+            f77_tok();
+            f77_fa_bound(f77_fa_st[k][j]);
+            if (f77_nerr != nerr0) break;
+        } else hi_emit(HI_STORE, TY_INT, f77_fa_st[k][j], f77_iconst(1), 0, NULL);
+        if (j < n - 1) {
+            if (lx_t != T_COMMA) { f77_error(shape); break; }
+            f77_tok();
+        }
+    }
+    f77_tfree_to(mk);
+    if (f77_nerr == nerr0 && lx_t != (mask ? T_COMMA : T_RP)) f77_error(shape);
+
+    /* the names are the indexes' from here: the mask's, and the body's */
+    for (j = 0; j < n; j++) {
+        strcpy(f77_sname[f77_fa_sym[k][w0 + j]], nm[j]);
+        f77_sname[f77_fa_real[k][j]][0] = '%';
+    }
+    if (hslot >= 0) {
+        f77_fa_loops_begin(k, lp);
+        if (mask && f77_nerr == nerr0) {
+            int b_push; int b_skip;
+            f77_tok();
+            mk = f77_tfree_mark();
+            c = f77_expr();
+            mty = ex_ty;
+            mlog = ex_log;
+            f77_tfree_to(mk);
+            if (f77_nerr == nerr0 && !(mty == TY_INT && mlog)) f77_error("a FORALL's mask is a scalar LOGICAL expression");
+            if (f77_nerr == nerr0 && lx_t != T_RP) f77_error(shape);
+            if (f77_nerr == nerr0) {
+                b_push = hir_new_block();
+                b_skip = hir_new_block();
+                hi_emit(HI_BRC, TY_VOID, c, b_push, b_skip, NULL);
+                f77_cur_blk_live = 0;
+                f77_begin_blk(b_push);
+                f77_fa_push(k, hslot, buf);
+                f77_goto_blk(b_skip);
+                f77_begin_blk(b_skip);
+            }
+        } else f77_fa_push(k, hslot, buf);
+        f77_fa_loops_end(k, lp);
+    }
+    if (up >= 0) f77_fa_iter_end(up, lpu);
+    if (hslot >= 0) {
+        args[0] = hi_emit(HI_LOAD, HL_ADDR_TY, hslot, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, f77_fa_cnt[k], f77_call_i("f77_vec_count", 1, args), 0, NULL);
+        f77_fa_list[k] = f77_int_temp();
+        hi_emit(HI_STORE, HL_ADDR_TY, f77_fa_list[k], f77_call_i("f77_vec_take", 1, args), 0, NULL);
+    }
+    lx_t = T_EOF;
+    if (f77_nerr != nerr0) { f77_fa_list[k] = -1; f77_fa_end(k); return; }
+
+    ctl_kind[k] = F77_CTL_FORALL;
+    ctl_else[k] = 0;
+    ctl_name[k][0] = 0;
+    ctl_n = k + 1;
+    tail = f77_match_paren(6);          /* a hoist may have moved it */
+    if (tail == lx_stmt_len) return;    /* the construct: END FORALL ends it */
+
+    /* the FORALL statement: its one assignment is the body */
+    lx_stmt_keep_from(tail);
+    f77_vec_n = 0;
+    cls = f77_classify();
+    if (cls == S_ASSIGN) f77_fa_body(k, 0);
+    else if (cls == S_KEYWORD && f77_is_ptrassign()) f77_fa_body(k, 1);
+    else f77_error("a FORALL statement's statement is an assignment or a pointer assignment");
+    ctl_n = k;
+    f77_fa_end(k);
+}
+
 /* Dispatch one statement.  Called once per assembled statement. */
 static void f77_statement(void) {
     int cls;
@@ -20131,11 +20711,31 @@ static void f77_statement(void) {
         if (cls == S_IF_LOGIC) { f77_error("a construct name is on a block IF, not a logical IF"); goto done; }
         if (!(cls == S_DO || cls == S_IF_BLOCK || f77_is_dowhile() || f77_is_doforever() ||
               (cls == S_KEYWORD && f77_starts("SELECTCASE(")) ||
-              (cls == S_KEYWORD && f77_starts("WHERE(") && f77_match_paren(5) == lx_stmt_len))) {
-            f77_error("a construct name is on DO, IF (...) THEN, SELECT CASE or WHERE (...) only");
+              (cls == S_KEYWORD && f77_starts("WHERE(") && f77_match_paren(5) == lx_stmt_len) ||
+              (cls == S_KEYWORD && f77_forall_tail() == lx_stmt_len))) {
+            f77_error("a construct name is on DO, IF (...) THEN, SELECT CASE, WHERE (...) or FORALL (...) only");
             goto done;
         }
         f77_cname_define(cname);
+    }
+
+    /* A WHERE construct's body, and a FORALL's (Fortran 95 7.5.3, 7.5.4):
+     * nothing else -- asked before anything is dispatched, a SELECT CASE,
+     * a declaration and a FORMAT included.  The unit's END goes on, to
+     * be told what it leaves open. */
+    if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE && cls != S_ASSIGN &&
+        !f77_starts("ELSEWHERE") && !f77_starts("ENDWHERE") && !f77_starts("WHERE(") &&
+        !f77_is_unit_end() && !f77_is_contains()) {
+        f77_error("a WHERE construct holds array assignments only");
+        goto done;
+    }
+    if (f77_fa_top() >= 0 && cls != S_ASSIGN &&
+        !(cls == S_KEYWORD && (f77_forall_tail() || f77_is_ptrassign() ||
+                               (f77_starts("ENDFORALL") && f77_name_tail(9)))) &&
+        !f77_is_unit_end() && !f77_is_contains()) {
+        f77_error(f77_starts("WHERE(") ? "a WHERE in a FORALL is not supported"
+                                       : "a FORALL construct holds assignments, pointer assignments and FORALLs only");
+        goto done;
     }
 
     /* Fortran 90: the statements of an INTERFACE block, and USE */
@@ -20201,9 +20801,16 @@ static void f77_statement(void) {
         f77_error("only a CASE statement may follow SELECT CASE");
         goto done;
     }
-    if (ctl_n > f77_ctl_base && ctl_kind[ctl_n - 1] == F77_CTL_WHERE && cls != S_ASSIGN &&
-        !f77_starts("ELSEWHERE") && !f77_starts("ENDWHERE") && !f77_starts("WHERE(")) {
-        f77_error("a WHERE construct holds array assignments only");
+    /* FORALL (Fortran 95) */
+    c = f77_fa_top();
+    if (c >= 0 && cls == S_ASSIGN) { f77_fa_body(c, 0); goto done; }
+    if (cls == S_KEYWORD && f77_forall_tail()) { f77_stmt_forall(); goto done; }
+    if (c >= 0 && cls == S_KEYWORD && f77_is_ptrassign()) { f77_fa_body(c, 1); goto done; }
+    if (cls == S_KEYWORD && f77_starts("ENDFORALL") && f77_name_tail(9)) {
+        if (c < 0) { f77_error("END FORALL without FORALL"); goto done; }
+        f77_cname_match(c, f77_name_tail(9), "END FORALL");
+        ctl_n = c;
+        f77_fa_end(c);
         goto done;
     }
     if (cls == S_ASSIGN)   { f77_stmt_assign(); goto done; }
@@ -20303,18 +20910,19 @@ static void f77_statement(void) {
         {
             /* Re-classify the tail as a statement in its own right by
              * shifting it to the front of the buffer. */
-            int i;
             int tail;
             int save_label;
+            int ctl_n1;
             tail = f77_if_tail;
             save_label = lx_stmt_label;
-            i = 0;
-            while (tail + i < lx_stmt_len) { lx_stmt[i] = lx_stmt[tail + i]; i = i + 1; }
-            lx_stmt_len = i;
-            lx_stmt[i] = 0;
+            lx_stmt_keep_from(tail);
             lx_stmt_label = -1;
+            ctl_n1 = ctl_n;
             f77_statement();
             lx_stmt_label = save_label;
+            /* IF (L) DO I = 1, 3 and IF (L) END IF had been taken, and a
+             * construct opened or closed inside the IF's own blocks */
+            if (ctl_n != ctl_n1 && f77_nerr == nerr0) f77_error("a logical IF's statement neither begins nor ends a construct");
         }
         f77_goto_blk(b_end);
         f77_begin_blk(b_end);

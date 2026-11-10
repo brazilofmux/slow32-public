@@ -296,6 +296,13 @@ static void lx_stmt_cut(int at, int n) {
     lx_stmt_len = lx_stmt_len - n;
 }
 
+/* Keep the statement from `off` on: the statement a logical IF, a WHERE
+ * or a FORALL statement holds becomes the statement. */
+static void lx_stmt_keep_from(int off) {
+    lx_stmt_cut(0, off);
+    lx_stmt[lx_stmt_len] = 0;
+}
+
 /* A construct name (Fortran 90), NAME: before DO or IF (...) THEN, is
  * taken off the text into lx_stmt_cname, so the unit scan and the
  * classifier see the statement they know; f77_statement says whether the

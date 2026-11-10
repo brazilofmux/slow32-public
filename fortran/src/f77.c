@@ -1090,6 +1090,7 @@ static void hl_func(Node *fn) {
         if (ctl_kind[ctl_n] == F77_CTL_IF) f77_error("IF block without END IF");
         else if (ctl_kind[ctl_n] == F77_CTL_WHERE) f77_error("WHERE without END WHERE");
         else if (ctl_kind[ctl_n] == F77_CTL_SELECT) f77_error("SELECT CASE without END SELECT");
+        else if (ctl_kind[ctl_n] == F77_CTL_FORALL) f77_error("FORALL without END FORALL");
         else if (ctl_label[ctl_n] < 0) f77_error("DO without END DO");
         else {
             /* a labelled DO whose terminal statement never came: no
