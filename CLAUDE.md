@@ -156,7 +156,8 @@ substituted 1:1.
   is built by a released host FPC in a stage of its own.  It was in
   slow32:toolchain until 2026-11-07.  Gate: fpc-backend/tests/run-image.sh.
 - `slow32:fortran` (FROM base): + `f77`, `libf77.s32o` and the `s32f77`
-  driver (`s32f77 prog.f -o prog.s32x`, then `s32run prog.s32x`). Same
+  driver (`s32f77 prog.f [more.f90 ...] -o prog.s32x`, modules first, then
+  `s32run prog.s32x`; Fortran 77, 90 and 95). Same
   shape as cobol: built in a stage FROM toolchain, no C compiler inside.
 - `slow32:forth` (FROM base): the DTC kernel (assembled and linked from
   `forth/kernel.s` in a stage FROM base -- no C anywhere) with prelude and

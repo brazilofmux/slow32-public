@@ -185,6 +185,7 @@ share `/tmp`).
 
     ./build.sh                       # out/f77 (host cc) + runtime/libf77.s32o (clang)
     ./compile.sh prog.f -o prog.s32x # f77 -> slow32asm -> s32-ld, libf77 + MMIO libc
+    ./compile.sh mod.f90 main.f90 -o prog.s32x   # several files, modules first
     ../tools/dbt/slow32-dbt prog.s32x
 
 `compile.sh`, `runtime/build.sh` and `tests/run-tests.sh` honour
@@ -200,6 +201,7 @@ tree.
 `hurriedreformist/slow32:fortran` (amd64 and arm64):
 
     podman run --rm -v $(pwd):/data slow32:fortran s32f77 prog.f -o prog.s32x
+    podman run --rm -v $(pwd):/data slow32:fortran s32f77 mod.f90 main.f90 -o prog.s32x
     podman run --rm -v $(pwd):/data slow32:fortran s32run prog.s32x
 
 f77 and libf77 are built in a stage FROM `slow32:toolchain`; the image

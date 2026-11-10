@@ -171,7 +171,7 @@ fi
 
 # --- Gate: programs of several files ------------------------------------
 # tests/multi/<name>/ holds the files of one program, compiled one at a
-# time and linked, and <name>/expected what gfortran prints for them
+# time and linked by compile.sh, and <name>/expected what gfortran prints for them
 # (recorded with gfortran on all the files at once).  The differential
 # gate above builds every program from one file, so it never saw what
 # only crosses files: COMMON blocks were a local label per file, two
@@ -183,18 +183,14 @@ if [ -x "$F77" ]; then
         b="$(basename "$d")"
         mw="$W/multi-$b"
         mkdir -p "$mw"
-        objs=()
-        fail=""
-        for f in "$d"*.f "$d"*.f90; do
-            [ -e "$f" ] || continue
-            o="$mw/$(basename "$f").s32o"
-            if ! (cd "$mw" && "$F77" "$f" "$o.s") > "$mw/cc.log" 2>&1; then fail="f77 compile $(basename "$f")"; break; fi
-            "$AS" "$o.s" "$o" > /dev/null 2>&1 || { fail="assemble"; break; }
-            objs+=("$o")
-        done
-        if [ -z "$fail" ] && ! "$LD" -o "$mw/p.s32x" --mmio 64K "$RT/crt0.s32o" "${objs[@]}" "$LIBF77" \
-                  "$RT/libc_mmio.s32a" "$RT/libs32.s32a" > "$mw/ld.log" 2>&1; then fail="link"; fi
-        if [ -n "$fail" ]; then report "multi:$b" 1 "$fail"; continue; fi
+        srcs=()
+        for f in "$d"*.f "$d"*.f90; do [ -e "$f" ] && srcs+=("$f"); done
+        # compile.sh is the driver the image ships as s32f77: the modules'
+        # .mod files land in $mw, the directory it runs in
+        if ! (cd "$mw" && S32_F77="$F77" S32_LIBF77="$LIBF77" S32_AS="$AS" S32_LD="$LD" S32_RT="$RT" \
+                  "$FDIR/compile.sh" "${srcs[@]}" -o "$mw/p.s32x") > "$mw/cc.log" 2>&1; then
+            report "multi:$b" 1 "$(grep -v '^ ' "$mw/cc.log" | head -1)"; continue
+        fi
         (cd "$mw" && "$EMU" "$mw/p.s32x" < /dev/null 2>/dev/null) \
             | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \
             > "$mw/got"

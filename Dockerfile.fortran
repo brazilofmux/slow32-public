@@ -28,6 +28,6 @@ COPY fortran/compile.sh /opt/slow32/fortran/
 COPY docker/bin/s32f77 /opt/slow32/bin/
 RUN chmod +x /opt/slow32/bin/s32f77 /opt/slow32/fortran/compile.sh
 
-# Usage:  s32f77 prog.f [-o prog.s32x]
+# Usage:  s32f77 prog.f [more.f90 ...] [-o prog.s32x]
 #         s32run prog.s32x
 WORKDIR /data
