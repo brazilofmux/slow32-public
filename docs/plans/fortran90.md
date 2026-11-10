@@ -219,8 +219,8 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
    ASSIGNMENT(=) (adfddbc6) -- INTERFACE OPERATOR(op), .NAME. operators
    binary and unary, through USE ONLY and PUBLIC/PRIVATE -- and
    ALLOCATABLE components (b9893620).  Refused by name: a defined
-   operation on array operands (a specific with array dummies, or F95's
-   ELEMENTAL), an operator's array-valued function.
+   operation on array operands (a specific with array dummies; F95's
+   ELEMENTAL came with milestone 6), an operator's array-valued function.
 
    Found on the way, pre-existing: a generic whose specifics differed
    only in a derived type called the first (silent); a module procedure
@@ -230,12 +230,54 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
 6. **Fortran 95**: PURE, ELEMENTAL, FORALL, NULL(), default initialization,
    CPU_TIME, and the F95 deletions noted as warnings, not removals.
 
-   **Not started.**  The work paused after milestone 5 (below).
+   **Status 2026-11-09: done.**  WHERE in full (a WHERE inside a WHERE,
+   masked ELSEWHEREs, construct names), the PURE, ELEMENTAL and RECURSIVE
+   prefixes, CPU_TIME and the small additions -- KIND on CEILING and
+   FLOOR, DIM on MAXLOC and MINLOC, I0 and F0.d, a ! comment in NAMELIST
+   input (1a7ac6fb); default initialization of components and `=> NULL()`
+   (dfdb0b77); ELEMENTAL procedures, defined operators and defined
+   assignment on arrays (db2362dc); FORALL, statement and construct
+   (7818d37f); the deleted features as warnings (4cb3db4d).  Automatic
+   deallocation of ALLOCATABLE locals at RETURN was there already and has
+   its tests now.
 
-## Fortran 90: where it stopped (2026-11-09)
+   The deletions -- a DO variable or loop control expression that is not
+   INTEGER, ASSIGN, the assigned GO TO, an assigned FORMAT, the H edit
+   descriptor, PAUSE, a branch to an END IF from outside its IF -- all
+   still compile.  Free-form source gets one warning for each; fixed
+   form, which is Fortran 77's and the FCVS's, gets none.
 
-Milestones 1 to 5 are done, and after them the list of what a Fortran 90
-program could still trip on was worked off:
+   Found on the way, all there before:
+
+   - the compiler crashed in the unit scan on a FUNCTION whose CHARACTER
+     length names a constant; an END that names its unit was not checked
+     (1a7ac6fb);
+   - a SAVEd ALLOCATABLE array of a host was deallocated at RETURN when
+     an internal procedure named it; a named constant of the enclosing
+     unit was not visible inside a derived type's definition; a whole
+     array component of a scalar POINTER structure was read from the
+     pointer's slot (dfdb0b77);
+   - generic, defined-operator and defined-assignment resolution did not
+     tell LOGICAL from INTEGER (db2362dc);
+   - an array assignment whose value overlaps its target through a
+     POINTER, a TARGET or a structure component stored without a
+     temporary (c0640bbe);
+   - a FUNCTION or SUBROUTINE spliced into its caller left its names
+     there, and the caller's next new name of the same spelling was the
+     callee's variable (e4f95346);
+   - SELECT CASE inside a WHERE construct was accepted (7818d37f);
+   - an I/O list's implied DO with a REAL or DOUBLE PRECISION variable
+     counted in integers; a DO or implied DO took a LOGICAL, COMPLEX or
+     CHARACTER variable, an array or a PARAMETER, and a constant step of
+     zero; an unformatted WRITE of an INTEGER*2 or LOGICAL*1 FUNCTION's
+     result wrote a fullword, and of INT(H) of an INTEGER*2 H two bytes;
+     a host variable an internal procedure names only against a keyword
+     (DO X = ..., PRINT F) was not seen as the host's (e2f6d2fa).
+
+## Fortran 90 and 95: where it stopped (2026-11-09)
+
+All six milestones are done.  After milestone 5 the list of what a
+Fortran 90 program could still trip on was worked off:
 
 - initial values of arrays and structures, PARAMETER arrays (c7d811cc);
 - the intrinsics that were missing (f97d18a8);
@@ -246,45 +288,88 @@ program could still trip on was worked off:
 - arrays of structures in expressions and I/O, implied DOs whose items
   need evaluating first, a constructor in a WHERE, a RECURSIVE host's
   locals in its internal procedures, ASSOCIATED with an array or section
-  TARGET, a derived type renamed by USE (bf5ad581).
+  TARGET, a derived type renamed by USE (bf5ad581);
 
-Gates at the pause: tests/run-tests.sh 443/0, FCVS 192/192, ffuzz 2000
+and then milestone 6, above.
+
+Gates at the pause: tests/run-tests.sh 593/0, FCVS 192/192, ffuzz 2000
 of 2000 the same as flang, LAPACK built by f77 printing what gfortran's
-build prints in 90 of 90 suites.
+build prints in 90 of 90 suites (5,199,980 tests).
 
 What is left is refused by name, none of it accepted and wrong.  The
 ones a program is likeliest to meet:
 
-- a defined operation on array operands, and an operator whose function
-  is array-valued;
+- a defined operation on array operands whose procedure is not
+  ELEMENTAL (it takes arrays), and an operator whose function is
+  array-valued;
 - ALLOCATABLE dummies and function results, POINTER function results
   (the first two are the F95 TR's, the third is Fortran 90's);
 - a type with ALLOCATABLE components: no structure constructor, no
-  initial value, no array assignment, no component of such a type in
-  turn, no array of it whose size is not constant;
-- a component of an array of structures that is itself an array (A%V),
-  or whose size does not divide the structure's (a CHARACTER*3 beside an
-  INTEGER); substrings of such components;
-- a POINTER component of an array of structures taken across the array;
-  a pointer to an ALLOCATABLE component; a vector subscript on a vector
+  array assignment, no ALLOCATABLE component of such a type in turn; as
+  an INTENT(OUT) assumed-shape array, like a type with default
+  initialization;
+- a component of an array of structures whose size does not divide the
+  structure's (a CHARACTER*3 beside an INTEGER);
+- a pointer to an ALLOCATABLE component; a vector subscript on a vector
   subscript;
 - a local a RECURSIVE host first names in its executable text
   (implicitly typed) and its internal procedures use;
 - ENTRY in an array-valued function; a generic of scalar and
   array-valued functions where an array is wanted; array-valued
-  functions of assumed CHARACTER length, INTEGER*2 or LOGICAL*1;
-- EOSHIFT of structures without a BOUNDARY; TRANSFER to a structure;
-- in constant expressions: an element of a module's PARAMETER array, a
-  structure PARAMETER, RESHAPE's PAD and ORDER;
-- Fortran 95's own: ELEMENTAL, FORALL, a WHERE inside a WHERE, a masked
-  ELSEWHERE, default initialization of components (milestone 6).
+  functions of assumed CHARACTER length, INTEGER*2 or LOGICAL*1; a
+  module function of assumed CHARACTER length;
+- TRANSFER to a structure; an intrinsic's first argument by keyword;
+- in constant expressions: a component of a structure PARAMETER,
+  RESHAPE's PAD and ORDER, CHARACTER and COMPLEX comparisons;
+- in FORALL: a WHERE in its body; an assignment that reads what it
+  assigns when the target is an assumed-size array, a POINTER or
+  ALLOCATABLE component, or a structure with ALLOCATABLE components; a
+  pointer assignment that does; an index a statement function of the
+  unit names;
+- a POINTER as a DO variable;
+- kinds: INTEGER and LOGICAL are kind 4 (and the extensions INTEGER*2
+  and LOGICAL*1, which have no kind number), REAL 4 and 8, COMPLEX 4
+  and 8.
+
+Not diagnosed -- a program that breaks these rules compiles, and does
+what it does:
+
+- PURE's constraints, and that a procedure a FORALL references is PURE;
+  a store into an INTENT(IN) dummy;
+- a FORALL that assigns one element twice, a FORALL stride or a DO step
+  that is zero only at run time, a LOGICAL constant as the bound of an
+  implied DO among constants;
+- a GO TO into the body of a DO, an IF, a WHERE or a FORALL; a DO
+  variable redefined while its loop is active.
+
+INTEGER*2 and LOGICAL*1 are storage widths, not kinds: a variable, an
+array element or a FUNCTION's result of the type is written at its width
+(two bytes or one in an unformatted record, seven columns in a list), and
+anything computed from one -- S + S, ABS(S), (/ S, S /) -- is an INTEGER.
+gfortran keeps kind 2 where every operand has it.
 
 Processor-dependent and left different from gfortran: the layout of
 NAMELIST output, the unit STOP's message goes to.
 
-Milestone 6 is the next thing if this resumes; the gfortran corpus
+Where gfortran departs from the standard and f77 does not, the tests pin
+f77's output (`<name>.expected`) instead of asking the oracle:
+
+- `x%p(2:6) = a(1:5)` with `x%p => a`, and `e1(2:6) = e2(1:5)` in a
+  FORALL with `EQUIVALENCE (e1, e2)`: gfortran stores without a
+  temporary;
+- a FORALL inside a FORALL whose inner bounds name the outer index, with
+  a mask or reading what it stores: gfortran 14 reads a freed
+  temporary, and its executable dies or prints garbage;
+- a FORALL whose body calls a PURE function that reads the assigned
+  array by host or use association: gfortran lets the function see the
+  stores;
+- a FORALL statement as the last statement of a labelled DO: gfortran
+  refuses it.
+
+What would come next if this resumes: the gfortran corpus
 (regression/run-flang-corpus.sh's programs, built by f77 with recorded
-verdicts) is the measure this plan promised and has not been set up.
+verdicts) is the measure this plan promised and has not been set up; and
+Fortran 2003 is not started and waits for a ruling.
 
 ## Oracles and corpora
 
