@@ -1346,6 +1346,9 @@ static int ex_hi;     /* its hi word, when ex_ty is TY_DOUBLE */
 static int f77_expr(void);
 static int f77_power(void);
 /* An operand as f77_expr left it, for a defined operation. */
+/* The actual arguments of one reference.  LAPACK's longest list is 40;
+ * gfortran's pr25603 passes 72, which overran arrays of 64. */
+#define F77_MAX_ACTUALS 256
 #define F77_OPND_N 6
 #define F77_OPND(o, val) do { (o)[0] = (val); (o)[1] = ex_ty; (o)[2] = ex_hi; (o)[3] = ex_len; \
                               (o)[4] = ex_ty == TY_DERIVED ? ex_dt : -1; (o)[5] = ex_log; } while (0)
@@ -1369,6 +1372,7 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
 static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt, int *isch);
 static int f77_me_find(int m, char *nm);
 static int f77_generic_all_afn(int g);
+static int f77_cur_dummy(char *nm);
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
                              char kws[][F77_MAX_NAME], int *pn, int *pss);
 static int f77_tfree_mark(void);
@@ -3841,12 +3845,12 @@ static int f77_primary1(int *intr) {
             int nc;
             int r;
             int rty;
-            int addrs[64];
-            int lens[64];
-            int aas[64];
-            int tys[64];
-            char kws[64][F77_MAX_NAME];
-            int pss[64];
+            int addrs[F77_MAX_ACTUALS];
+            int lens[F77_MAX_ACTUALS];
+            int aas[F77_MAX_ACTUALS];
+            int tys[F77_MAX_ACTUALS];
+            char kws[F77_MAX_ACTUALS][F77_MAX_NAME];
+            int pss[F77_MAX_ACTUALS];
             int aamk;
             int ai;
             int mk;
@@ -3865,7 +3869,7 @@ static int f77_primary1(int *intr) {
                          * h_carg slots: an actual may itself contain a
                          * call, which would otherwise interleave its
                          * arguments with ours. */
-                        if (nargs < 64) {
+                        if (nargs < F77_MAX_ACTUALS) {
                             f77_kw_take(kws[nargs]);
                             addrs[nargs] = f77_actual(el); lens[nargs] = f77_act_len; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot; tys[nargs] = f77_act_ty;
                         }
@@ -3883,7 +3887,7 @@ static int f77_primary1(int *intr) {
             {
                 int hx;
                 hx = f77_host_extra(u);
-                if (hx >= 0 && nargs < 64) { addrs[nargs] = hx; lens[nargs] = -1; nargs = nargs + 1; }
+                if (hx >= 0 && nargs < F77_MAX_ACTUALS) { addrs[nargs] = hx; lens[nargs] = -1; nargs = nargs + 1; }
             }
             f77_naa = aamk;
             rty = f77_urty_of(u);
@@ -4050,17 +4054,17 @@ static int f77_primary1(int *intr) {
             int nargs;
             int nc;
             int r;
-            int addrs[64];
-            int lens[64];
+            int addrs[F77_MAX_ACTUALS];
+            int lens[F77_MAX_ACTUALS];
             int ai;
             int rty;
             int fptr;
             int mk;
-            int tys[64];
-            int dts[64];
-            int aas[64];
-            char kws[64][F77_MAX_NAME];
-            int pss[64];
+            int tys[F77_MAX_ACTUALS];
+            int dts[F77_MAX_ACTUALS];
+            int aas[F77_MAX_ACTUALS];
+            char kws[F77_MAX_ACTUALS][F77_MAX_NAME];
+            int pss[F77_MAX_ACTUALS];
             int aamk;
             int me;
             char *cname;
@@ -4076,7 +4080,7 @@ static int f77_primary1(int *intr) {
             f77_tok();
             if (lx_t != T_RP) {
                 for (;;) {
-                    if (nargs < 64) {
+                    if (nargs < F77_MAX_ACTUALS) {
                         f77_kw_take(kws[nargs]);
                         addrs[nargs] = f77_actual(el); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
                         dts[nargs] = f77_act_dt;
@@ -6365,7 +6369,7 @@ static void f77_array_assign1(int s, int whole) {
  * ',' or ')' after it -- and its keyword ("" when positional); end is past
  * the ')'.  Text-level, so that each argument can be parsed where the
  * caller wants it: a reduction's ARRAY and MASK inside its loops. */
-#define F77_MAX_IARGS 64   /* a call's actuals too (f77_hoist_actuals) */
+#define F77_MAX_IARGS F77_MAX_ACTUALS   /* a call's actuals too (f77_hoist_actuals) */
 typedef struct {
     int n;
     int from[F77_MAX_IARGS];
@@ -6394,7 +6398,7 @@ static int f77_args_at(int open, F77Args *a) {
         if ((c == ',' && depth == 0) || (c == ')' && depth == 0)) {
             int j;
             int k;
-            if (a->n >= F77_MAX_IARGS) { f77_error("too many arguments to an intrinsic"); return 0; }
+            if (a->n >= F77_MAX_IARGS) { f77_error("more arguments than f77 takes in one reference (F77_MAX_ACTUALS)"); return 0; }
             k = a->n;
             a->kw[k][0] = 0;
             /* KEYWORD=, not == */
@@ -11167,6 +11171,13 @@ static int f77_stat_target(void) {
     return f77_sval[s];
 }
 
+/* n, or 0 once STAT= (at statp, or -1) holds an error: the objects after
+ * the one that failed are left alone, their components with them. */
+static int f77_unless_stat(int statp, int n) {
+    if (statp < 0) return n;
+    return hi_emit(HI_MUL, TY_INT, n, hi_emit(HI_SEQ, TY_INT, hi_emit(HI_LOAD, TY_INT, statp, -1, 0, NULL), f77_iconst(0), 0, NULL), 0, NULL);
+}
+
 /* ALLOCATE (A(lo:hi, n), ... [, STAT=v]) and DEALLOCATE (A, ... [, STAT=v])
  * (Fortran 90).  Every bound is evaluated, in order, before any storage is
  * taken (STAT= may come last); a lower bound left out is 1.  ALLOCATE
@@ -11318,6 +11329,7 @@ static void f77_stmt_allocate(int skip, int alloc) {
     if (lx_t != T_RP) { f77_error("expected ) after the ALLOCATE list"); return; }
     f77_tok();
     if (lx_t != T_EOF) { f77_error("unexpected text after the statement"); return; }
+    if (statp >= 0) hi_emit(HI_STORE, TY_INT, statp, f77_iconst(0), 0, NULL);     /* the first error's, else 0 */
     for (i = 0; i < nobj; i++) {
         int s;
         int args[3];
@@ -11365,12 +11377,12 @@ static void f77_stmt_allocate(int skip, int alloc) {
                     n = hi_emit(HI_SNE, TY_INT, cur, f77_iconst(0), 0, NULL);
                     for (k = 0; k < f77_srank[s]; k++)
                         n = hi_emit(HI_MUL, TY_INT, n, hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, slot, -1, 4 + 8 * k, NULL), -1, 0, NULL), 0, NULL);
-                    f77_dta_free_at(cur, f77_sdt[s], n);
+                    f77_dta_free_at(cur, f77_sdt[s], f77_unless_stat(statp, n));
                 }
                 args[0] = cur;
                 args[1] = statp >= 0 ? statp : f77_iconst(0);
-                f77_call_i("f77_deallocate", 2, args);
-                hi_emit(HI_STORE, TY_INT, slot, f77_iconst(0), 0, NULL);
+                r = f77_call_i("f77_deallocate", 2, args);
+                hi_emit(HI_STORE, TY_INT, slot, r, 0, NULL);
             }
             continue;
         }
@@ -11395,7 +11407,7 @@ static void f77_stmt_allocate(int skip, int alloc) {
                 hi_emit(HI_STORE, TY_INT, f77_desc_at(s, 8 + 8 * k), f77_select(changed, ext[i][k], oe), 0, NULL);
             }
         } else {
-            if (f77_sty[s] == TY_DERIVED) f77_dta_free_at(cur, f77_sdt[s], f77_alloc_count(s));
+            if (f77_sty[s] == TY_DERIVED) f77_dta_free_at(cur, f77_sdt[s], f77_unless_stat(statp, f77_alloc_count(s)));
             args[1] = statp >= 0 ? statp : f77_iconst(0);
             r = f77_call_i("f77_deallocate", 2, args);
         }
@@ -11476,7 +11488,7 @@ static void f77_dta_entry(void) {
         if (s == f77_result_sym || (f77_dta_local(s) && (f77_sgidx[s] < 0 || f77_shost[s] == 1))) {
             f77_sstored[s] = 1;
             f77_dfl_fill(f77_sval[s], dt, f77_nelem_v(s));
-        } else if (f77_sarg[s] && f77_sintout[s]) {
+        } else if (f77_sarg[s] && f77_sintout[s] && f77_cur_dummy(f77_sname[s])) {
             int n;
             if (f77_sassz[s] || f77_sashape[s]) {
                 /* Fortran 95 5.1.2.4.4 has no such assumed-size dummy; an
@@ -12339,7 +12351,7 @@ static void f77_opt_note(int s) {
 static int f77_sym_decl(char *nm) {
     int s;
     s = f77_sym_find(nm);
-    if (s >= 0 && f77_sassoc[s] == 2) {
+    if (s >= 0 && f77_sassoc[s] == 2 && !(f77_sme[s] >= 0 && f77_me_iface[f77_sme[s]])) {
         char m[F77_MAX_NAME + 60];
         sprintf(m, "%s is a module's, by USE: it cannot be declared again", nm);
         f77_error(m);
@@ -12906,6 +12918,17 @@ static int f77_aa_pack(int s) {
     return run;
 }
 
+/* Is nm a dummy argument of the unit being compiled -- of this entry,
+ * where the unit has ENTRYs?  (Another entry's INTENT(OUT) dummy was
+ * given its default values on the way in, over whatever this entry's
+ * argument in the same position held.) */
+static int f77_cur_dummy(char *nm) {
+    int q;
+    for (q = 0; q < f77_nfamd; q++)
+        if (f77_famd_unit[q] == f77_cur_unit && strcmp(f77_famd_name[q], nm) == 0) return 1;
+    return 0;
+}
+
 /* The rank of dummy k of unit u when it is assumed-shape (the scan), else 0. */
 static int f77_unit_dummy_as(int u, int k) {
     int q; int n;
@@ -12948,7 +12971,7 @@ static int f77_callee_dummies(int u, int e, char names[][F77_MAX_NAME], int *opt
     int n; int q;
     n = 0;
     if (u >= 0) {
-        for (q = 0; q < f77_nfamd && n < 64; q++) {
+        for (q = 0; q < f77_nfamd && n < F77_MAX_ACTUALS; q++) {
             if (f77_famd_unit[q] != u) continue;
             strcpy(names[n], f77_famd_name[q]);
             opt[n] = f77_famd_opt[q];
@@ -13008,8 +13031,8 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
     p = f77_me_str[g];
     while (*p) {
         char nm[F77_MAX_NAME];
-        static char names[64][F77_MAX_NAME];
-        int opt[64]; int isch[64]; int got[16];
+        static char names[F77_MAX_ACTUALS][F77_MAX_NAME];
+        int opt[F77_MAX_ACTUALS]; int isch[F77_MAX_ACTUALS]; int got[16];
         int k; int e; int nd; int ok;
         e = f77_gen_item(&p, m, nm);
         if (e < 0 || f77_me_kind[e] != F77_ME_PROC) continue;
@@ -13045,12 +13068,17 @@ static int f77_generic_pick_kw(int g, int *tys, char kws[][F77_MAX_NAME], int n)
  * 0 among the hidden ones), marked absent (aas -2).  0 on error, said. */
 static int f77_actuals_order(int u, int e, char *nm, int *addrs, int *lens, int *tys, int *aas,
                              char kws[][F77_MAX_NAME], int *pn, int *pss) {
-    static char names[64][F77_MAX_NAME];
-    int opt[64]; int isch[64]; int slot[64];
-    int na[64]; int nl[64]; int nt[64]; int nz[64]; int np[64];
+    static char names[F77_MAX_ACTUALS][F77_MAX_NAME];
+    int opt[F77_MAX_ACTUALS]; int isch[F77_MAX_ACTUALS]; int slot[F77_MAX_ACTUALS];
+    int na[F77_MAX_ACTUALS]; int nl[F77_MAX_ACTUALS]; int nt[F77_MAX_ACTUALS]; int nz[F77_MAX_ACTUALS]; int np[F77_MAX_ACTUALS];
     int n; int nd; int i; int j; int anykw; int anyopt;
     char m[F77_MAX_NAME * 2 + 80];
-    n = *pn > 64 ? 64 : *pn;
+    if (*pn > F77_MAX_ACTUALS) {
+        sprintf(m, "%s: more arguments than f77 takes in one reference (F77_MAX_ACTUALS)", nm);
+        f77_error(m);
+        return 0;
+    }
+    n = *pn;
     anykw = 0;
     for (i = 0; i < n; i++) if (kws[i][0]) anykw = 1;
     nd = f77_callee_dummies(u, e, names, opt, isch);
@@ -13110,7 +13138,7 @@ static int f77_dummy_is_ptr(int u, int e, int i) {
 static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e, int *pss) {
     int i; int r;
     static char m[F77_MAX_NAME + 100];
-    for (i = 0; i < nargs && i < 64; i++) {
+    for (i = 0; i < nargs && i < F77_MAX_ACTUALS; i++) {
         r = 0;
         if (aas[i] == -2) continue;                  /* an absent OPTIONAL one */
         if (f77_dummy_is_ptr(u, e, i)) {
@@ -14825,15 +14853,25 @@ static void f77_hoist_actuals(void) {
 /* An actual that is an expression: its value in a temporary, whose
  * address is passed. */
 static int f77_actual_value(void) {
-    int v; int vty; int vhi; int tmp;
+    int v; int vty; int vhi; int tmp; int alias;
+    /* TRIM(S) and (S) are S's own characters, where they are */
+    alias = lx_t == T_LP || (lx_t == T_NAME && strcmp(lex_name, "TRIM") == 0);
     v = f77_expr();
     vty = ex_ty;
     vhi = ex_hi;
     f77_act_ty = f77_gty(vty, ex_log);
     f77_act_dt = vty == TY_DERIVED ? ex_dt : -1;
     if (vty == TY_CHAR) {
-        /* A character value is already an address. */
+        /* A character value is already an address.  One that is a
+         * variable's own storage is copied: the actual is the value the
+         * expression had, and the callee may store into the variable
+         * (CALL SUB(TRIM(STR), STR) blanked STR and then read it). */
         f77_act_len = ex_len;
+        if (alias) {
+            int args[4];
+            args[0] = v; args[1] = ex_len; args[2] = v; args[3] = f77_iconst(0);
+            v = f77_call_i("f77_cat", 4, args);
+        }
         return v;
     }
     f77_act_len = -1;
@@ -15371,7 +15409,7 @@ static int f77_intr_sub(char *nm, int nargs, int *addrs, int *lens, int *tys, ch
     ds = f77_sym_find(nm);
     if (f77_find_unit(nm) >= 0 || (ds >= 0 && (f77_sexternal[ds] || f77_slink[ds] || f77_sme[ds] >= 0 || f77_sarg[ds]))) return 0;
     for (nd = 0; nd < 4 && dn[w][nd + 1]; nd++) got[nd] = -1;
-    for (i = 0; i < nargs && i < 64; i++) {
+    for (i = 0; i < nargs && i < F77_MAX_ACTUALS; i++) {
         int j;
         if (kws[i][0]) { for (j = 0; j < nd; j++) if (strcmp(kws[i], dn[w][j + 1]) == 0) break; }
         else j = i;
@@ -15427,13 +15465,13 @@ static int f77_intr_sub(char *nm, int nargs, int *addrs, int *lens, int *tys, ch
 
 static void f77_stmt_call1(int skip) {
     char nm[F77_MAX_NAME];
-    int addrs[64];
-    int lens[64];
-    int tys[64];
-    int dts[64];
-    char kws[64][F77_MAX_NAME];
-            int pss[64];
-    int aas[64];
+    int addrs[F77_MAX_ACTUALS];
+    int lens[F77_MAX_ACTUALS];
+    int tys[F77_MAX_ACTUALS];
+    int dts[F77_MAX_ACTUALS];
+    char kws[F77_MAX_ACTUALS][F77_MAX_NAME];
+            int pss[F77_MAX_ACTUALS];
+    int aas[F77_MAX_ACTUALS];
     int aamk;
     int fe;
     char *cname;
@@ -15472,7 +15510,7 @@ static void f77_stmt_call1(int skip) {
                 }
                 /* Evaluated before any h_carg slot is reserved -- see
                  * the note in the FUNCTION path. */
-                if (nargs < 64) {
+                if (nargs < F77_MAX_ACTUALS) {
                     f77_kw_take(kws[nargs]);
                     addrs[nargs] = f77_actual(el); lens[nargs] = f77_act_len; tys[nargs] = f77_act_ty; aas[nargs] = f77_act_aa; pss[nargs] = f77_act_pslot;
                     dts[nargs] = f77_act_dt;
@@ -15506,7 +15544,7 @@ static void f77_stmt_call1(int skip) {
         {
             int hx;
             hx = f77_host_extra(fu);
-            if (hx >= 0 && nargs < 64) { addrs[nargs] = hx; lens[nargs] = -1; tys[nargs] = -1; nargs = nargs + 1; }
+            if (hx >= 0 && nargs < F77_MAX_ACTUALS) { addrs[nargs] = hx; lens[nargs] = -1; tys[nargs] = -1; nargs = nargs + 1; }
         }
         f77_naa = aamk;
     }
@@ -15946,6 +15984,20 @@ static int f77_unit_sees(int from, int u) {
     return 0;
 }
 
+/* Is hosted unit i, a module's or a host's procedure called nm, hidden
+ * from the current unit by what the unit itself says of the name: a USE
+ * of another entity so called, or a declaration of its own (14.6.1.3)?
+ * (INTEGER :: C made C no local while a sibling was called C: the
+ * sibling was passed, or called, in the variable's place.) */
+static int f77_unit_hidden(int i, char *nm) {
+    int s;
+    if (f77_uhost[i] < 0 || i == f77_cur_unit || f77_uhost[i] == f77_cur_unit) return 0;
+    s = f77_sym_find(nm);
+    if (s < 0) return 0;
+    if (f77_sme[s] >= 0) return f77_sassoc[s] == 2;
+    return f77_styped[s] && !f77_sassoc[s] && !f77_sexternal[s];
+}
+
 static int f77_find_unit(char *nm) {
     int i;
     int found;
@@ -15953,7 +16005,7 @@ static int f77_find_unit(char *nm) {
     i = 0;
     while (i < f77_nunit) {
         if (f77_ukind[i] != F77_UNIT_PROGRAM && f77_ukind[i] != F77_UNIT_MODULE &&
-            strcmp(f77_uname[i], nm) == 0 && f77_unit_sees(f77_cur_unit, i)) {
+            strcmp(f77_uname[i], nm) == 0 && f77_unit_sees(f77_cur_unit, i) && !f77_unit_hidden(i, nm)) {
             /* the innermost: an internal procedure hides an external of its name */
             if (found < 0 || f77_uhost[i] >= 0) found = i;
         }
@@ -15972,7 +16024,7 @@ static int f77_find_func(char *nm) {
     int i; int found; int best; int r;
     found = -1; best = -1;
     for (i = 0; i < f77_nunit; i++) {
-        if (f77_ukind[i] != F77_UNIT_FUNC || strcmp(f77_uname[i], nm) != 0) continue;
+        if (f77_ukind[i] != F77_UNIT_FUNC || strcmp(f77_uname[i], nm) != 0 || f77_unit_hidden(i, nm)) continue;
         r = f77_uhost[i] < 0 ? 1 : !f77_unit_sees(f77_cur_unit, i) ? 0 :
             f77_ukind[f77_uhost[i]] == F77_UNIT_MODULE ? 2 : 3;
         if (r > best) { best = r; found = i; }
@@ -16264,7 +16316,7 @@ static void f77_mod_proc(int u) {
     lx_line = f77_uline[u];
     n = 0;
     if (f77_next_stmt()) {
-        f77_scan_from(f77_ukind[u] == F77_UNIT_SUBR ? 10 : f77_function_skip());
+        f77_scan_from(f77_uentry_parent[u] >= 0 ? 5 : f77_ukind[u] == F77_UNIT_SUBR ? 10 : f77_function_skip());
         if (lx_t == T_NAME) f77_tok();
         if (lx_t == T_LP) {
             f77_tok();
@@ -16336,6 +16388,7 @@ static void f77_me_bind(int e, char *local) {
         f77_slog[s] = f77_me_log[e];
         f77_slink[s] = f77_me_str[e];
         f77_sme[s] = e;
+        f77_sassoc[s] = f77_me_assoc;       /* a USE's hides the host's procedure of the name */
         if (f77_me_ty[e] == TY_CHAR) f77_slen[s] = f77_me_ival[e];     /* a CHARACTER FUNCTION's result */
         return;
     }
@@ -18933,6 +18986,9 @@ static void f77_stmt_write(int skip) {
     int fmt_label;
     f77_scan_from(skip);
     if (!f77_io_control(0, &unit_val, &fmt_label)) return;
+    /* a WRITE that fails stops the program, so IOSTAT= is 0 (it was left
+     * as it had been) */
+    if (f77_io_iostat >= 0) hi_emit(HI_STORE, TY_INT, f77_io_iostat, f77_iconst(0), 0, NULL);
     f77_io_announce();
     if (fmt_label == -5) {
         if (lx_t != T_EOF) { f77_error("a NAMELIST WRITE has no list"); return; }
@@ -19416,6 +19472,7 @@ static void f77_stmt_inquire(int skip) {
 }
 
 /* CLOSE (unit [, STATUS='KEEP'|'DELETE']) */
+static int f77_rd_target(int *tyo);
 static void f77_stmt_close(int skip) {
     int unit_val;
     int have_unit;
@@ -19449,8 +19506,14 @@ static void f77_stmt_close(int skip) {
                     stat_sidx = lex_sidx;
                     stat_slen = lex_slen;
                     f77_tok();
+                } else if (strcmp(kw, "ERR") == 0) {
+                    f77_tok();                  /* a CLOSE that fails stops the program */
+                } else if (strcmp(kw, "IOSTAT") == 0) {
+                    int ty; int ia;
+                    ia = f77_rd_target(&ty);
+                    hi_emit(HI_STORE, TY_INT, ia, f77_iconst(0), 0, NULL);
                 } else {
-                    f77_error("only UNIT= and STATUS= are supported in CLOSE");
+                    f77_error("unknown keyword in CLOSE (UNIT= STATUS= ERR= IOSTAT= are taken)");
                     return;
                 }
             } else if (!have_unit) {
@@ -19486,13 +19549,16 @@ static void f77_stmt_close(int skip) {
     h_cbase[r] = cb; f77_dtf_after(r);
 }
 
-/* REWIND u  --  or REWIND (u). */
+/* REWIND, BACKSPACE, ENDFILE (F77 12.10.4): u, or (u) with UNIT= ERR=
+ * and IOSTAT=.  None of them fails here that does not stop the program,
+ * so IOSTAT= is 0 and ERR= is never taken.  (BACKSPACE and ENDFILE took
+ * the unit alone.) */
 static int f77_rd_target(int *tyo);
-static void f77_stmt_rewind(int skip) {
+static void f77_stmt_position(int skip, char *what, char *fn) {
     int unit_val;
+    char m[64];
     f77_scan_from(skip);
     if (lx_t == T_LP) {
-        /* (u) or (UNIT=u [, ERR=l] [, IOSTAT=v]) */
         unit_val = -1;
         f77_tok();
         for (;;) {
@@ -19505,26 +19571,26 @@ static void f77_stmt_rewind(int skip) {
                 if (strcmp(kw, "UNIT") == 0) {
                     unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                 } else if (strcmp(kw, "ERR") == 0) {
-                    f77_tok();                      /* a REWIND does not fail here */
+                    f77_tok();
                 } else if (strcmp(kw, "IOSTAT") == 0) {
                     int ty; int a;
                     a = f77_rd_target(&ty);
                     hi_emit(HI_STORE, TY_INT, a, f77_iconst(0), 0, NULL);
-                } else { f77_error("unknown keyword in REWIND"); return; }
+                } else { sprintf(m, "unknown keyword in %s", what); f77_error(m); return; }
             } else {
                 unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
             }
             if (lx_t == T_COMMA) { f77_tok(); continue; }
             break;
         }
-        if (lx_t != T_RP) { f77_error("expected ) after REWIND unit"); return; }
+        if (lx_t != T_RP) { sprintf(m, "expected ) after %s unit", what); f77_error(m); return; }
         f77_tok();
-        if (unit_val < 0) { f77_error("REWIND needs a unit"); return; }
+        if (unit_val < 0) { sprintf(m, "%s needs a unit", what); f77_error(m); return; }
     } else {
         unit_val = f77_expr();
         unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
     }
-    f77_call_i("f77_rewind", 1, &unit_val);
+    f77_call_i(fn, 1, &unit_val);
 }
 
 /* Is this statement part of the declaration part (so the scalar dummy
@@ -21137,22 +21203,8 @@ static void f77_statement(void) {
     if ((n = f77_starts("DEALLOCATE")) != 0) { f77_stmt_allocate(n, 0); goto done; }
     if (f77_starts("CYCLE")) { f77_stmt_exit_cycle(1); goto done; }
     if ((n = f77_starts("INQUIRE")) != 0) { f77_stmt_inquire(n); goto done; }
-    if ((n = f77_starts("REWIND")) != 0) { f77_stmt_rewind(n); goto done; }
-    if ((n = f77_starts("BACKSPACE")) != 0) {
-        int u;
-        f77_scan_from(n);
-        if (lx_t == T_LP) {
-            f77_tok();
-            if (lx_t == T_NAME && strcmp(lex_name, "UNIT") == 0) { f77_tok(); if (lx_t == T_ASSIGN) f77_tok(); }
-            u = f77_expr(); u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
-            if (lx_t != T_RP) f77_error("expected ) in BACKSPACE");
-            else f77_tok();
-        } else {
-            u = f77_expr(); u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
-        }
-        f77_call_i("f77_backspace", 1, &u);
-        goto done;
-    }
+    if ((n = f77_starts("REWIND")) != 0) { f77_stmt_position(n, "REWIND", "f77_rewind"); goto done; }
+    if ((n = f77_starts("BACKSPACE")) != 0) { f77_stmt_position(n, "BACKSPACE", "f77_backspace"); goto done; }
     if ((n = f77_starts("EQUIVALENCE")) != 0) { f77_stmt_equivalence(n); goto done; }
     if (f77_starts("CHARACTER")) { f77_stmt_decl(TY_CHAR, 9); goto done; }
     if (f77_starts("COMPLEX")) { f77_stmt_decl(TY_CPLX, 7); goto done; }
@@ -21521,23 +21573,7 @@ static void f77_statement(void) {
     }
 
     if ((n = f77_starts("ENDFILE")) != 0) {   /* must precede the END match */
-        int u;
-        f77_scan_from(n);
-        if (lx_t == T_LP) {
-            f77_tok();
-            if (lx_t == T_NAME && strcmp(lex_name, "UNIT") == 0) {
-                f77_tok();
-                if (lx_t == T_ASSIGN) f77_tok();
-            }
-            u = f77_expr();
-            u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
-            if (lx_t != T_RP) f77_error("expected ) in ENDFILE");
-            else f77_tok();
-        } else {
-            u = f77_expr();
-            u = f77_cvt(u, &ex_hi, ex_ty, TY_INT);
-        }
-        f77_call_i("f77_endfile", 1, &u);
+        f77_stmt_position(n, "ENDFILE", "f77_endfile");
         goto done;
     }
 

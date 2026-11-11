@@ -5733,43 +5733,48 @@ f77_allocate:                           # @f77_allocate
 	stw sp+0, lr
 	stw sp+28, r11
 	stw sp+24, r12
-	add r11, r5, r0
-	beq r3, r0, .LBB43_5
-.LBB43_1:
-	beq r11, r0, .LBB43_9
-.LBB43_2:
 	add r1, r3, r0
+	beq r5, r0, .LBB43_2
+.LBB43_1:
+	ldw r3, r5+0
+	bne r3, r0, .LBB43_6
+.LBB43_2:
+	beq r1, r0, .LBB43_5
+.LBB43_3:
+	beq r5, r0, .LBB43_9
+.LBB43_4:
 	lui r3, 1
 	addi r3, r3, 918
-.LBB43_3:
-	stw r11+0, r3
-.LBB43_4:
-	ldw r12, sp+24
-	ldw r11, sp+28
-	ldw lr, sp+0
-	addi sp, sp, 32
-	jalr r0, r31, 0
+	stw r5+0, r3
+	jal r0, .LBB43_6
 .LBB43_5:
+	add r12, r5, r0
 	addi r1, r0, 1
 	sgt r1, r4, r1
 	sub r1, r0, r1
-	add r12, r4, r0
+	add r11, r4, r0
 	xori r3, r4, 1
 	and r1, r3, r1
 	xori r3, r1, 1
 	jal r31, malloc
 	beq r1, r0, .LBB43_7
 .LBB43_6:
-	add r3, r0, r0
-	bne r11, r0, .LBB43_3
-	jal r0, .LBB43_4
+	ldw r12, sp+24
+	ldw r11, sp+28
+	ldw lr, sp+0
+	addi sp, sp, 32
+	jalr r0, r31, 0
 .LBB43_7:
-	beq r11, r0, .LBB43_11
-.LBB43_8:
-	lui r1, 1
-	addi r3, r1, 918
 	add r1, r0, r0
-	jal r0, .LBB43_3
+	add r5, r12, r0
+	bne r12, r0, .LBB43_4
+.LBB43_8:
+	lui r1, %hi(stderr)
+	ldw r3, r1+%lo(stderr)
+	lui r4, %hi(.L.str.19)
+	addi r4, r4, %lo(.L.str.19)
+	add r5, r11, r0
+	jal r0, .LBB43_10
 .LBB43_9:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
@@ -5779,13 +5784,6 @@ f77_allocate:                           # @f77_allocate
 	jal r31, fprintf
 	addi r3, r0, 2
 	jal r31, exit
-.LBB43_11:
-	lui r1, %hi(stderr)
-	ldw r3, r1+%lo(stderr)
-	lui r4, %hi(.L.str.19)
-	addi r4, r4, %lo(.L.str.19)
-	add r5, r12, r0
-	jal r0, .LBB43_10
 .Lfunc_end43:
 	.size	f77_allocate, .Lfunc_end43-f77_allocate
                                         # -- End function
@@ -5794,29 +5792,30 @@ f77_allocate:                           # @f77_allocate
 	.type	f77_deallocate,@function
 f77_deallocate:                         # @f77_deallocate
 # %bb.0:
-	addi sp, sp, -32
+	addi sp, sp, -16
 	stw sp+0, lr
-	stw sp+28, r11
-	add r11, r4, r0
-	beq r3, r0, .LBB44_2
+	beq r4, r0, .LBB44_2
 .LBB44_1:
-	jal r31, free
-	add r1, r0, r0
-	bne r11, r0, .LBB44_4
-	jal r0, .LBB44_5
+	ldw r1, r4+0
+	bne r1, r0, .LBB44_7
 .LBB44_2:
-	beq r11, r0, .LBB44_6
+	beq r3, r0, .LBB44_4
 .LBB44_3:
-	addi r1, r0, 1
+	jal r31, free
+	jal r0, .LBB44_6
 .LBB44_4:
-	stw r11+0, r1
+	beq r4, r0, .LBB44_8
 .LBB44_5:
-	add r1, r0, r0
-	ldw r11, sp+28
-	ldw lr, sp+0
-	addi sp, sp, 32
-	jalr r0, r31, 0
+	addi r1, r0, 1
+	stw r4+0, r1
 .LBB44_6:
+	add r3, r0, r0
+.LBB44_7:
+	add r1, r3, r0
+	ldw lr, sp+0
+	addi sp, sp, 16
+	jalr r0, r31, 0
+.LBB44_8:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.20)

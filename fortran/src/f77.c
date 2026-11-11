@@ -121,6 +121,9 @@ static int  f77_ent_line[F77_MAX_ENTRY];
 static int  f77_ent_parent[F77_MAX_ENTRY];
 static char f77_ent_name[F77_MAX_ENTRY][F77_MAX_NAME];
 static int  f77_ent_ty[F77_MAX_ENTRY];
+static int  f77_ent_len[F77_MAX_ENTRY];    /* a CHARACTER result's length */
+static char f77_ent_res[F77_MAX_ENTRY][F77_MAX_NAME];   /* its RESULT name, or "" */
+static int  f77_ent_log[F77_MAX_ENTRY];    /* a LOGICAL result */
 
 static int  f77_nent;
 
@@ -151,20 +154,35 @@ static int f77_has_attr(char *at) {
     return 0;
 }
 
+/* What the name being noted has besides its type: a CHARACTER length,
+ * LOGICAL-ness.  An ENTRY of a FUNCTION is typed by these -- its result
+ * was CHARACTER*1 and no LOGICAL whatever the unit declared. */
+static int f77_dn_xlen = 1;
+static int f77_dn_xlog;
+static int *f77_dn_len;
+static int *f77_dn_log;
+
 static void f77_dn_note(int unit, char *nm, int ty) {
     int q;
     if (unit != f77_dn_unit) { f77_dn_unit = unit; f77_dn_n = 0; }
     for (q = 0; q < f77_nent; q++)
-        if (f77_ent_parent[q] == unit && strcmp(f77_ent_name[q], nm) == 0) f77_ent_ty[q] = ty;
+        if (f77_ent_parent[q] == unit && strcmp(f77_ent_name[q], nm) == 0) {
+            f77_ent_ty[q] = ty; f77_ent_len[q] = f77_dn_xlen; f77_ent_log[q] = f77_dn_xlog;
+        }
     if (f77_dn_n >= f77_dn_cap) {
         f77_dn_cap = f77_dn_cap ? f77_dn_cap * 2 : 128;
         f77_dn_name = realloc(f77_dn_name, (size_t)f77_dn_cap * sizeof(*f77_dn_name));
         f77_dn_ty = realloc(f77_dn_ty, (size_t)f77_dn_cap * sizeof(int));
-        if (!f77_dn_name || !f77_dn_ty) { fdputs("f77: out of memory\n", 2); exit(1); }
+        f77_dn_len = realloc(f77_dn_len, (size_t)f77_dn_cap * sizeof(int));
+        f77_dn_log = realloc(f77_dn_log, (size_t)f77_dn_cap * sizeof(int));
+        if (!f77_dn_name || !f77_dn_ty || !f77_dn_len || !f77_dn_log) { fdputs("f77: out of memory\n", 2); exit(1); }
     }
     strcpy(f77_dn_name[f77_dn_n], nm);
     f77_dn_ty[f77_dn_n] = ty;
+    f77_dn_len[f77_dn_n] = f77_dn_xlen;
+    f77_dn_log[f77_dn_n] = f77_dn_xlog;
     f77_dn_n = f77_dn_n + 1;
+    f77_dn_xlen = 1; f77_dn_xlog = 0;
 }
 
 /* The type a type statement of `unit` gave `nm`, or -1. */
@@ -475,7 +493,9 @@ static void f77_scan_shapes(int u) {
  * `:: P => NULL()`?  Its unit is then never spliced, as with a DATA or
  * SAVE statement: spliced, V was the caller's temporary, never set
  * (gfortran's arithmetic_if.f90 counted down from a SAVEd 2 and got -1
- * every time).  A PARAMETER's `=` is no storage. */
+ * every time).  A scalar PARAMETER's `=` is no storage; a PARAMETER
+ * array's is (pr19926.f90: MAP(42) of a spliced unit read the caller's
+ * frame). */
 static int f77_scan_decl_static(void) {
     int p;
     p = 0;
@@ -486,7 +506,24 @@ static int f77_scan_decl_static(void) {
         p = p + 1;
     }
     lx_stmt[p] = 0;
-    if (strstr(lx_stmt, ",PARAMETER")) { lx_stmt[p] = ':'; return 0; }
+    if (strstr(lx_stmt, ",PARAMETER")) {
+        /* a PARAMETER array is static too (its image); a scalar is not */
+        int i; int depth; int eq; int dim;
+        dim = strstr(lx_stmt, ",DIMENSION") != NULL;
+        lx_stmt[p] = ':';
+        if (dim) return 1;
+        depth = 0; eq = 0;
+        for (i = p + 2; i < lx_stmt_len; i++) {
+            int c;
+            c = lx_stmt[i];
+            if (c == '\'') { i++; while (i < lx_stmt_len && lx_stmt[i] != '\'') i++; continue; }
+            if (c == '(') { if (depth == 0 && !eq) return 1; depth++; }
+            else if (c == ')') depth--;
+            else if (depth == 0 && c == '=') eq = 1;
+            else if (depth == 0 && c == ',') eq = 0;
+        }
+        return 0;
+    }
     if (strstr(lx_stmt, ",SAVE")) { lx_stmt[p] = ':'; return 1; }
     lx_stmt[p] = ':';
     return f77_toplevel('=', p + 2) >= 0 || strstr(lx_stmt + p, "=>") != NULL;
@@ -762,8 +799,33 @@ static void f77_scan_units(void) {
                 f77_ent_pos[f77_nent] = pos;
                 f77_ent_line[f77_nent] = line;
                 f77_ent_parent[f77_nent] = f77_nunit - 1;
-                f77_ent_ty[f77_nent] = f77_dn_find(f77_nunit - 1, lex_name);
-                if (f77_ent_ty[f77_nent] < 0) f77_ent_ty[f77_nent] = f77_implicit_ty(lex_name);
+                char rn[F77_MAX_NAME];
+                /* ENTRY E(...) RESULT(R): the result is R's, typed as R is */
+                strcpy(rn, lex_name);
+                {
+                    char *r; int k;
+                    r = strstr(lx_stmt, ")RESULT(");
+                    k = r ? (int)strlen(r + 8) - 1 : 0;
+                    f77_ent_res[f77_nent][0] = 0;
+                    if (r && k > 0 && k < F77_MAX_NAME && r[8 + k] == ')') { memcpy(rn, r + 8, (size_t)k); rn[k] = 0; strcpy(f77_ent_res[f77_nent], rn); }
+                }
+                f77_ent_ty[f77_nent] = f77_dn_find(f77_nunit - 1, rn);
+                f77_ent_len[f77_nent] = 1; f77_ent_log[f77_nent] = 0;
+                if (f77_ent_ty[f77_nent] >= 0) {
+                    int dq;
+                    for (dq = f77_dn_n - 1; dq >= 0; dq--)
+                        if (strcmp(f77_dn_name[dq], rn) == 0) {
+                            f77_ent_len[f77_nent] = f77_dn_len[dq]; f77_ent_log[f77_nent] = f77_dn_log[dq];
+                            break;
+                        }
+                }
+                if (f77_ent_ty[f77_nent] < 0 && strcmp(rn, f77_unit_rname(f77_nunit - 1)) == 0) {
+                    /* the unit's own result variable */
+                    f77_ent_ty[f77_nent] = f77_urty[f77_nunit - 1];
+                    f77_ent_len[f77_nent] = f77_urlen[f77_nunit - 1];
+                    f77_ent_log[f77_nent] = f77_urlog[f77_nunit - 1];
+                }
+                if (f77_ent_ty[f77_nent] < 0) f77_ent_ty[f77_nent] = f77_implicit_ty(rn);
                 f77_collect_dummies(5, -2 - f77_nent);   /* unit index assigned after the scan */
                 f77_nent = f77_nent + 1;
             }
@@ -955,12 +1017,12 @@ static void f77_scan_units(void) {
                             f77_urlen[f77_nunit - 1] = l;
                             strcpy(f77_ultext[f77_nunit - 1], lnm);
                         }
-                        else f77_dn_note(f77_nunit - 1, dnm, TY_CHAR);
+                        else { f77_dn_xlen = l; f77_dn_note(f77_nunit - 1, dnm, TY_CHAR); }
                     } else if (lx_t == T_STAR) {
                         int n;
                         int got;
                         got = f77_star_len(&n);
-                        if (got && !is_fn) f77_dn_note(f77_nunit - 1, dnm, f77_lenty(ty, n, 0));
+                        if (got && !is_fn) { f77_dn_xlog = lg; f77_dn_note(f77_nunit - 1, dnm, f77_lenty(ty, n, 0)); }
                         else if (got && is_fn) {
                             f77_urty[f77_nunit - 1] = f77_lenty(ty, n, 0);
                             f77_urlog[f77_nunit - 1] = lg;
@@ -973,6 +1035,8 @@ static void f77_scan_units(void) {
                         f77_urpend[f77_nunit - 1] = kpend;
                         if (ty == TY_CHAR) { f77_urlen[f77_nunit - 1] = clen; strcpy(f77_ultext[f77_nunit - 1], clnm); }
                     } else {
+                        f77_dn_xlog = lg;
+                        if (ty == TY_CHAR) f77_dn_xlen = clen;
                         f77_dn_note(f77_nunit - 1, dnm, kpend ? -1 : ty);
                     }
                     if (iparam && lx_t == T_ASSIGN) {
@@ -1034,10 +1098,11 @@ static void f77_scan_units(void) {
             f77_uline[f77_nunit] = f77_ent_line[q];
             f77_ukind[f77_nunit] = f77_ukind[par];
             f77_urty[f77_nunit] = (f77_ukind[par] == F77_UNIT_FUNC) ? f77_ent_ty[q] : TY_INT;
-            f77_urlog[f77_nunit] = 0;
+            f77_urlog[f77_nunit] = f77_ukind[par] == F77_UNIT_FUNC ? f77_ent_log[q] : 0;
             f77_urnar[f77_nunit] = 0;
-            f77_urlen[f77_nunit] = 1;
+            f77_urlen[f77_nunit] = f77_ukind[par] == F77_UNIT_FUNC && f77_ent_ty[q] == TY_CHAR ? f77_ent_len[q] : 1;
             strcpy(f77_uname[f77_nunit], f77_ent_name[q]);
+            strcpy(f77_uresult[f77_nunit], f77_ent_res[q]);
             f77_uentry_parent[f77_nunit] = par;
             f77_uhost[f77_nunit] = f77_uhost[par];
             f77_unosplice[f77_nunit] = 1;
@@ -1201,8 +1266,17 @@ static void hl_func(Node *fn) {
             if (f77_uhost[v] == u) { f77_host_save(u); break; }
     }
     if (f77_uhost[u] >= 0 && f77_uentry_parent[u] < 0) {
-        if (f77_ukind[f77_uhost[u]] == F77_UNIT_MODULE) f77_mod_proc(u);
-        else f77_hostnames_check();
+        if (f77_ukind[f77_uhost[u]] == F77_UNIT_MODULE) {
+            /* and its ENTRYs, the module's procedures too: here, where
+             * their dummies and results are declared -- the entries
+             * themselves are compiled after every other unit, too late
+             * for a USE (they were no entity of the module at all) */
+            int v;
+            f77_mod_proc(u);
+            for (v = 0; v < f77_nunit; v++) {
+                if (f77_uentry_parent[v] == u) f77_mod_proc(v);
+            }
+        } else f77_hostnames_check();
     }
 
     fn->locals_size = f77_frame;

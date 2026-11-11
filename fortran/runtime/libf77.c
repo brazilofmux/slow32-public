@@ -1646,8 +1646,14 @@ double f77_zabs(const double *a) { return hypot(a[0], a[1]); }
  * program goes on, without it the error stops the program (F90 6.3).  The
  * values are gfortran's: 5014 (its LIBERROR_ALLOCATION) for either
  * ALLOCATE error, 1 for a DEALLOCATE of an array not allocated. */
+/* STAT= is zero when its statement begins (the compiled code sets it)
+ * and takes the first error; the objects after that one are left as they
+ * are, as gfortran leaves them.  It was each object's own verdict, so a
+ * later success wiped an earlier failure: DEALLOCATE (B4, B5, STAT=I)
+ * with B4 not allocated gave 0. */
 void *f77_allocate(void *cur, int bytes, int *stat) {
     void *p;
+    if (stat && *stat) return cur;
     if (cur) {
         if (stat) { *stat = 5014; return cur; }
         fprintf(stderr, "f77: ALLOCATE of an array already allocated\n");
@@ -1659,18 +1665,17 @@ void *f77_allocate(void *cur, int bytes, int *stat) {
         fprintf(stderr, "f77: ALLOCATE: out of memory (%d bytes)\n", bytes);
         exit(2);
     }
-    if (stat) *stat = 0;
     return p;
 }
 
 void *f77_deallocate(void *cur, int *stat) {
+    if (stat && *stat) return cur;
     if (!cur) {
         if (stat) { *stat = 1; return 0; }
         fprintf(stderr, "f77: DEALLOCATE of an array not allocated\n");
         exit(2);
     }
     free(cur);
-    if (stat) *stat = 0;
     return 0;
 }
 
