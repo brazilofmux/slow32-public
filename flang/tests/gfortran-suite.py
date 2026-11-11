@@ -290,6 +290,10 @@ def one(rel, out):
 HEADER = """# flang/tests/gfortran-suite.py's verdict on each of gfortran's execute tests.
 # regression/run-flang-corpus.sh holds a run to this; --update records one.
 """
+HEADER_F77 = """# flang/tests/gfortran-suite.py --f77: fortran/'s f77 on each of gfortran's execute
+# tests.  regression/run-f77-corpus.sh holds a run to this; --update records one.
+# `f77` is a test f77 refuses by name (most of the corpus is past Fortran 95).
+"""
 AGREE = ('pass', 'format-only')
 # More than this leaving for "gfortran has no verdict" is the oracle broken, not a
 # new gfortran's opinion of a few tests.
@@ -394,7 +398,7 @@ def main():
     sys.stdout.write(report)
     if a.update:
         with open(a.update, 'w') as f:
-            f.write(HEADER + ''.join(f'{v}\t{t}\n' for t, v, _ in sorted(results)))
+            f.write((HEADER_F77 if COMPILER == 'f77' else HEADER) + ''.join(f'{v}\t{t}\n' for t, v, _ in sorted(results)))
         print(f'recorded {len(results)} verdicts in {a.update}')
     if a.check:
         sys.exit(check(a.check, results, out))

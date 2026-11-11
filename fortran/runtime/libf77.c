@@ -64,6 +64,7 @@ static int   fio_rlen;
 static int   fio_rpos;
 static int   fio_ldone;          /* list-directed: '/' seen, rest untouched */
 static int   fio_l_pending;      /* list-directed r*c: repeats left on fio_ltok */
+static int   fio_l_rep;          /* the item is a repeat of the last (r*c) */
 static char  fio_ltok[128];
 
 /* Open units.  0/5/6 are preconnected (stderr/stdin/stdout, matching
@@ -1049,7 +1050,17 @@ static int fio_rd_done(int r) {
  * goes on; the unit's next REWIND, BACKSPACE, ENDFILE or CLOSE cuts the
  * file where the writing stopped.  (It stayed: a file rewritten shorter
  * and reopened gave back the old records past the new ones.) */
+/* ACTION= of the unit's OPEN holds (F90 9.3.4.8): a WRITE to a unit
+ * opened for READ wrote, and a READ of one opened for WRITE read. */
+static void fio_action(int unit, int writing) {
+    if (unit <= 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) return;
+    if (fio_uaction[unit] == (writing ? 1 : 2)) {
+        fprintf(stderr, "f77: %s unit %d, opened with ACTION='%s'\n", writing ? "WRITE to" : "READ from", unit, writing ? "READ" : "WRITE");
+        exit(2);
+    }
+}
 static void fio_wrote(int unit) {
+    fio_action(unit, 1);
     if (unit > 0 && unit < FIO_MAXUNIT && fio_ufile[unit] && !fio_udirect[unit]) fio_uwrote[unit] = 1;
 }
 static void fio_cut(int unit, FILE *f) {
@@ -1129,6 +1140,7 @@ static int fio_ru_begin(int unit, int flags) {
     FILE *f;
     fio_init_units();
     f = fio_resolve(unit, 0);
+    fio_action(unit, 0);
     if (unit > 0 && unit < FIO_MAXUNIT) fio_uwrote[unit] = 0;
     fio_in = f;
     fio_unit = unit;
@@ -2305,6 +2317,9 @@ void f77_endfile(int unit) {
     fio_init_units();
     f = fio_resolve(unit, 1);
     if (f == stdout || f == stderr) return;
+    /* the endfile record is the file's last: what followed is gone, after
+     * a READ as after a WRITE */
+    if (unit > 0 && unit < FIO_MAXUNIT && fio_ufile[unit] && !fio_udirect[unit]) fio_uwrote[unit] = 1;
     fio_cut(unit, f);
     fflush(f);
     if (unit > 0 && unit < FIO_MAXUNIT) {
@@ -2332,6 +2347,13 @@ static void fio_field_in(char *buf, int w) {
     int seen = 0;
     for (i = 0; i < w; i++) {
         c = (fio_rpos + i < fio_rlen) ? fio_rec[fio_rpos + i] : ' ';
+        if (c == ',') {
+            /* a comma ends a numeric field short of its width, the next
+             * field beginning after it: the extension every compiler
+             * since the card reader has had ("1, 235" read by 3I2) */
+            w = i + 1;
+            break;
+        }
         if (c == ' ' || c == '\t') {
             /* BZ: a blank after the first nonblank is a zero */
             if (fio_bz && seen && n < FIO_MAXLINE - 1) buf[n++] = '0';
@@ -2345,11 +2367,34 @@ static void fio_field_in(char *buf, int w) {
     fio_rpos += w;
 }
 
+/* A field or a list item that is no number of the kind wanted is an
+ * error (F77 13.5.9: "a field of this form").  What parsed was kept and
+ * the rest dropped: 'end' read by F20.0 was 0.0 and went on. */
+static void fio_bad_num(const char *text) {
+    fprintf(stderr, "f77: READ: '%s' is no number\n", text);
+    exit(2);
+}
+/* Infinity and NaN, as output writes them and gfortran reads them: 1,
+ * and the value. */
+static int fio_in_infnan(const char *t, double *v) {
+    char u[16];
+    int i; int neg = 0;
+    if (*t == '+') t++; else if (*t == '-') { neg = 1; t++; }
+    for (i = 0; t[i] && i < 15; i++) u[i] = (char)toupper((unsigned char)t[i]);
+    u[i] = 0;
+    if (strcmp(u, "INF") == 0 || strcmp(u, "INFINITY") == 0) { *v = neg ? -HUGE_VAL : HUGE_VAL; return 1; }
+    if (strncmp(u, "NAN", 3) == 0 && (u[3] == 0 || u[3] == '(')) { *v = nan(""); return 1; }
+    return 0;
+}
 static int fio_in_int(int w) {
     char buf[FIO_MAXLINE];
+    char *end;
+    long v;
     fio_field_in(buf, w);
     if (!buf[0]) return 0;
-    return (int)strtol(buf, 0, 10);
+    v = strtol(buf, &end, 10);
+    if (end == buf || *end) fio_bad_num(buf);
+    return (int)v;
 }
 /* B, O and Z input: digits of the base, the bits of the item */
 static int fio_in_base(int w, int base) {
@@ -2407,6 +2452,7 @@ static double fio_in_real(int w, int d) {
 
     fio_field_in(raw, w);
     if (!raw[0]) return 0.0;
+    { double sv; if (fio_in_infnan(raw, &sv)) return sv; }
 
     i = 0;
     if (raw[i] == '+') i++;
@@ -2433,15 +2479,21 @@ static double fio_in_real(int w, int d) {
             if (c == '-') esign = -1;
             continue;
         }
-        break;                              /* junk: stop, keep what parsed */
+        fio_bad_num(raw);
     }
     if (has_exp) {
-        for (; raw[i]; i++)
-            if (fio_isdigit(raw[i])) expv = expv * 10 + (raw[i] - '0');
+        for (; raw[i]; i++) {
+            if (!fio_isdigit(raw[i])) fio_bad_num(raw);
+            expv = expv * 10 + (raw[i] - '0');
+        }
         expv = expv * esign;
     }
     mant[n] = 0;
-    if (n == 0) return 0.0;
+    if (n == 0) {
+        /* no digit before the exponent, or none at all: zero -- ".",
+         * "+", "E+00" (FCVS FM110 reads +.E00, and gfortran reads these) */
+        return 0.0;
+    }
 
     /* Where does the point go?  Explicit point: pfrac digits are
      * fractional.  No point: the rightmost d are. */
@@ -2488,7 +2540,8 @@ static int fio_list_tok(void) {
     int n;
 
     if (fio_l_nulls > 0) { fio_l_nulls--; return 2; }
-    if (fio_l_pending > 0) { fio_l_pending--; return 0; }
+    if (fio_l_pending > 0) { fio_l_pending--; fio_l_rep = 1; return 0; }
+    fio_l_rep = 0;
 
     for (;;) {
         if (fio_rpos >= fio_rlen) { fio_next_record(); continue; }
@@ -2551,13 +2604,27 @@ static int fio_list_tok(void) {
 static double fio_list_real(void) {
     char num[sizeof fio_ltok];
     int i;
+    int j = 0;
     for (i = 0; fio_ltok[i]; i++) {
         int c = fio_ltok[i];
+        if (c == ' ' || c == '\t') continue;            /* ( 1.0 , 2.0 ): blanks around a part */
         if (c == 'D' || c == 'd' || c == 'Q' || c == 'q') c = 'E';
-        num[i] = (char)c;
+        num[j++] = (char)c;
     }
-    num[i] = 0;
-    return strtod(num, 0);
+    num[j] = 0;
+    {
+        char *end;
+        double v;
+        v = strtod(num, &end);
+        if (end != num && (*end == '+' || *end == '-') && fio_isdigit(end[1])) {
+            /* 1.5+3: an exponent with no letter (13.5.9.2.1) */
+            memmove(end + 1, end, strlen(end) + 1);
+            *end = 'E';
+            v = strtod(num, &end);
+        }
+        if (end == num || *end) fio_bad_num(fio_ltok);
+        return v;
+    }
 }
 
 /* --- READ entry points ------------------------------------------------ */
@@ -2574,6 +2641,7 @@ int f77_rd_begin(int unit, const char *fmt, int fmtlen, int has_end) {
     fio_ibuf = 0;
     fio_in = fio_resolve(unit, 0);
     fio_unit = unit;
+    fio_action(unit, 0);
     if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 0; fio_uwrote[unit] = 0; }
     fio_position(fio_in, unit);
     fio_bz = (unit > 0 && unit < FIO_MAXUNIT) ? fio_ubz[unit] : 0;
@@ -2656,7 +2724,13 @@ void f77_rd_i(int *p) {
             *p = (fio_ltok[i] == 'T' || fio_ltok[i] == 't') ? 1 : 0;
             return;
         }
-        *p = (int)strtol(fio_ltok, 0, 10);
+        {
+            char *end;
+            long v;
+            v = strtol(fio_ltok, &end, 10);
+            if (end == fio_ltok || *end) fio_bad_num(fio_ltok);
+            *p = (int)v;
+        }
         return;
     }
     d = fio_want();
@@ -2789,7 +2863,15 @@ void f77_rd_s(char *p, int len) {
 /* A COMPLEX or COMPLEX*16 value, list-directed, once its first token is
  * in fio_ltok: ( re , im ) with blanks anywhere inside, possibly split
  * over records, or a lone real (imaginary part 0). */
+static double fio_l_re, fio_l_im;
+static void fio_list_cplx_in1(double *re, double *im);
 static void fio_list_cplx_in(double *re, double *im) {
+    /* r*(re,im): the pair is parsed once -- its token is taken apart in
+     * the parsing, and each repeat read the pieces */
+    if (!fio_l_rep) fio_list_cplx_in1(&fio_l_re, &fio_l_im);
+    *re = fio_l_re; *im = fio_l_im;
+}
+static void fio_list_cplx_in1(double *re, double *im) {
     if (fio_ltok[0] == '(') {
         /* ( re , im ) with blanks anywhere inside, possibly split
          * over records: gather the text up to the ')' and parse
@@ -2920,6 +3002,7 @@ static int   nml_npend;
 /* reading: the group's text, and the assignments parsed from it */
 static char *nml_text;
 static int   nml_tlen, nml_tcap;
+#define NML_SUB_LB (-2147483647 - 1)     /* a subscript left out before ':' */
 struct nml_asg { char name[32]; int nsub; int sub[NML_MAXDIM]; int first, count, used; };
 struct nml_val { int start, len, rep; };          /* len 0: a null value */
 static struct nml_asg *nml_asg;
@@ -3120,11 +3203,30 @@ static void nml_parse(void) {
                     char *e;
                     long v;
                     while (nml_text[j] == ' ') j++;
-                    v = strtol(nml_text + j, &e, 10);
-                    if (e == nml_text + j) { nml_fail("a subscript is no integer"); return; }
+                    if (nml_text[j] == ':') {
+                        /* (:hi): from the dimension's lower bound */
+                        v = NML_SUB_LB;
+                        e = nml_text + j;
+                    } else {
+                        v = strtol(nml_text + j, &e, 10);
+                        if (e == nml_text + j) { nml_fail("a subscript is no integer"); return; }
+                    }
                     if (a->nsub < NML_MAXDIM) a->sub[a->nsub++] = (int)v;
                     j = (int)(e - nml_text);
                     while (nml_text[j] == ' ') j++;
+                    if (nml_text[j] == ':') {
+                        /* a section lo:hi names where the values start; they
+                         * go on in array element order, so only a stride of 1
+                         * is taken */
+                        j++;
+                        while (j < nml_tlen && nml_text[j] != ',' && nml_text[j] != ')') {
+                            if (nml_text[j] == ':') {
+                                char *e2;
+                                if (strtol(nml_text + j + 1, &e2, 10) != 1) { nml_fail("a section with a stride other than 1 is not supported"); return; }
+                            }
+                            j++;
+                        }
+                    }
                     if (nml_text[j] == ',') { j++; continue; }
                     break;
                 }
@@ -3374,7 +3476,7 @@ void f77_nml_item(const char *name, int nlen, int code, void *addr, int elen, in
                 int stride = 1, d;
                 if (g->nsub != nml_ndim) { nml_fail("the subscripts do not match the array"); break; }
                 for (d = 0; d < g->nsub; d++) {
-                    int s = g->sub[d] - nml_lo[d];
+                    int s = g->sub[d] == NML_SUB_LB ? 0 : g->sub[d] - nml_lo[d];
                     if (s < 0 || s >= nml_ext[d]) { nml_fail("a subscript is out of range"); break; }
                     el += s * stride;
                     stride *= nml_ext[d];
@@ -3552,6 +3654,16 @@ int f77_open(int unit, const char *name, int nlen,
     }
     direct = (access && alen > 0 && fio_str_is(access, alen, "DIRECT"));
     unf = (form && fmlen > 0) ? fio_str_is(form, fmlen, "UNFORMATTED") : direct;
+    /* a value that is neither of the two was the default: ACCESS='STREAM'
+     * (Fortran 2003) opened a sequential file */
+    if ((access && alen > 0 && !direct && !fio_str_is(access, alen, "SEQUENTIAL")) ||
+        (form && fmlen > 0 && !unf && !fio_str_is(form, fmlen, "FORMATTED"))) {
+        int isacc = access && alen > 0 && !direct && !fio_str_is(access, alen, "SEQUENTIAL");
+        if (recoverable) return 2;
+        fprintf(stderr, "f77: OPEN %s='%.*s' is not supported\n", isacc ? "ACCESS" : "FORM",
+                isacc ? alen : fmlen, isacc ? access : form);
+        exit(2);
+    }
     scratch = (status && slen > 0 && fio_str_is(status, slen, "SCRATCH"));
     if (direct && recl <= 0) {
         if (recoverable) return 2;
@@ -3668,12 +3780,12 @@ int f77_open(int unit, const char *name, int nlen,
 void f77_close(int unit, const char *status, int slen) {
     int del;
     fio_pend[fio_pslot(unit)] = 0;          /* a non-advancing READ's record given up */
-    if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) return;
     del = (status && slen > 0 && fio_str_is(status, slen, "DELETE"));
     if (status && slen > 0 && !del && !fio_str_is(status, slen, "KEEP")) {
-        fprintf(stderr, "f77: CLOSE STATUS value is not supported\n");
+        fprintf(stderr, "f77: CLOSE STATUS='%.*s' is not supported\n", slen, status);
         exit(2);
     }
+    if (unit < 0 || unit >= FIO_MAXUNIT || !fio_ufile[unit]) return;
     fio_cut(unit, fio_ufile[unit]);
     fclose(fio_ufile[unit]);
     fio_ufile[unit] = 0;

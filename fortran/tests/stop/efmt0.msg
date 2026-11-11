@@ -1,0 +1,1 @@
+f77: FORMAT: E, D and G with no digits (d = 0) need a positive scale factor

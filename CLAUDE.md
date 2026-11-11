@@ -437,6 +437,14 @@ python3 ~/slow-32/flang/tests/gfortran-axes.py OUT [--variants]
 # backends.  90 of 90 suites print what gfortran's build prints.  ~5 min.
 cd ~/slow-32/regression && ./run-lapack.sh
 cd ~/slow-32/regression && ./run-lapack.sh --f77
+# And gfortran's corpus through fortran/'s f77 (the flang gate above, with f77
+# in flang's place), held to fortran/tests/gfortran-verdicts.txt.  Most of the
+# corpus is past Fortran 95 and is refused by name; the ~750 it takes found
+# some fifty defects on its first run (2026-11-10) with every other Fortran
+# gate green -- wrong code, ENTRY bugs in Fortran 77 itself, operands of any
+# type accepted.  After a change to fortran/ or the HIR backends.  Mac only,
+# as the flang corpus is.  ~6 min.
+cd ~/slow-32/regression && ./run-f77-corpus.sh
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour

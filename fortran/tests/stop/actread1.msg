@@ -1,0 +1,1 @@
+f77: WRITE to unit 10, opened with ACTION='READ'

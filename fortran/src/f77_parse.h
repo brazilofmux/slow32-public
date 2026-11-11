@@ -17965,8 +17965,15 @@ static void f77_bind_unit(int u) {
                 f77_error("an ENTRY of a different type than its COMPLEX*16 FUNCTION (or the reverse) is not supported");
                 return;
             }
+            /* One of another type shares the storage and not the value
+             * (15.7.3: the result is the name of the type the entry
+             * referenced has), so here it is a local of its own.  As one
+             * symbol, REAL ENT in an INTEGER FUNCTION made the function's
+             * own result REAL. */
+            if (f77_urty[e] != f77_urty[u] || f77_urlog[e] != f77_urlog[u] ||
+                (f77_urty[u] == TY_CHAR && f77_urlen[e] != f77_urlen[u])) continue;
             if (f77_stfb_n < F77_MAX_STFB) {
-                strcpy(f77_stfb_name[f77_stfb_n], f77_uname[e]);
+                strcpy(f77_stfb_name[f77_stfb_n], f77_unit_rname(e));
                 f77_stfb_sym[f77_stfb_n] = f77_result_sym;
                 f77_stfb_n = f77_stfb_n + 1;
             }

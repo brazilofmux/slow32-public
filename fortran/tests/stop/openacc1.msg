@@ -1,0 +1,1 @@
+f77: OPEN ACCESS='STREAM' is not supported

@@ -274,6 +274,78 @@ that, and none needs anything new in the HIR backend (stage08's, shared):
      a host variable an internal procedure names only against a keyword
      (DO X = ..., PRINT F) was not seen as the host's (e2f6d2fa).
 
+## gfortran's corpus through f77 (2026-11-10)
+
+The measure this plan promised and had not set up: gfortran's own 3,222
+execute tests through f77, native gfortran as the oracle
+(`regression/run-f77-corpus.sh`, the harness flang's corpus uses with
+`--f77`; verdicts in `fortran/tests/gfortran-verdicts.txt`).  Most of the
+corpus is past Fortran 95 and f77 refuses it by name.  The first run, with
+f77's own suite, FCVS, the fuzzer and LAPACK all green:
+
+| | first run | now |
+|---|---|---|
+| refused by name | 1,819 | 1,820 |
+| agree with gfortran | 599 | 644 |
+| compiled, another answer or exit | 124 | 86 |
+| would not link | 28 | 21 |
+| killed the compiler | 1 | 0 |
+
+What it found, all fixed (commits 3b63366f, 6347260a, 92dae301, e41ec23d and
+the one after):
+
+- **Wrong code.**  A unit with a SAVEd or initialized variable (`, SAVE ::`,
+  `:: V = value`) or a PARAMETER array spliced into its caller.  An internal
+  procedure not hiding a module's entity of its name; a local declaration,
+  or a USE, not hiding a sibling procedure.  DOT_PRODUCT of LOGICAL arrays.
+  Real MOD through an INTEGER quotient, and the sign of a zero from MOD,
+  MODULO, FRACTION.  TRIM(S) or (S) as an actual being S itself; the right
+  side of a defined assignment likewise.  An ELEMENTAL SUBROUTINE's value
+  argument reading what earlier calls defined.  A vector subscript that is
+  an expression.  An absent OPTIONAL argument passed on, to a procedure or
+  to an intrinsic.  ASSOCIATED over a dimension of one element.
+  DEALLOCATE's STAT= losing an earlier error.
+- **ENTRY**, in Fortran 77 as well: an entry of a CHARACTER FUNCTION
+  returned one character, one of a LOGICAL FUNCTION was no LOGICAL, one of
+  another type than its function changed the function's type; in a module
+  an entry was no entity of the module.
+- **Silent acceptance.**  Operators and intrinsics took operands of any
+  type (`1 + 'A'`, `MIN('FOO', 'BAR')`, `.NOT. 5`, `IABS(1.5)`).  A numeric
+  READ of text that is no number gave 0.  OPEN took any ACCESS= and FORM=,
+  and ACTION= was not held.
+- **Files.**  A sequential file kept its old records past a shorter
+  rewrite: WRITE and ENDFILE now end it.  WRITE with IOSTAT= left the
+  variable unset.  BACKSPACE, ENDFILE and CLOSE took no IOSTAT= or ERR=.
+- **Formatted output.**  G editing's choice of F or E; Ew.0; G0; fields
+  wider than 64 characters, which overran the runtime's buffers; EN's
+  carry; a field's leading blanks after a T.
+- **The compiler itself.**  More than 64 actual arguments overran its
+  arrays.
+
+What is left, each read and judged:
+
+- **Errors inside an I/O statement stop the program.**  ERR=, END= and
+  IOSTAT= are taken where the statement begins (end of file, a unit that
+  cannot be opened); a condition met among the items -- a record too
+  short, a field that is no number, the end of an internal file -- prints
+  its message and stops.  About twenty-five tests.  It is one feature, and
+  the largest thing the corpus asks for that f77 has not got.
+- **Non-advancing output is written as it is made**, so a T back over it
+  and a later statement's continuation of it do not meet (two tests).
+- **gfortran's own choices**, which the tests pin: its IOSTAT numbers; the
+  run-time checks it makes (MATMUL's shapes, ENDFILE twice, RANDOM_SEED's
+  sizes); padding in COMMON for alignment; which operand of .AND. it does
+  not evaluate; a continued character constant with no `&`; F0.d of a
+  value below one written without its zero; its NAMELIST layout (f77
+  writes FORTRAN H's, `&END` and all, by fort370's ruling).
+- **Past Fortran 95**, met only at run time or at link: ACCESS='STREAM',
+  assignment to an unallocated ALLOCATABLE, structures in a NAMELIST, and
+  gfortran's extension procedures (ABORT, FGETC, SECNDS, LSTAT, ...), which
+  are undefined symbols at link.
+- **Limits**: unit numbers above 99; OPEN of unit 5 or 6; PAD='NO';
+  DELIM= in NAMELIST output; a host variable an internal procedure names
+  only in an EQUIVALENCE.
+
 ## Fortran 90 and 95: where it stopped (2026-11-09)
 
 All six milestones are done.  After milestone 5 the list of what a
