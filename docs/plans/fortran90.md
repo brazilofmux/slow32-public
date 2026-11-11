@@ -482,6 +482,45 @@ What would come next if this resumes: the gfortran corpus
 verdicts) is the measure this plan promised and has not been set up; and
 Fortran 2003 is not started and waits for a ruling.
 
+## Under memcheck (2026-11-11)
+
+The reference interpreter's memcheck mode (`slow32 -m`,
+tools/emulator/memcheck.h; gate `regression/run-memcheck.sh`) watches what a
+program reads: uninitialised values that are used, dead frames, freed
+blocks, null pointers.  f77's suite, the FCVS and gfortran's corpus ran
+under it with every gate green, and four defects were there:
+
+- **A static array's frame bytes.**  Every local array had its frame bytes
+  from the moment it was declared, and COMMON, SAVE, DATA or EQUIVALENCE
+  made it static afterwards without giving them back.  A subroutine that
+  declared `COMMON /LCS/ X0(3,100000), XIN(3,100000)` had a 4.8 MB frame it
+  used none of, on a 64 KB stack.  It ran, on the DBT, which does not check
+  the stack's lower bound (docs/SPEC.md 6.2 leaves the gap between regions
+  to the engine); the reference interpreter faults, which is how gfortran's
+  pr45578.f90 came to light.  LAPACK's suites and the corpus had run this
+  way.  Large locals are placeholders now until the declaration part closes
+  (`f77_place_large`).  Test: commonframe1.
+- **An automatic array in a spliced routine.**  The scan that keeps a unit
+  with an automatic array from being inlined looked for the dimensions only
+  after the entity's name, and not at all in a CHARACTER or TYPE statement:
+  `INTEGER, DIMENSION(N) :: A` was spliced, and A had one element a
+  dimension on its caller's stack -- stored past, over the locals declared
+  before it -- and its address went to `free` at RETURN, which the allocator
+  turned away.  The scan sees every form, and a splice that meets one anyway
+  is an error by name.  Test: f90autosplice1 (its answer was wrong).
+- **An absent OPTIONAL argument was read.**  Handing an intrinsic its own
+  optional argument (`SCAN(S, T, BACK)` with BACK absent) loaded BACK
+  through its null address and masked the value afterwards.  It loads from
+  a block of zeros in libf77 instead.  f90optintr1 is silent under memcheck.
+- **A whole ALLOCATABLE array assigned before it is allocated** is a
+  Fortran 2003 program (the assignment allocates it).  f77 stored nothing
+  and went on, and the next read of the array was from address 0.  It stops
+  by name at run time now.  Test: stop/unalloc1; the corpus's
+  realloc_on_assign_15.f90 goes from agreeing by accident to refused.
+
+What memcheck cannot see is in its header: an overrun inside a frame or
+between two globals is addressable either way.
+
 ## Oracles and corpora
 
 - **flang** builds SLOW-32 programs from the same source: the same machine and

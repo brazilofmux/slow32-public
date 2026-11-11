@@ -1179,6 +1179,30 @@ static int f77_storage_bytes(int s) {
     return f77_esize(s) * f77_sym_nelem(s);
 }
 
+/* Storage worth deferring (f77_realloc_sym): an array, a CHARACTER or a
+ * structure -- not a numeric scalar, whose slot the SSA promoter takes
+ * and whose halves may be split. */
+static int f77_large(int s) {
+    if (f77_sarg[s] || f77_salloc[s] || f77_sptr[s]) return 0;
+    return f77_srank[s] > 0 || f77_storage_bytes(s) > 16;
+}
+
+/* The declaration part has closed and f77_layout_static has bound what is
+ * static: frame bytes for the large symbols that are not. */
+static void f77_place_large(void) {
+    int s; int i; int bytes;
+    for (s = f77_scope_base; s < f77_nsym; s++) {
+        if (!f77_large(s) || f77_sgidx[s] >= 0 || f77_scom[s] || f77_sparam[s]) continue;
+        if (f77_sval[s] < 0 || h_kind[f77_sval[s]] != HI_ALLOCA) continue;
+        bytes = (f77_storage_bytes(s) + 3) & ~3;
+        if (bytes <= 4) continue;                  /* the placeholder is enough */
+        f77_frame = f77_frame + bytes;
+        h_val[f77_sval[s]] = 0 - f77_frame;
+        for (i = 0; i < hl_nalloca; i++)
+            if (hl_ainst[i] == f77_sval[s]) hl_aoff[i] = 0 - f77_frame;
+    }
+}
+
 static void f77_realloc_sym(int s) {
     int bytes;
     if (f77_sauto[s] && !f77_decls_open) return;     /* its storage is allocated */
@@ -1198,6 +1222,18 @@ static void f77_realloc_sym(int s) {
     /* A main program's array is static (f77_layout_static): its slot
      * is only a placeholder until then. */
     if (f77_srank[s] > 0 && !f77_salloc[s] && f77_ukind[f77_cur_unit] == F77_UNIT_PROGRAM) bytes = 4;
+    /* And anything large is a placeholder while the declaration part is
+     * open, in every unit: where it will live is not known until the part
+     * closes.  COMMON, SAVE, DATA and EQUIVALENCE make it static, and its
+     * frame bytes, given here, were never given back -- a subroutine that
+     * declared COMMON /LCS/ X0(3,100000), XIN(3,100000) had a 4.8 MB frame
+     * it used none of, on a 64 KB stack.  It ran: the DBT does not check
+     * the stack's lower bound (docs/SPEC.md 6.2 leaves the gap between
+     * regions to the engine), and nothing was written there but the saved
+     * registers.  The reference interpreter faults, which is how
+     * gfortran's pr45578.f90 came to light under its memcheck mode.
+     * f77_place_large gives what is still on the stack its bytes. */
+    if (f77_decls_open && f77_large(s)) bytes = 4;
     f77_frame = f77_frame + bytes;
     h_val[f77_sval[s]] = 0 - f77_frame;
     h_ty[f77_sval[s]] = f77_salloc[s] ? TY_INT : f77_aty(f77_sty[s]);
@@ -2906,7 +2942,20 @@ static int f77_primary(void) {
  * dummy of this unit, by its name alone?  Then it may be absent, and the
  * intrinsic's argument with it (12.4.1.6); the value that says whether
  * it is here, else -1.  Read where it is not, it was whatever address 0
- * holds: SCAN(S, T, BACK) with BACK absent, MAX(A1, A2, A3). */
+ * holds: SCAN(S, T, BACK) with BACK absent, MAX(A1, A2, A3).
+ *
+ * And it is not read there at all: until f77_absent_done, the dummy's
+ * address is the argument's when there is one and libf77's f77_absent
+ * (zeros) when there is not, so the expression parsed in between loads
+ * from something that is the program's to read.  The engines answer a
+ * load from address 0 with the first instruction of crt0, which is how
+ * masking the value afterwards was enough to pass; memcheck saw the load. */
+static int f77_absent_sym = -1;
+static int f77_absent_val;
+static void f77_absent_done(void) {
+    if (f77_absent_sym >= 0) f77_sval[f77_absent_sym] = f77_absent_val;
+    f77_absent_sym = -1;
+}
 static int f77_absent_arg(int at) {
     char nm[F77_MAX_NAME];
     int k; int s; int c;
@@ -2927,7 +2976,12 @@ static int f77_absent_arg(int at) {
     if (c != ',' && c != ')') return -1;
     s = f77_sym_find(nm);
     if (s < 0 || !f77_sopt[s] || !f77_sarg[s] || f77_srank[s] > 0) return -1;
-    return hi_emit(HI_SNE, TY_INT, f77_sval[s], f77_iconst(0), 0, NULL);
+    c = hi_emit(HI_SNE, TY_INT, f77_sval[s], f77_iconst(0), 0, NULL);
+    f77_absent_done();
+    f77_absent_sym = s;
+    f77_absent_val = f77_sval[s];
+    f77_sval[s] = f77_select(c, f77_sval[s], hi_emit(HI_GADDR, HL_ADDR_TY, -1, -1, 0, "f77_absent"));
+    return c;
 }
 
 /* The one argument type of a specific intrinsic name, or -1 for a
@@ -3326,6 +3380,7 @@ static int f77_primary1(int *intr) {
                     f77_kw_skip("BACK");
                     here = f77_absent_arg(-1);
                     args[4] = f77_expr();
+                    f77_absent_done();
                     if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
                     args[4] = hi_emit(HI_SNE, TY_INT, args[4], f77_iconst(0), 0, NULL);
                     if (here >= 0) args[4] = hi_emit(HI_AND, TY_INT, args[4], here, 0, NULL);
@@ -3367,6 +3422,7 @@ static int f77_primary1(int *intr) {
                     else {
                         here = f77_absent_arg(-1);
                         im = f77_expr(); imhi = ex_hi; imty = ex_ty;
+                        f77_absent_done();
                         if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                         has_y = 1;
                         if (lx_t == T_COMMA) { f77_tok(); kn = 1; }
@@ -3577,6 +3633,7 @@ static int f77_primary1(int *intr) {
                     f77_kw_skip("BACK");
                     here = f77_absent_arg(-1);
                     bk = f77_expr();
+                    f77_absent_done();
                     if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
                     if (here >= 0) bk = hi_emit(HI_AND, TY_INT, hi_emit(HI_SNE, TY_INT, bk, f77_iconst(0), 0, NULL), here, 0, NULL);
                     if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
@@ -3820,6 +3877,7 @@ static int f77_primary1(int *intr) {
                 f77_tok();
                 here = f77_absent_arg(-1);
                 b = f77_expr(); bty = ex_ty; bhi = ex_hi;
+                f77_absent_done();
                 if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                 rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
                 if (in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0 ||
@@ -6245,6 +6303,24 @@ static int f77_av_inside(int from, int to) {
     int b; int c;
     return f77_av_find(from, to, &b, &c) != 0;
 }
+/* X = ... with X an ALLOCATABLE array: it shall be allocated (Fortran 95
+ * 6.3.1.2, an unallocated array is not defined or referenced).  Fortran
+ * 2003 allocates it there instead, and programs written since lean on
+ * that; taken without a word, the assignment stored nothing -- X has no
+ * elements -- and the next statement to read X read from address 0, which
+ * on this machine is crt0 (gfortran's realloc_on_assign_15.f90: it
+ * "agreed", printing nothing, and the interpreter's memcheck counted 4,000
+ * loads through a null pointer).  Said at run time, by name. */
+static void f77_need_allocated(int s) {
+    int args[3];
+    int n;
+    n = (int)strlen(f77_sname[s]);
+    args[0] = f77_desc_base(s);
+    args[1] = hi_emit(HI_SADDR, HL_ADDR_TY, -1, -1, f77_intern_str(f77_sname[s], n), NULL);
+    args[2] = f77_iconst(n);
+    f77_call_i("f77_need_allocated", 3, args);
+}
+
 static void f77_array_assign1(int s, int whole);
 static void f77_array_assign(int s, int whole) {
     int mk;
@@ -6283,6 +6359,7 @@ static void f77_array_assign1(int s, int whole) {
     doff = -1;
     for (k = 0; k < F77_MAX_RANK; k++) idx[k] = -1;
     if (whole) {
+        if (f77_salloc[s] && !f77_sptr[s] && !f77_sarg[s]) f77_need_allocated(s);
         for (k = 0; k < rank; k++) {
             trip[k] = 1;
             f77_dim_bounds(s, k, &lo[k], &hi[k]);
@@ -7046,6 +7123,7 @@ static int f77_arr_inquiry1(int in) {
         int d; int here;
         here = in == IN_SIZE ? f77_absent_arg(A.from[dim]) : -1;
         d = f77_expr_at(A.from[dim], A.to[dim]);
+        f77_absent_done();
         if (ex_ty != TY_INT || ex_log) { sprintf(m, "DIM= of %s needs an INTEGER", fname); f77_error(m); return f77_iconst(0); }
         if (here >= 0) {
             /* SIZE(A, DIM) with DIM absent is SIZE(A) */
@@ -8840,6 +8918,15 @@ static void f77_parse_dims(int s) {
     f77_srank[s] = rank;
     f77_sassz[s] = f77_bound_star;
     f77_sauto[s] = !f77_sarg[s] && !f77_salloc[s] && f77_adjustable(s);
+    /* A splice has no place to allocate one, and the scan keeps a unit
+     * that has one from being spliced (f77_scan_may_auto).  Where the
+     * scan misses, say so: the array had room for one element a
+     * dimension, on the caller's stack, and its address was handed to
+     * free() at RETURN -- INTEGER, DIMENSION(N,9) :: A, which the scan
+     * did not see for an array (found 2026-11-11 by the interpreter's
+     * memcheck: the free of a stack address, in a program whose answers
+     * were right). */
+    if (f77_sauto[s] && f77_inline_depth > 0) f77_error("an automatic array in a spliced unit (an f77 defect)");
 }
 
 /* A CHARACTER length after the `*`: n, (cexpr), or (*) for an
@@ -11002,7 +11089,6 @@ static void f77_layout_static(void) {
             f77_error("an automatic array cannot be in COMMON, SAVEd, or in an EQUIVALENCE");
             return;
         }
-        if (f77_inline_depth > 0) { f77_error("an automatic array in a spliced unit (an f77 defect)"); return; }
         n = hi_emit(HI_MUL, TY_INT, f77_iconst(f77_esize(s)), f77_nelem_v(s), 0, NULL);
         args[0] = f77_iconst(0); args[1] = n; args[2] = f77_iconst(0);
         f77_sval[s] = f77_call_i("f77_allocate", 3, args);
@@ -16190,6 +16276,7 @@ static void f77_emit_copyin(void) {
     }
     if (f77_result_sym >= 0 && f77_sty[f77_result_sym] == TY_DERIVED) f77_urdt[f77_cur_unit] = f77_sdt[f77_result_sym] + 1;
     f77_layout_static();
+    f77_place_large();
     f77_host_table();
     f77_dta_entry();
     /* An array-valued FUNCTION: callers took its value for a scalar and

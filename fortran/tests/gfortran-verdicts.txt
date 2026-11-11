@@ -2727,7 +2727,7 @@ f77	realloc_on_assign_1.f03
 f77	realloc_on_assign_10.f90
 f77	realloc_on_assign_11.f90
 f77	realloc_on_assign_12.f90
-pass	realloc_on_assign_15.f90
+exit-differs	realloc_on_assign_15.f90
 f77	realloc_on_assign_16.f90
 f77	realloc_on_assign_17.f90
 f77	realloc_on_assign_2.f03

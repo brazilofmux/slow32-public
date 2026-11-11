@@ -29,6 +29,11 @@
 #define FIO_MAXLINE  1024
 #define FIO_MAXGROUP 16
 
+/* What an absent OPTIONAL argument reads as, where f77 must evaluate one
+ * to hand an intrinsic its own optional argument (f77_absent_arg): wide
+ * enough for a COMPLEX*16. */
+const int f77_absent[4] = { 0, 0, 0, 0 };
+
 static const char *fio_fmt;      /* format text, without outer parens */
 static int   fio_pos;            /* cursor into fio_fmt */
 static int   fio_unit;
@@ -1712,6 +1717,14 @@ void *f77_deallocate(void *cur, int *stat) {
     }
     free(cur);
     return 0;
+}
+
+/* A whole ALLOCATABLE array about to be assigned: Fortran 95 wants it
+ * allocated (f77_need_allocated in the compiler has the rest). */
+void f77_need_allocated(void *cur, const char *name, int n) {
+    if (cur) return;
+    fprintf(stderr, "f77: %.*s is not allocated: Fortran 95 does not allocate an array by assigning to it (Fortran 2003 does)\n", n, name);
+    exit(2);
 }
 
 /* A subprogram's allocated, unSAVEd ALLOCATABLE arrays at its RETURN
