@@ -160,10 +160,9 @@ corpus, xbase, xbc), after two things about the suites rather than the
 mode.  The COBOL suite's CCVS both-paths check compares console output
 byte for byte, and the interpreter's closing lines carry the wall time: the
 sweep runs the suite with CCVS=0 and CCVS by itself, quiet, against its
-recorded totals.  And islisp's suite is not swept: it cannot pass on the
-interpreter with the mode or without, because the stage08 build's soft libm
-differs from the clang build's (runtime ISSUES-29; `(log
-*most-positive-float*)` is off in the 12th digit there, not the last),
-which the DBT's host libm hides.  One corpus program is listed as known:
+recorded totals.  (islisp's suite was left out here for a day, on the
+belief that the kit's libm differed from clang's on the interpreters; it
+was a stage08 binary twelve days old, runtime ISSUES-29.  It is swept, and
+its collector's reports are the known ones.)  One corpus program is listed as known:
 gfortran's whole_file_14.f90 follows a pointer to a local of a subroutine
 that has returned, on purpose.

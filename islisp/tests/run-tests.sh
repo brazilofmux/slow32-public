@@ -24,6 +24,25 @@ PASS=0
 
 [ -x "$IDIR/out/islisp-host" ] && [ -f "$IDIR/out/islisp.s32x" ] || "$IDIR/build.sh" >/dev/null
 
+# A binary older than what it is made of is rebuilt: the sources, and the C
+# library it was linked with.  The stage08 build sat here from 2026-10-30,
+# two days before the kit's library took musl's libm, and the identity check
+# below went on comparing it -- identical on the DBT, whose math is the
+# host's, and eleven lines of number.out apart on the interpreters, which
+# read as a defect in the kit's libm (2026-11-11) until its date was looked at.
+KIT="${KIT:-$HOME/s32x}"
+stale() {       # binary, then what it depends on
+    local bin="$1"; shift
+    [ -f "$bin" ] || return 1
+    [ -n "$(find "$IDIR/src" "$@" -newer "$bin" 2>/dev/null | head -1)" ]
+}
+if stale "$IDIR/out/islisp.s32x" "$ROOT/runtime/libc_mmio.s32a" "$ROOT/runtime/libs32.s32a"; then
+    "$IDIR/build.sh" >/dev/null
+fi
+if stale "$IDIR/out/islisp-stage08.s32x" "$KIT/selfhost/libc.s32a" "$KIT/cc.s32x"; then
+    "$IDIR/build.sh" stage08 >/dev/null
+fi
+
 echo "=== verify (host) ==="
 if OUT=/tmp/islisp-gate-host "$HERE/run-verify.sh" --host | tail -1 | grep -q " 0 fail"; then PASS=$((PASS+1)); echo "  PASS"; else FAIL=$((FAIL+1)); echo "  FAIL"; fi
 [ "${1:-}" = quick ] && { echo "islisp: $PASS passed, $FAIL failed"; exit $FAIL; }

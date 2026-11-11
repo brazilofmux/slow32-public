@@ -334,7 +334,7 @@ buffer is sent at the same byte either way (the COBOL runtime's WRITE;
 `cobol/docs/performance.md`).  `stdio.c` asserts the two constants the
 header repeats.
 
-### 29. The soft libm's last digit (2026-10-06, open)
+### 29. The soft libm's last digit (2026-10-06; resolved 2026-11-01 by musl's libm, closed 2026-11-11)
 
 `math_soft.c` computes exp, log, sin, cos, tan and atan by Taylor
 series after a one-constant range reduction (`x - k * LN2`, `fmod(x,
@@ -351,6 +351,18 @@ their kernels and two-constant (Cody-Waite) or Payne-Hanek reduction --
 in place of the series, for every language on the machine; sqrt is
 already the FPU's.  Until then tests print at most 13 significant
 digits of a transcendental result.
+
+**Closed.**  Both C libraries have had musl's libm since the clause 7 work
+of 2026-11-01 (runtime/libm, built by clang for runtime/ and by stage08 cc
+for the kit); `math_soft.c` is gone.  Checked 2026-11-11 on the reference
+interpreter: the three examples above print the host's fifteen digits
+(`exp(50)` 5.18470552858707e+21, `cos(100)`, `tan(1e11)`), and the two
+builds give the same bits for exp, log, pow and sin and the same doubles
+from `strtod`.  The item was reopened in passing that day and wrongly: the
+islisp suite's stage08 binary dated from 2026-10-30 and still carried the
+series (islisp/tests/run-tests.sh rebuilds a stale one now).  What remains
+open under this number in docs/plans/flang.md is musl's own `bessel_yn` in
+REAL(4), a unit in the last place.
 
 ### 30. `malloc` fragments under alternating big and small blocks (2026-10-16, open)
 

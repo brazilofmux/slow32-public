@@ -28,15 +28,10 @@
 #
 #   run-memcheck.sh              the instrument, and the quick sweeps (~8 min):
 #                                regression, forth, fortran, fcvs, kit
-#   run-memcheck.sh --all        and the long ones (~40 min): cobol, ccvs,
-#                                corpus, xbase, xbc
+#   run-memcheck.sh --all        and the long ones (~45 min): cobol, ccvs,
+#                                corpus, xbase, xbc, islisp
 #   run-memcheck.sh NAME ...     the instrument and the sweeps named
 #   run-memcheck.sh --none       the instrument alone (seconds)
-#
-# islisp's suite is not among them: it cannot pass on the interpreter, with
-# the mode or without -- its stage08 build's soft libm differs from the
-# clang build's in last digits (runtime ISSUES-29), which the DBT's host
-# libm hides.  Its collector's reports are in known.txt for a run by hand.
 #
 # After a change to the interpreter or memcheck.h: all of it.  After a
 # change to a compiler or a run-time library: the sweep of its suite.
@@ -49,7 +44,7 @@ KIT="${KIT:-$HOME/s32x}"
 CLANG="${CLANG:-$HOME/llvm-project/build/bin/clang}"
 KNOWN="$HERE/memcheck/known.txt"
 QUICK="regression forth fortran fcvs kit"
-LONG="cobol ccvs corpus xbase xbc"
+LONG="cobol ccvs corpus xbase xbc islisp"
 [ -x "$EMU" ] || { echo "run-memcheck: no $EMU" >&2; exit 2; }
 
 case "${1:-}" in
@@ -140,6 +135,7 @@ sweep_cmd() {
         corpus)     echo "S32_ENGINE='$W/slow32-q' '$ROOT/regression/run-f77-corpus.sh'" ;;
         xbase)      echo "EMU='$EMU' bash '$ROOT/xbase/tests/run-tests.sh'" ;;
         xbc)        echo "EMU='$EMU' bash '$ROOT/xbc/tests/run-tests.sh'" ;;
+        islisp)     echo "EMU='$W/slow32-q' bash '$ROOT/islisp/tests/run-tests.sh'" ;;
         *)          return 1 ;;
     esac
 }

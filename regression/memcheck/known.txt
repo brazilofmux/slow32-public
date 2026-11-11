@@ -18,8 +18,7 @@ regression	*/results/feature-dbt-select-fuse/test.s32x	asm: scratch below sp
 # A conservative collector: gc_collect (islisp/src/heap.c) takes every word
 # of the C stack between here and main for a possible object, initialised
 # or not, and asks its object table.  That is the design, and Boehm's
-# collector draws the same reports from Valgrind.  (islisp is not a sweep
-# of run-memcheck.sh -- its header says why; these are for a run by hand.)
+# collector draws the same reports from Valgrind.
 islisp	*/islisp/out/islisp.s32x	conservative collector scans the whole stack
 islisp	*/islisp/out/islisp-stage08.s32x	conservative collector scans the whole stack
 #
