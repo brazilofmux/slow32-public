@@ -139,6 +139,7 @@ def build_f77(src, text, work, opts):
     objs = []
     for i, f in enumerate(aux + [src] + more):
         o = os.path.join(work, f't{i}')
+        linked = i >= len(aux)      # an aux module is compiled for its .mod; a source of the test links
         rc, out, err = proc([F77, f, o + '.s'], work, BUILD_TIMEOUT)
         if rc is None:
             return 'build-timeout', ''
@@ -150,8 +151,9 @@ def build_f77(src, text, work, opts):
         rc, out, err = proc([AS, o + '.s', o + '.s32o'], work, BUILD_TIMEOUT)
         if rc != 0:
             return 'as', first_error(out + err)
-        objs.append(o + '.s32o')
-    rc, out, err = proc([LD, '-o', os.path.join(work, 't.s32x'), '--mmio', '64K', os.path.join(RT, 'crt0.s32o')] + objs
+        if linked:
+            objs.append(o + '.s32o')
+    rc, out, err = proc([LD, '-o', os.path.join(work, 't.s32x'), '--mmio', '64K', '--heap-size', '16M', os.path.join(RT, 'crt0.s32o')] + objs
                         + [F77_LIB, os.path.join(RT, 'libc_mmio.s32a'), os.path.join(RT, 'libs32.s32a')], work, BUILD_TIMEOUT)
     if rc != 0:
         return 'ld', first_error(out + err)

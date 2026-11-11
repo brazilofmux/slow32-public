@@ -44,6 +44,6 @@ for src in "${srcs[@]}"; do
     "$S32_AS" "$o.s" "$o.s32o" >"$o.log" 2>&1 || { cat "$o.log" >&2; exit 1; }
     objs+=("$o.s32o")
 done
-"$S32_LD" -o "$out" --mmio 64K "$S32_RT/crt0.s32o" "${objs[@]}" "$S32_LIBF77" \
+"$S32_LD" -o "$out" --mmio 64K --heap-size 16M "$S32_RT/crt0.s32o" "${objs[@]}" "$S32_LIBF77" \
     "$S32_RT/libc_mmio.s32a" "$S32_RT/libs32.s32a" >"$W/ld.log" 2>&1 || { cat "$W/ld.log" >&2; exit 1; }
 echo "$out"

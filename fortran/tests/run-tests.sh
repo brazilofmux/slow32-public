@@ -124,18 +124,14 @@ else
             cp "$f" "$OW/$b.$x"
             "$HERE/oracle.sh" "$OW/$b.$x" < "$IN" > "$W/$b.want" 2>/dev/null; wrc=$?
         fi
-        # our compiler -> .s -> .s32o -> .s32x -> emulator
-        # from $W: a module's .mod file lands in the current directory
-        if ! (cd "$W" && "$F77" "$f" "$W/$b.s") >"$W/$b.cc.log" 2>&1; then
-            report "diff:$b" 1 "f77 compile"; continue
+        # our compiler -> .s -> .s32o -> .s32x -> emulator, by compile.sh,
+        # the driver the image ships as s32f77 (its link line is the one a
+        # user gets: --mmio, which carries STOP n out as the exit status,
+        # and its heap).  From $W: a module's .mod lands there.
+        if ! (cd "$W" && S32_F77="$F77" S32_LIBF77="$LIBF77" S32_AS="$AS" S32_LD="$LD" S32_RT="$RT" \
+                  "$FDIR/compile.sh" "$f" -o "$W/$b.s32x") >"$W/$b.cc.log" 2>&1; then
+            report "diff:$b" 1 "$(grep -v '^ ' "$W/$b.cc.log" | head -1)"; continue
         fi
-        "$AS" "$W/$b.s" "$W/$b.s32o" >/dev/null 2>&1 || { report "diff:$b" 1 "assemble"; continue; }
-        # --mmio + libc_mmio is what propagates the guest exit status out
-        # of the emulator, which is how STOP n is checked.
-        "$LD" -o "$W/$b.s32x" --mmio 64K "$RT/crt0.s32o" "$W/$b.s32o" \
-              "$LIBF77" \
-              "$RT/libc_mmio.s32a" "$RT/libs32.s32a" \
-              >/dev/null 2>&1 || { report "diff:$b" 1 "link"; continue; }
         # cwd inside $W so files a test OPENs land in scratch space.
         (cd "$W" && "$EMU" "$W/$b.s32x" < "$IN" 2>/dev/null) \
             | grep -vE "^Starting execution|^HALT at|^$|^Program halted|^Instructions|^Cycles|^Wall|^Performance|^MMIO|^Exit code" \

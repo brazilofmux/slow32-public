@@ -831,9 +831,9 @@ static char *fio_exp_out(char *q, int expv, int letter) {
 static int fio_floor3(int e) { return e >= 0 ? (e / 3) * 3 : -(((-e) + 2) / 3) * 3; }
 
 static void fio_esn(char *out, int outsz, double v, int d, int eng) {
-    char tmp[64];
+    char tmp[FIO_MAXLINE];
     char cf[16];
-    char dig[48];
+    char dig[FIO_MAXLINE];
     char *p;
     char *q;
     int n;
@@ -843,7 +843,7 @@ static void fio_esn(char *out, int outsz, double v, int d, int eng) {
     int lead;
     int neg;
     if (d < 0) d = 0;
-    if (d > 30) d = 30;
+    if (d > 500) d = 500;
     /* the exponent at full precision decides EN's digits ahead of the point */
     snprintf(tmp, sizeof tmp, "%.17E", v);
     p = strchr(tmp, 'E');
@@ -855,7 +855,7 @@ static void fio_esn(char *out, int outsz, double v, int d, int eng) {
     neg = 0;
     if (*p == '-') { neg = 1; p++; }
     n = 0;
-    for (i = 0; p[i] && p[i] != 'E'; i++) if (p[i] != '.' && n < 47) dig[n++] = p[i];
+    for (i = 0; p[i] && p[i] != 'E'; i++) if (p[i] != '.' && n < (int)sizeof dig - 1) dig[n++] = p[i];
     e = p[i] == 'E' ? (int)strtol(p + i + 1, 0, 10) : 0;
     if (v == 0.0) e = 0;
     if (eng) {
@@ -863,7 +863,8 @@ static void fio_esn(char *out, int outsz, double v, int d, int eng) {
             /* rounding carried to a power of ten: its digits are 1 and
              * zeros, so the new group's lead digits are only padding */
             lead = e - fio_floor3(e) + 1;
-            while (n < lead + d && n < 47) dig[n++] = '0';
+            while (n < lead + d && n < (int)sizeof dig - 1) dig[n++] = '0';
+            if (n > lead + d) n = lead + d;     /* and no more of them: 999.9999 in EN15.3 was 1.00000E+03 */
         }
         e = fio_floor3(e);
     }
@@ -877,7 +878,8 @@ static void fio_esn(char *out, int outsz, double v, int d, int eng) {
 }
 
 static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
-    char tmp[64];
+    char tmp[FIO_MAXLINE];
+    char dig[FIO_MAXLINE];             /* the significant digits, the point dropped */
     char cf[16];
     char *p;
     char *q;
@@ -913,7 +915,7 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
     q = out;
     i = 0;
     while (p[i] && p[i] != 'E' && p[i] != 'e') {
-        if (p[i] != '.') { tmp[n + 40] = p[i]; n++; }
+        if (p[i] != '.' && n < (int)sizeof dig) { dig[n] = p[i]; n++; }
         i++;
     }
     expv = 0;
@@ -925,14 +927,14 @@ static void fio_efmt(char *out, int outsz, double v, int nd, int letter) {
     q = out;
     if (neg) *q++ = '-';
     if (k > 0) {                                    /* k digits ahead of the point */
-        for (i = 0; i < k && i < n; i++) *q++ = tmp[40 + i];
+        for (i = 0; i < k && i < n; i++) *q++ = dig[i];
         *q++ = '.';
-        for (; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
+        for (; i < n && (q - out) < outsz - 8; i++) *q++ = dig[i];
     } else {
         *q++ = '0';
         *q++ = '.';
         for (i = k; i < 0 && (q - out) < outsz - 8; i++) *q++ = '0';   /* |k| leading zeros */
-        for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = tmp[40 + i];
+        for (i = 0; i < n && (q - out) < outsz - 8; i++) *q++ = dig[i];
     }
     if (v != 0.0) expv = expv - k;    /* zero's exponent is 0 whatever k: 1PE10.2 is 0.00E+00 */
     q = fio_exp_out(q, expv, letter);
@@ -1290,7 +1292,7 @@ static void fio_list_int(int v, int w) {
 }
 
 void f77_wr_i(int v) {
-    char buf[32];
+    char buf[FIO_MAXLINE];             /* I50.40 is a field: m digits overran 32 */
     int d;
     if (fio_listed) { fio_list_int(v, 12); return; }
     d = fio_want();
@@ -1307,10 +1309,10 @@ void f77_wr_i(int v) {
          * base 2, 8 or 16, m digits at least; Bw.0 of zero blanks */
         unsigned int u = (unsigned int)v;
         int base = d == 'B' ? 2 : d == 'O' ? 8 : 16;
-        char dig[40];
+        char dig[FIO_MAXLINE];
         int nd = 0, k;
         do { dig[nd++] = "0123456789ABCDEF"[u % base]; u /= base; } while (u);
-        while (nd < fio_d) dig[nd++] = '0';
+        while (nd < fio_d && nd < (int)sizeof dig - 1) dig[nd++] = '0';
         for (k = 0; k < nd; k++) buf[k] = dig[nd - 1 - k];
         buf[nd] = 0;
         if (v == 0 && fio_d == 0 && fio_fmt[fio_pos - 1] == '0' && fio_fmt[fio_pos - 2] == '.') buf[0] = 0;
@@ -1338,7 +1340,7 @@ void f77_wr_i(int v) {
 }
 
 void f77_wr_d(double v) {
-    char buf[64];
+    char buf[FIO_MAXLINE];             /* E199.192 is a field too */
     char cf[16];
     int d;
     if (fio_listed) { fio_list_out_real(v, 1); return; }
@@ -1794,6 +1796,9 @@ void *f77_as_pack(const int *d, int rank, int esz) {
     int k;
     int n = 1;
     char *run;
+    /* an OPTIONAL dummy that is absent, passed on: absent still (its
+     * descriptor was read at address 0) */
+    if (!d) return 0;
     if (f77_as_contig(d, rank)) return (void *)(long)d[0];
     for (k = 0; k < rank; k++) n *= d[1 + 2 * k];
     run = malloc(n * esz > 0 ? (size_t)(n * esz) : 1);
@@ -1854,7 +1859,7 @@ void *f77_vec_take(void *h) {
 }
 
 void f77_as_unpack(const int *d, int rank, int esz, void *run) {
-    if (run == (void *)(long)d[0]) return;
+    if (!d || run == (void *)(long)d[0]) return;
     f77_as_walk(d, rank, esz, run, 0);
     free(run);
 }

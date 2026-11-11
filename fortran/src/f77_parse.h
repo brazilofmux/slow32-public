@@ -2884,6 +2884,35 @@ static int f77_primary(void) {
     return v;
 }
 
+/* An intrinsic's optional argument about to be parsed -- the text at
+ * offset `at`, or the scanner's token for at < 0: is it an OPTIONAL scalar
+ * dummy of this unit, by its name alone?  Then it may be absent, and the
+ * intrinsic's argument with it (12.4.1.6); the value that says whether
+ * it is here, else -1.  Read where it is not, it was whatever address 0
+ * holds: SCAN(S, T, BACK) with BACK absent, MAX(A1, A2, A3). */
+static int f77_absent_arg(int at) {
+    char nm[F77_MAX_NAME];
+    int k; int s; int c;
+    if (at < 0) {
+        if (lx_t != T_NAME) return -1;
+        strcpy(nm, lex_name);
+        c = lx_rp < lx_rpe ? *lx_rp : 0;
+    } else {
+        k = 0;
+        while (at < lx_stmt_len && (lx_isalpha(lx_stmt[at]) || lx_isdigit(lx_stmt[at]) || lx_stmt[at] == '_')) {
+            if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[at];
+            at = at + 1;
+        }
+        nm[k] = 0;
+        if (k == 0) return -1;
+        c = at < lx_stmt_len ? lx_stmt[at] : 0;
+    }
+    if (c != ',' && c != ')') return -1;
+    s = f77_sym_find(nm);
+    if (s < 0 || !f77_sopt[s] || !f77_sarg[s] || f77_srank[s] > 0) return -1;
+    return hi_emit(HI_SNE, TY_INT, f77_sval[s], f77_iconst(0), 0, NULL);
+}
+
 /* The one argument type of a specific intrinsic name, or -1 for a
  * generic name (or one this does not know). */
 static int f77_specific_arg_ty(char *nm) {
@@ -3276,10 +3305,13 @@ static int f77_primary1(int *intr) {
                 args[5] = f77_iconst(in == IN_VERIFY);
                 if (lx_t == T_COMMA) {
                     f77_tok();
+                    int here;
                     f77_kw_skip("BACK");
+                    here = f77_absent_arg(-1);
                     args[4] = f77_expr();
                     if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
                     args[4] = hi_emit(HI_SNE, TY_INT, args[4], f77_iconst(0), 0, NULL);
+                    if (here >= 0) args[4] = hi_emit(HI_AND, TY_INT, args[4], here, 0, NULL);
                 }
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                 ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
@@ -3310,12 +3342,13 @@ static int f77_primary1(int *intr) {
                 /* CMPLX(X [, Y] [, KIND]) (Fortran 90): of kind 8 it is
                  * DCMPLX */
                 int im; int imhi; int imty; int k; int has_y; int kn;
-                int a0; int a0hi;
-                im = -1; imhi = -1; imty = -1; k = 4; has_y = 0; kn = 0;
+                int a0; int a0hi; int here;
+                im = -1; imhi = -1; imty = -1; k = 4; has_y = 0; kn = 0; here = -1;
                 if (lx_t == T_COMMA) {
                     f77_tok();
                     if (lx_t == T_NAME && strcmp(lex_name, "KIND") == 0 && lx_rp < lx_rpe && *lx_rp == '=') kn = 1;
                     else {
+                        here = f77_absent_arg(-1);
                         im = f77_expr(); imhi = ex_hi; imty = ex_ty;
                         if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                         has_y = 1;
@@ -3335,6 +3368,7 @@ static int f77_primary1(int *intr) {
                     if (has_y) {
                         a = f77_cvt(a, &ahi, aty, TY_DOUBLE);
                         im = f77_cvt(im, &imhi, imty, TY_DOUBLE);
+                        if (here >= 0) { im = f77_select(here, im, f77_iconst(0)); imhi = f77_select(here, imhi, f77_iconst(0)); }
                         ex_hi = -1;
                         return f77_dcx_make(a, ahi, im, imhi);
                     }
@@ -3344,7 +3378,10 @@ static int f77_primary1(int *intr) {
                 }
                 a0 = a; a0hi = ahi;
                 a = f77_cvt(a, &ahi, aty, TY_FLOAT);
-                if (has_y) im = f77_cvt(im, &imhi, imty, TY_FLOAT);
+                if (has_y) {
+                    im = f77_cvt(im, &imhi, imty, TY_FLOAT);
+                    if (here >= 0) im = f77_select(here, im, f77_rconst(0.0));     /* Y absent: 0 */
+                }
                 else if (aty == TY_CPLX) im = ahi;
                 else if (aty == TY_DCPLX) {         /* CMPLX of a COMPLEX*16: each part narrowed */
                     im = f77_cvt(a0, &a0hi, TY_DCPLX, TY_CPLX);
@@ -3519,9 +3556,12 @@ static int f77_primary1(int *intr) {
                     /* Fortran 90's BACK: the last occurrence */
                     int bk; int c;
                     f77_tok();
+                    int here;
                     f77_kw_skip("BACK");
+                    here = f77_absent_arg(-1);
                     bk = f77_expr();
                     if (ex_ty != TY_INT || !ex_log) { f77_error("BACK is LOGICAL"); return f77_iconst(0); }
+                    if (here >= 0) bk = hi_emit(HI_AND, TY_INT, hi_emit(HI_SNE, TY_INT, bk, f77_iconst(0), 0, NULL), here, 0, NULL);
                     if (lx_t == T_RP) f77_tok(); else f77_error("expected )");
                     ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
                     if (f77_hconst(bk, &c)) return f77_call_i(c ? "f77_index_back" : "f77_index", 4, args);
@@ -3758,13 +3798,21 @@ static int f77_primary1(int *intr) {
 
             /* Binary and n-ary forms: MAX/MIN fold pairwise. */
             for (;;) {
+                int here;
                 if (lx_t != T_COMMA) break;
                 f77_tok();
+                here = f77_absent_arg(-1);
                 b = f77_expr(); bty = ex_ty; bhi = ex_hi;
                 if (!f77_in_arg_ok(nm, in)) return f77_iconst(0);
                 rty = f77_balance(&a, &ahi, aty, &b, &bhi, bty);
                 if (in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0 ||
                     in == IN_MIN || in == IN_MIN1 || in == IN_AMIN0) {
+                    if (here >= 0) {
+                        /* an argument that is absent takes no part: it is
+                         * the one beside it */
+                        b = f77_select(here, b, a);
+                        if (rty == TY_DOUBLE) bhi = f77_select(here, bhi, ahi);
+                    }
                     a = f77_minmax(in == IN_MAX || in == IN_MAX1 || in == IN_AMAX0,
                                    a, ahi, b, bhi, rty, &ahi);
                 } else if (in == IN_MOD) {
@@ -6966,9 +7014,25 @@ static int f77_arr_inquiry1(int in) {
             r = hi_emit(HI_MUL, TY_INT, r, v[k], 0, NULL);
         }
     } else {
-        int d;
+        int d; int here;
+        here = in == IN_SIZE ? f77_absent_arg(A.from[dim]) : -1;
         d = f77_expr_at(A.from[dim], A.to[dim]);
         if (ex_ty != TY_INT || ex_log) { sprintf(m, "DIM= of %s needs an INTEGER", fname); f77_error(m); return f77_iconst(0); }
+        if (here >= 0) {
+            /* SIZE(A, DIM) with DIM absent is SIZE(A) */
+            int all;
+            all = f77_iconst(1);
+            for (k = 0; k < nt; k++) {
+                if (v[k] < 0) { f77_error("the size of an assumed-size array is not known"); return f77_iconst(0); }
+                all = hi_emit(HI_MUL, TY_INT, all, v[k], 0, NULL);
+            }
+            r = all;
+            for (k = 0; k < nt; k++)
+                r = f77_select(hi_emit(HI_AND, TY_INT, here, hi_emit(HI_SEQ, TY_INT, d, f77_iconst(k + 1), 0, NULL), 0, NULL), v[k], r);
+            f77_scan_from(A.end);
+            ex_ty = TY_INT; ex_hi = -1; ex_log = 0;
+            return r;
+        }
         if (h_kind[d] == HI_ICONST) {
             if (h_val[d] < 1 || h_val[d] > nt) { sprintf(m, "DIM= of %s is outside the array's rank", fname); f77_error(m); return f77_iconst(0); }
             r = v[h_val[d] - 1];
@@ -13202,7 +13266,15 @@ static void f77_actuals_final(int *addrs, int *aas, int nargs, int u, int e, int
             if (j != r) { sprintf(m, "an actual of rank %d for an assumed-shape dummy of rank %d", j, r); f77_error(m); continue; }
             addrs[i] = f77_run_desc(f77_aa_storage(ea), r, ext, 1);
         }
-        else if (r > 0) addrs[i] = f77_aa_desc(aas[i], r);
+        else if (r > 0) {
+            int sy;
+            sy = f77_aa_sym[aas[i]];
+            addrs[i] = f77_aa_desc(aas[i], r);
+            /* an absent OPTIONAL dummy passed on is absent: a descriptor
+             * made here for one of explicit shape would be present */
+            if (!f77_aa_sec[aas[i]] && f77_sopt[sy] && f77_sarg[sy] && !f77_sashape[sy])
+                addrs[i] = f77_select(hi_emit(HI_SNE, TY_INT, f77_sval[sy], f77_iconst(0), 0, NULL), addrs[i], f77_iconst(0));
+        }
         else if (f77_aa_sec[aas[i]]) addrs[i] = f77_aa_storage(aas[i]);
         else if (f77_sashape[f77_aa_sym[aas[i]]]) addrs[i] = f77_aa_pack(f77_aa_sym[aas[i]]);
     }
@@ -20350,6 +20422,26 @@ static int f77_td_stmt(int cls) {
     return 1;
 }
 
+/* v, and the n dimensions of the descriptors at p and q the same: each
+ * extent, none of them zero (F95 13.14.13), and each stride -- where the
+ * extent is above 1; a dimension of one element has no stride to compare
+ * (P => A(2:1:-2, ...) is A(2:2, ...) there). */
+static int f77_assoc_dims(int v, int p, int q, int n) {
+    int k;
+    for (k = 0; k < n; k++) {
+        int e1; int e2; int s1; int s2; int same;
+        e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, p, -1, 4 + 8 * k, NULL), -1, 0, NULL);
+        e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, q, -1, 4 + 8 * k, NULL), -1, 0, NULL);
+        s1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, p, -1, 8 + 8 * k, NULL), -1, 0, NULL);
+        s2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, q, -1, 8 + 8 * k, NULL), -1, 0, NULL);
+        v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
+        v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SNE, TY_INT, e2, f77_iconst(0), 0, NULL), 0, NULL);
+        same = hi_emit(HI_OR, TY_INT, hi_emit(HI_SEQ, TY_INT, s1, s2, 0, NULL), hi_emit(HI_SEQ, TY_INT, e2, f77_iconst(1), 0, NULL), 0, NULL);
+        v = hi_emit(HI_AND, TY_INT, v, same, 0, NULL);
+    }
+    return v;
+}
+
 /* ASSOCIATED(POINTER [, TARGET]) (F90 13.13.13): its slot (an array's
  * base) not null -- or, with TARGET, the address it holds TARGET's (an
  * array's base, extents and strides its, and no extent zero). */
@@ -20379,13 +20471,7 @@ static int f77_associated(void) {
              * each dimension's extent and stride */
             ta = hi_emit(HI_LOAD, TY_INT, f77_ptr_slot(t), -1, 0, NULL);
             v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
-            for (k = 0; k < 2 * f77_srank[ps] && k < 2 * f77_srank[t]; k++) {
-                int e1; int e2;
-                e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 4 * k, NULL), -1, 0, NULL);
-                e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(t), -1, 4 + 4 * k, NULL), -1, 0, NULL);
-                v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
-                if (k % 2 == 0) v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SNE, TY_INT, e2, f77_iconst(0), 0, NULL), 0, NULL);   /* and no zero-sized one (F95 13.14.13) */
-            }
+            v = f77_assoc_dims(v, f77_ptr_slot(ps), f77_ptr_slot(t), f77_srank[ps] < f77_srank[t] ? f77_srank[ps] : f77_srank[t]);
         } else {
             if (f77_srank[t] > 0 && lx_t == T_LP && !f77_paren_has_colon()) { f77_tok(); ta = f77_subscript_addr(t); }
             else if (f77_srank[t] > 0 && f77_srank[ps] > 0) {
@@ -20403,13 +20489,7 @@ static int f77_associated(void) {
                 f77_naa = saved;
                 ta = hi_emit(HI_LOAD, TY_INT, d, -1, 0, NULL);
                 v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, base, ta, 0, NULL), 0, NULL);
-                for (k = 0; k < 2 * nt; k++) {
-                    int e1; int e2;
-                    e1 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, f77_ptr_slot(ps), -1, 4 + 4 * k, NULL), -1, 0, NULL);
-                    e2 = hi_emit(HI_LOAD, TY_INT, hi_emit(HI_ADDI, HL_ADDR_TY, d, -1, 4 + 4 * k, NULL), -1, 0, NULL);
-                    v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SEQ, TY_INT, e1, e2, 0, NULL), 0, NULL);
-                    if (k % 2 == 0) v = hi_emit(HI_AND, TY_INT, v, hi_emit(HI_SNE, TY_INT, e2, f77_iconst(0), 0, NULL), 0, NULL);   /* and no zero-sized one (F95 13.14.13) */
-                }
+                v = f77_assoc_dims(v, f77_ptr_slot(ps), d, nt);
                 if (lx_t == T_RP) f77_tok(); else f77_error("expected ) after ASSOCIATED's arguments");
                 ex_ty = TY_INT; ex_hi = -1; ex_log = 1;
                 return v;
