@@ -682,26 +682,32 @@ int64_t SLOW32InstrInfo::emitStagedAddImmediate(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator InsertPt,
     const DebugLoc &DL, Register DestReg, Register SrcReg, int64_t Amount,
     bool StopWhenImmLegal, MachineInstr::MIFlag Flag) const {
-  if (DestReg != SrcReg) {
-    BuildMI(MBB, InsertPt, DL, get(SLOW32::ADD), DestReg)
-        .addReg(SrcReg)
-        .addReg(SLOW32::R0)
-        .setMIFlag(Flag);
-  }
-
   int64_t Remaining = Amount;
   auto Done = [&] {
     return StopWhenImmLegal ? isInt<12>(Remaining) : Remaining == 0;
   };
+  // The first step reads SrcReg: `addi dest, src, step`, not a copy and
+  // then an add.  That is an instruction saved wherever the two registers
+  // differ -- every prologue and epilogue of a frame with a frame pointer,
+  // `addi fp, sp, frame` and `addi sp, fp, -frame` -- and in the epilogue
+  // it is more than that: `add sp, fp, zero; addi sp, sp, -frame` had sp
+  // above the saved lr and fp for one instruction.
+  Register Base = SrcReg;
   while (!Done()) {
     int64_t Step = Remaining > 0 ? std::min<int64_t>(Remaining, 2047)
                                  : std::max<int64_t>(Remaining, -2048);
     BuildMI(MBB, InsertPt, DL, get(SLOW32::ADDI), DestReg)
-        .addReg(DestReg)
+        .addReg(Base)
         .addImm(Step)
         .setMIFlag(Flag);
     Remaining -= Step;
+    Base = DestReg;
   }
+  if (Base != DestReg) // nothing was added: the copy alone
+    BuildMI(MBB, InsertPt, DL, get(SLOW32::ADD), DestReg)
+        .addReg(SrcReg)
+        .addReg(SLOW32::R0)
+        .setMIFlag(Flag);
   return Remaining;
 }
 

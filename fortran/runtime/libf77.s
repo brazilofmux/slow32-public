@@ -1429,24 +1429,13 @@ f77_wr_i:                               # @f77_wr_i
 	addi sp, sp, -2048
 	addi sp, sp, -48
 	stw sp+0, lr
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	stw r1+45, r11
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+41, r12
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+37, r13
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+33, r14
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+29, r15
 	add r11, r3, r0
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+25, r3
 	lui r1, %hi(fio_listed)
 	ldw r1, r1+%lo(fio_listed)
@@ -1773,26 +1762,16 @@ f77_wr_i:                               # @f77_wr_i
 	stw r4+%lo(fio_len), r6
 	jal r0, .LBB13_30
 .LBB13_55:
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	addi r3, r1, 25
 	addi r4, r0, 4
 	jal r31, fio_hol_out
 .LBB13_56:
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	ldw r15, r1+29
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r14, r1+33
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r13, r1+37
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r12, r1+41
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r11, r1+45
 	ldw lr, sp+0
 	addi sp, sp, 2047
@@ -3260,38 +3239,17 @@ fio_efmt:                               # @fio_efmt
 	addi sp, sp, -2048
 	addi sp, sp, -96
 	stw sp+0, lr
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	stw r1+93, r11
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+89, r12
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+85, r13
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+81, r14
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+77, r15
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+73, r16
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+69, r17
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+65, r18
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+61, r19
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+57, r20
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+53, r21
 	add r11, r7, r0
 	add r13, r6, r0
@@ -3541,8 +3499,7 @@ fio_efmt:                               # @fio_efmt
 	sub r3, r5, r3
 	ori  r11, r3, 48
 	addi r3, r10, 1
-	add r13, sp, r0
-	addi r13, r13, 2047
+	addi r13, sp, 2047
 	addi r12, r13, 37
 	add r12, r12, r10
 	stb r12+0, r11
@@ -3562,8 +3519,7 @@ fio_efmt:                               # @fio_efmt
 	xori r4, r4, 15
 	and r4, r4, r5
 	xor r4, r6, r4
-	add r6, sp, r0
-	addi r6, r6, 2047
+	addi r6, sp, 2047
 	addi r5, r6, 37
 	bge r3, r4, .LBB23_48
 .LBB23_45:
@@ -3579,8 +3535,7 @@ fio_efmt:                               # @fio_efmt
 	add r3, r4, r0
 .LBB23_48:
 	addi r1, r1, 1
-	add r5, sp, r0
-	addi r5, r5, 2047
+	addi r5, sp, 2047
 	addi r4, r5, 37
 	addi r4, r4, -1
 .LBB23_49:
@@ -3593,38 +3548,17 @@ fio_efmt:                               # @fio_efmt
 	bgt r5, r17, .LBB23_49
 .LBB23_50:
 	stb r1+0, r0
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	ldw r21, r1+53
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r20, r1+57
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r19, r1+61
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r18, r1+65
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r17, r1+69
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r16, r1+73
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r15, r1+77
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r14, r1+81
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r13, r1+85
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r12, r1+89
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r11, r1+93
 	ldw lr, sp+0
 	addi sp, sp, 2047
@@ -3656,53 +3590,22 @@ fio_esn:                                # @fio_esn
 	addi sp, sp, -2048
 	addi sp, sp, -128
 	stw sp+0, lr
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	stw r1+125, r11
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+121, r12
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+117, r13
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+113, r14
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+109, r15
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+105, r16
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+101, r17
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+97, r18
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+93, r19
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+89, r20
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+85, r21
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+81, r22
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+77, r23
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+73, r24
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+69, r26
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+65, r27
 	add r13, r7, r0
 	add r15, r6, r0
@@ -3978,8 +3881,7 @@ fio_esn:                                # @fio_esn
 	sub r1, r7, r1
 	ori  r12, r1, 48
 	addi r1, lr, 1
-	add r14, sp, r0
-	addi r14, r14, 2047
+	addi r14, sp, 2047
 	addi r13, r14, 49
 	add r13, r13, lr
 	stb r13+0, r12
@@ -3999,8 +3901,7 @@ fio_esn:                                # @fio_esn
 	xori r6, r6, 15
 	and r6, r6, r7
 	xor r5, r5, r6
-	add r7, sp, r0
-	addi r7, r7, 2047
+	addi r7, sp, 2047
 	addi r6, r7, 49
 	bge r1, r5, .LBB24_51
 .LBB24_48:
@@ -4016,8 +3917,7 @@ fio_esn:                                # @fio_esn
 	add r1, r5, r0
 .LBB24_51:
 	addi r4, r4, 1
-	add r6, sp, r0
-	addi r6, r6, 2047
+	addi r6, sp, 2047
 	addi r5, r6, 49
 	addi r5, r5, -1
 .LBB24_52:
@@ -4030,53 +3930,22 @@ fio_esn:                                # @fio_esn
 	bgt r6, r3, .LBB24_52
 .LBB24_53:
 	stb r4+0, r0
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	ldw r27, r1+65
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r26, r1+69
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r24, r1+73
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r23, r1+77
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r22, r1+81
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r21, r1+85
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r20, r1+89
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r19, r1+93
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r18, r1+97
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r17, r1+101
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r16, r1+105
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r15, r1+109
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r14, r1+113
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r13, r1+117
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r12, r1+121
-	add r1, sp, r0
-	addi r1, r1, 2047
 	ldw r11, r1+125
 	ldw lr, sp+0
 	addi sp, sp, 2047
@@ -13272,47 +13141,23 @@ fio_in_real:                            # @fio_in_real
 	addi sp, sp, -2048
 	addi sp, sp, -1104
 	stw sp+0, lr
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	stw r1+1101, r11
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1097, r12
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1093, r13
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1089, r14
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1085, r15
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1081, r16
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1077, r17
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1073, r18
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1069, r19
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1065, r20
-	add r1, sp, r0
-	addi r1, r1, 2047
 	stw r1+1061, r21
 	add r11, r4, r0
 	add r4, r3, r0
-	add r1, sp, r0
-	addi r1, r1, 2047
 	addi r3, r1, 37
 	jal r31, fio_field_in
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	ldbu r3, r1+37
 	addi r12, sp, 20
 	lui r1, %hi(.LCPI161_0)
@@ -13321,8 +13166,7 @@ fio_in_real:                            # @fio_in_real
 	ldw r14, r1+0
 	beq r3, r0, .LBB161_8
 .LBB161_1:
-	add r4, sp, r0
-	addi r4, r4, 2047
+	addi r4, sp, 2047
 	addi r1, r4, 37
 	addi r13, r0, 45
 	beq r3, r13, .LBB161_9
@@ -13334,8 +13178,7 @@ fio_in_real:                            # @fio_in_real
 	addi r4, r0, 43
 	bne r3, r4, .LBB161_4
 .LBB161_3:
-	add r3, sp, r0
-	addi r3, r3, 2047
+	addi r3, sp, 2047
 	addi r1, r3, 37
 	addi r1, r1, 1
 .LBB161_4:
@@ -13364,8 +13207,7 @@ fio_in_real:                            # @fio_in_real
 	add r17, r15, r0
 	jal r0, .LBB161_71
 .LBB161_9:
-	add r3, sp, r0
-	addi r3, r3, 2047
+	addi r3, sp, 2047
 	addi r1, r3, 37
 	addi r1, r1, 1
 	lui r3, %hi(.LCPI161_2)
@@ -13419,8 +13261,7 @@ fio_in_real:                            # @fio_in_real
 .LBB161_19:
 	beq r3, r0, .LBB161_71
 .LBB161_20:
-	add r3, sp, r0
-	addi r3, r3, 2047
+	addi r3, sp, 2047
 	ldbu r1, r3+37
 	addi r4, r0, 1
 	addi r6, r0, 43
@@ -13439,8 +13280,7 @@ fio_in_real:                            # @fio_in_real
 .LBB161_25:
 	add r3, r4, r0
 .LBB161_26:
-	add r7, sp, r0
-	addi r7, r7, 2047
+	addi r7, sp, 2047
 	addi r1, r7, 37
 	or  r1, r1, r5
 	ldbu r20, r1+0
@@ -13480,8 +13320,7 @@ fio_in_real:                            # @fio_in_real
 	jalr r0, r20, 0
 .LBB161_33:
 	addi r19, r5, 1
-	add r21, sp, r0
-	addi r21, r21, 2047
+	addi r21, sp, 2047
 	addi r20, r21, 37
 	add r20, r20, r19
 	ldbu r20, r20+0
@@ -13515,8 +13354,7 @@ fio_in_real:                            # @fio_in_real
 	add r19, r0, r0
 .LBB161_42:
 	addi r5, r5, 1
-	add r21, sp, r0
-	addi r21, r21, 2047
+	addi r21, sp, 2047
 	addi r20, r21, 37
 	add r20, r20, r5
 	ldbu r20, r20+0
@@ -13537,15 +13375,13 @@ fio_in_real:                            # @fio_in_real
 	add r19, r4, r0
 	bne r19, r0, .LBB161_51
 .LBB161_46:
-	add r7, sp, r0
-	addi r7, r7, 2047
+	addi r7, sp, 2047
 	addi r6, r7, 37
 	add r6, r6, r5
 	ldbu r6, r6+0
 	beq r6, r0, .LBB161_51
 .LBB161_47:
-	add r8, sp, r0
-	addi r8, r8, 2047
+	addi r8, sp, 2047
 	addi r7, r8, 37
 	add r5, r5, r7
 	addi r5, r5, 1
@@ -13686,38 +13522,17 @@ fio_in_real:                            # @fio_in_real
 .LBB161_71:
 	add r1, r16, r0
 	add r2, r17, r0
-	add r3, sp, r0
-	addi r3, r3, 2047
+	addi r3, sp, 2047
 	ldw r21, r3+1061
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r20, r3+1065
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r19, r3+1069
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r18, r3+1073
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r17, r3+1077
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r16, r3+1081
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r15, r3+1085
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r14, r3+1089
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r13, r3+1093
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r12, r3+1097
-	add r3, sp, r0
-	addi r3, r3, 2047
 	ldw r11, r3+1101
 	ldw lr, sp+0
 	addi sp, sp, 2047
@@ -13728,8 +13543,7 @@ fio_in_real:                            # @fio_in_real
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.134)
 	addi r4, r4, %lo(.L.str.134)
-	add r1, sp, r0
-	addi r1, r1, 2047
+	addi r1, sp, 2047
 	addi r5, r1, 37
 	jal r31, fprintf
 	addi r3, r0, 2
@@ -23784,5 +23598,5 @@ f77_rng:
 	.word	.L.str.115
 	.size	.Lswitch.table.fio_fmt_use, 72
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git a06e1a6e35103a79b1ae3c6830426b277cc25690)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 77f07727152e39f179dfe39786aa3bcae0860790)"
 	.section	".note.GNU-stack","",@progbits

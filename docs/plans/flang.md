@@ -206,9 +206,9 @@ assignment a null descriptor (not looked into further).
 Forty more reported at first and were memcheck's to learn: clang's epilogue
 for a frame with a frame pointer is `add sp, fp, zero` then `addi sp, sp,
 -frame`, and for one instruction the saved registers are below sp.
-Instructions in a row that each move sp are one adjustment to it now.  (One
-`addi sp, fp, -frame` would do, where the frame fits an immediate: an
-instruction saved in every such epilogue, not taken up here.)
+Instructions in a row that each move sp are one adjustment to it now.  And
+the backend emits one `addi sp, fp, -frame` since 2026-11-12, and `addi fp,
+sp, frame` in the prologue (llvm-project f2bdea675f6e).
 
 ## Not done
 

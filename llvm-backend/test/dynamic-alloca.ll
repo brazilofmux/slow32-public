@@ -12,12 +12,10 @@ define i32 @dyn(i32 %n) {
 ; Prologue: aligned frame, saves, fp = incoming sp.
 ; CHECK: stw sp+0, lr
 ; CHECK: stw sp+4, fp
-; CHECK: add fp, sp, r0
-; CHECK-NEXT: addi fp, fp, 16
+; CHECK: addi fp, sp, 16
 ; Epilogue: sp is recomputed from fp before the reloads (CFI directives
 ; may sit between them).
-; CHECK: add sp, fp, r0
-; CHECK-NEXT: addi sp, sp, -16
+; CHECK: addi sp, fp, -16
 ; CHECK: ldw lr, sp+0
 ; CHECK: ldw fp, sp+4
 ; CHECK: jalr r0, r31, 0
