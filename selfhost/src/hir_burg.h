@@ -293,6 +293,10 @@ static int bg_faddr_ok(int idx) {
 
 static int bg_faddr_offset(int idx) {
     int k;
+    /* no instruction: no frame address, and no displacement reaches it.
+     * (The labeller looks at dead instructions too, and a dead ADDI's
+     * operand is -1: h_kind[-1] was read, whatever lay before the table.) */
+    if (idx < 0) return 4096;
     k = h_kind[idx];
     if (k == HI_ALLOCA) return h_val[idx];
     if (k == HI_ADDI) {
