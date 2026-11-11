@@ -729,9 +729,15 @@ static size_t vformat(char *buffer, size_t buffer_size, const char *format, va_l
                     conv_cols = nc;
                     break;
                 }
-                conv_len = strlen(conv_str);
-                if (has_precision && (size_t)precision < conv_len) {
-                    conv_len = precision;
+                if (has_precision) {
+                    // No more than `precision` bytes are looked at: with a
+                    // precision the array need not hold a null (7.21.6.1p8).
+                    // strlen here read to one wherever it was -- past the
+                    // bytes read() had filled, in the test memcheck saw it on.
+                    conv_len = 0;
+                    while (conv_len < (size_t)precision && conv_str[conv_len]) conv_len++;
+                } else {
+                    conv_len = strlen(conv_str);
                 }
                 break;
             }

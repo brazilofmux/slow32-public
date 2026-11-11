@@ -193,16 +193,20 @@ _unwind_restore_context:
     ldw  r26, r3, 104
     ldw  r27, r3, 108
     ldw  r28, r3, 112
-    ldw  r29, r3, 116            # restore SP
     ldw  r30, r3, 120            # restore FP
     ldw  r31, r3, 124            # restore LR
 
     # Restore r1 from context
     ldw  r1,  r3, 4
 
-    # Restore r3 last (destroys our base pointer)
+    # r3 and sp last, with sp itself as the base for both: the context is in
+    # a frame this is about to leave, and once sp is the landing pad's, the
+    # context is below it.  Nothing is read from there (no interrupt could
+    # have written it, docs/SPEC.md 7 -- but nothing below sp is ours).
     # The personality routine has set r3 = exception ptr and r4 = selector via SetGR
-    ldw  r3,  r3, 12
+    add  r29, r3, r0             # sp = the context, for two instructions
+    ldw  r3,  r29, 12
+    ldw  r29, r29, 116           # restore SP
 
     # Jump to landing pad (target IP is in r2)
     jalr r0, r2, 0

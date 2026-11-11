@@ -364,3 +364,22 @@ with a few hundred KB live (islisp ISSUES-7, fixed on islisp's side).
 Address-ordered or size-ordered large bins, or carving small blocks
 from the top before a recycled large one, would bound it; nothing else
 has hit it.
+
+### 31. `printf("%.*s")` read past its precision (Resolved 2026-11-11)
+
+`%s` with a precision took `strlen` of the argument and then cut the length
+to the precision.  C11 7.21.6.1p8 says the array need not hold a null
+character when the precision is no greater than its size, and `strlen`
+read on until it met one, wherever that was: past the end of an
+unterminated buffer.  regression/tests/feature-poll-socket prints what
+`read()` returned with `%.*s`, and the reference interpreter's memcheck mode
+saw `strlen` branch on the uninitialised rest of the buffer.  It now counts
+at most `precision` bytes.  Shared with the kit's libc
+(`runtime/printf_enhanced.c` is built into both).
+
+The same day, for the same instrument: `_unwind_restore_context`
+(unwind_asm.s) restored the stack pointer and then loaded three more
+registers from the context, which by then was below it.  No interrupt
+exists to write there (docs/SPEC.md 7), so nothing was wrong; the order is
+now r3 and sp last, through sp, and nothing is read below the stack
+pointer.
