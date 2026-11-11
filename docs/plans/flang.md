@@ -176,6 +176,40 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 - `bessel_yn` in `REAL(4)` is a unit in the last place off, enough to fail
   `bessel_5` through the recurrence (runtime ISSUES-29).
 
+### Under memcheck (2026-11-11)
+
+The corpus on the reference interpreter with `S32_MEMCHECK=1` (`slow32 -m`,
+tools/emulator/memcheck.h): 2,784 programs, the same verdicts, and sixteen
+that report.  Eleven are one defect, and it is flang's:
+
+- **`main` under `-fdefault-integer-8`.**  `Optimizer/Builder/Runtime/Main.cpp`
+  types `main`'s `argc`, its result, and `ProgramStart`'s first argument with
+  `builder.getDefaultIntegerType()`.  With 8-byte default integers that is
+  `i64 @main(i64, ptr, ptr)` calling `_FortranAProgramStart(i64, ptr, ptr,
+  ptr null)`, and on a 32-bit target the i64 takes two registers: the
+  runtime's `argc`, `argv` and `envp` still arrive where crt0 put them, by
+  the luck the section above describes, and its fourth argument -- the list
+  of environment defaults, which should be null -- is whatever r6 held.
+  `SetEnvironmentDefaults` then reads a count and that many name/value
+  pairs from it (here from address 1: code).  The eleven tests pass.  The
+  repair is the C type, `builder.getIntegerType(32)`, in those three places;
+  it is NOT made yet, because a change to flang's source re-keys the flang
+  image (hours on the builder) and that is the user's call.
+
+The other five are the tests' own: `whole_file_14.f90` follows a pointer to
+a dead local on purpose, `pr47757-1.f90` prints an array it never set (a
+typo for it is assigned), `unlimited_polymorphic_1.f03` prints a pointer
+target it allocated and did not define, `dtio_4.f90` tests a local before
+defining it, and `alloc_comp_class_4.f03` hands the runtime's derived-type
+assignment a null descriptor (not looked into further).
+
+Forty more reported at first and were memcheck's to learn: clang's epilogue
+for a frame with a frame pointer is `add sp, fp, zero` then `addi sp, sp,
+-frame`, and for one instruction the saved registers are below sp.
+Instructions in a row that each move sp are one adjustment to it now.  (One
+`addi sp, fp, -frame` would do, where the frame fits an immediate: an
+instruction saved in every such epilogue, not taken up here.)
+
 ## Not done
 
 - `trampoline` is left out of the runtime: internal procedures passed as arguments

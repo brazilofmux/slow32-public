@@ -125,6 +125,8 @@ typedef struct {
     mc_note_t note[32];
 
     uint32_t  stk_lo, stk_hi;   /* sp lives in [stk_lo, stk_hi] */
+    int       sp_pending;       /* sp has moved and the shadow has not followed yet */
+    uint32_t  sp_from, sp_pc;   /* where it was, and the first instruction to move it */
     uint32_t  code_limit;
     uint32_t  mmio_base;        /* 0 = none */
     uint8_t  *mmio_v;           /* V bits of what the guest stored there */
@@ -740,6 +742,8 @@ static void mc_store(cpu_state_t *cpu, uint32_t addr, int size, uint32_t v, uint
     mc_put_v(addr, size, v, origin);
 }
 
+static void mc_sp_settle(cpu_state_t *cpu);
+
 /* Before the instruction executes: the registers still hold its operands. */
 static void mc_pre(cpu_state_t *cpu, const instruction_t *in) {
     uint32_t *vr = g_mc.vr, *og = g_mc.orr;
@@ -750,6 +754,11 @@ static void mc_pre(cpu_state_t *cpu, const instruction_t *in) {
     int rd = in->rd, op = in->opcode;
     mc_note_t nn;
     nn.kind = MC_N_NONE;
+
+    /* a run of instructions that moved sp ends at one that will not */
+    if (g_mc.sp_pending &&
+        !(rd == REG_SP && op != OP_STB && op != OP_STH && op != OP_STW && !(op >= OP_BEQ && op <= OP_BGEU)))
+        mc_sp_settle(cpu);
 
     /* the allocator: where the outermost call began, and where it ends */
     if (g_mc.heap) {
@@ -973,13 +982,28 @@ static void mc_pre(cpu_state_t *cpu, const instruction_t *in) {
     }
 }
 
-/* After it: the stack pointer may have moved. */
+/* After it: the stack pointer may have moved.  The shadow follows when the
+ * next instruction that does not itself move sp begins (mc_sp_settle), so
+ * that instructions in a row that each move it are one adjustment.  LLVM's
+ * epilogue for a frame with a frame pointer is `add sp, fp, zero` and then
+ * `addi sp, sp, -frame`: sp is above the saved registers for the length
+ * of one instruction, nothing can run in it (docs/SPEC.md 7), and taken as
+ * a free and a fresh allocation it made every such function return
+ * through an "uninitialised" lr. */
 static inline void mc_post(cpu_state_t *cpu, uint32_t old_sp) {
-    uint32_t sp = cpu->regs[REG_SP];
+    if (cpu->regs[REG_SP] == old_sp || g_mc.sp_pending) return;
+    g_mc.sp_pending = 1;
+    g_mc.sp_from = old_sp;
+    g_mc.sp_pc = cpu->pc;
+}
+
+static void mc_sp_settle(cpu_state_t *cpu) {
+    uint32_t old_sp = g_mc.sp_from, sp = cpu->regs[REG_SP];
+    g_mc.sp_pending = 0;
     if (sp == old_sp) return;
     if (old_sp < g_mc.stk_lo || old_sp > g_mc.stk_hi || sp < g_mc.stk_lo || sp > g_mc.stk_hi) return;
     /* the red zone moves with sp: what was written in it stays as it is */
-    if (sp < old_sp) mc_set_range(sp - MC_REDZONE, old_sp - sp, 1, 0xFF, cpu->pc);
+    if (sp < old_sp) mc_set_range(sp - MC_REDZONE, old_sp - sp, 1, 0xFF, g_mc.sp_pc);
     else mc_set_range(old_sp - MC_REDZONE, sp - old_sp, 0, 0, 0);
 }
 
