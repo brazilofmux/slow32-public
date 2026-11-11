@@ -4089,3 +4089,26 @@ copies.  Found by LAPACK built by f77: the testing selector DLCTSX returned
 driver (DGX: 30 of 150).  COBOL's and s32-bc's generated code are unchanged
 (1,154 and 114 programs); stage08 185/185 with the fixed point, SQLite identical,
 cfuzz 4,000 ok.  Gates: `tests/test_retpin_saddr.c`, `fortran/tests/f77/retpin1.f`.
+
+### 118. [RESOLVED 2026-11-11] ISSUES-76, one stage down: stage06 still made the tail call that pops the frame its callee is handed
+
+ISSUES-76 was repaired in `stage07/hir_codegen.h`, which compiles stage08's
+tools.  stage07's own tools are compiled by stage06, whose code generator
+(stage05's is the same file) had the defect unrepaired: stage07's
+`s32-as.s32x` still ended `handle()`'s relocation cases with
+
+    addi r29, r29, <frame>      # pop the frame `sym` is in
+    jal  r0, add_reloc_ex       # and hand the callee a pointer into it
+
+Nothing had gone wrong: the chain under `add_reloc_ex` in that assembler is
+shallow and its tables do not grow.  It was found by the reference
+interpreter's memcheck mode (`slow32 -m`, tools/emulator/memcheck.h) on its
+first day, running stage08's suite: `strcmp`, `strlen` and `memcpy` reading
+a label's name 72 to 140 bytes below the stack pointer, in every one of the
+101 runs of the stage07 assembler.
+
+The same scan, ported to `stage05/hir_codegen.h` and `stage06/hir_codegen.h`
+(one file, two copies): a function that lets a local's address out makes no
+tail calls.  The stage walk passes (stage05 to stage08), stage07's assembler
+is silent under memcheck, and stage08's `cc.s32x` is the same bytes built
+through the repaired stage06 as through the old one.

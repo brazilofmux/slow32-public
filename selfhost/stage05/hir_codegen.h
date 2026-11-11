@@ -93,6 +93,8 @@ static int hcg_locals;     /* fn->locals_size (original) */
 static int hcg_frame;      /* total frame size */
 static int hcg_epilog;     /* epilog label */
 static int hcg_va_save_size; /* varargs register save area size */
+static int hcg_frame_escapes; /* an alloca's address may reach a callee:
+                                 tail calls must not pop the frame first */
 
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
@@ -754,6 +756,7 @@ static int hcg_is_tailcall(int idx) {
     /* Conservative guards */
     if (hcg_va_save_size > 0) return 0;       /* varargs fn */
     if (h_val[idx] > 8) return 0;              /* stack args */
+    if (hcg_frame_escapes) return 0;          /* callee may see our frame */
 
     blk = h_blk[idx];
     end = bb_end[blk];
@@ -1789,6 +1792,10 @@ static void hcg_func(Node *fn) {
     int fs;
     int i;
     int b;
+    int fe_i;
+    int fe_j;
+    int fe_k;
+    int fe_a;
 
     /* Lower AST to HIR */
     hl_func(fn);
@@ -1829,6 +1836,46 @@ static void hcg_func(Node *fn) {
     cg_c(10);
     cg_s(fn->name);
     cg_s(":\n");
+
+    /* Frame-escape scan for the tail-call guard: stage07's, which is
+     * stage08's (selfhost ISSUES-76), ported one stage further down in
+     * 2026-11.  A tail call pops this frame BEFORE entering the callee; if
+     * a local's address escaped (an alloca used outside a direct
+     * LOAD/STORE address position, or passed as a call argument), the
+     * callee is handed a pointer into stack that its own frame then
+     * reuses.  stage07's assembler is compiled by this compiler, and its
+     * `return add_reloc_ex(typ, off, sym, add)` with `sym` a local array
+     * was still such a call: the interpreter's memcheck mode (-m) saw
+     * strcmp reading the name 72 bytes below the stack pointer. */
+    hcg_frame_escapes = 0;
+    fe_i = 0;
+    while (fe_i < h_ninst) {
+        fe_k = h_kind[fe_i];
+        if (fe_k != HI_NOP) {
+            if (h_src1[fe_i] >= 0 && h_kind[h_src1[fe_i]] == HI_ALLOCA &&
+                fe_k != HI_LOAD && fe_k != HI_STORE) {
+                hcg_frame_escapes = 1;
+            }
+            /* src2 is a block index for BR/BRC and a phi slot for PHI;
+             * only real value refs count */
+            if (h_src2[fe_i] >= 0 && fe_k != HI_BR && fe_k != HI_BRC &&
+                fe_k != HI_PHI &&
+                h_kind[h_src2[fe_i]] == HI_ALLOCA) {
+                hcg_frame_escapes = 1;
+            }
+            if (fe_k == HI_CALL || fe_k == HI_CALLP) {
+                fe_j = 0;
+                while (fe_j < h_val[fe_i]) {
+                    fe_a = h_carg[h_cbase[fe_i] + fe_j];
+                    if (fe_a >= 0 && h_kind[fe_a] == HI_ALLOCA) {
+                        hcg_frame_escapes = 1;
+                    }
+                    fe_j = fe_j + 1;
+                }
+            }
+        }
+        fe_i = fe_i + 1;
+    }
 
     /* Varargs register save area — placed before regular prologue so
        it's contiguous with caller's stack arguments */
