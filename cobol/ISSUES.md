@@ -6718,3 +6718,24 @@ finishes.  The rule's "preceding ACCEPT" is one place with the DISPLAYs here:
 RM's prompt followed by `ACCEPT LINE 0 POSITION 0` needs that.
 
 Tests: free/posat0, free/posaccat.
+
+### 136. Two reads memcheck saw: UNSTRING's null descriptor, the report writer's unfilled buffer (2026-11-11, fixed)
+
+Both from the suite's first run under the reference interpreter's memcheck
+mode (`slow32 -m`), with every test passing.
+
+`unstr_into_1` computes `plain_num` from `dd` before it looks at anything
+else, and for a dynamic-length receiver (`cob_unstr_into_dynl`) `dd` is
+null.  The fast path it guards is never taken then, so the value was not
+used -- but it was read, from address 0, which on this machine is crt0's
+first instructions and no fault.  `dd &&` in front.
+
+`cob_rw_field` moves a national field into a local buffer `t` and then
+measures its clusters.  For a numeric national receiver `cob_move` narrows
+the receiver first (so that a move that stores nothing leaves it as it was),
+and `t` held whatever the stack held: `nat_narrow` branched on it.  The
+move then overwrote every byte, so no report line was ever wrong.  `t` is
+zeroed for the field's width first, as any receiving item has contents.
+
+Tests: free/dynlen and free/natreport, which are silent under memcheck now
+(`regression/run-memcheck.sh cobol`).

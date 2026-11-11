@@ -5031,7 +5031,10 @@ static __attribute__((noinline)) void unstr_into_slow(void *dst, const cob_desc 
  * was 193 instructions a receiver (performance.md 2026-10-08) */
 static void unstr_into_1(void *dst, const cob_desc *dd, cob_dyn *dyn, const cob_dynl_desc *dynt, void *ddst, const cob_desc *ddd, void *cdst, const cob_desc *cdd)
 {
-    int plain_num = dd->cat == COB_NUM && dd->usage == COB_U_DISPLAY && !dd->flags && dd->scale == 0;   /* cob_move's digits path takes it; "0" when nothing was examined */
+    /* dd is null for a dynamic-length receiver (cob_unstr_into_dynl), which is
+     * never the fast path's: it was read all the same, as whatever address 0
+     * holds (crt0's first instructions; the interpreter's memcheck saw it) */
+    int plain_num = dd && dd->cat == COB_NUM && dd->usage == COB_U_DISPLAY && !dd->flags && dd->scale == 0;   /* cob_move's digits path takes it; "0" when nothing was examined */
     if (!dyn && !ddst && !cdst && cu.nd == 1 && cu.d[0].n == 1 && !cu.d[0].all && cu.w == 1 && ((dd->cat == COB_ALNUM && !(dd->flags & COB_F_JUST)) || plain_num) &&
         !cu.overflow && cu.pos <= cu.slen) {
         int start = cu.pos - 1;
@@ -6763,6 +6766,11 @@ void cob_rw_field(int col, const cob_desc *dd, const void *src, const cob_desc *
     if (!nat) { cob_move(src, sd, rw_line + col - 1, dd); return; }
     unsigned char t[2 * RW_WIDTH];
     cob_cluster cl[RW_WIDTH];
+    /* a receiving item has contents, whatever they are, and a move into a
+     * numeric national one reads them first (cob_move narrows the receiver,
+     * so that a move that stores nothing leaves it as it was): this one
+     * had the stack's */
+    memset(t, 0, (size_t)(2 * ncol));
     cob_move(src, sd, t, dd);
     int n = nat_clusters(t, ncol, cl, RW_WIDTH), x = col - 1, end = col - 1 + ncol;
     memset(rw_line + x, ' ', (size_t)ncol);
