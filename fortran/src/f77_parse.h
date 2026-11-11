@@ -449,6 +449,7 @@ static void f77_dtf_flush(void);
 static int f77_dta_list(int dt, int off0, int *offs, int *rk, int *esz, int max) {
     int c; int n;
     n = 0;
+    if (dt < 0) return 0;               /* a type an earlier error left unknown */
     for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++) {
         if (f77_dc_ptr[c] == 2) {
             int e;
@@ -471,6 +472,21 @@ static int f77_dta_list(int dt, int off0, int *offs, int *rk, int *esz, int max)
     }
     return n;
 }
+/* A constant's REAL or DOUBLE PRECISION value as an INTEGER.  Out of an
+ * INTEGER's range the C conversion is undefined, and the hosts differ
+ * (an ARM saturates, an x86 gives the smallest INTEGER), so a constant
+ * folded here would be one program on a Mac and another on a PC: it
+ * saturates, and a NaN is 0. */
+static void f77_icon_fits(void) {
+    if (lex_ibig && !f77_scan_mode) f77_error("an INTEGER constant too large for an INTEGER");
+}
+static int f77_d2i(double d) {
+    if (d != d) return 0;
+    if (d >= 2147483647.0) return 2147483647;
+    if (d <= -2147483648.0) return -2147483647 - 1;
+    return (int)d;
+}
+
 /* How many ALLOCATABLE components a structure of type dt has (-1: more
  * than this compiler follows). */
 static int f77_dt_nalloc(int dt) {
@@ -2975,7 +2991,7 @@ static int f77_primary1(int *intr) {
     int save;
 
     ex_log = 0;
-    if (lx_t == T_ICON) { v = f77_iconst(lex_ival); ex_ty = TY_INT; f77_tok(); return v; }
+    if (lx_t == T_ICON) { f77_icon_fits(); v = f77_iconst(lex_ival); ex_ty = TY_INT; f77_tok(); return v; }
     if (lx_t == T_RCON) { v = f77_rconst(lex_dval); ex_ty = TY_FLOAT; f77_tok(); return v; }
     if (lx_t == T_DCON) {
         v = f77_dconst(lex_dval, &ex_hi); ex_ty = TY_DOUBLE; f77_tok(); return v;
@@ -7550,6 +7566,7 @@ static void f77_lx_restore(F77LxSave *sv) {
     lex_sidx = sv->sidx; lex_slen = sv->slen;
 }
 
+static int f77_stf_depth;      /* expansions in progress */
 static int f77_stf_expand(int si) {
     int n;
     int k;
@@ -7586,6 +7603,13 @@ static int f77_stf_expand(int si) {
         return f77_iconst(0);
     }
     if (f77_stfb_n + n > F77_MAX_STFB) { f77_error("statement functions nested too deep"); return f77_iconst(0); }
+    /* one that references itself, or does through another (15.4.2), is
+     * expanded without end: the compiler ran out of stack */
+    if (f77_stf_depth >= 32) {
+        f77_error("a statement function references itself");
+        return f77_iconst(0);
+    }
+    f77_stf_depth = f77_stf_depth + 1;
 
     /* Checkpoint the statement and scanner, swap the definition in. */
     f77_lx_save(&sv);
@@ -7603,6 +7627,7 @@ static int f77_stf_expand(int si) {
     v = f77_expr(); vty = ex_ty; vhi = ex_hi;
     if (lx_t != T_EOF) f77_error("junk after statement function expression");
     f77_stfb_n = f77_stfb_n - n;
+    f77_stf_depth = f77_stf_depth - 1;
 
     f77_lx_restore(&sv);
 
@@ -8057,7 +8082,7 @@ static int f77_inquiry(char *nm, int t, int *iv, double *dv) {
  * precision already. */
 static void f77_kind_lit(void) {
     char nm[F77_MAX_NAME];
-    char m[96];
+    char m[F77_MAX_NAME + 96];          /* the message and a name of any length (96 was overrun) */
     int k;
     strcpy(nm, lex_kind);
     lex_kind[0] = 0;
@@ -8231,7 +8256,7 @@ static int f77_cintrinsic(void) {
         f77_cx_ty = ty[0];
         f77_cx_d = sqrt(dv[0]);
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
         return 1;
     }
     if (strcmp(nm, "CEILING") == 0 || strcmp(nm, "FLOOR") == 0) {
@@ -8253,7 +8278,7 @@ static int f77_cintrinsic(void) {
         f77_cx_d = dv[0];
         f77_cx_d2 = n > 1 ? dv[1] : d2[0];
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
         return 1;
     }
     if (strcmp(nm, "DBLE") == 0 || strcmp(nm, "REAL") == 0 || strcmp(nm, "INT") == 0 || strcmp(nm, "NINT") == 0) {
@@ -8275,7 +8300,7 @@ static int f77_cintrinsic(void) {
         }
         f77_cx_d = dv[0];
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
         return 1;
     }
     if (strcmp(nm, "ABS") == 0) {
@@ -8290,7 +8315,7 @@ static int f77_cintrinsic(void) {
             if (ty[0] == TY_INT) return 1;
         }
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
         return 1;
     }
     /* MAX MIN MOD: one type for all the arguments */
@@ -8310,7 +8335,7 @@ static int f77_cintrinsic(void) {
         if (dv[1] == 0) { f77_error("MOD by zero in a constant expression"); return 1; }
         f77_cx_d = fmod(dv[0], dv[1]);
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
         return 1;
     } else {
         double r;
@@ -8323,7 +8348,7 @@ static int f77_cintrinsic(void) {
         f77_cx_d = r;
     }
     f77_cx_round();
-    f77_cx_i = (int)f77_cx_d;
+    f77_cx_i = f77_d2i(f77_cx_d);
     return 1;
 }
 
@@ -8333,9 +8358,9 @@ static void f77_cprimary(void) {
         f77_tok();
         return;
     }
-    if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); return; }
-    if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = (int)f77_cx_d; f77_tok(); return; }
-    if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); return; }
+    if (lx_t == T_ICON) { f77_icon_fits(); f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); return; }
+    if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = f77_d2i(f77_cx_d); f77_tok(); return; }
+    if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = f77_d2i(lex_dval); f77_tok(); return; }
     if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); return; }
     if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); return; }
     if (lx_t == T_LP) {
@@ -8353,7 +8378,7 @@ static void f77_cprimary(void) {
             f77_cx_d2 = f77_cx_part(f77_cx_d, f77_cx_ty);
             f77_cx_ty = (rty == TY_DOUBLE || f77_cx_ty == TY_DOUBLE) ? TY_DCPLX : TY_CPLX;
             f77_cx_d = re;
-            f77_cx_i = (int)re;
+            f77_cx_i = f77_d2i(re);
             return;
         }
         if (lx_t != T_RP) { f77_error("expected ) in constant expression"); return; }
@@ -8497,7 +8522,7 @@ static void f77_cpower(void) {
         }
         f77_cx_d = r;
         f77_cx_round();
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
     }
 }
 
@@ -8541,7 +8566,7 @@ static void f77_cterm(void) {
             f77_cx_d = re;
             f77_cx_d2 = im;
             f77_cx_round();
-            f77_cx_i = (int)f77_cx_d;
+            f77_cx_i = f77_d2i(f77_cx_d);
             continue;
         }
         f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
@@ -8558,7 +8583,7 @@ static void f77_cterm(void) {
         }
         f77_cx_round();
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
-        else f77_cx_i = (int)f77_cx_d;
+        else f77_cx_i = f77_d2i(f77_cx_d);
     }
 }
 
@@ -8580,7 +8605,7 @@ static void f77_carith(void) {
             f77_cx_d = add ? dv + f77_cx_d : dv - f77_cx_d;
             f77_cx_d2 = add ? d2v + bi : d2v - bi;
             f77_cx_round();
-            f77_cx_i = (int)f77_cx_d;
+            f77_cx_i = f77_d2i(f77_cx_d);
             continue;
         }
         f77_cx_ty = f77_cx_promote(ty, f77_cx_ty);
@@ -8588,7 +8613,7 @@ static void f77_carith(void) {
         else     { f77_cx_i = iv - f77_cx_i; f77_cx_d = dv - f77_cx_d; }
         f77_cx_round();
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
-        else f77_cx_i = (int)f77_cx_d;
+        else f77_cx_i = f77_d2i(f77_cx_d);
     }
 }
 
@@ -9054,7 +9079,7 @@ static void f77_stmt_decl(int ty, int skip) {
             } else if (strcmp(at, "TARGET") == 0) {
                 a_tgt = 1;
             } else {
-                char m[96];
+                char m[F77_MAX_NAME + 96];
                 sprintf(m, "%s is not an attribute", at);
                 f77_error(m);
                 return;
@@ -9528,21 +9553,21 @@ static int f77_param_def(int s) {
         } else if (f77_sty[s] == TY_CPLX) {
             f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_d;
             f77_spdval2[s] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
-            f77_spival[s] = (int)f77_spdval[s];
+            f77_spival[s] = f77_d2i(f77_spdval[s]);
         } else if (f77_sty[s] == TY_DCPLX) {
             /* each part as its constant's type makes it: a REAL one
              * rounded to single precision, then widened */
             f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_part(f77_cx_d, f77_cx_ty);
             f77_spdval2[s] = f77_iscx(f77_cx_ty) ? f77_cx_d2 : 0.0;
-            f77_spival[s] = (int)f77_spdval[s];
+            f77_spival[s] = f77_d2i(f77_spdval[s]);
         } else if (f77_sty[s] == TY_INT) {
-            f77_spival[s] = (f77_cx_ty == TY_INT) ? f77_cx_i : (int)f77_cx_d;
+            f77_spival[s] = (f77_cx_ty == TY_INT) ? f77_cx_i : f77_d2i(f77_cx_d);
             f77_spdval[s] = (double)f77_spival[s];
         } else {
             f77_spdval[s] = (f77_cx_ty == TY_INT) ? (double)f77_cx_i : f77_cx_d;
             if (f77_sty[s] == TY_FLOAT)
                 f77_spdval[s] = (double)(float)f77_spdval[s];
-            f77_spival[s] = (int)f77_spdval[s];
+            f77_spival[s] = f77_d2i(f77_spdval[s]);
         }
     return 1;
 }
@@ -9634,11 +9659,11 @@ static void f77_cx_conv(int ty, int len) {
     }
     if (f77_cx_ty == TY_CHAR) { f77_error("a character value for a numeric constant"); return; }
     if (f77_cx_ty == TY_HEXC) return;
-    if (ty == TY_INT) { if (f77_cx_ty != TY_INT) f77_cx_i = (int)f77_cx_d; f77_cx_d = (double)f77_cx_i; }
+    if (ty == TY_INT) { if (f77_cx_ty != TY_INT) f77_cx_i = f77_d2i(f77_cx_d); f77_cx_d = (double)f77_cx_i; }
     else if (ty == TY_FLOAT || ty == TY_DOUBLE) {
         if (f77_cx_ty == TY_INT) f77_cx_d = (double)f77_cx_i;
         if (ty == TY_FLOAT) f77_cx_d = (double)(float)f77_cx_d;
-        f77_cx_i = (int)f77_cx_d;
+        f77_cx_i = f77_d2i(f77_cx_d);
     } else if (ty == TY_CPLX || ty == TY_DCPLX) {
         if (!f77_iscx(f77_cx_ty)) { f77_cx_d = f77_cx_ty == TY_INT ? (double)f77_cx_i : f77_cx_d; f77_cx_d2 = 0.0; }
         if (ty == TY_CPLX) { f77_cx_d = (double)(float)f77_cx_d; f77_cx_d2 = (double)(float)f77_cx_d2; }
@@ -10005,9 +10030,9 @@ static void f77_data_const(void) {
     neg = 0;
     if (lx_t == T_MINUS) { neg = 1; f77_tok(); }
     else if (lx_t == T_PLUS) f77_tok();
-    if (lx_t == T_ICON) { f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); }
-    else if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = (int)f77_cx_d; f77_tok(); }
-    else if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = (int)lex_dval; f77_tok(); }
+    if (lx_t == T_ICON) { f77_icon_fits(); f77_cx_ty = TY_INT; f77_cx_i = lex_ival; f77_cx_d = (double)lex_ival; f77_tok(); }
+    else if (lx_t == T_RCON) { f77_cx_ty = TY_FLOAT; f77_cx_d = (double)(float)lex_dval; f77_cx_i = f77_d2i(f77_cx_d); f77_tok(); }
+    else if (lx_t == T_DCON) { f77_cx_ty = TY_DOUBLE; f77_cx_d = lex_dval; f77_cx_i = f77_d2i(lex_dval); f77_tok(); }
     else if (lx_t == T_TRUE)  { f77_cx_ty = TY_INT; f77_cx_i = 1; f77_cx_d = 1.0; f77_tok(); }
     else if (lx_t == T_FALSE) { f77_cx_ty = TY_INT; f77_cx_i = 0; f77_cx_d = 0.0; f77_tok(); }
     else if (lx_t == T_SCON) { f77_cx_ty = TY_CHAR; f77_cx_sidx = lex_sidx; f77_cx_i = lex_slen; f77_cx_d = 0.0; f77_tok(); }
@@ -10027,7 +10052,7 @@ static void f77_data_const(void) {
         f77_cx_d2 = f77_cx_part(f77_cx_d, f77_cx_ty);
         f77_cx_ty = (rty == TY_DOUBLE || f77_cx_ty == TY_DOUBLE) ? TY_DCPLX : TY_CPLX;
         f77_cx_d = re;
-        f77_cx_i = (int)re;
+        f77_cx_i = f77_d2i(re);
     }
     else if (lx_t == T_NAME) {
         int s;
@@ -10567,7 +10592,7 @@ static int f77_di_encode(int i, unsigned char *p, int sty, int snar, int esz) {
         for (k = 0; k < 4; k++) p[k] = u.b[k];
     } else {
         int v;
-        v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : (int)f77_di_d[i];
+        v = (f77_di_ty[i] == TY_INT) ? f77_di_i[i] : f77_d2i(f77_di_d[i]);
         /* an INTEGER*2 or LOGICAL*1 image is its width: the low bytes,
          * which come first (fort370 issue 10) */
         for (k = 0; k < (snar ? snar : 4); k++)
@@ -10969,6 +10994,20 @@ static void f77_layout_static(void) {
         if (g < 0) continue;            /* parse already errored */
         if (!f77_g_image(g)) return;
         esz = f77_di_place(i, &off, &sty, &snar);
+        {
+            /* and inside the variable: DATA (A(I:I), I = 0, 0) of a
+             * CHARACTER*1 A put its character before A, in the image
+             * and past the compiler's own buffer */
+            int tot; int k;
+            tot = f77_esize(s);
+            for (k = 0; k < f77_srank[s]; k++) tot = tot * f77_sext[s][k];
+            if (off < 0 || off + esz > tot) {
+                char m[F77_MAX_NAME + 60];
+                sprintf(m, "%s: DATA for a subscript or substring outside the variable", f77_sname[s]);
+                f77_error(m);
+                return;
+            }
+        }
         if (!f77_di_encode(i, ps_ginit_pool + ps_ginit_start[g] + f77_sgoff[s] + off, sty, snar, esz)) return;
     }
 }
@@ -11616,6 +11655,7 @@ static int f77_alloc_count(int s) {
  * a FUNCTION's result just made (f77_dt_fresh), its storage taken over. */
 static void f77_dt_assign(int addr, int v, int dt) {
     int offs[F77_MAX_DTA]; int rk[F77_MAX_DTA]; int esz[F77_MAX_DTA]; int old[F77_MAX_DTA]; int n; int i; int fresh;
+    if (dt < 0) return;                 /* a type an earlier error left unknown */
     n = f77_dta_list(dt, 0, offs, rk, esz, F77_MAX_DTA);
     fresh = 0;
     for (i = 0; i < f77_dtf_n; i++)
@@ -17534,7 +17574,8 @@ static int f77_op_spec(char *out) {
     f77_tok(); f77_tok();
     t = lx_t;
     if (t == T_DOTOP) {
-        if (strlen(lex_name) > 31) f77_error("a defined operator's name is 31 letters at most");
+        /* and no longer: the name goes into a symbol's, which it overran */
+        if (strlen(lex_name) > 31) { f77_error("a defined operator's name is 31 letters at most"); strcpy(out, "OP:?"); return 1; }
         sprintf(out, "OP:.%s.", lex_name);
     } else if (t >= T_PLUS && t <= T_NEQV && t != T_COLON) sprintf(out, "OP:%s", f77_op_name(t));
     else { f77_error("expected an operator in OPERATOR( )"); strcpy(out, "OP:?"); return 1; }
@@ -17942,7 +17983,7 @@ static void f77_bind_unit(int u) {
             int du;
             int ps;
             du = f77_famd_unit[q];
-            if (du == u) continue;
+            if (du == u || du < 0) continue;        /* du < 0: an ENTRY the scan gave no unit (an error's) */
             if (du != fam && f77_uentry_parent[du] != fam) continue;
             ps = f77_sym_find(f77_famd_name[q]);
             if (ps >= 0) continue;                    /* a real dummy of this unit, or seen */
@@ -19790,7 +19831,7 @@ static void f77_stmt_close(int skip) {
 static int f77_rd_target(int *tyo);
 static void f77_stmt_position(int skip, char *what, char *fn) {
     int unit_val;
-    char m[64];
+    char m[F77_MAX_NAME + 64];
     f77_scan_from(skip);
     if (lx_t == T_LP) {
         unit_val = -1;
@@ -19952,6 +19993,7 @@ static int f77_alias_at(int s, int addr) {
 /* Component nm of type dt: its index, or -1 (said). */
 static int f77_dt_comp(int dt, char *nm) {
     int c;
+    if (dt < 0) return -1;              /* a type an earlier error left unknown */
     for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++)
         if (strcmp(f77_dc_name[c], nm) == 0) return c;
     {
@@ -20242,6 +20284,7 @@ static int f77_dt_construct(int dt) {
 static void f77_io_elem(int s, int addr);
 static void f77_io_derived(int addr, int dt) {
     int c;
+    if (dt < 0) return;                 /* a type an earlier error left unknown */
     addr = f77_dcx_arg(addr);              /* an alias: a value's address may reach calls so */
     for (c = f77_dt_c0[dt]; c < f77_dt_c0[dt] + f77_dt_nc[dt]; c++)
         if (f77_dc_ptr[c]) { f77_error("a structure with a POINTER or ALLOCATABLE component is no I/O item (F90 9.4.2)"); return; }

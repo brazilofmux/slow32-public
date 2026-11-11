@@ -111,11 +111,22 @@ static void f77_string_tok(char *ts, char *te) {
     lx_t = T_SCON;
 }
 
+/* The digits' value.  One too large for an INTEGER sets lex_ibig for the
+ * parser to refuse where it is a constant (it wrapped: I = 9999999999
+ * was 1410065407); 2147483648 itself passes, for the -2147483648 it is
+ * written in. */
+static int lex_ibig;
 static int f77_digits_val(char *s, char *e) {
-    int v;
-    v = 0;
-    while (s < e && *s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s = s + 1; }
-    return v;
+    unsigned int v;
+    int big;
+    v = 0; big = 0;
+    while (s < e && *s >= '0' && *s <= '9') {
+        if (v > 214748364u || (v == 214748364u && *s > '8')) big = 1;
+        v = v * 10u + (unsigned int)(*s - '0');
+        s = s + 1;
+    }
+    lex_ibig = big;
+    return (int)v;
 }
 
 /* Is `s` the start of a dotted operator?  Used to decide whether a

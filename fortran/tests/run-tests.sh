@@ -550,6 +550,9 @@ if [ -x "$F77" ]; then
     printf "      K = IBITS(5, 1)\n      END\n" > "$W/bitnarg.f"
     printf "      K = 1\n      CALL MVBITS(K, 0, 1, K)\n      END\n" > "$W/mvbnarg.f"
     printf "      INCLUDE 'nosuch'\n      END\n" > "$W/incnone.f"
+    printf "      I = 9999999999\n      END\n" > "$W/bigint.f"
+    printf "      CHARACTER*1 A\n      DATA (A(I:I), I = 0, 0) /1*'#'/\n      END\n" > "$W/datasubout.f"
+    printf "      F(X) = G(X) + 1.0\n      G(X) = F(X) * 2.0\n      Y = F(1.0)\n      END\n" > "$W/stfself.f"
     printf "      K = 1 + 'A'\n      END\n" > "$W/opchar.f"
     printf "      K = -'A'\n      END\n" > "$W/opnegch.f"
     printf "      LOGICAL L\n      K = 2 ** L\n      END\n" > "$W/oplogar.f"
@@ -833,6 +836,9 @@ if [ -x "$F77" ]; then
              "bitnarg:line 1: wrong number of arguments to a bit intrinsic" \
              "mvbnarg:line 2: MVBITS needs five arguments" \
              "incnone:f77: line 1: INCLUDE: no file nosuch" \
+             "bigint:line 1: an INTEGER constant too large for an INTEGER" \
+             "datasubout:A: DATA for a subscript or substring outside the variable" \
+             "stfself:line 3: a statement function references itself" \
              "opchar:line 1: an arithmetic operator's operand is CHARACTER" \
              "opnegch:line 1: an arithmetic operator's operand is CHARACTER" \
              "oplogar:line 2: an arithmetic operator's operand is LOGICAL" \

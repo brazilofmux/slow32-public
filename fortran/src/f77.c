@@ -1131,8 +1131,27 @@ static void f77_scan_units(void) {
     f77_check_unit_names();
 }
 
-/* Phase 2: the backend asks for one unit's HIR. */
+/* Phase 2: the backend asks for one unit's HIR.  Once an error has been
+ * reported no code is wanted, and what a refused statement left behind
+ * is no HIR to optimize: the unit's is then a bare return.  (The backend
+ * was handed operands of -1 and string constants that were never made;
+ * it read before its tables, by luck with no worse result than the
+ * "compilation failed" that followed.) */
+static void hl_func1(Node *fn);
 static void hl_func(Node *fn) {
+    hl_func1(fn);
+    if (f77_nerr > 0) {
+        hir_reset();
+        hl_nalloca = 0;
+        f77_frame = 8;
+        f77_begin_blk(hir_new_block());
+        hi_emit(HI_RET, TY_INT, f77_iconst(0), -1, 0, NULL);
+        hl_cur_blk = -1;
+        fn->locals_size = f77_frame;
+    }
+}
+
+static void hl_func1(Node *fn) {
     int b_entry;
     int u;
 
@@ -1259,6 +1278,10 @@ static void hl_func(Node *fn) {
     memcpy(f77_uimp_nar[u], f77_imp_nar, sizeof(f77_imp_nar));
     f77_uimp_none[u] = f77_imp_none;
     if (u == f77_nunit - 1) f77_cblk_finish();     /* the last unit: the blocks are complete */
+    /* what a unit leaves for others -- a module's table, a host's -- is
+     * left only by a unit that compiled: nothing is written after an
+     * error, and its symbols are not all there to be read */
+    if (f77_nerr > 0) { fn->locals_size = f77_frame; return; }
     if (f77_ukind[u] == F77_UNIT_MODULE) f77_mod_snapshot(u);
     else {
         int v;

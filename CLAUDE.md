@@ -445,6 +445,13 @@ cd ~/slow-32/regression && ./run-lapack.sh --f77
 # type accepted.  After a change to fortran/ or the HIR backends.  Mac only,
 # as the flang corpus is.  ~6 min.
 cd ~/slow-32/regression && ./run-f77-corpus.sh
+# And f77 itself under the address and undefined-behaviour sanitizers, over every
+# Fortran source at hand (its tests, FCVS, the corpus: 8,829 files).  The gates
+# above see a compiler's bad read only when an answer changes; this sees it where
+# it happens, and on the paths nothing compares -- what f77 does after it has
+# refused a statement.  Its first run found the instruction selector reading
+# before its table on ordinary Fortran 77.  After a change to fortran/src.  ~1 min.
+cd ~/slow-32/regression && ./run-f77-sanitize.sh
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour
