@@ -180,7 +180,7 @@ FCVS passed through all of this; it is Fortran 77, with no descriptors in types.
 
 The corpus on the reference interpreter with `S32_MEMCHECK=1` (`slow32 -m`,
 tools/emulator/memcheck.h): 2,784 programs, the same verdicts, and sixteen
-that report.  Eleven are one defect, and it is flang's:
+that reported.  Eleven were one defect, and it was flang's:
 
 - **`main` under `-fdefault-integer-8`.**  `Optimizer/Builder/Runtime/Main.cpp`
   types `main`'s `argc`, its result, and `ProgramStart`'s first argument with
@@ -192,9 +192,9 @@ that report.  Eleven are one defect, and it is flang's:
   of environment defaults, which should be null -- is whatever r6 held.
   `SetEnvironmentDefaults` then reads a count and that many name/value
   pairs from it (here from address 1: code).  The eleven tests pass.  The
-  repair is the C type, `builder.getIntegerType(32)`, in those three places;
-  it is NOT made yet, because a change to flang's source re-keys the flang
-  image (hours on the builder) and that is the user's call.
+  repair is the C type, `builder.getIntegerType(32)`, for all three, made
+  the same day (llvm-project 77f07727152e; patches/07-flang.patch).  The
+  eleven are silent, and the corpus is 2441 agreeing with nothing worse.
 
 The other five are the tests' own: `whole_file_14.f90` follows a pointer to
 a dead local on purpose, `pr47757-1.f90` prints an array it never set (a

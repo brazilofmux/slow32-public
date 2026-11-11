@@ -1658,6 +1658,25 @@ index 9be86f357e74..0447b405b5ca 100644
  }
  
  mlir::Value fir::runtime::genFseek(fir::FirOpBuilder &builder,
+diff --git a/flang/lib/Optimizer/Builder/Runtime/Main.cpp b/flang/lib/Optimizer/Builder/Runtime/Main.cpp
+index 2427088ec7f8..5a29705ab000 100644
+--- a/flang/lib/Optimizer/Builder/Runtime/Main.cpp
++++ b/flang/lib/Optimizer/Builder/Runtime/Main.cpp
+@@ -26,7 +26,13 @@ void fir::runtime::genMain(
+     const std::vector<Fortran::lower::EnvironmentDefault> &defs, bool initCuda,
+     bool initCoarrayEnv, unsigned fpExceptionTraps) {
+   auto *context = builder.getContext();
+-  auto argcTy = builder.getDefaultIntegerType();
++  // C's int, which is what crt0 passes main and what the runtime's
++  // ProgramStart(int, ...) reads -- not the default INTEGER.  With
++  // -fdefault-integer-8 the two differ, and on a 32-bit target an i64 argc
++  // takes two argument registers: everything after it is one register late,
++  // and the runtime's list of environment defaults was whatever the next
++  // register held instead of the null passed here.
++  auto argcTy = builder.getIntegerType(32);
+   auto ptrTy = mlir::LLVM::LLVMPointerType::get(context);
+ 
+   // void ProgramStart(int argc, char** argv, char** envp,
 diff --git a/flang/lib/Optimizer/CodeGen/CodeGen.cpp b/flang/lib/Optimizer/CodeGen/CodeGen.cpp
 index cf13475d4f88..b246d3c1e8de 100644
 --- a/flang/lib/Optimizer/CodeGen/CodeGen.cpp
