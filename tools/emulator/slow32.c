@@ -12,6 +12,7 @@
 #include "s32x_loader.h"
 #include "memory_manager.h"
 #include "mmio_ring.h"
+#include "memcheck.h"
 
 // Unaligned LD/ST are PERMITTED by the architecture -- see "Alignment"
 // in docs/INSTRUCTION-SET.md.  x86-64, AArch64 and RISC-V all allow
@@ -39,6 +40,7 @@ static int slow32_mmio_guest_read(void *ctx, uint32_t addr, void *dest, size_t s
 
 static int slow32_mmio_guest_write(void *ctx, uint32_t addr, const void *src, size_t size) {
     cpu_state_t *cpu = (cpu_state_t *)ctx;
+    if (g_mc.on) mc_host_wrote(cpu, addr, (uint32_t)size);
     return mm_write(&cpu->mm, addr, src, (uint32_t)size);
 }
 
@@ -501,6 +503,9 @@ void cpu_step(cpu_state_t *cpu) {
     
     uint32_t next_pc = cpu->pc + 4;
     cpu->regs[REG_ZERO] = 0;  // Ensure r0 is always 0
+
+    uint32_t mc_sp = cpu->regs[REG_SP];
+    if (g_mc.on) mc_pre(cpu, &inst);
     
     // Execute instruction
     switch (inst.opcode) {
@@ -1058,6 +1063,7 @@ void cpu_step(cpu_state_t *cpu) {
     }
     
     cpu->regs[REG_ZERO] = 0;  // Ensure r0 stays 0
+    if (g_mc.on) mc_post(cpu, mc_sp);
     cpu->pc = next_pc;
     cpu->cycle_count++;
     cpu->inst_count++;
@@ -1124,6 +1130,8 @@ static void print_usage(const char *progname) {
     fprintf(stderr, "  -b <addr>       Set breakpoint (hex, up to 16)\n");
     fprintf(stderr, "  -w <start-end>  Watch memory range (hex)\n");
     fprintf(stderr, "  -p <file>       Write instructions executed per code address to file\n");
+    fprintf(stderr, "  -m              Memcheck: report uses of uninitialised values and of memory\n");
+    fprintf(stderr, "                  that is not the program's to use (memcheck.h says what is seen)\n");
     fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
 }
@@ -1179,7 +1187,7 @@ int main(int argc, char *argv[]) {
 
     mmio_ring_set_emulator(argv[0]);
 
-    while ((opt = getopt(argc, argv, "+hstrc:b:w:qIp:")) != -1) {
+    while ((opt = getopt(argc, argv, "+hstrc:b:w:qIp:m")) != -1) {
         switch (opt) {
             case 'h':
                 print_usage(argv[0]);
@@ -1213,6 +1221,9 @@ int main(int argc, char *argv[]) {
             case 'p':
                 g_pcprof_path = optarg;
                 break;
+            case 'm':
+                mc_init();
+                break;
             case 'q':
                 quiet = 1;
                 g_quiet = true;
@@ -1231,6 +1242,11 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    if (!g_mc.on) {
+        const char *mc = getenv("S32_MEMCHECK");
+        if (mc && mc[0] == '1') mc_init();
+    }
+
     // Load program
     if (optind >= argc) {
         fprintf(stderr, "Error: missing program path\n");
@@ -1242,6 +1258,8 @@ int main(int argc, char *argv[]) {
         cpu_destroy(&cpu);
         return 1;
     }
+
+    if (g_mc.on) mc_attach(&cpu, argv[optind], cpu.regs[REG_SP]);
 
     // Apply service policy
     if (policy.allow_count > 0 || policy.deny_count > 0) {
@@ -1306,6 +1324,10 @@ int main(int argc, char *argv[]) {
     }
 
     int exit_code = cpu.fault_status ? (int)cpu.fault_status : (int)cpu.regs[1];
+    if (g_mc.on) {
+        if (g_mc.errors && g_mc.exit_code) exit_code = g_mc.exit_code;
+        mc_finish();
+    }
     cpu_destroy(&cpu);
     return exit_code;
 }

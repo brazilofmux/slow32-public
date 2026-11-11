@@ -34,7 +34,7 @@ LIBS32CXX="$SLOW32_BASE/runtime/libs32cxx.s32a"
 # Test configuration
 TEST_DIR="$(dirname "$0")/tests"
 RESULTS_DIR="$(dirname "$0")/results"
-TIMEOUT=2
+TIMEOUT="${TIMEOUT:-2}"     # seconds a test may run; a slower engine (run-memcheck.sh) asks for more
 
 # Colors
 RED='\033[0;31m'

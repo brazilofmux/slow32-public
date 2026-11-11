@@ -1,0 +1,23 @@
+# Programs the sweeps of run-memcheck.sh expect reports from, and why.
+# One per line, tab-separated: the sweep, a pattern matched against the
+# program's path as memcheck prints it (a shell glob), and the reason.  A
+# program not listed here that reports is a failure; so is a listed one
+# that stops reporting when its sweep runs (take it off the list).
+#
+# Hand-written assembly that keeps scratch below the stack pointer.  That is
+# legal on this machine -- it has no interrupts (docs/SPEC.md 7) -- and
+# no compiler does it beyond the eight bytes memcheck allows; these tests
+# are about a DBT code pattern, and where they keep their scratch is not it.
+regression	*/results/bug-dbt-backedge-regpressure/test.s32x	asm: scratch below sp
+regression	*/results/bug-dbt-intrinsic-bounds-memchr/test.s32x	asm: scratch below sp, searched before it is filled
+regression	*/results/bug-dbt-select-fuse-inplace-setcc/test.s32x	asm: scratch below sp
+regression	*/results/bug-dbt-shifted-eor-fold/test.s32x	asm: scratch below sp
+regression	*/results/feature-dbt-divrem-pair/test.s32x	asm: scratch below sp
+regression	*/results/feature-dbt-select-fuse/test.s32x	asm: scratch below sp
+#
+# A conservative collector: gc_collect (islisp/src/heap.c) takes every word
+# of the C stack between here and main for a possible object, initialised
+# or not, and asks its object table.  That is the design, and Boehm's
+# collector draws the same reports from Valgrind.
+islisp	*/islisp/out/islisp.s32x	conservative collector scans the whole stack
+islisp	*/islisp/out/islisp-stage08.s32x	conservative collector scans the whole stack

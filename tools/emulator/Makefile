@@ -5,7 +5,7 @@ include ../../common/s32_crypto.mk
 CFLAGS += $(S32_CRYPTO_CFLAGS)
 TARGETS = slow32 slow32-fast
 
-HEADERS = slow32.h memory_manager.h s32x_loader.h mmio_ring.h
+HEADERS = slow32.h memory_manager.h s32x_loader.h mmio_ring.h memcheck.h ilp.h
 
 OBJS = slow32.o mmio_ring.o
 

@@ -31,6 +31,7 @@ make
 ./tools/emulator/slow32 -c 1000 program.s32x  # limit to 1000 cycles
 ./tools/emulator/slow32 -b 0x100 program.s32x  # break at address
 ./tools/emulator/slow32 -w 0x1000-0x2000 program.s32x  # watch memory range
+./tools/emulator/slow32 -m program.s32x  # memcheck: uninitialised values used, dead frames, freed blocks, null reads
 ```
 
 ## Key Architecture Points
@@ -458,6 +459,30 @@ cd ~/slow-32/regression && ./run-f77-sanitize.sh
 # taken in silence on its first run (a name typed twice, a unit with no END, a
 # label on two statements).  Not a gate: docs/plans/fortran90.md says what is left.
 cd ~/slow-32/regression/fuzz && ./fmut.py run OUT -n 30
+
+# And the reads themselves, below every compiler: the reference interpreter's
+# memcheck mode (slow32 -m; tools/emulator/memcheck.h says what it sees and
+# what it cannot).  Addressability per byte and definedness per bit beside
+# the program, which runs the same instructions and prints the same bytes;
+# S32_MEMCHECK=1 in the environment turns it on under any suite that runs
+# on the interpreter, with reports to the file S32_MEMCHECK_LOG names.  The
+# gates above see a bad read only when the bytes it finds are wrong, and here
+# they seldom are -- a dead frame still holds its values, and a null pointer
+# reads crt0.  Its first day (2026-11-11), every gate green: f77 gave a
+# subprogram's COMMON arrays frame bytes they never used (megabytes, on a
+# 64 KB stack; the DBT does not check the stack's lower bound), spliced
+# routines whose automatic arrays then had one element a dimension, and read
+# an absent OPTIONAL through address 0; libcob read through a null
+# descriptor and branched on an unfilled buffer; printf("%.*s") read past
+# its precision; and selfhost ISSUES-76 was alive one stage down.  The
+# script: seeded errors that must each be told for what they are (clang and
+# the kit), then whole suites that must pass as they do without the mode and
+# report nothing (regression/memcheck/known.txt lists the few that may).
+# After a change to the interpreter: all of it.  After a change to a
+# compiler or a run-time library: the sweep of its suite.  ~8 min; --all
+# adds cobol, the f77 corpus, xbase, xbc and islisp (~40 min); NAME ... runs
+# the sweeps named; --none the seeded errors alone.
+cd ~/slow-32/regression && ./run-memcheck.sh
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour

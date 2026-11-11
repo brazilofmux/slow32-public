@@ -27,7 +27,10 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SUITE = os.environ.get('SUITE', os.path.expanduser('~/refs/llvm-test-suite/Fortran/gfortran/regression'))
-DBT = os.path.join(ROOT, 'tools/dbt/slow32-dbt')
+# The engine the programs run on.  S32_ENGINE names another: the reference
+# interpreter, quiet, when a run is to be watched by its memcheck mode
+# (regression/run-memcheck.sh).
+DBT = os.environ.get('S32_ENGINE') or os.path.join(ROOT, 'tools/dbt/slow32-dbt')
 DRIVER = os.path.join(ROOT, 'flang/s32flang')
 FC = os.environ.get('GFORTRAN', 'gfortran')
 EXT = re.compile(r'\.(f|f90|f95|f03|f08|for)$', re.I)

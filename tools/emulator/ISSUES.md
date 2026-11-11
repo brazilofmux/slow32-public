@@ -123,3 +123,46 @@ This is the second bug of the same family found the same day: DBT-15 was the
 x86-64 translator mistranslating `bge zero, rX`, also a selfhost-only pattern,
 also a fused/special-cased compare path. Both were invisible to a suite built
 entirely from clang output.
+
+### 13. Memcheck mode: `slow32 -m` (2026-11-11)
+
+Not a defect: a mode.  `memcheck.h` keeps addressability per byte and
+definedness per bit beside the reference interpreter's memory and
+registers, and reports uses of what is not the program's or not yet a
+value: a branch, an address or an output byte that depends on an
+uninitialised one, a load or store in a dead frame, in a freed block, in
+the padding after a block or through a null pointer, a free of what is not
+a live block.  The header says what is seen and what is not (overruns
+between globals or within a frame are not).  The program runs the same
+instructions with or without it; a clean run prints nothing.
+
+Gate: `regression/run-memcheck.sh` -- seeded errors that must each be told
+for what they are, by clang and by the kit, and whole suites run under
+`S32_MEMCHECK=1` that must pass as they do without and report nothing.
+
+Three things it had to learn from real programs, each a false report first:
+
+- the HIR backends' large-frame prologue saves lr and fp at sp-4 and sp-8
+  before it moves sp: eight bytes below sp are the program's;
+- the same backends select without a branch, `y ^ ((x ^ y) & m)`, and bit by
+  bit that is undefined whenever the side not chosen is: the two XORs and
+  the AND are followed as one select;
+- the Forth kernel's threaded code is data in its code segment, read by
+  design: a null pointer is told by the base register holding 0, not by the
+  address being low.
+
+Known reports, listed in `regression/memcheck/known.txt`: six hand-written
+assembly tests that keep scratch below the stack pointer, and islisp's
+conservative collector, which reads every word of the stack on purpose.
+
+Open, as of the day it landed: the long sweeps (`run-memcheck.sh --all`)
+have not passed as a whole.  xbase and xbc ran clean by hand, islisp
+reports as listed, and the f77 corpus was clean after the day's fixes; the
+COBOL suite, run on the reference interpreter under the mode, fails its own
+`ccvs/both-paths` check (IC101A's output differs between the two code
+paths) and, in an earlier run with other suites alongside, `ccvs/totals`
+by four tests.  IC101A alone passes on the same engine with the mode on
+and off, and the suite passes 1298/0 on its usual engine, so this is
+either the interpreter's speed against the CCVS runner's `timeout 120` or
+something order-dependent in the IC module -- not yet looked at.  No
+memcheck report was logged in either run after the libcob fixes.
