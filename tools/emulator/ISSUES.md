@@ -155,14 +155,15 @@ Known reports, listed in `regression/memcheck/known.txt`: six hand-written
 assembly tests that keep scratch below the stack pointer, and islisp's
 conservative collector, which reads every word of the stack on purpose.
 
-Open, as of the day it landed: the long sweeps (`run-memcheck.sh --all`)
-have not passed as a whole.  xbase and xbc ran clean by hand, islisp
-reports as listed, and the f77 corpus was clean after the day's fixes; the
-COBOL suite, run on the reference interpreter under the mode, fails its own
-`ccvs/both-paths` check (IC101A's output differs between the two code
-paths) and, in an earlier run with other suites alongside, `ccvs/totals`
-by four tests.  IC101A alone passes on the same engine with the mode on
-and off, and the suite passes 1298/0 on its usual engine, so this is
-either the interpreter's speed against the CCVS runner's `timeout 120` or
-something order-dependent in the IC module -- not yet looked at.  No
-memcheck report was logged in either run after the libcob fixes.
+The long sweeps pass too (`run-memcheck.sh --all`: cobol, ccvs, the f77
+corpus, xbase, xbc), after two things about the suites rather than the
+mode.  The COBOL suite's CCVS both-paths check compares console output
+byte for byte, and the interpreter's closing lines carry the wall time: the
+sweep runs the suite with CCVS=0 and CCVS by itself, quiet, against its
+recorded totals.  And islisp's suite is not swept: it cannot pass on the
+interpreter with the mode or without, because the stage08 build's soft libm
+differs from the clang build's (runtime ISSUES-29; `(log
+*most-positive-float*)` is off in the 12th digit there, not the last),
+which the DBT's host libm hides.  One corpus program is listed as known:
+gfortran's whole_file_14.f90 follows a pointer to a local of a subroutine
+that has returned, on purpose.

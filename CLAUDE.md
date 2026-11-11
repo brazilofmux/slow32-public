@@ -480,7 +480,7 @@ cd ~/slow-32/regression/fuzz && ./fmut.py run OUT -n 30
 # report nothing (regression/memcheck/known.txt lists the few that may).
 # After a change to the interpreter: all of it.  After a change to a
 # compiler or a run-time library: the sweep of its suite.  ~8 min; --all
-# adds cobol, the f77 corpus, xbase, xbc and islisp (~40 min); NAME ... runs
+# adds cobol, CCVS, the f77 corpus, xbase and xbc (~40 min); NAME ... runs
 # the sweeps named; --none the seeded errors alone.
 cd ~/slow-32/regression && ./run-memcheck.sh
 

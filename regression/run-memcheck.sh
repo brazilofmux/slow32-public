@@ -28,13 +28,15 @@
 #
 #   run-memcheck.sh              the instrument, and the quick sweeps (~8 min):
 #                                regression, forth, fortran, fcvs, kit
-#   run-memcheck.sh --all        and the long ones (~40 min): cobol, corpus,
-#                                xbase, xbc, islisp
+#   run-memcheck.sh --all        and the long ones (~40 min): cobol, ccvs,
+#                                corpus, xbase, xbc
 #   run-memcheck.sh NAME ...     the instrument and the sweeps named
 #   run-memcheck.sh --none       the instrument alone (seconds)
 #
-# (The long ones have not all passed yet: tools/emulator ISSUES-13 has the
-# COBOL suite's open item.)
+# islisp's suite is not among them: it cannot pass on the interpreter, with
+# the mode or without -- its stage08 build's soft libm differs from the
+# clang build's in last digits (runtime ISSUES-29), which the DBT's host
+# libm hides.  Its collector's reports are in known.txt for a run by hand.
 #
 # After a change to the interpreter or memcheck.h: all of it.  After a
 # change to a compiler or a run-time library: the sweep of its suite.
@@ -47,7 +49,7 @@ KIT="${KIT:-$HOME/s32x}"
 CLANG="${CLANG:-$HOME/llvm-project/build/bin/clang}"
 KNOWN="$HERE/memcheck/known.txt"
 QUICK="regression forth fortran fcvs kit"
-LONG="cobol corpus xbase xbc islisp"
+LONG="cobol ccvs corpus xbase xbc"
 [ -x "$EMU" ] || { echo "run-memcheck: no $EMU" >&2; exit 2; }
 
 case "${1:-}" in
@@ -131,11 +133,13 @@ sweep_cmd() {
         fortran)    echo "EMU='$EMU' '$ROOT/fortran/tests/run-tests.sh'" ;;
         fcvs)       echo "EMU='$W/slow32-q' TIMEOUT=600 '$ROOT/fortran/tests/run-fcvs.sh'" ;;
         kit)        echo "cd '$ROOT/regression' && KIT='$KIT' TIMEOUT=60 ./run-kit-differential.sh" ;;
-        cobol)      echo "EMU='$EMU' '$ROOT/cobol/tests/run-tests.sh'" ;;
+        # CCVS apart: the suite's both-paths check compares console output byte
+        # for byte, and the interpreter's own closing lines carry the wall time
+        cobol)      echo "CCVS=0 EMU='$EMU' '$ROOT/cobol/tests/run-tests.sh'" ;;
+        ccvs)       echo "EMU='$W/slow32-q' '$ROOT/cobol/tests/ccvs-run.sh' | tail -1 | diff - '$ROOT/cobol/tests/ccvs-baseline.txt'" ;;
         corpus)     echo "S32_ENGINE='$W/slow32-q' '$ROOT/regression/run-f77-corpus.sh'" ;;
         xbase)      echo "EMU='$EMU' bash '$ROOT/xbase/tests/run-tests.sh'" ;;
         xbc)        echo "EMU='$EMU' bash '$ROOT/xbc/tests/run-tests.sh'" ;;
-        islisp)     echo "EMU='$W/slow32-q' bash '$ROOT/islisp/tests/run-tests.sh'" ;;
         *)          return 1 ;;
     esac
 }
