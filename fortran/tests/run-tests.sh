@@ -550,6 +550,22 @@ if [ -x "$F77" ]; then
     printf "      K = IBITS(5, 1)\n      END\n" > "$W/bitnarg.f"
     printf "      K = 1\n      CALL MVBITS(K, 0, 1, K)\n      END\n" > "$W/mvbnarg.f"
     printf "      INCLUDE 'nosuch'\n      END\n" > "$W/incnone.f"
+    printf "      INTEGER K\n      REAL K\n      END\n" > "$W/typetwice.f"
+    printf "      INTEGER FUNCTION F(X)\n      INTEGER F\n      F = 1\n      END\n" > "$W/typetwice2.f"
+    printf "      K = 1\n" > "$W/noendfile.f"
+    printf "      SUBROUTINE S\n      K = 1\n      SUBROUTINE T\n      END\n" > "$W/noend2.f"
+    printf "      PROGRAM\n      END\n" > "$W/progform.f"
+    printf "      PROGRAM P, Q\n      END\n" > "$W/progjunk.f"
+    printf "      INTEGER\n      END\n" > "$W/declnone.f"
+    printf "      INTEGER I1, I2,\n      END\n" > "$W/declcomma.f"
+    printf "      K = 1\n 10   K = 2\n 10   K = 3\n      END\n" > "$W/labtwice.f"
+    printf "      IMPLICIT NONE\n      IMPLICIT NONE\n      END\n" > "$W/nonetwice.f"
+    printf "      IF (K) K = 1\n      END\n" > "$W/ifnotlog.f"
+    printf "      IF (K + 1) THEN\n      END IF\n      END\n" > "$W/ifnotlog2.f"
+    printf "      WRITE (2.5, *) K\n      END\n" > "$W/unitreal.f"
+    printf "      REWIND (.TRUE.)\n      END\n" > "$W/unitlog.f"
+    printf "      LOGICAL L\n      L = 2.5\n      END\n" > "$W/asglog.f"
+    printf "      X = .TRUE.\n      END\n" > "$W/asgnum.f"
     printf "      I = 9999999999\n      END\n" > "$W/bigint.f"
     printf "      CHARACTER*1 A\n      DATA (A(I:I), I = 0, 0) /1*'#'/\n      END\n" > "$W/datasubout.f"
     printf "      F(X) = G(X) + 1.0\n      G(X) = F(X) * 2.0\n      Y = F(1.0)\n      END\n" > "$W/stfself.f"
@@ -836,6 +852,22 @@ if [ -x "$F77" ]; then
              "bitnarg:line 1: wrong number of arguments to a bit intrinsic" \
              "mvbnarg:line 2: MVBITS needs five arguments" \
              "incnone:f77: line 1: INCLUDE: no file nosuch" \
+             "typetwice:line 2: K already has a type" \
+             "typetwice2:line 2: F already has a type" \
+             "noendfile:the file ends before its last unit's END" \
+             "noend2:a program unit begins before the END of the one before it" \
+             "progform:line 1: PROGRAM needs a name" \
+             "progjunk:line 1: unexpected text after the PROGRAM statement's name" \
+             "declnone:line 1: a declaration needs the name it declares" \
+             "declcomma:line 1: a declaration needs the name it declares" \
+             "labtwice:line 3: statement label 10 is on two statements" \
+             "nonetwice:line 2: IMPLICIT NONE twice in one unit" \
+             "ifnotlog:line 1: an IF's condition is a LOGICAL expression" \
+             "ifnotlog2:line 1: an IF's condition is a LOGICAL expression" \
+             "unitreal:line 1: a unit is an INTEGER expression" \
+             "unitlog:line 1: a unit is an INTEGER expression" \
+             "asglog:line 2: a LOGICAL variable is assigned a LOGICAL expression" \
+             "asgnum:line 1: a LOGICAL value for a numeric variable" \
              "bigint:line 1: an INTEGER constant too large for an INTEGER" \
              "datasubout:A: DATA for a subscript or substring outside the variable" \
              "stfself:line 3: a statement function references itself" \

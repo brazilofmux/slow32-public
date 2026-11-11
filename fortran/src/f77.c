@@ -835,6 +835,13 @@ static void f77_scan_units(void) {
             continue;
         }
         rty = f77_unit_header_ty();
+        /* A unit ends with its END before another begins.  One whose END
+         * was missing ran on into the next unit's header, taken as one of
+         * its own statements, and compiled. */
+        if (started && !ended && (f77_starts("BLOCKDATA") || ((f77_starts("SUBROUTINE") || rty >= 0) && f77_toplevel('=', 0) < 0))) {
+            f77_error("a program unit begins before the END of the one before it");
+            return;
+        }
         if (f77_starts("BLOCKDATA")) {
             /* A declarations-only unit: its DATA lands in the COMMON
              * blocks it names.  It compiles to an empty function that
@@ -1087,6 +1094,7 @@ static void f77_scan_units(void) {
     }
 
     if (hn > 0 || in_iface) { f77_error(in_iface ? "INTERFACE without END INTERFACE" : "CONTAINS without its unit's END"); return; }
+    if (started && !ended) { f77_error("the file ends before its last unit's END"); return; }
     /* Each ENTRY becomes a unit of its own, after the ordinary ones. */
     {
         int q;

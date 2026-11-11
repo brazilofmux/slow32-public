@@ -145,6 +145,7 @@ static int  f77_sparr_at[F77_MAX_SYM];
 static int  f77_sparr_cnt[F77_MAX_SYM];  /* a structure PARAMETER's: how many component values */
 static int  f77_scalc[F77_MAX_SYM];      /* an ALLOCATABLE component's temporary (f77_sptr too: its descriptor) */
 static int  f77_sintout[F77_MAX_SYM];    /* a dummy said INTENT(OUT) */
+static int  f77_sdeclared[F77_MAX_SYM];  /* a type statement of this unit has named it */
 static int  f77_sassoc[F77_MAX_SYM];     /* a module's entity here by host association (1) or USE (2) */
 /* Host association of variables (Fortran 90).  A host of internal
  * procedures has, before it is compiled, the names its procedures' text
@@ -857,7 +858,7 @@ static int f77_sym(char *nm) {
     f77_sopt[f77_nsym] = 0;
     f77_sptr[f77_nsym] = 0;
     f77_starg[f77_nsym] = 0;
-    f77_scalc[f77_nsym] = 0; f77_sintout[f77_nsym] = 0; f77_sparr[f77_nsym] = 0;
+    f77_scalc[f77_nsym] = 0; f77_sintout[f77_nsym] = 0; f77_sdeclared[f77_nsym] = 0; f77_sparr[f77_nsym] = 0;
     f77_shost[f77_nsym] = 0;
     f77_sdt[f77_nsym] = -1;
     f77_salloc[f77_nsym] = 0;
@@ -922,7 +923,7 @@ static int f77_sym_temp(int ty) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sdeclared[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -1135,7 +1136,7 @@ static int f77_sym_param(char *nm, int index) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sdeclared[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -4256,6 +4257,18 @@ static int f77_primary1(int *intr) {
  * f77_dpow_i -- real calls, unlike the __fp64_* names the backend
  * inlines, so the arguments carry real ABI tags).  A real exponent
  * is pow / powf, by the libm names the DBT intercepts. */
+/* An IF's condition, just evaluated, is a LOGICAL expression (11.5,
+ * 11.6.1): IF (3**0 ** 1) and IF (KG 0) compiled, to a test for nonzero. */
+static void f77_cond_is_logical(void) {
+    if ((ex_ty != TY_INT || !ex_log) && !f77_nerr) f77_error("an IF's condition is a LOGICAL expression");
+}
+/* A unit, a record number or the like, just evaluated, is an INTEGER. */
+static void f77_is_integer(char *what) {
+    char m[96];
+    if (ex_ty == TY_INT && !ex_log) return;
+    sprintf(m, "%s is an INTEGER expression", what);
+    if (!f77_nerr) f77_error(m);
+}
 /* An intrinsic operator's operands are of the kind it works on (7.1.2):
  * numbers for the arithmetic ones, LOGICALs for .NOT. .AND. .OR. .EQV.
  * .NEQV., and for the relationals numbers or CHARACTER, never LOGICAL.
@@ -7410,6 +7423,13 @@ static void f77_stmt_assign1(void) {
     f77_tok();
     v = f77_expr();
     vty = ex_ty;
+    /* a LOGICAL is assigned a LOGICAL value and a number a number (10.1,
+     * 10.2): L = 2.5 and X = .TRUE. stored the bits converted */
+    if (vty != TY_DERIVED && vty != TY_CHAR && f77_sty[s] != TY_CHAR && f77_sty[s] != TY_DERIVED &&
+        (f77_sty[s] == TY_INT && f77_slog[s]) != (vty == TY_INT && ex_log) && !f77_nerr) {
+        f77_error(f77_slog[s] ? "a LOGICAL variable is assigned a LOGICAL expression" : "a LOGICAL value for a numeric variable");
+        return;
+    }
     if (vty == TY_DERIVED) {
         /* a defined assignment's: into a temporary, then stored */
         int xo[F77_OPND_N]; int e;
@@ -7698,6 +7718,7 @@ static int f77_io_unit_expr(void) {
         f77_io_int_nrec = f77_iconst(nrec);
         return v;
     }
+    f77_is_integer("a unit");
     return f77_cvt(v, &ex_hi, ex_ty, TY_INT);
 }
 
@@ -9092,11 +9113,24 @@ static void f77_stmt_decl(int ty, int skip) {
         dcolon = 1;
     }
     for (;;) {
-        if (lx_t != T_NAME) break;
+        /* a name, and after each comma another: INTEGER alone, DIMENSION
+         * alone and INTEGER I1, I2, were declarations of nothing */
+        if (lx_t != T_NAME) { f77_error("a declaration needs the name it declares"); return; }
         if (a_vis) f77_vis_note(lex_name, a_vis == 2);
         s = f77_sym_decl(lex_name);
         if (a_opt) f77_opt_note(s);
         if (ty >= 0) {                  /* declaration overrides implicit typing */
+            /* once (5.1: an entity's type is declared by one statement).
+             * INTEGER K twice, or REAL K after it, was the last one's. */
+            if (strcmp(f77_sname[s], lex_name) == 0) {      /* not an ENTRY's name for the one result */
+                if (f77_sdeclared[s]) {
+                    char m[F77_MAX_NAME + 40];
+                    sprintf(m, "%s already has a type", lex_name);
+                    f77_error(m);
+                    return;
+                }
+                f77_sdeclared[s] = 1;
+            }
             f77_sty[s] = ty;
             if (ty == TY_DERIVED) f77_sdt[s] = f77_decl_dt;
             f77_styped[s] = 1;
@@ -9166,7 +9200,8 @@ static void f77_stmt_decl(int ty, int skip) {
         if (lx_t != T_COMMA) break;
         f77_tok();
     }
-    if (dcolon && lx_t != T_EOF) f77_error("unexpected text after the declaration");
+    if (lx_t != T_EOF && !dcolon) return;      /* the statement's own check says so */
+    if (lx_t != T_EOF) f77_error("unexpected text after the declaration");
 }
 
 /* --- COMMON and SAVE --------------------------------------------------
@@ -9430,6 +9465,7 @@ static void f77_stmt_implicit(int skip) {
     }
     f77_scan_from(skip);
     if (lx_t == T_NAME && strcmp(lex_name, "NONE") == 0) {
+        if (f77_imp_said & 1) { f77_error("IMPLICIT NONE twice in one unit"); return; }
         f77_imp_none = F77_IMP_ALL;
         f77_imp_said |= 1;
         if (f77_imp_said == 3) f77_error("IMPLICIT NONE is the only IMPLICIT statement of its unit");
@@ -15411,7 +15447,7 @@ static int f77_bind_actual(char *nm, int addr) {
     f77_sopt[s] = 0;
     f77_sptr[s] = 0;
     f77_starg[s] = 0;
-    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sparr[s] = 0;
+    f77_scalc[s] = 0; f77_sintout[s] = 0; f77_sdeclared[s] = 0; f77_sparr[s] = 0;
     f77_shost[s] = 0;
     f77_sdt[s] = -1;
     f77_salloc[s] = 0;
@@ -17974,6 +18010,9 @@ static void f77_bind_unit(int u) {
         f77_realloc_sym(f77_result_sym);
     }
 
+    /* a typed header (INTEGER FUNCTION F) is the result's one type statement */
+    if (f77_result_sym >= 0 && skip != 8 && skip != 5) f77_sdeclared[f77_result_sym] = 1;
+
     /* Phantoms for the family's other dummies (see f77_famd_name). */
     if (f77_ukind[u] != F77_UNIT_PROGRAM && f77_ukind[u] != F77_UNIT_BDATA) {
         int fam;
@@ -19473,7 +19512,7 @@ static void f77_stmt_open(int skip) {
             if (lx_t == T_ASSIGN) {
                 f77_tok();
                 if (strcmp(kw, "UNIT") == 0) {
-                    unit_val = f77_expr();
+                    unit_val = f77_expr(); f77_is_integer("a unit");
                     unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                     have_unit = 1;
                 } else if (strcmp(kw, "FILE") == 0) {
@@ -19534,7 +19573,7 @@ static void f77_stmt_open(int skip) {
                 return;
             }
         } else if (!have_unit) {
-            unit_val = f77_expr();
+            unit_val = f77_expr(); f77_is_integer("a unit");
             unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
             have_unit = 1;
         } else {
@@ -19619,7 +19658,7 @@ static void f77_stmt_inquire(int skip) {
         if (lx_t != T_NAME) {
             /* the first item may be the unit without UNIT= (12.10.3) */
             if (nspec == 0 && unit_val < 0 && file_addr < 0 && err_label < 0 && iostat_addr < 0) {
-                unit_val = f77_expr();
+                unit_val = f77_expr(); f77_is_integer("a unit");
                 unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                 if (lx_t == T_COMMA) { f77_tok(); continue; }
                 break;
@@ -19643,7 +19682,7 @@ static void f77_stmt_inquire(int skip) {
         f77_tok();
         code = 0;
         if (strcmp(kw, "UNIT") == 0) {
-            unit_val = f77_expr();
+            unit_val = f77_expr(); f77_is_integer("a unit");
             unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
         } else if (strcmp(kw, "FILE") == 0) {
             file_addr = f77_expr();
@@ -19770,7 +19809,7 @@ static void f77_stmt_close(int skip) {
             if (lx_t == T_ASSIGN) {
                 f77_tok();
                 if (strcmp(kw, "UNIT") == 0) {
-                    unit_val = f77_expr();
+                    unit_val = f77_expr(); f77_is_integer("a unit");
                     unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                     have_unit = 1;
                 } else if (strcmp(kw, "STATUS") == 0) {
@@ -19800,7 +19839,7 @@ static void f77_stmt_close(int skip) {
                 return;
             }
         } else if (!have_unit) {
-            unit_val = f77_expr();
+            unit_val = f77_expr(); f77_is_integer("a unit");
             unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
             have_unit = 1;
         } else {
@@ -19844,7 +19883,7 @@ static void f77_stmt_position(int skip, char *what, char *fn) {
                 f77_tok();
                 f77_tok();
                 if (strcmp(kw, "UNIT") == 0) {
-                    unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                    unit_val = f77_expr(); f77_is_integer("a unit"); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
                 } else if (strcmp(kw, "ERR") == 0) {
                     f77_tok();
                 } else if (strcmp(kw, "IOSTAT") == 0) {
@@ -19853,7 +19892,7 @@ static void f77_stmt_position(int skip, char *what, char *fn) {
                     hi_emit(HI_STORE, TY_INT, a, f77_iconst(0), 0, NULL);
                 } else { sprintf(m, "unknown keyword in %s", what); f77_error(m); return; }
             } else {
-                unit_val = f77_expr(); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
+                unit_val = f77_expr(); f77_is_integer("a unit"); unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
             }
             if (lx_t == T_COMMA) { f77_tok(); continue; }
             break;
@@ -19862,7 +19901,7 @@ static void f77_stmt_position(int skip, char *what, char *fn) {
         f77_tok();
         if (unit_val < 0) { sprintf(m, "%s needs a unit", what); f77_error(m); return; }
     } else {
-        unit_val = f77_expr();
+        unit_val = f77_expr(); f77_is_integer("a unit");
         unit_val = f77_cvt(unit_val, &ex_hi, ex_ty, TY_INT);
     }
     f77_call_i(fn, 1, &unit_val);
@@ -19957,7 +19996,7 @@ static int f77_dt_temp_comp(int c, int addr) {
     f77_sopt[t] = 0; f77_shost[t] = 0; f77_salloc[t] = 0; f77_sashape[t] = 0; f77_shidden[t] = 0;
     f77_sassz[t] = 0; f77_sintrinsic[t] = 0; f77_spstr[t] = -1;
     f77_sptr[t] = f77_dc_ptr[c] != 0; f77_starg[t] = 0;
-    f77_scalc[t] = f77_dc_ptr[c] == 2; f77_sintout[t] = 0; f77_sparr[t] = 0;
+    f77_scalc[t] = f77_dc_ptr[c] == 2; f77_sintout[t] = 0; f77_sdeclared[t] = 0; f77_sparr[t] = 0;
     if (f77_dc_ptr[c] && f77_dc_rank[c] > 0) f77_sashape[t] = 1;     /* a pointer array: its descriptor */
     /* a slot or descriptor of its own address, even at offset 0: the
      * guard (f77_desc_guard) reads every use of it, and the structure's
@@ -21295,7 +21334,16 @@ static void f77_statement(void) {
         int b;
         b = f77_label_blk(lx_stmt_label);
         { int q; for (q = f77_label_base; q < f77_nlabel; q++)
-            if (f77_lnum[q] == lx_stmt_label) f77_ldef[q] = 1; }
+            if (f77_lnum[q] == lx_stmt_label) {
+                /* one statement of the unit (3.4): on two, a GO TO went
+                 * to both, the second running after the first */
+                if (f77_ldef[q] == 1 && !f77_nerr) {
+                    char m[64];
+                    sprintf(m, "statement label %d is on two statements", lx_stmt_label);
+                    f77_error(m);
+                }
+                f77_ldef[q] = 1;
+            } }
         f77_goto_blk(b);
         f77_begin_blk(b);
     }
@@ -21420,6 +21468,7 @@ static void f77_statement(void) {
         /* IF (e) stmt -- execute stmt only when e is true. */
         f77_scan_from(2);
         c = f77_expr();
+        f77_cond_is_logical();
         f77_if_tail = f77_match_paren(2);     /* f77_hoist may have moved it */
         b_then = hir_new_block();
         b_end = hir_new_block();
@@ -21451,6 +21500,7 @@ static void f77_statement(void) {
     if (cls == S_IF_BLOCK) {
         f77_scan_from(2);
         c = f77_expr();
+        f77_cond_is_logical();
         if (lx_t == T_NAME && strcmp(lex_name, "THEN") == 0) f77_tok();
         b_then = hir_new_block();
         b_else = hir_new_block();
@@ -21469,7 +21519,15 @@ static void f77_statement(void) {
 
     /* --- keyword statements --- */
 
-    if (f77_starts("PROGRAM")) goto done;      /* name is documentation */
+    if (f77_starts("PROGRAM")) {
+        /* the name is documentation, but the statement is PROGRAM name
+         * (PROGRAM alone, PROGRAM 1.0, PROGRAM .EQ. all passed) */
+        f77_scan_from(7);
+        if (lx_t != T_NAME) { f77_error("PROGRAM needs a name"); goto done; }
+        f77_tok();
+        if (lx_t != T_EOF) f77_error("unexpected text after the PROGRAM statement's name");
+        goto done;
+    }
 
     if (f77_starts("FORMAT")) {                /* collected in phase 1 */
         /* fort370: checked here, once, where its line is known */
@@ -21667,6 +21725,7 @@ static void f77_statement(void) {
         f77_begin_blk(ctl_else[ctl_n - 1]);
         f77_scan_from(7);
         c = f77_expr();
+        f77_cond_is_logical();
         if (lx_t != T_RP) { f77_error("expected ) in ELSE IF"); goto done; }
         lx_t = T_EOF;                           /* THEN [name]: checked above */
         b_then = hir_new_block();

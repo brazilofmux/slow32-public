@@ -346,6 +346,45 @@ What is left, each read and judged:
   DELIM= in NAMELIST output; a host variable an internal procedure names
   only in an EQUIVALENCE.
 
+## Two more instruments (2026-11-10)
+
+Both look where the output-comparing gates cannot.
+
+**The compiler under the sanitizers** (`regression/run-f77-sanitize.sh`, a
+gate; 05fec21e).  f77 built with AddressSanitizer and UBSan compiles every
+Fortran source at hand, 8,829 files.  First run: 1,178 files with a report;
+now none.  The instruction selector read `h_kind[-1]` on ordinary Fortran 77
+(a dead ADDI's operand); after a refusal the compiler went on to optimize
+and generate what the refused statement left; a DATA substring out of range
+was written past the compiler's own image; long names overran message
+buffers; constants were folded by conversions C leaves undefined, so one
+source was two programs on two hosts; an INTEGER literal too large wrapped.
+The same build of stage08 cc over 1,007 C files, of s32-cobc over 1,279
+COBOL sources in both formats, and of the assembler and linker over 480
+programs found nothing that was theirs.
+
+**Accept-invalid** (`regression/fuzz/fmut.py`, a report).  Each program of
+`fortran/tests/f77` is changed in one place, thirty ways, and both
+compilers are asked only whether they take it.  Of 9,030 mutants, gfortran
+refused and f77 compiled 956 on the first run; 394 now.  Fixed: a name
+typed twice; a unit with no END, at the end of the file or before the next
+unit; PROGRAM with no name or more than one; a declaration of nothing
+(`INTEGER`, `INTEGER I1, I2,`); a statement label on two statements;
+IMPLICIT NONE twice; an IF whose condition is no LOGICAL; a unit that is no
+INTEGER; a LOGICAL assigned a number, and the reverse.
+
+Left, and read:
+- a SUBROUTINE or FUNCTION statement's own form (`SUBROUTINE S X)`), a
+  FORMAT with no opening parenthesis, a constant named in two PARAMETERs:
+  not checked yet;
+- an actual argument of another type, rank or count than a unit of the
+  same file declares (about fifty): f77 does not check a call against its
+  callee, as no Fortran 77 compiler had to;
+- a DO variable assigned in its loop; an INTEGER constant expression that
+  overflows;
+- a second PROGRAM statement in a main program (forty-two): taken, on
+  purpose -- forty FCVS files as distributed open with the card twice.
+
 ## Fortran 90 and 95: where it stopped (2026-11-09)
 
 All six milestones are done.  After milestone 5 the list of what a

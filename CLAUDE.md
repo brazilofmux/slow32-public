@@ -452,6 +452,12 @@ cd ~/slow-32/regression && ./run-f77-corpus.sh
 # refused a statement.  Its first run found the instruction selector reading
 # before its table on ordinary Fortran 77.  After a change to fortran/src.  ~1 min.
 cd ~/slow-32/regression && ./run-f77-sanitize.sh
+# And a report on the other side of a compiler -- what it takes that it should
+# refuse: fmut.py changes each of fortran/tests/f77's valid programs in one place
+# and asks gfortran and f77 only whether they take it.  956 of 9,030 mutants were
+# taken in silence on its first run (a name typed twice, a unit with no END, a
+# label on two statements).  Not a gate: docs/plans/fortran90.md says what is left.
+cd ~/slow-32/regression/fuzz && ./fmut.py run OUT -n 30
 
 # The host assembler and linker against the self-hosted ones: the same
 # object bytes from both assemblers, the same loaded image and behaviour
