@@ -140,7 +140,7 @@ f77_wr_begin:                           # @f77_wr_begin
 	lui r3, %hi(fio_busy)
 	ldbu r4, r3+%lo(fio_busy)
 	addi r1, r0, 1
-	beq r4, r1, .LBB3_21
+	beq r4, r1, .LBB3_23
 .LBB3_1:
 	add r11, r5, r0
 	stb r3+%lo(fio_busy), r1
@@ -173,7 +173,7 @@ f77_wr_begin:                           # @f77_wr_begin
 	addi r4, r14, -1
 	addi r5, r0, 98
 	slli r3, r14, 2
-	bgtu r4, r5, .LBB3_7
+	bgtu r4, r5, .LBB3_9
 .LBB3_6:
 	lui r4, %hi(fio_uunf)
 	addi r4, r4, %lo(fio_uunf)
@@ -183,22 +183,38 @@ f77_wr_begin:                           # @f77_wr_begin
 	addi r4, r4, %lo(fio_uaeof)
 	add r4, r3, r4
 	stw r4+0, r0
+	lui r4, %hi(fio_ufile)
+	addi r4, r4, %lo(fio_ufile)
+	add r4, r3, r4
+	ldw r4, r4+0
+	beq r4, r0, .LBB3_9
 .LBB3_7:
+	lui r4, %hi(fio_udirect)
+	addi r4, r4, %lo(fio_udirect)
+	add r4, r3, r4
+	ldw r4, r4+0
+	bne r4, r0, .LBB3_9
+.LBB3_8:
+	lui r4, %hi(fio_uwrote)
+	addi r4, r4, %lo(fio_uwrote)
+	add r4, r3, r4
+	stw r4+0, r13
+.LBB3_9:
 	lui r5, %hi(fio_rec_next)
 	ldw r4, r5+%lo(fio_rec_next)
 	stw r5+%lo(fio_rec_next), r0
 	addi r5, r14, -100
 	addi r6, r0, -99
-	bltu r5, r6, .LBB3_11
-.LBB3_8:
+	bltu r5, r6, .LBB3_13
+.LBB3_10:
 	lui r5, %hi(fio_udirect)
 	addi r5, r5, %lo(fio_udirect)
 	add r5, r3, r5
 	ldw r5, r5+0
-	beq r5, r0, .LBB3_11
-.LBB3_9:
-	ble r4, r0, .LBB3_23
-.LBB3_10:
+	beq r5, r0, .LBB3_13
+.LBB3_11:
+	ble r4, r0, .LBB3_25
+.LBB3_12:
 	addi r4, r4, -1
 	lui r5, %hi(fio_urecl)
 	addi r5, r5, %lo(fio_urecl)
@@ -208,7 +224,7 @@ f77_wr_begin:                           # @f77_wr_begin
 	add r3, r1, r0
 	add r5, r0, r0
 	jal r31, fseek
-.LBB3_11:
+.LBB3_13:
 	lui r1, %hi(fio_reading)
 	stb r1+%lo(fio_reading), r0
 	lui r1, %hi(fio_len)
@@ -232,15 +248,15 @@ f77_wr_begin:                           # @f77_wr_begin
 	lui r14, %hi(fio_pos)
 	lui r15, %hi(fio_revert)
 	lui r1, %hi(fio_listed)
-	beq r12, r0, .LBB3_18
-.LBB3_12:
+	beq r12, r0, .LBB3_20
+.LBB3_14:
 	stw r1+%lo(fio_listed), r0
 	add r3, r12, r0
 	add r4, r11, r0
 	jal r31, fio_fmt_use
 	addi r3, r0, -1
-	ble r1, r3, .LBB3_22
-.LBB3_13:
+	ble r1, r3, .LBB3_24
+.LBB3_15:
 	stw r14+%lo(fio_pos), r0
 	stw r15+%lo(fio_revert), r3
 	lui r1, %hi(fio_since_data)
@@ -249,22 +265,22 @@ f77_wr_begin:                           # @f77_wr_begin
 	ldw r3, r1+%lo(fio_fmt)
 	addi r4, r0, 32
 	add r1, r0, r0
-.LBB3_14:
+.LBB3_16:
 	add r5, r3, r1
 	ldbu r5, r5+0
-	bne r5, r4, .LBB3_16
-.LBB3_15:
+	bne r5, r4, .LBB3_18
+.LBB3_17:
 	addi r1, r1, 1
 	stw r14+%lo(fio_pos), r1
-	jal r0, .LBB3_14
-.LBB3_16:
+	jal r0, .LBB3_16
+.LBB3_18:
 	addi r3, r0, 40
-	bne r5, r3, .LBB3_20
-.LBB3_17:
+	bne r5, r3, .LBB3_22
+.LBB3_19:
 	addi r3, r1, 1
 	add r1, r3, r0
-	jal r0, .LBB3_19
-.LBB3_18:
+	jal r0, .LBB3_21
+.LBB3_20:
 	stw r1+%lo(fio_listed), r13
 	lui r1, %hi(.L.str.8)
 	addi r1, r1, %lo(.L.str.8)
@@ -272,10 +288,10 @@ f77_wr_begin:                           # @f77_wr_begin
 	stw r3+%lo(fio_fmt), r1
 	addi r1, r0, -1
 	add r3, r0, r0
-.LBB3_19:
+.LBB3_21:
 	stw r14+%lo(fio_pos), r3
 	stw r15+%lo(fio_revert), r1
-.LBB3_20:
+.LBB3_22:
 	ldw r15, sp+28
 	ldw r14, sp+32
 	ldw r13, sp+36
@@ -284,7 +300,7 @@ f77_wr_begin:                           # @f77_wr_begin
 	ldw lr, sp+0
 	addi sp, sp, 48
 	jalr r0, r31, 0
-.LBB3_21:
+.LBB3_23:
 	lui r1, %hi(stdout)
 	ldw r3, r1+%lo(stdout)
 	jal r31, fflush
@@ -292,16 +308,16 @@ f77_wr_begin:                           # @f77_wr_begin
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.92)
 	addi r4, r4, %lo(.L.str.92)
-	jal r0, .LBB3_24
-.LBB3_22:
+	jal r0, .LBB3_26
+.LBB3_24:
 	addi r3, r0, 2
 	jal r31, exit
-.LBB3_23:
+.LBB3_25:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.94)
 	addi r4, r4, %lo(.L.str.94)
-.LBB3_24:
+.LBB3_26:
 	jal r31, fprintf
 	addi r3, r0, 2
 	jal r31, exit
@@ -456,7 +472,7 @@ f77_wu_begin:                           # @f77_wu_begin
 	lui r3, %hi(fio_busy)
 	ldbu r4, r3+%lo(fio_busy)
 	addi r1, r0, 1
-	beq r4, r1, .LBB5_12
+	beq r4, r1, .LBB5_14
 .LBB5_1:
 	stb r3+%lo(fio_busy), r1
 	lui r3, %hi(fio_uend_init)
@@ -486,7 +502,7 @@ f77_wu_begin:                           # @f77_wu_begin
 	addi r4, r11, -1
 	addi r5, r0, 98
 	slli r3, r11, 2
-	bgtu r4, r5, .LBB5_7
+	bgtu r4, r5, .LBB5_9
 .LBB5_6:
 	lui r4, %hi(fio_uunf)
 	addi r4, r4, %lo(fio_uunf)
@@ -496,22 +512,38 @@ f77_wu_begin:                           # @f77_wu_begin
 	addi r4, r4, %lo(fio_uaeof)
 	add r4, r3, r4
 	stw r4+0, r0
+	lui r4, %hi(fio_ufile)
+	addi r4, r4, %lo(fio_ufile)
+	add r4, r3, r4
+	ldw r4, r4+0
+	beq r4, r0, .LBB5_9
 .LBB5_7:
+	lui r4, %hi(fio_udirect)
+	addi r4, r4, %lo(fio_udirect)
+	add r4, r3, r4
+	ldw r4, r4+0
+	bne r4, r0, .LBB5_9
+.LBB5_8:
+	lui r4, %hi(fio_uwrote)
+	addi r4, r4, %lo(fio_uwrote)
+	add r4, r3, r4
+	stw r4+0, r12
+.LBB5_9:
 	lui r5, %hi(fio_rec_next)
 	ldw r4, r5+%lo(fio_rec_next)
 	stw r5+%lo(fio_rec_next), r0
 	addi r5, r11, -100
 	addi r6, r0, -99
-	bltu r5, r6, .LBB5_11
-.LBB5_8:
+	bltu r5, r6, .LBB5_13
+.LBB5_10:
 	lui r5, %hi(fio_udirect)
 	addi r5, r5, %lo(fio_udirect)
 	add r5, r3, r5
 	ldw r5, r5+0
-	beq r5, r0, .LBB5_11
-.LBB5_9:
-	ble r4, r0, .LBB5_13
-.LBB5_10:
+	beq r5, r0, .LBB5_13
+.LBB5_11:
+	ble r4, r0, .LBB5_15
+.LBB5_12:
 	addi r4, r4, -1
 	lui r5, %hi(fio_urecl)
 	addi r5, r5, %lo(fio_urecl)
@@ -521,7 +553,7 @@ f77_wu_begin:                           # @f77_wu_begin
 	add r3, r1, r0
 	add r5, r0, r0
 	jal r31, fseek
-.LBB5_11:
+.LBB5_13:
 	lui r1, %hi(fio_ulen)
 	stw r1+%lo(fio_ulen), r0
 	ldw r12, sp+24
@@ -529,7 +561,7 @@ f77_wu_begin:                           # @f77_wu_begin
 	ldw lr, sp+0
 	addi sp, sp, 32
 	jalr r0, r31, 0
-.LBB5_12:
+.LBB5_14:
 	lui r1, %hi(stdout)
 	ldw r3, r1+%lo(stdout)
 	jal r31, fflush
@@ -537,13 +569,13 @@ f77_wu_begin:                           # @f77_wu_begin
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.92)
 	addi r4, r4, %lo(.L.str.92)
-	jal r0, .LBB5_14
-.LBB5_13:
+	jal r0, .LBB5_16
+.LBB5_15:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.94)
 	addi r4, r4, %lo(.L.str.94)
-.LBB5_14:
+.LBB5_16:
 	jal r31, fprintf
 	addi r3, r0, 2
 	jal r31, exit
@@ -721,18 +753,20 @@ f77_wu_end:                             # @f77_wu_end
 	.type	f77_ru_begin,@function
 f77_ru_begin:                           # @f77_ru_begin
 # %bb.0:
-	addi sp, sp, -48
+	addi sp, sp, -64
 	stw sp+0, lr
-	stw sp+44, r11
-	stw sp+40, r12
-	stw sp+36, r13
-	stw sp+32, r14
-	stw sp+28, r15
-	stw sp+24, r16
+	stw sp+60, r11
+	stw sp+56, r12
+	stw sp+52, r13
+	stw sp+48, r14
+	stw sp+44, r15
+	stw sp+40, r16
+	stw sp+36, r17
+	stw sp+32, r18
 	lui r15, %hi(fio_busy)
 	ldbu r1, r15+%lo(fio_busy)
 	addi r12, r0, 1
-	beq r1, r12, .LBB8_31
+	beq r1, r12, .LBB8_29
 .LBB8_1:
 	add r11, r4, r0
 	add r14, r3, r0
@@ -757,35 +791,46 @@ f77_ru_begin:                           # @f77_ru_begin
 	add r4, r0, r0
 	jal r31, fio_resolve
 	add r13, r1, r0
+	addi r17, r14, -1
+	addi r18, r0, 98
+	slli r16, r14, 2
+	bgtu r17, r18, .LBB8_7
+.LBB8_6:
+	lui r1, %hi(fio_uwrote)
+	addi r1, r1, %lo(fio_uwrote)
+	add r1, r16, r1
+	stw r1+0, r0
 	lui r1, %hi(fio_in)
 	stw r1+%lo(fio_in), r13
 	lui r1, %hi(fio_unit)
 	stw r1+%lo(fio_unit), r14
-	addi r1, r14, -1
-	addi r3, r0, 98
-	bgtu r1, r3, .LBB8_14
-.LBB8_6:
-	slli r16, r14, 2
 	lui r1, %hi(fio_uunf)
 	addi r1, r1, %lo(fio_uunf)
 	add r1, r16, r1
 	addi r3, r0, 1
 	stw r1+0, r3
+	jal r0, .LBB8_8
+.LBB8_7:
+	lui r1, %hi(fio_in)
+	stw r1+%lo(fio_in), r13
+	lui r1, %hi(fio_unit)
+	stw r1+%lo(fio_unit), r14
+.LBB8_8:
 	lui r3, %hi(fio_rec_next)
 	ldw r1, r3+%lo(fio_rec_next)
 	stw r3+%lo(fio_rec_next), r0
 	addi r3, r14, -100
 	addi r4, r0, -99
-	bltu r3, r4, .LBB8_10
-.LBB8_7:
+	bltu r3, r4, .LBB8_12
+.LBB8_9:
 	lui r3, %hi(fio_udirect)
 	addi r3, r3, %lo(fio_udirect)
 	add r3, r16, r3
 	ldw r3, r3+0
-	beq r3, r0, .LBB8_10
-.LBB8_8:
-	ble r1, r0, .LBB8_33
-.LBB8_9:
+	beq r3, r0, .LBB8_12
+.LBB8_10:
+	ble r1, r0, .LBB8_31
+.LBB8_11:
 	addi r1, r1, -1
 	lui r3, %hi(fio_urecl)
 	addi r3, r3, %lo(fio_urecl)
@@ -795,15 +840,17 @@ f77_ru_begin:                           # @f77_ru_begin
 	add r3, r13, r0
 	add r5, r0, r0
 	jal r31, fseek
-.LBB8_10:
+.LBB8_12:
 	lui r1, %hi(fio_upos)
 	stw r1+%lo(fio_upos), r0
+	bgtu r17, r18, .LBB8_17
+.LBB8_13:
 	lui r1, %hi(fio_udirect)
 	addi r1, r1, %lo(fio_udirect)
 	add r1, r16, r1
 	ldw r1, r1+0
-	beq r1, r0, .LBB8_19
-.LBB8_11:
+	beq r1, r0, .LBB8_17
+.LBB8_14:
 	lui r1, %hi(fio_urecl)
 	addi r1, r1, %lo(fio_urecl)
 	add r1, r16, r1
@@ -816,74 +863,44 @@ f77_ru_begin:                           # @f77_ru_begin
 	lui r3, %hi(fio_ulen)
 	stw r3+%lo(fio_ulen), r1
 	add r12, r0, r0
-	bne r1, r0, .LBB8_26
-.LBB8_12:
+	bne r1, r0, .LBB8_24
+.LBB8_15:
 	andi r1, r11, 2
-	bne r1, r0, .LBB8_30
-.LBB8_13:
+	bne r1, r0, .LBB8_28
+.LBB8_16:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.95)
 	addi r4, r4, %lo(.L.str.95)
-	jal r0, .LBB8_35
-.LBB8_14:
-	lui r3, %hi(fio_rec_next)
-	ldw r1, r3+%lo(fio_rec_next)
-	stw r3+%lo(fio_rec_next), r0
-	addi r3, r14, -100
-	addi r4, r0, -99
-	bltu r3, r4, .LBB8_18
-.LBB8_15:
-	slli r3, r14, 2
-	lui r4, %hi(fio_udirect)
-	addi r4, r4, %lo(fio_udirect)
-	add r4, r3, r4
-	ldw r4, r4+0
-	beq r4, r0, .LBB8_18
-.LBB8_16:
-	ble r1, r0, .LBB8_33
+	jal r0, .LBB8_33
 .LBB8_17:
-	addi r1, r1, -1
-	lui r4, %hi(fio_urecl)
-	addi r4, r4, %lo(fio_urecl)
-	add r3, r3, r4
-	ldw r3, r3+0
-	mul r4, r3, r1
-	add r3, r13, r0
-	add r5, r0, r0
-	jal r31, fseek
-.LBB8_18:
-	lui r1, %hi(fio_upos)
-	stw r1+%lo(fio_upos), r0
-.LBB8_19:
-	slli r16, r14, 2
 	lui r1, %hi(fio_uend)
 	addi r1, r1, %lo(fio_uend)
 	add r14, r16, r1
 	ldw r1, r14+0
-	blt r1, r0, .LBB8_21
-.LBB8_20:
+	blt r1, r0, .LBB8_19
+.LBB8_18:
 	add r3, r13, r0
 	jal r31, ftell
 	ldw r3, r14+0
-	bge r1, r3, .LBB8_25
-.LBB8_21:
-	addi r3, sp, 20
+	bge r1, r3, .LBB8_23
+.LBB8_19:
+	addi r3, sp, 28
 	addi r12, r0, 1
 	addi r14, r0, 4
 	add r4, r12, r0
 	add r5, r14, r0
 	add r6, r13, r0
 	jal r31, fread
-	bne r1, r14, .LBB8_25
-.LBB8_22:
-	addi r3, sp, 20
+	bne r1, r14, .LBB8_23
+.LBB8_20:
+	addi r3, sp, 28
 	addi r1, r3, 3
 	ldbu r1, r1+0
 	slli r1, r1, 24
-	blt r1, r0, .LBB8_29
-.LBB8_23:
-	ldhu r4, sp+20
+	blt r1, r0, .LBB8_27
+.LBB8_21:
+	ldhu r4, sp+28
 	addi r3, r3, 2
 	ldbu r3, r3+0
 	slli r3, r3, 16
@@ -891,8 +908,8 @@ f77_ru_begin:                           # @f77_ru_begin
 	or  r5, r3, r1
 	lui r1, 16
 	addi r1, r1, 1
-	bge r5, r1, .LBB8_29
-.LBB8_24:
+	bge r5, r1, .LBB8_27
+.LBB8_22:
 	lui r3, %hi(fio_urec)
 	addi r3, r3, %lo(fio_urec)
 	addi r11, r0, 1
@@ -901,44 +918,46 @@ f77_ru_begin:                           # @f77_ru_begin
 	jal r31, fread
 	lui r3, %hi(fio_ulen)
 	stw r3+%lo(fio_ulen), r1
-	addi r3, sp, 20
+	addi r3, sp, 28
 	addi r5, r0, 4
 	add r4, r11, r0
 	add r6, r13, r0
 	jal r31, fread
 	add r12, r0, r0
-	bne r12, r0, .LBB8_27
-	jal r0, .LBB8_28
-.LBB8_25:
+	bne r12, r0, .LBB8_25
+	jal r0, .LBB8_26
+.LBB8_23:
 	lui r1, %hi(fio_uaeof)
 	addi r1, r1, %lo(fio_uaeof)
 	add r1, r16, r1
 	stw r1+0, r12
 	andi r1, r11, 3
-	beq r1, r0, .LBB8_32
-.LBB8_26:
-	beq r12, r0, .LBB8_28
-.LBB8_27:
+	beq r1, r0, .LBB8_30
+.LBB8_24:
+	beq r12, r0, .LBB8_26
+.LBB8_25:
 	stb r15+%lo(fio_busy), r0
-.LBB8_28:
+.LBB8_26:
 	add r1, r12, r0
-	ldw r16, sp+24
-	ldw r15, sp+28
-	ldw r14, sp+32
-	ldw r13, sp+36
-	ldw r12, sp+40
-	ldw r11, sp+44
+	ldw r18, sp+32
+	ldw r17, sp+36
+	ldw r16, sp+40
+	ldw r15, sp+44
+	ldw r14, sp+48
+	ldw r13, sp+52
+	ldw r12, sp+56
+	ldw r11, sp+60
 	ldw lr, sp+0
-	addi sp, sp, 48
+	addi sp, sp, 64
 	jalr r0, r31, 0
-.LBB8_29:
+.LBB8_27:
 	andi r1, r11, 2
-	beq r1, r0, .LBB8_34
-.LBB8_30:
+	beq r1, r0, .LBB8_32
+.LBB8_28:
 	addi r12, r0, 2
-	bne r12, r0, .LBB8_27
-	jal r0, .LBB8_28
-.LBB8_31:
+	bne r12, r0, .LBB8_25
+	jal r0, .LBB8_26
+.LBB8_29:
 	lui r1, %hi(stdout)
 	ldw r3, r1+%lo(stdout)
 	jal r31, fflush
@@ -946,25 +965,25 @@ f77_ru_begin:                           # @f77_ru_begin
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.92)
 	addi r4, r4, %lo(.L.str.92)
-	jal r0, .LBB8_35
-.LBB8_32:
+	jal r0, .LBB8_33
+.LBB8_30:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.96)
 	addi r4, r4, %lo(.L.str.96)
-	jal r0, .LBB8_35
-.LBB8_33:
+	jal r0, .LBB8_33
+.LBB8_31:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.94)
 	addi r4, r4, %lo(.L.str.94)
-	jal r0, .LBB8_35
-.LBB8_34:
+	jal r0, .LBB8_33
+.LBB8_32:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.97)
 	addi r4, r4, %lo(.L.str.97)
-.LBB8_35:
+.LBB8_33:
 	jal r31, fprintf
 	addi r3, r0, 2
 	jal r31, exit
@@ -1068,30 +1087,48 @@ f77_backspace:                          # @f77_backspace
 .LBB11_4:
 	addi r1, r3, -100
 	addi r4, r0, -99
-	bltu r1, r4, .LBB11_8
+	bltu r1, r4, .LBB11_10
 .LBB11_5:
 	addi r1, r3, -5
 	addi r4, r0, 2
-	bltu r1, r4, .LBB11_8
+	bltu r1, r4, .LBB11_10
 .LBB11_6:
 	addi r12, r0, 1
 	add r13, r3, r0
 	add r4, r12, r0
 	jal r31, fio_resolve
 	add r11, r1, r0
-	add r3, r1, r0
+	slli r14, r13, 2
+	lui r1, %hi(fio_uwrote)
+	addi r1, r1, %lo(fio_uwrote)
+	add r1, r14, r1
+	ldw r3, r1+0
+	beq r3, r0, .LBB11_8
+.LBB11_7:
+	stw r1+0, r0
+	add r3, r11, r0
+	jal r31, fflush
+	add r3, r11, r0
+	jal r31, fileno
+	add r13, r1, r0
+	add r3, r11, r0
+	jal r31, ftell
+	add r3, r13, r0
+	add r4, r1, r0
+	jal r31, ftruncate
+.LBB11_8:
+	add r3, r11, r0
 	jal r31, fflush
 	add r3, r11, r0
 	jal r31, ftell
-	slli r3, r13, 2
-	lui r4, %hi(fio_uaeof)
-	addi r4, r4, %lo(fio_uaeof)
-	add r4, r3, r4
-	ldw r5, r4+0
-	beq r5, r0, .LBB11_9
-.LBB11_7:
-	stw r4+0, r0
-.LBB11_8:
+	lui r3, %hi(fio_uaeof)
+	addi r3, r3, %lo(fio_uaeof)
+	add r3, r14, r3
+	ldw r4, r3+0
+	beq r4, r0, .LBB11_11
+.LBB11_9:
+	stw r3+0, r0
+.LBB11_10:
 	ldw r15, sp+28
 	ldw r14, sp+32
 	ldw r13, sp+36
@@ -1100,15 +1137,15 @@ f77_backspace:                          # @f77_backspace
 	ldw lr, sp+0
 	addi sp, sp, 48
 	jalr r0, r31, 0
-.LBB11_9:
-	blt r1, r12, .LBB11_8
-.LBB11_10:
-	lui r4, %hi(fio_uunf)
-	addi r4, r4, %lo(fio_uunf)
-	add r3, r3, r4
-	ldw r3, r3+0
-	beq r3, r0, .LBB11_14
 .LBB11_11:
+	blt r1, r12, .LBB11_10
+.LBB11_12:
+	lui r3, %hi(fio_uunf)
+	addi r3, r3, %lo(fio_uunf)
+	add r3, r14, r3
+	ldw r3, r3+0
+	beq r3, r0, .LBB11_16
+.LBB11_13:
 	add r13, r1, r0
 	addi r4, r1, -4
 	add r3, r11, r0
@@ -1121,22 +1158,22 @@ f77_backspace:                          # @f77_backspace
 	add r6, r11, r0
 	jal r31, fread
 	add r4, r0, r0
-	bne r1, r12, .LBB11_13
-.LBB11_12:
+	bne r1, r12, .LBB11_15
+.LBB11_14:
 	ldw r1, sp+24
 	sub r1, r13, r1
 	addi r4, r1, -8
-.LBB11_13:
+.LBB11_15:
 	add r3, r11, r0
 	add r5, r0, r0
 	jal r31, fseek
-	jal r0, .LBB11_8
-.LBB11_14:
+	jal r0, .LBB11_10
+.LBB11_16:
 	addi r13, r1, -1
 	addi r15, r0, 10
-.LBB11_15:
-	blt r13, r12, .LBB11_17
-.LBB11_16:
+.LBB11_17:
+	blt r13, r12, .LBB11_19
+.LBB11_18:
 	addi r14, r13, -1
 	add r3, r11, r0
 	add r4, r14, r0
@@ -1149,11 +1186,11 @@ f77_backspace:                          # @f77_backspace
 	sub r3, r0, r3
 	and r3, r4, r3
 	xor r13, r14, r3
-	bne r1, r15, .LBB11_15
-	jal r0, .LBB11_18
-.LBB11_17:
+	bne r1, r15, .LBB11_17
+	jal r0, .LBB11_20
+.LBB11_19:
 	add r13, r0, r0
-.LBB11_18:
+.LBB11_20:
 	add r3, r11, r0
 	add r4, r13, r0
 	add r5, r0, r0
@@ -11436,11 +11473,13 @@ fio_flush_line:                         # @fio_flush_line
 	.type	f77_endfile,@function
 f77_endfile:                            # @f77_endfile
 # %bb.0:
-	addi sp, sp, -32
+	addi sp, sp, -48
 	stw sp+0, lr
-	stw sp+28, r11
-	stw sp+24, r12
-	stw sp+20, r13
+	stw sp+44, r11
+	stw sp+40, r12
+	stw sp+36, r13
+	stw sp+32, r14
+	stw sp+28, r15
 	add r11, r3, r0
 	lui r1, %hi(fio_uend_init)
 	ldbu r3, r1+%lo(fio_uend_init)
@@ -11466,35 +11505,59 @@ f77_endfile:                            # @f77_endfile
 	add r13, r1, r0
 	lui r1, %hi(stdout)
 	ldw r1, r1+%lo(stdout)
-	beq r13, r1, .LBB151_8
+	beq r13, r1, .LBB151_11
 .LBB151_5:
 	lui r1, %hi(stderr)
 	ldw r1, r1+%lo(stderr)
-	beq r13, r1, .LBB151_8
+	beq r13, r1, .LBB151_11
 .LBB151_6:
+	addi r1, r11, -100
+	addi r3, r0, -99
+	slli r15, r11, 2
+	bltu r1, r3, .LBB151_9
+.LBB151_7:
+	lui r1, %hi(fio_uwrote)
+	addi r1, r1, %lo(fio_uwrote)
+	add r1, r15, r1
+	ldw r3, r1+0
+	beq r3, r0, .LBB151_9
+.LBB151_8:
+	stw r1+0, r0
+	add r3, r13, r0
+	jal r31, fflush
+	add r3, r13, r0
+	jal r31, fileno
+	add r14, r1, r0
+	add r3, r13, r0
+	jal r31, ftell
+	add r3, r14, r0
+	add r4, r1, r0
+	jal r31, ftruncate
+.LBB151_9:
 	add r3, r13, r0
 	jal r31, fflush
 	addi r1, r11, -1
 	addi r3, r0, 98
-	bgtu r1, r3, .LBB151_8
-.LBB151_7:
+	bgtu r1, r3, .LBB151_11
+.LBB151_10:
 	add r3, r13, r0
 	jal r31, ftell
-	slli r3, r11, 2
-	lui r4, %hi(fio_uend)
-	addi r4, r4, %lo(fio_uend)
-	add r4, r3, r4
-	stw r4+0, r1
+	lui r3, %hi(fio_uend)
+	addi r3, r3, %lo(fio_uend)
+	add r3, r15, r3
+	stw r3+0, r1
 	lui r1, %hi(fio_uaeof)
 	addi r1, r1, %lo(fio_uaeof)
-	add r1, r3, r1
+	add r1, r15, r1
 	stw r1+0, r12
-.LBB151_8:
-	ldw r13, sp+20
-	ldw r12, sp+24
-	ldw r11, sp+28
+.LBB151_11:
+	ldw r15, sp+28
+	ldw r14, sp+32
+	ldw r13, sp+36
+	ldw r12, sp+40
+	ldw r11, sp+44
 	ldw lr, sp+0
-	addi sp, sp, 32
+	addi sp, sp, 48
 	jalr r0, r31, 0
 .Lfunc_end151:
 	.size	f77_endfile, .Lfunc_end151-f77_endfile
@@ -11582,6 +11645,10 @@ f77_rd_begin:                           # @f77_rd_begin
 	slli r16, r14, 2
 	lui r3, %hi(fio_uunf)
 	addi r3, r3, %lo(fio_uunf)
+	add r3, r16, r3
+	stw r3+0, r0
+	lui r3, %hi(fio_uwrote)
+	addi r3, r3, %lo(fio_uwrote)
 	add r3, r16, r3
 	stw r3+0, r0
 	lui r4, %hi(fio_rec_next)
@@ -19348,70 +19415,69 @@ f77_close:                              # @f77_close
 	stw sp+36, r13
 	stw sp+32, r14
 	stw sp+28, r15
-	add r1, r3, r0
-	addi r3, r3, -1
+	stw sp+24, r16
+	addi r1, r3, -1
 	addi r6, r0, 99
-	sltu r3, r3, r6
-	sub r3, r0, r3
-	and r3, r1, r3
-	slli r3, r3, 2
+	sltu r1, r1, r6
+	sub r1, r0, r1
+	and r1, r3, r1
+	slli r1, r1, 2
 	lui r7, %hi(fio_pend)
 	addi r7, r7, %lo(fio_pend)
-	add r3, r3, r7
-	stw r3+0, r0
-	bgtu r1, r6, .LBB184_27
+	add r1, r1, r7
+	stw r1+0, r0
+	bgtu r3, r6, .LBB184_30
 .LBB184_1:
-	slli r11, r1, 2
-	lui r3, %hi(fio_ufile)
-	addi r3, r3, %lo(fio_ufile)
-	add r12, r11, r3
-	ldw r3, r12+0
-	beq r3, r0, .LBB184_27
+	slli r13, r3, 2
+	lui r1, %hi(fio_ufile)
+	addi r1, r1, %lo(fio_ufile)
+	add r14, r13, r1
+	ldw r11, r14+0
+	beq r11, r0, .LBB184_30
 .LBB184_2:
-	addi r7, r0, 1
+	addi r6, r0, 1
 	beq r4, r0, .LBB184_10
 .LBB184_3:
-	addi r6, r0, 1
-	add r13, r0, r0
-	blt r5, r6, .LBB184_11
+	addi r1, r0, 1
+	add r15, r0, r0
+	blt r5, r1, .LBB184_11
 .LBB184_4:
-	addi r7, r0, 6
-	lui r8, %hi(.L.str.80)
-	addi r8, r8, %lo(.L.str.80)
-	addi r9, r0, 26
-	add r10, r0, r0
+	addi r6, r0, 6
+	lui r7, %hi(.L.str.80)
+	addi r7, r7, %lo(.L.str.80)
+	addi r8, r0, 26
+	add r9, r0, r0
 .LBB184_5:
-	beq r10, r7, .LBB184_28
+	beq r9, r6, .LBB184_31
 .LBB184_6:
-	add lr, r10, r8
+	add r10, r9, r7
+	ldb r10, r10+0
+	add lr, r4, r9
 	ldb lr, lr+0
-	add r13, r4, r10
-	ldb r13, r13+0
-	addi r14, r13, -97
-	andi r14, r14, 255
-	sltu r14, r14, r9
-	addi r15, r13, -32
-	xor r15, r15, r13
-	sub r14, r0, r14
-	and r14, r15, r14
-	xor r13, r13, r14
-	bne r13, lr, .LBB184_9
+	addi r12, lr, -97
+	andi r12, r12, 255
+	sltu r12, r12, r8
+	addi r15, lr, -32
+	xor r15, r15, lr
+	sub r12, r0, r12
+	and r12, r15, r12
+	xor lr, lr, r12
+	bne lr, r10, .LBB184_9
 .LBB184_7:
-	addi r10, r10, 1
-	bne r5, r10, .LBB184_5
+	addi r9, r9, 1
+	bne r5, r9, .LBB184_5
 .LBB184_8:
-	add r8, r5, r0
-	beq r8, r7, .LBB184_29
+	add r7, r5, r0
+	beq r7, r6, .LBB184_32
 .LBB184_9:
-	add r7, r0, r0
+	add r6, r0, r0
 .LBB184_10:
-	add r13, r0, r0
+	add r15, r0, r0
 .LBB184_11:
-	add r14, r1, r0
-	bne r7, r0, .LBB184_24
+	bne r6, r0, .LBB184_24
 .LBB184_12:
 	addi r1, r0, 1
-	blt r5, r1, .LBB184_34
+	blt r5, r1, .LBB184_37
 .LBB184_13:
 	addi r1, r0, 4
 	lui r6, %hi(.L.str.81)
@@ -19428,12 +19494,12 @@ f77_close:                              # @f77_close
 	addi lr, r10, -97
 	andi lr, lr, 255
 	sltu lr, lr, r7
-	addi r15, r10, -32
-	xor r15, r15, r10
+	addi r12, r10, -32
+	xor r12, r12, r10
 	sub lr, r0, lr
-	and lr, r15, lr
+	and lr, r12, lr
 	xor r10, r10, lr
-	bne r10, r9, .LBB184_34
+	bne r10, r9, .LBB184_37
 .LBB184_16:
 	addi r8, r8, 1
 	bne r5, r8, .LBB184_14
@@ -19443,7 +19509,7 @@ f77_close:                              # @f77_close
 .LBB184_18:
 	add r6, r1, r0
 .LBB184_19:
-	bne r6, r1, .LBB184_34
+	bne r6, r1, .LBB184_37
 .LBB184_20:
 	addi r1, r0, 5
 	blt r5, r1, .LBB184_24
@@ -19453,30 +19519,53 @@ f77_close:                              # @f77_close
 	addi r5, r0, 32
 .LBB184_22:
 	ldbu r6, r1+0
-	bne r6, r5, .LBB184_34
+	bne r6, r5, .LBB184_37
 .LBB184_23:
 	addi r1, r1, 1
 	addi r4, r4, -1
 	bne r4, r0, .LBB184_22
 .LBB184_24:
+	add r16, r3, r0
+	beq r3, r0, .LBB184_27
+.LBB184_25:
+	lui r1, %hi(fio_uwrote)
+	addi r1, r1, %lo(fio_uwrote)
+	add r1, r13, r1
+	ldw r3, r1+0
+	beq r3, r0, .LBB184_27
+.LBB184_26:
+	stw r1+0, r0
+	add r3, r11, r0
+	jal r31, fflush
+	add r3, r11, r0
+	jal r31, fileno
+	add r12, r1, r0
+	add r3, r11, r0
+	jal r31, ftell
+	add r3, r12, r0
+	add r4, r1, r0
+	jal r31, ftruncate
+.LBB184_27:
+	ldw r3, r14+0
 	jal r31, fclose
-	stw r12+0, r0
+	stw r14+0, r0
 	lui r1, %hi(fio_uend)
 	addi r1, r1, %lo(fio_uend)
-	add r1, r11, r1
+	add r1, r13, r1
 	addi r3, r0, -1
 	stw r1+0, r3
-	slli r11, r14, 8
+	slli r11, r16, 8
 	lui r12, %hi(fio_ufname)
 	addi r12, r12, %lo(fio_ufname)
-	beq r13, r0, .LBB184_26
-.LBB184_25:
+	beq r15, r0, .LBB184_29
+.LBB184_28:
 	add r3, r11, r12
 	jal r31, remove
-.LBB184_26:
+.LBB184_29:
 	add r1, r11, r12
 	stb r1+0, r0
-.LBB184_27:
+.LBB184_30:
+	ldw r16, sp+24
 	ldw r15, sp+28
 	ldw r14, sp+32
 	ldw r13, sp+36
@@ -19485,35 +19574,35 @@ f77_close:                              # @f77_close
 	ldw lr, sp+0
 	addi sp, sp, 48
 	jalr r0, r31, 0
-.LBB184_28:
-	add r8, r7, r0
-	bne r8, r7, .LBB184_9
-.LBB184_29:
-	addi r8, r0, 7
-	add r7, r6, r0
-	add r13, r6, r0
-	blt r5, r8, .LBB184_11
-.LBB184_30:
-	addi r10, r5, -7
-	addi r6, r4, 6
-	addi r8, r0, 32
-	addi r9, r0, 1
 .LBB184_31:
-	ldbu lr, r6+0
-	seq r7, lr, r8
-	addi r13, r10, -1
-	sltu r10, r13, r10
-	bne r10, r9, .LBB184_33
+	add r7, r6, r0
+	bne r7, r6, .LBB184_9
 .LBB184_32:
-	addi r6, r6, 1
-	add r10, r13, r0
-	add r13, r7, r0
-	beq lr, r8, .LBB184_31
-	jal r0, .LBB184_11
+	addi r7, r0, 7
+	add r6, r1, r0
+	add r15, r1, r0
+	blt r5, r7, .LBB184_11
 .LBB184_33:
-	add r13, r7, r0
-	jal r0, .LBB184_11
+	addi r9, r5, -7
+	addi r1, r4, 6
+	addi r7, r0, 32
+	addi r8, r0, 1
 .LBB184_34:
+	ldbu r10, r1+0
+	seq r6, r10, r7
+	addi lr, r9, -1
+	sltu r9, lr, r9
+	bne r9, r8, .LBB184_36
+.LBB184_35:
+	addi r1, r1, 1
+	add r9, lr, r0
+	add r15, r6, r0
+	beq r10, r7, .LBB184_34
+	jal r0, .LBB184_11
+.LBB184_36:
+	add r15, r6, r0
+	jal r0, .LBB184_11
+.LBB184_37:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.82)
@@ -20569,6 +20658,7 @@ f77_rewind:                             # @f77_rewind
 	stw sp+0, lr
 	stw sp+28, r11
 	stw sp+24, r12
+	stw sp+20, r13
 	add r11, r3, r0
 	addi r1, r3, -1
 	addi r3, r0, 99
@@ -20599,33 +20689,52 @@ f77_rewind:                             # @f77_rewind
 .LBB187_4:
 	addi r1, r11, -100
 	addi r3, r0, -99
-	bltu r1, r3, .LBB187_7
+	bltu r1, r3, .LBB187_9
 .LBB187_5:
 	addi r1, r11, -5
 	addi r3, r0, 1
-	bleu r1, r3, .LBB187_7
+	bleu r1, r3, .LBB187_9
 .LBB187_6:
 	addi r4, r0, 1
 	add r3, r11, r0
 	jal r31, fio_resolve
 	add r12, r1, r0
-	add r3, r1, r0
+	slli r13, r11, 2
+	lui r1, %hi(fio_uwrote)
+	addi r1, r1, %lo(fio_uwrote)
+	add r1, r13, r1
+	ldw r3, r1+0
+	beq r3, r0, .LBB187_8
+.LBB187_7:
+	stw r1+0, r0
+	add r3, r12, r0
+	jal r31, fflush
+	add r3, r12, r0
+	jal r31, fileno
+	add r11, r1, r0
+	add r3, r12, r0
+	jal r31, ftell
+	add r3, r11, r0
+	add r4, r1, r0
+	jal r31, ftruncate
+.LBB187_8:
+	add r3, r12, r0
 	jal r31, fflush
 	add r3, r12, r0
 	add r4, r0, r0
 	add r5, r0, r0
 	jal r31, fseek
-	slli r1, r11, 2
-	lui r3, %hi(fio_uaeof)
-	addi r3, r3, %lo(fio_uaeof)
-	add r1, r1, r3
+	lui r1, %hi(fio_uaeof)
+	addi r1, r1, %lo(fio_uaeof)
+	add r1, r13, r1
 	stw r1+0, r0
+	ldw r13, sp+20
 	ldw r12, sp+24
 	ldw r11, sp+28
 	ldw lr, sp+0
 	addi sp, sp, 32
 	jalr r0, r31, 0
-.LBB187_7:
+.LBB187_9:
 	lui r1, %hi(stderr)
 	ldw r3, r1+%lo(stderr)
 	lui r4, %hi(.L.str.91)
@@ -22429,6 +22538,9 @@ f77_rng:
 	.type	fio_in,@object                  # @fio_in
 	.local	fio_in
 	.comm	fio_in,4,4
+	.type	fio_uwrote,@object              # @fio_uwrote
+	.local	fio_uwrote
+	.comm	fio_uwrote,400,4
 	.type	fio_ubz,@object                 # @fio_ubz
 	.local	fio_ubz
 	.comm	fio_ubz,400,4

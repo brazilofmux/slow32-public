@@ -23,6 +23,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #define FIO_MAXFMT   1024
 #define FIO_MAXLINE  1024
@@ -85,6 +86,7 @@ static int   fio_urecl[FIO_MAXUNIT];     /* RECL= in bytes */
 static int   fio_ubz[FIO_MAXUNIT];       /* BLANK='ZERO' */
 static int   fio_rec_next;               /* REC= of the statement about to begin, or 0 */
 static int   fio_uaeof[FIO_MAXUNIT];     /* positioned after the endfile record */
+static int   fio_uwrote[FIO_MAXUNIT];    /* the last transfer was a sequential WRITE */
 static int   fio_recoverable;            /* ERR=/IOSTAT= present: report, do not exit */
 static int   fio_err;                    /* set when a recoverable error happened */
 /* Unformatted record buffer: assembled on WRITE, consumed on READ. */
@@ -1040,6 +1042,21 @@ static int fio_rd_done(int r) {
     return r;
 }
 
+/* A sequential WRITE makes its record the file's last (F77 12.9.5.2.3):
+ * what the file held after it is gone.  Nothing is cut while the writing
+ * goes on; the unit's next REWIND, BACKSPACE, ENDFILE or CLOSE cuts the
+ * file where the writing stopped.  (It stayed: a file rewritten shorter
+ * and reopened gave back the old records past the new ones.) */
+static void fio_wrote(int unit) {
+    if (unit > 0 && unit < FIO_MAXUNIT && fio_ufile[unit] && !fio_udirect[unit]) fio_uwrote[unit] = 1;
+}
+static void fio_cut(int unit, FILE *f) {
+    if (unit <= 0 || unit >= FIO_MAXUNIT || !fio_uwrote[unit]) return;
+    fio_uwrote[unit] = 0;
+    fflush(f);
+    ftruncate(fileno(f), (int)ftell(f));
+}
+
 void f77_wr_begin(int unit, const char *fmt, int fmtlen) {
     fio_enter();
     fio_init_units();
@@ -1047,6 +1064,7 @@ void f77_wr_begin(int unit, const char *fmt, int fmtlen) {
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
     if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 0; fio_uaeof[unit] = 0; }
+    fio_wrote(unit);
     fio_position(fio_out, unit);
     fio_wr_setup(fmt, fmtlen);
 }
@@ -1062,6 +1080,7 @@ void f77_wu_begin(int unit) {
     fio_out = fio_resolve(unit, 1);
     fio_unit = unit;
     if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 1; fio_uaeof[unit] = 0; }   /* BACKSPACE needs to know */
+    fio_wrote(unit);
     fio_position(fio_out, unit);
     fio_ulen = 0;
 }
@@ -1108,6 +1127,7 @@ static int fio_ru_begin(int unit, int flags) {
     FILE *f;
     fio_init_units();
     f = fio_resolve(unit, 0);
+    if (unit > 0 && unit < FIO_MAXUNIT) fio_uwrote[unit] = 0;
     fio_in = f;
     fio_unit = unit;
     if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 1;
@@ -1171,6 +1191,7 @@ void f77_backspace(int unit) {
     fio_init_units();
     if (unit <= 0 || unit >= FIO_MAXUNIT || unit == 5 || unit == 6) return;
     f = fio_resolve(unit, 1);
+    fio_cut(unit, f);
     fflush(f);
     pos = ftell(f);
     if (fio_uaeof[unit]) { fio_uaeof[unit] = 0; return; }   /* back over the endfile record */
@@ -2279,6 +2300,7 @@ void f77_endfile(int unit) {
     fio_init_units();
     f = fio_resolve(unit, 1);
     if (f == stdout || f == stderr) return;
+    fio_cut(unit, f);
     fflush(f);
     if (unit > 0 && unit < FIO_MAXUNIT) {
         fio_uend[unit] = ftell(f);
@@ -2547,7 +2569,7 @@ int f77_rd_begin(int unit, const char *fmt, int fmtlen, int has_end) {
     fio_ibuf = 0;
     fio_in = fio_resolve(unit, 0);
     fio_unit = unit;
-    if (unit > 0 && unit < FIO_MAXUNIT) fio_uunf[unit] = 0;
+    if (unit > 0 && unit < FIO_MAXUNIT) { fio_uunf[unit] = 0; fio_uwrote[unit] = 0; }
     fio_position(fio_in, unit);
     fio_bz = (unit > 0 && unit < FIO_MAXUNIT) ? fio_ubz[unit] : 0;
     return fio_rd_done(fio_rd_setup(fmt, fmtlen, has_end));
@@ -3647,6 +3669,7 @@ void f77_close(int unit, const char *status, int slen) {
         fprintf(stderr, "f77: CLOSE STATUS value is not supported\n");
         exit(2);
     }
+    fio_cut(unit, fio_ufile[unit]);
     fclose(fio_ufile[unit]);
     fio_ufile[unit] = 0;
     fio_uend[unit] = -1;
@@ -3767,6 +3790,7 @@ void f77_rewind(int unit) {
         exit(2);
     }
     f = fio_resolve(unit, 1);
+    fio_cut(unit, f);
     fflush(f);
     fseek(f, 0L, SEEK_SET);
     fio_uaeof[unit] = 0;

@@ -4589,11 +4589,27 @@ static int f77_asg_pick(int tty, int tdt, int trk, int *x, int xrk) {
 
 /* Specific e called on the target's address taddr (tlen a CHARACTER's
  * length) and the value x. */
+/* A structure's value v of type dt as a value of its own, in a
+ * temporary: what (S) is, and the right side of a defined assignment
+ * (12.3.2.1.2: as if in parentheses).  Passed where it was, D = D gave
+ * the procedure one object twice, and an INTENT(OUT) first argument's
+ * default initialization was the value assigned.  A type with
+ * ALLOCATABLE components stays where it is: its copy would own them. */
+static int f77_dt_nalloc(int dt);
+static void f77_copy_n(int dst, int src, int n);
+static int f77_dt_own_value(int v, int dt) {
+    int tmp;
+    if (dt < 0 || f77_dt_nalloc(dt) != 0) return v;
+    tmp = f77_char_temp(f77_dt_size[dt]);
+    f77_copy_n(tmp, f77_dcx_arg(v), f77_iconst(f77_dt_size[dt]));
+    return f77_dcx_mark(tmp);
+}
+
 static void f77_asg_call(int e, int taddr, int tty, int tlen, int *x) {
     int addrs[2]; int lens[2]; int cb; int nc; int k; int r;
     if (f77_me_pkind[e] != F77_UNIT_SUBR) { f77_error("an ASSIGNMENT(=)'s procedure is a SUBROUTINE"); return; }
     addrs[0] = taddr; lens[0] = tty == TY_CHAR ? tlen : -1;
-    addrs[1] = f77_op_actual(x[0], x[1], x[2], x[3], &lens[1]);
+    addrs[1] = f77_op_actual(x[1] == TY_DERIVED ? f77_dt_own_value(x[0], x[4]) : x[0], x[1], x[2], x[3], &lens[1]);
     cb = h_ncarg;
     nc = 0;
     for (k = 0; k < 2; k++) { f77_carg(addrs[k], 0); nc = nc + 1; }
@@ -7147,6 +7163,7 @@ static void f77_where_end(void) {
 }
 
 static void f77_stmt_assign(void);
+static int f77_vecsub_hoist(int from, int *to);
 
 /* WHERE (mask) assignment, or WHERE (mask) opening the construct its
  * ELSEWHERE and END WHERE close. */
@@ -7205,7 +7222,24 @@ static void f77_stmt_elsewhere(void) {
     lx_t = T_EOF;
 }
 
+static void f77_stmt_assign1(void);
+/* An assignment.  A vector subscript on its left that is an expression
+ * is evaluated first (f77_vecsub_hoist), its temporary freed after. */
 static void f77_stmt_assign(void) {
+    int mk; int eq;
+    mk = f77_tfree_mark();
+    eq = f77_toplevel('=', 0);
+    if (eq > 0) {
+        int nerr0;
+        nerr0 = f77_nerr;
+        f77_vecsub_hoist(0, &eq);
+        if (f77_nerr > nerr0) { lx_t = T_EOF; return; }
+    }
+    f77_stmt_assign1();
+    f77_tfree_to(mk);
+}
+
+static void f77_stmt_assign1(void) {
     int s;
     int v;
     int vty;
@@ -14788,11 +14822,80 @@ static int f77_desig_hoist(int from, int *to) {
     return n;
 }
 
+/* A vector subscript that is an expression -- A(2*IV), A(IV + 1), or a
+ * PARAMETER array's name -- is evaluated into a hidden INTEGER array, and
+ * the subscript is then that array's name, the vector subscript f77
+ * knows.  Text [from, *to), as f77_hoist; the number made.  (It was
+ * refused as "a whole array in an expression", and in an ELEMENTAL
+ * SUBROUTINE's actual it compiled, to the wrong elements.) */
+static int f77_vecsub_hoist(int from, int *to) {
+    int n; int i; int nerr0;
+    n = 0;
+    nerr0 = f77_nerr;
+    i = from;
+    while (i < *to) {
+        if (lx_stmt[i] == '\'') {
+            i = i + 1;
+            while (i < lx_stmt_len && lx_stmt[i] != '\'') i = i + 1;
+            i = i + 1;
+            continue;
+        }
+        if (lx_isalpha(lx_stmt[i]) && f77_name_starts(i, from)) {
+            char nm[F77_MAX_NAME];
+            int k; int sy; int a; int close; int depth; int j; int made;
+            k = 0;
+            while (i < lx_stmt_len && (lx_isalpha(lx_stmt[i]) || lx_isdigit(lx_stmt[i]) || lx_stmt[i] == '_')) {
+                if (k < F77_MAX_NAME - 1) nm[k++] = lx_stmt[i];
+                i = i + 1;
+            }
+            nm[k] = 0;
+            sy = f77_sym_find(nm);
+            if (sy < 0 || f77_srank[sy] == 0 || i >= *to || lx_stmt[i] != '(') continue;
+            close = f77_match_paren(i) - 1;
+            if (close > *to) continue;
+            /* each subscript [a, j): one with no ':' of its own, over an
+             * array, that is not already a vector subscript */
+            made = 0;
+            a = i + 1; depth = 0;
+            for (j = a; j <= close && !made; j++) {
+                int c; int colon; int q; int at; int h; int len0;
+                c = lx_stmt[j];
+                if (c == '\'') { j = j + 1; while (j < close && lx_stmt[j] != '\'') j = j + 1; continue; }
+                if (c == '(') { depth = depth + 1; continue; }
+                if (c == ')' && j < close) { depth = depth - 1; continue; }
+                if (!(j == close || (c == ',' && depth == 0))) continue;
+                colon = 0;
+                { int d2; d2 = 0;
+                  for (q = a; q < j; q++) {
+                      if (lx_stmt[q] == '(') d2++; else if (lx_stmt[q] == ')') d2--;
+                      else if (lx_stmt[q] == ':' && d2 == 0) colon = 1;
+                  } }
+                if (!colon && j > a && !f77_text_is_vecsub(a) && f77_aex_first(a, j, &at) >= 0) {
+                    len0 = lx_stmt_len;
+                    h = f77_av_operand(a, j);
+                    if (h < 0 || f77_nerr > nerr0) return n;
+                    f77_text_replace(a, j, h);
+                    *to = *to + (lx_stmt_len - len0);
+                    n = n + 1;
+                    made = 1;
+                }
+                a = j + 1;
+            }
+            if (made) i = from;         /* the text moved: look again from the start */
+            continue;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
 static int f77_hoist(int from, int *to) {
     int n; int nerr0;
     n = 0;
     nerr0 = f77_nerr;
     n = f77_desig_hoist(from, to);
+    if (f77_nerr > nerr0) return n;
+    n = n + f77_vecsub_hoist(from, to);
     if (f77_nerr > nerr0) return n;
     for (;;) {
         int av; int b; int close; int s; int len0;
@@ -14875,7 +14978,7 @@ static int f77_actual_value(void) {
         return v;
     }
     f77_act_len = -1;
-    if (vty == TY_DERIVED) return f77_dcx_arg(v);   /* a structure's value is its address (a constructor's temporary) */
+    if (vty == TY_DERIVED) return f77_dcx_arg(alias ? f77_dt_own_value(v, ex_dt) : v);   /* a structure's value is its address (a constructor's temporary) */
     f77_frame = f77_frame + f77_tysize(vty);
     tmp = hi_emit(HI_ALLOCA, f77_aty(vty), -1, -1, 0 - f77_frame, NULL);
     f77_alloca_add(tmp, 0 - f77_frame);
@@ -15677,6 +15780,57 @@ static int f77_call_shape(int skip, int *ext) {
 /* CALL: the TRANSFER temporaries its actuals made are freed after it.  An
  * elemental SUBROUTINE with an array among its actuals is called once for
  * each element. */
+/* An ELEMENTAL SUBROUTINE called with arrays is called once for each
+ * element, and what one call defines a later call's argument must not
+ * read: an actual that is a value -- an expression, or an array under a
+ * vector subscript, which no call may define -- is evaluated whole,
+ * before the first call, when it names an array another actual hands the
+ * procedure to define.  CALL DOUBLE(A(1:4) + 1, A(2:5)) doubled its own
+ * results; so did MVBITS from A(IV) into A.  (Two designators of one
+ * array that overlap are the program's error, 12.4.1.6.) */
+static void f77_elem_call_values(int skip) {
+    char nm[F77_MAX_NAME];
+    int open; int nerr0;
+    f77_scan_from(skip);
+    if (lx_t != T_NAME) return;
+    strcpy(nm, lex_name);
+    f77_tok();
+    if (lx_t != T_LP || !(f77_elemental_name(nm) || f77_is_mvbits(nm))) return;
+    open = (int)(lx_rts - lx_stmt);
+    nerr0 = f77_nerr;
+    { int end; end = f77_match_paren(open) - 1; f77_vecsub_hoist(open + 1, &end); }
+    for (;;) {
+        F77Args A;
+        int k; int j; int found;
+        int base[F77_MAX_IARGS]; int value[F77_MAX_IARGS];
+        if (f77_nerr > nerr0 || !f77_args_at(open, &A)) return;
+        for (k = 0; k < A.n; k++) {
+            int at;
+            base[k] = f77_aex_first(A.from[k], A.to[k], &at);
+            value[k] = base[k] >= 0 &&
+                       !(at == A.from[k] && f77_text_is_operand(base[k], A.from[k], A.to[k]) &&
+                         !f77_paren_has_vecsub_at(at + (int)strlen(f77_sname[base[k]])));
+        }
+        found = 0;
+        for (k = 0; k < A.n && !found; k++) {
+            if (!value[k]) continue;
+            for (j = 0; j < A.n; j++) {
+                int sj; int h;
+                sj = base[j];
+                if (j == k || sj < 0 || value[j]) continue;
+                if (!f77_overlap_scan(A.from[k], A.to[k], sj,
+                                      f77_sptr[sj] || f77_starg[sj] || f77_shidden[sj] || f77_sname[sj][0] == '%', 0, 1)) continue;
+                h = f77_av_operand(A.from[k], A.to[k]);
+                if (h < 0) return;
+                f77_text_replace(A.from[k], A.to[k], h);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return;
+    }
+}
+
 static void f77_stmt_call(int skip) {
     int saved; int nt; int k;
     int ext[F77_MAX_RANK]; int c[F77_MAX_RANK];
@@ -15684,6 +15838,7 @@ static void f77_stmt_call(int skip) {
     F77AexSave asv;
     saved = f77_call_mk;
     f77_call_mk = f77_tfree_mark();
+    f77_elem_call_values(skip);
     nt = f77_call_shape(skip, ext);
     if (nt > 0) {
         int outer;
