@@ -238,6 +238,7 @@ int dbf_open(dbf_t *db, const char *filename) {
     db->header_dirty = 0;
     db->end_dirty = 0;
     db->modified = 0;
+    db->data_changed = 0;
     db->file_pos = -1; db->last_op = 0;
     dbf_cache_init(db);
 
@@ -295,6 +296,7 @@ int dbf_append_blank_ex(dbf_t *db, int eager) {
     db->record_count++;
     db->current_record = db->record_count;
     db->end_dirty = 1;
+    db->data_changed = 1;
 
     /* Fill record buffer with spaces, deletion flag = ' ' */
     memset(db->record_buf, ' ', db->record_size);
@@ -352,6 +354,7 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
     /* Flush current if dirty */
     if (db->record_dirty)
         dbf_flush_record(db);
+    db->data_changed = 0;   /* a record read: nothing of it changed yet */
 
     if (db->cache_buf && db->cache_count > 0 &&
         recno >= db->cache_start &&
@@ -458,7 +461,11 @@ int dbf_flush_record(dbf_t *db) {
     db->file_pos = pos + db->record_size;
     db->last_op = 2;
     db->record_dirty = 0;
-    db->modified = 1;
+    /* a record's data dates the table; its deletion flag alone does not
+     * (DELETE and RECALL leave LUPDATE() as it was -- Harbour, and
+     * Teacher's Pet's Quicksilver build) */
+    if (db->data_changed) db->modified = 1;
+    db->data_changed = 0;
 
     /* Sync our own cache so subsequent reads don't restore stale data */
     if (db->cache_buf && db->cache_count > 0 &&
@@ -525,6 +532,7 @@ int dbf_set_field_raw(dbf_t *db, int idx, const char *value) {
         memset(db->record_buf + 1 + db->fields[idx].offset + vlen, ' ', len - vlen);
 
     db->record_dirty = 1;
+    db->data_changed = 1;
     /* Update cache in place if this record is cached */
     if (db->cache_buf && db->cache_count > 0 &&
         db->current_record >= db->cache_start &&

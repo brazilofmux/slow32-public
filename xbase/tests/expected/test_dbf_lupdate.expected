@@ -25,6 +25,12 @@ one
 . Database LUPT.DBF opened with 1 record(s).
 . 
 after a GET left as it was: 80.01.02
+. . 1 record deleted.
+. Database closed.
+. Database LUPT.DBF opened with 1 record(s).
+. 
+after DELETE: 80.01.02
+. . 1 record recalled.
 . . Database closed.
 . Database LUPT.DBF opened with 1 record(s).
 . 

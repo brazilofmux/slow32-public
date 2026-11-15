@@ -7499,7 +7499,7 @@ static int field_assign(const char *alias, const char *field, const value_t *val
     dbf_read_record(db, db->current_record);
     if (only_changed && db->fields[fi].type != 'M') {
         char before[256], after[256];
-        int was_dirty = db->record_dirty;
+        int was_dirty = db->record_dirty, was_changed = db->data_changed;
         dbf_get_field_raw(db, fi, before, sizeof(before));
         replace_begin(db, &st);
         replace_set(db, &st, fi, val);
@@ -7513,6 +7513,7 @@ static int field_assign(const char *alias, const char *field, const value_t *val
         dbf_get_field_raw(db, fi, after, sizeof(after));
         if (strcmp(before, after) == 0) {
             db->record_dirty = was_dirty;
+            db->data_changed = was_changed;
             area_set_current_idx(saved);
             ctx_setup();
             return 0;
