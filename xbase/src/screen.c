@@ -1328,7 +1328,11 @@ void screen_read(void) {
                     val_to_string(&v, nv, sizeof(nv));
                     if (strcmp(nv, scr.gets[i].initial) != 0) read_updated = 1;
                 }
-                if (getsys_style() && v.type == VAL_NUM) get_show_value(&scr.gets[i], &v);
+                /* an accepted number shown again as it now is, right-justified
+                 * through its picture -- in both dialects: Teacher's Pet's
+                 * Quicksilver build shows " 3" once "3" typed over "30" is
+                 * accepted, the old digit gone */
+                if (v.type == VAL_NUM) get_show_value(&scr.gets[i], &v);
                 break;  /* accepted */
             }
             } /* for (;;) */
