@@ -86,8 +86,8 @@ memory variables with `PRIVATE`/`PUBLIC`/`LOCAL`, macro substitution,
   dBASE III's: an index built by dBASE cannot be opened; rebuild it
   with `INDEX ON`. No `.NTX`, `.MDX` or `.CDX`.
 - `CREATE` makes the file but does not leave it in use; `USE` it.
-- Fixed limits (`src/*.h`): 2,000 lines per program file, 255
-  characters per line (continuations included), 256 memory variables,
+- Fixed limits (`src/*.h`): 255 characters per line (continuations
+  included), 256 memory variables,
   10 work areas, 7 indexes per work area, 100-byte index keys, 128
   fields, 32 nested calls.
 - Several SET options are accepted and ignored (`STATUS`, `SCOREBOARD`,
