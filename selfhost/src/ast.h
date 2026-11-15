@@ -336,6 +336,7 @@ struct Node {
     int is_varargs;   /* FUNC: 1 if variadic (...); CALL_PTR: through a variadic signature */
     int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
     int locals_size;  /* FUNC: total local stack bytes */
+    int calls_setjmp; /* FUNC: calls setjmp (its frame space is never reused) */
     int bit_off;      /* MEMBER: bit offset within storage unit (bit-fields) */
     int bit_width;    /* MEMBER: bit-field width in bits; 0 = not a bit-field.
                        * FUNC: the frame's alignment, when a local needs more

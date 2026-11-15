@@ -10396,6 +10396,7 @@ params_done:
         fn->body->body = kr_pre;
     }
     fn->locals_size = ps_stack_max;
+    fn->calls_setjmp = ps_fn_setjmp;
     fn->bit_width = ps_fn_align;
     fn->arr_cols = ps_fn_vm;        /* not inlined: hl_inl_sel_one */
 

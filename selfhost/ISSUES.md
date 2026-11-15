@@ -4112,3 +4112,35 @@ The same scan, ported to `stage05/hir_codegen.h` and `stage06/hir_codegen.h`
 tail calls.  The stage walk passes (stage05 to stage08), stage07's assembler
 is silent under memcheck, and stage08's `cc.s32x` is the same bytes built
 through the repaired stage06 as through the old one.
+
+### 119. [RESOLVED 2026-11-15] A compiler temporary held its frame room to the end of the function: a 1.5 MB frame
+
+The lowering's temporaries -- a structure return's slot, `&&`/`||` and `?:`
+merges, an inlined callee's frame, sema's complex temporaries -- came from
+`hl_temp_stack`, a count that only grew over the function.  The parser has
+given a block's locals back since GitHub issue 77; these were never given
+back.  xbc's programs are one `main` of many statements, each with calls
+returning a `value_t`: a 4,600-line test asked for a 1.5 MB frame and wrote
+past its 1 MB stack under stage08, where clang's build ran.
+
+A temporary lives no longer than its statement, so `hl_stmt` now gives the
+room a statement took back when it ends (not when the function calls
+setjmp: the parser's reason, a `longjmp` back into a statement after later
+ones have run).  Two things then had to change:
+
+- Splices of inlined statics in different statements can now be shifted
+  to the same place, and slot ids restart with each function: callee B's
+  slot 3 would find callee A's alloca, of another type, in
+  `hl_get_alloca_id` -- two variables on one alloca.  No case was found
+  where that changed an answer (a build without the change passes the
+  test below), but each variable keeps its own: each alloca carries the
+  splice it belongs to (`hl_inl_tag`), and a lookup matches it.
+- sema numbers its complex temporaries across the unit, but an inlined
+  body is lowered at each splice; the number-to-slot cache is cut back
+  with the room, so a later splice gets room of its own.
+
+`tests/test_stmt_temps.c`: sixteen calls returning 256 bytes each took a
+4 KB frame, held under 1 KB now; two inlined statics with locals of
+different types in neighbouring statements; complex temporaries in two
+statements.  The xbc test that found it (`xbc/tests/dupspan.prg`) runs
+under stage08 in `xbc/tests/run-stage08.sh`.

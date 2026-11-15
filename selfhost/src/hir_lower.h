@@ -23,6 +23,7 @@
  * hl_emit_temp_alloca's comment describes. */
 static int *hl_aoff;
 static int *hl_aslot;  /* Node->slot_id; 0 = temp keyed by offset */
+static int *hl_atag;   /* the inlined splice it belongs to (hl_inl_tag); 0 = the function's own */
 static int *hl_ainst;
 static int hl_nalloca;
 static int hl_alloca_cap;
@@ -33,13 +34,23 @@ static void hl_alloca_room(int n) {
     if (hl_alloca_cap == 0) {
         tab_add((char **)&hl_aoff, (int)sizeof(int), TAB_HL_ALLOCA, 0);
         tab_add((char **)&hl_aslot, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_atag, (int)sizeof(int), TAB_HL_ALLOCA, 0);
         tab_add((char **)&hl_ainst, (int)sizeof(int), TAB_HL_ALLOCA, 0);
     }
     tab_grow(TAB_HL_ALLOCA, &hl_alloca_cap, 1024, hl_nalloca + n);
 }
 
-/* Temp stack for merge values (&&, ||, ternary) */
+/* Temp stack for merge values (&&, ||, ternary), structure returns,
+ * inlined frames: compiler temporaries past the parser's locals.  Each
+ * lives no longer than the statement that made it, so hl_stmt gives a
+ * statement's room back when it ends -- a function of many statements
+ * each calling something that returns a structure took a slot per call
+ * (xbc's generated programs: a 4,600-line test asked for a 1.5 MB
+ * frame and overran its stack).  Not when the function calls setjmp,
+ * for the parser's reason: a longjmp can come back into a statement
+ * after later ones have run. */
 static int hl_temp_stack;
+static int hl_keep_temps;       /* 1: the function calls setjmp */
 
 /* --- Loop break/continue targets --- */
 static int *hl_break_blk;
@@ -243,6 +254,13 @@ static int   hl_inl_caller_sz;   /* current function's body size, capped at hl_i
 static int   hl_inl_depth;
 static Node *hl_inl_stack[HL_INL_MAX_DEPTH];
 static int   hl_inl_shift;       /* callee frame -> caller frame */
+/* Which splice is being lowered (0: none), so its locals' allocas are
+ * its own.  Slot ids restart with each function, and once statements
+ * give their temporaries back two splices in different statements can
+ * be shifted to the same place: callee B's slot 3 would find callee A's
+ * alloca, of another type -- two variables on one alloca. */
+static int   hl_inl_tag;
+static int   hl_inl_serial;      /* splices so far in this function */
 static int   hl_inl_ret_blk;     /* continuation block for `return` */
 static int   hl_inl_res;         /* result alloca, -1 when void */
 static int   hl_inl_res_ty;
@@ -289,12 +307,14 @@ static int hl_get_alloca_id(int offset, int ty, int slot_id) {
     int i;
     i = 0;
     while (i < hl_nalloca) {
-        if (hl_aslot[i] == slot_id && hl_aoff[i] == offset) return hl_ainst[i];
+        if (hl_aslot[i] == slot_id && hl_aoff[i] == offset &&
+            hl_atag[i] == hl_inl_tag) return hl_ainst[i];
         i = i + 1;
     }
     hl_alloca_room(1);
     hl_aoff[hl_nalloca] = offset;
     hl_aslot[hl_nalloca] = slot_id;
+    hl_atag[hl_nalloca] = hl_inl_tag;
     hl_ainst[hl_nalloca] = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
     hl_nalloca = hl_nalloca + 1;
     return hl_ainst[hl_nalloca - 1];
@@ -323,6 +343,7 @@ static int hl_emit_temp_alloca(int ty, int offset) {
     hl_alloca_room(1);
     hl_aoff[hl_nalloca] = offset;
     hl_aslot[hl_nalloca] = 0;
+    hl_atag[hl_nalloca] = hl_inl_tag;
     hl_ainst[hl_nalloca] = inst;
     hl_nalloca = hl_nalloca + 1;
     return inst;
@@ -2227,6 +2248,7 @@ static int hl_inline_call(Node *call, Node *fn) {
     int save_rv_hi;
     int save_loop;
     int save_sw;
+    int save_tag;
     int frame;
     int ret_blk;
     int res;
@@ -2275,6 +2297,9 @@ static int hl_inline_call(Node *call, Node *fn) {
      * callee big enough to allocate temps afterwards was inlined. */
     hl_inl_shift = hl_temp_stack;
     hl_temp_stack = hl_temp_stack + frame;
+    save_tag = hl_inl_tag;
+    hl_inl_serial = hl_inl_serial + 1;
+    hl_inl_tag = hl_inl_serial;
     hl_inl_stack[hl_inl_depth] = fn;
     hl_inl_depth = hl_inl_depth + 1;
     hl_inl_depth_dbg = hl_inl_depth;
@@ -2368,6 +2393,7 @@ static int hl_inline_call(Node *call, Node *fn) {
 
     hl_inl_depth = hl_inl_depth - 1;
     hl_inl_shift = save_shift;
+    hl_inl_tag = save_tag;
     hl_inl_ret_blk = save_ret_blk;
     hl_inl_res = save_res;
     hl_inl_res_ty = save_res_ty;
@@ -4519,7 +4545,23 @@ static void hl_check_labels(void) {
     }
 }
 
+static void hl_stmt_body(Node *n);
+
 static void hl_stmt(Node *n) {
+    int saved_stack;
+    int saved_nctemp;
+    saved_stack = hl_temp_stack;
+    saved_nctemp = hl_nctemp;
+    hl_stmt_body(n);
+    if (hl_keep_temps) return;
+    hl_temp_stack = saved_stack;
+    /* sema's numbers are the unit's, but an inlined body is lowered at
+     * each splice: its temporaries must get room again, not the slot
+     * the last splice had */
+    hl_nctemp = saved_nctemp;
+}
+
+static void hl_stmt_body(Node *n) {
     int sw_hi;
     int cv;
     int lv;
@@ -5018,6 +5060,9 @@ static void hl_func(Node *fn) {
     hl_nparams = fn->nparams;  /* will be updated by param expansion for llong */
     hl_hi = -1;
     hl_temp_stack = fn->locals_size;
+    hl_keep_temps = fn->calls_setjmp;
+    hl_inl_tag = 0;
+    hl_inl_serial = 0;
     hl_loop_depth = 0;
     hl_sw_depth = 0;
     hl_inl_loop_base = 0;
