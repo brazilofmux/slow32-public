@@ -4458,22 +4458,61 @@ typedef struct {
     char key[256];
 } sort_entry_t;
 
+/* SORT's keys: ON field [/A|/D][/C] [, field ...] -- dBASE III Plus takes
+ * a list (it read the first and dropped the rest, a FOR after them too:
+ * Teacher's Pet's progress report sorted on period alone and selected every
+ * student).  Each key is a fixed-width segment of the entry's key */
+#define MAX_SORT_KEYS 10
 typedef struct {
-    int ascending;
-    int case_insensitive;
-    int key_type; /* 0=char/default, 1=numeric, 2=date */
+    int nkeys;
+    int field[MAX_SORT_KEYS];
+    int off[MAX_SORT_KEYS], len[MAX_SORT_KEYS];
+    int ascending[MAX_SORT_KEYS];
+    int case_insensitive[MAX_SORT_KEYS];
+    int key_type[MAX_SORT_KEYS]; /* 0=char/default, 1=numeric, 2=date */
 } sort_ctx_t;
 
 static int sort_compare_r(const void *a, const void *b, void *arg) {
     const sort_entry_t *sa = (const sort_entry_t *)a;
     const sort_entry_t *sb = (const sort_entry_t *)b;
     sort_ctx_t *ctx = (sort_ctx_t *)arg;
-    int cmp;
-    if (ctx->key_type == 0 && ctx->case_insensitive)
-        cmp = str_icmp(sa->key, sb->key);
-    else
-        cmp = strcmp(sa->key, sb->key);
-    return ctx->ascending ? cmp : -cmp;
+    int k;
+    for (k = 0; k < ctx->nkeys; k++) {
+        const char *x = sa->key + ctx->off[k], *y = sb->key + ctx->off[k];
+        int cmp = 0, j;
+        for (j = 0; j < ctx->len[k] && !cmp; j++) {
+            int cx = (unsigned char)x[j], cy = (unsigned char)y[j];
+            if (ctx->key_type[k] == 0 && ctx->case_insensitive[k]) { cx = toupper(cx); cy = toupper(cy); }
+            cmp = cx - cy;
+        }
+        if (cmp) return ctx->ascending[k] ? cmp : -cmp;
+    }
+    /* equal keys keep their order */
+    return sa->recno < sb->recno ? -1 : sa->recno > sb->recno;
+}
+
+/* The entry's key: each field's value in its segment */
+static void sort_make_key(dbf_t *db, const sort_ctx_t *ctx, char *key) {
+    int k;
+    for (k = 0; k < ctx->nkeys; k++) {
+        char raw[256], seg[256];
+        int n;
+        dbf_get_field_raw(db, ctx->field[k], raw, sizeof(raw));
+        if (ctx->key_type[k] == 1) {
+            value_t v = val_num(atof(raw));
+            index_format_key_value(1, &v, seg, sizeof(seg));
+        } else if (ctx->key_type[k] == 2) {
+            value_t v = val_date(date_from_dbf(raw));
+            index_format_key_value(2, &v, seg, sizeof(seg));
+        } else {
+            str_copy(seg, raw, sizeof(seg));
+        }
+        n = (int)strlen(seg);
+        if (n > ctx->len[k]) n = ctx->len[k];
+        memcpy(key + ctx->off[k], seg, (size_t)n);
+        memset(key + ctx->off[k] + n, ' ', (size_t)(ctx->len[k] - n));
+    }
+    key[ctx->off[ctx->nkeys - 1] + ctx->len[ctx->nkeys - 1]] = '\0';
 }
 
 #define MAX_SORT_ENTRIES 2000
@@ -4539,37 +4578,45 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     }
     p = skip_ws(p + 2);
 
-    /* Parse field name */
-    {
-        int fi = 0;
+    /* The keys: field [/A|/D][/C], ... */
+    ctx.nkeys = 0;
+    for (;;) {
+        int fi = 0, k = ctx.nkeys, at;
+        if (k >= MAX_SORT_KEYS) { prog_error(ERR_SYNTAX, "Too many SORT keys"); return; }
         while (is_ident_char(*p) && fi < DBF_MAX_FIELD_NAME - 1)
             field_name[fi++] = *p++;
         field_name[fi] = '\0';
-    }
-    str_upper(field_name);
-
-    field_idx = dbf_find_field(db, field_name);
-    if (field_idx < 0) {
-        prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
-        return;
-    }
-
-    /* Parse flags */
-    ctx.ascending = 1;
-    ctx.case_insensitive = 0;
-    ctx.key_type = 0;
-    if (db->fields[field_idx].type == 'N') ctx.key_type = 1;
-    else if (db->fields[field_idx].type == 'D') ctx.key_type = 2;
-    p = skip_ws(p);
-    while (*p == '/') {
-        p++;
-        char fc = *p;
-        if (fc >= 'a' && fc <= 'z') fc -= 32;
-        if (fc == 'A') ctx.ascending = 1;
-        else if (fc == 'D') ctx.ascending = 0;
-        else if (fc == 'C') ctx.case_insensitive = 1;
-        p++;
+        str_upper(field_name);
+        field_idx = dbf_find_field(db, field_name);
+        if (field_idx < 0) {
+            prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
+            return;
+        }
+        at = k ? ctx.off[k - 1] + ctx.len[k - 1] : 0;
+        ctx.field[k] = field_idx;
+        ctx.ascending[k] = 1;
+        ctx.case_insensitive[k] = 0;
+        ctx.key_type[k] = db->fields[field_idx].type == 'N' ? 1 : db->fields[field_idx].type == 'D' ? 2 : 0;
+        ctx.off[k] = at;
+        ctx.len[k] = ctx.key_type[k] == 1 ? 16 : ctx.key_type[k] == 2 ? 8 : db->fields[field_idx].length;
+        if (at + ctx.len[k] >= (int)sizeof(((sort_entry_t *)0)->key)) {
+            prog_error(ERR_SYNTAX, "SORT key too long");
+            return;
+        }
+        ctx.nkeys++;
         p = skip_ws(p);
+        while (*p == '/') {   /* /A /D /C, or together: /DC */
+            p++;
+            while (*p && strchr("ADCadc", *p)) {
+                char fc = (char)toupper((unsigned char)*p++);
+                if (fc == 'A') ctx.ascending[k] = 1;
+                else if (fc == 'D') ctx.ascending[k] = 0;
+                else ctx.case_insensitive[k] = 1;
+            }
+            p = skip_ws(p);
+        }
+        if (*p != ',') break;
+        p = skip_ws(p + 1);
     }
 
     /* Parse scope */
@@ -4609,18 +4656,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         }
 
         sort_entries[nentries].recno = i;
-        dbf_get_field_raw(db, field_idx, raw, sizeof(raw));
-        if (ctx.key_type == 1) {
-            value_t v = val_num(atof(raw));
-            index_format_key_value(1, &v, sort_entries[nentries].key,
-                                   sizeof(sort_entries[nentries].key));
-        } else if (ctx.key_type == 2) {
-            value_t v = val_date(date_from_dbf(raw));
-            index_format_key_value(2, &v, sort_entries[nentries].key,
-                                   sizeof(sort_entries[nentries].key));
-        } else {
-            str_copy(sort_entries[nentries].key, raw, sizeof(sort_entries[nentries].key));
-        }
+        sort_make_key(db, &ctx, sort_entries[nentries].key);
         nentries++;
 
         if (nentries == MAX_SORT_ENTRIES) {
@@ -4681,11 +4717,8 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         }
     }
 
-    if (nchunks == 0 && nentries == 0) {
-        prog_error(ERR_RECORD_RANGE, "No records to sort");
-        free(sort_entries);
-        return;
-    }
+    /* nothing selected: the table is made all the same, empty (dBASE; a
+     * program USEs it next -- Teacher's Pet's progress report did) */
 
     /* Phase 2: Create destination file */
     {

@@ -476,3 +476,18 @@ the current record (SCAN's step goes from where its body left the
 pointer, as dBASE's SKIP does); COPY TO and both SCANs walk with it.
 Test: xbc/tests/scanidx.prg (SCAN, SCAN REST, SCAN NEXT, COPY TO, COPY TO
 SDF under an index; the old build fails every line), suite and oracle.
+
+### SORT took one key and dropped the rest, a FOR after them too — RESOLVED 2026-11-15
+
+SORT TO file ON f1, f2, f3 FOR cond: the parser read f1, stopped at the
+comma, found no FOR there, and sorted every record on f1 alone, saying
+nothing.  dBASE III Plus sorts on a list of fields, each with /A /D /C
+(/DC together).  Teacher's Pet's progress report sorts its students ON
+ST_PE_NUM,ST_LAST,ST_FIRST FOR a name range that, left blank, selects
+nobody -- its Quicksilver build prints nothing, and ours printed every
+student.  The keys are fixed-width segments compared each with its own
+direction and case; equal keys keep their order (qsort is not stable;
+the record number breaks the tie); and a SORT that selects nothing makes
+its table, empty, where it refused ("No records to sort") and the
+program's next USE failed.  Test: xbc/tests/sortkeys.prg (old build fails
+every line), suite and oracle.

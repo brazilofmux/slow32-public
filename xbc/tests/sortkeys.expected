@@ -1,0 +1,4 @@
+
+ON P, L /C, N /D: bdcae
+ON P /D, N FOR N > 4: acbd
+FOR none:          0
