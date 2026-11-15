@@ -1147,9 +1147,12 @@ Teacher's Pet, a dBASE III gradebook from 1986 (18 programs, nine tables,
 macro-built variable names, index-ordered reports, printer output), was
 compiled whole with s32-xbc and driven screen by screen beside the
 interpreter, the same keys piped to both.  Its sources had been through a
-later maintenance pass that the shipped Clipper build predates, so the
-build's strings settled what the original said; the program is a test
-here, not a thing to improve.  It ran into fourteen defects of ours, none
+later maintenance pass that the shipped build predates, so the build's
+strings settled what the original said; the program is a test here, not
+a thing to improve.  (Corrected 2026-11-15: the build is WordTech
+Quicksilver 1.2c's, not Clipper's.  Two older copies of the sources
+since recovered, a Quicksilver one and a FoxPro port, carry the keys the
+build's strings do.)  It ran into fourteen defects of ours, none
 of which the probes, the oracle or majesty had reached:
 
 - @ SAY ... PICTURE had a character mask of its own (14137 under "##"
