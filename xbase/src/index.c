@@ -547,13 +547,34 @@ static int page_upper_bound(index_t *idx, ndx_page_t *page, const char *key) {
     return lo;
 }
 
+/* Whether the first entry under page_no is the key itself with a record
+ * number past recno (the new entry belongs left of that subtree) */
+static int first_entry_after(index_t *idx, int page_no, const char *key, uint32_t recno) {
+    ndx_page_t *p = page_get(idx, page_no);
+    int after;
+    while (p && p->type == PAGE_INTERNAL) {
+        int child = p->children[0];
+        page_put(p);
+        p = page_get(idx, child);
+    }
+    if (!p) return 0;
+    after = p->nkeys > 0 && key_cmp(page_key(idx, p, 0), key, idx->key_len) == 0 && p->recnos[0] > recno;
+    page_put(p);
+    return after;
+}
+
 /* ---- Search: find leaf and position for key ---- */
+/* The FIRST leaf that can hold key: a run of equal keys a split divided
+ * starts in the page left of its separator (the separator is the right
+ * page's first key), and routing right of it found the run part-way --
+ * Teacher's Pet's grade report lost a student's first grades.  A search
+ * that ends past a leaf's last key goes on into the next. */
 static ndx_page_t *bt_find_leaf(index_t *idx, const char *key) {
     ndx_page_t *node;
     if (idx->num_pages <= 1) return NULL;
     node = page_get(idx, idx->root_page);
     while (node && node->type == PAGE_INTERNAL) {
-        int pos = page_upper_bound(idx, node, key);
+        int pos = page_lower_bound(idx, node, key);
         int child_no = node->children[pos];
         page_put(node);
         /* descend to children[pos] */
@@ -580,9 +601,17 @@ int index_key_exists(index_t *idx, const char *key, uint32_t exclude_recno) {
     leaf = bt_find_leaf(idx, padded);
     if (!leaf) return 0;
 
+    /* the run of equal keys, across leaves */
     pos = page_lower_bound(idx, leaf, padded);
-    while (pos < leaf->nkeys &&
-           key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) == 0) {
+    for (;;) {
+        if (pos >= leaf->nkeys) {
+            int next = leaf->next_leaf;
+            page_put(leaf);
+            if (!next || !(leaf = page_get(idx, next))) return 0;
+            pos = 0;
+            continue;
+        }
+        if (key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) != 0) break;
         if (leaf->recnos[pos] != exclude_recno) {
             page_put(leaf);
             return 1; /* duplicate exists */
@@ -924,10 +953,17 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
         return 0;
     }
 
-    /* Walk down tree to find leaf */
+    /* Walk down tree to find leaf: among the children a run of equal keys
+     * spans, the last whose first entry is not past (key, recno) -- equal
+     * keys stay in record order when an older record takes a key already
+     * there (a REPLACE), not only when a new one is appended */
     node = page_get(idx, idx->root_page);
     while (node->type == PAGE_INTERNAL) {
+        int lo = page_lower_bound(idx, node, padded);
         pos = page_upper_bound(idx, node, padded);
+        if (!idx->unique)
+            while (pos > lo && first_entry_after(idx, node->children[pos], padded, recno))
+                pos--;
         path[depth] = node->page_no;
         path_pos[depth] = pos;
         depth++;
@@ -1051,12 +1087,18 @@ static int bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno)
     if (!node) return 0;
 
     if (node->type == PAGE_INTERNAL) {
-        int pos = page_upper_bound(idx, node, key);
-        int removed = bt_remove(idx, node->children[pos], key, recno);
+        /* every child whose range can hold key: a run of equal keys may
+         * span several (routing to the last alone missed an entry in an
+         * earlier one, and left it in the index) */
+        int lo = page_lower_bound(idx, node, key), hi = page_upper_bound(idx, node, key);
+        int pos, removed = 0;
+        for (pos = lo; pos <= hi && !removed; pos++)
+            removed = bt_remove(idx, node->children[pos], key, recno);
         if (!removed) {
             page_put(node);
             return 0;
         }
+        pos--;   /* the child that held it */
         
         /* Check for underflow in the child we just returned from */
         ndx_page_t *child = page_get(idx, node->children[pos]);

@@ -8,7 +8,6 @@
 
 struct lexer;
 
-#define MAX_PROGRAM_LINES 2000
 #define MAX_LINE_LEN      256
 #define MAX_CALL_DEPTH     32
 #define MAX_LOOP_DEPTH     16

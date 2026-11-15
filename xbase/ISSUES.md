@@ -503,7 +503,28 @@ out in order, here they broke off partway along the line.  The build
 breaks ties on the record number, and an insert goes after the equal keys
 with smaller record numbers.  (An insert into a run of equal keys that
 spans leaves, of a record older than some of them, can still land at the
-start of the last leaf's run.)  The user's ledger reports, run with and
+start of the last leaf's run -- resolved in the next entry.)  The user's ledger reports, run with and
 without the change, differ only where equal-key lines were summed in a
 different order: "-0.00" became "0.00" on two lines.  Test:
 xbc/tests/eqkeys.prg (the old build fails it).
+
+### A run of equal keys across index pages: SEEK found it part-way, a delete missed an entry — RESOLVED 2026-11-15
+
+A page's separator is the first key of the page to its right, so a run of
+equal keys a split divided starts in the page LEFT of it.  The search
+routed right of the separator: SEEK landed in the run part-way, and
+Teacher's Pet's grade report, still after the previous fix, lost a
+student's first grades.  Removing an entry routed the same way and missed
+one in an earlier page, leaving it in the index; the duplicate check for
+UNIQUE looked at one leaf only; and an older record taking a key already
+in such a run went to the end of it.  Now the search takes the first page
+that can hold the key and goes on into the next leaf when it runs off
+the end, a remove tries each child the run spans, the duplicate check
+walks the run across leaves, and an insert picks, among the children the
+run spans, the last whose first entry is not past its record number.
+
+Its test, xbc/tests/dupspan.prg (2,000 records under three keys, SEEK to
+each, every seventh record's key replaced, the order walked), is 4,600
+lines, and the interpreter refused it: a program was held to 2,000
+lines.  The table grows now, and running out of memory says so.  Under
+stage08 the compiled test then ran off its stack -- selfhost ISSUES-119.

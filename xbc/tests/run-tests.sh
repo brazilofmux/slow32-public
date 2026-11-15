@@ -46,6 +46,7 @@ run_one dosend "$CLIP_DIR/tests" || fail=1
 run_one scanidx "$CLIP_DIR/out" || fail=1
 run_one sortkeys "$CLIP_DIR/out" || fail=1
 run_one eqkeys "$CLIP_DIR/out" || fail=1
+run_one dupspan "$CLIP_DIR/out" || fail=1
 run_one func || fail=1
 run_one funcpriv || fail=1
 run_one funclocal || fail=1

@@ -936,6 +936,8 @@ void prog_preprocess(char *line, memvar_store_t *store) {
 }
 
 /* ---- Load program file ---- */
+static void prog_free(program_t *prog);
+
 static program_t *prog_load(const char *filename) {
     FILE *fp;
     char path[128];
@@ -1014,15 +1016,20 @@ static program_t *prog_load(const char *filename) {
             }
         }
 
+        /* as long as memory lasts: dBASE sets no length (a 2,000-line
+         * ceiling refused a generated test program) */
         if (prog->nlines >= capacity) {
+            char **nl = (char **)realloc(prog->lines, (size_t)capacity * 2 * sizeof(char *));
+            int *ns = nl ? (int *)realloc(prog->srcline, (size_t)capacity * 2 * sizeof(int)) : NULL;
+            if (nl) prog->lines = nl;
+            if (!nl || !ns) {   /* refused whole, not run in part */
+                prog_error(ERR_OUT_OF_MEMORY, "Out of memory reading the program");
+                fclose(fp);
+                prog_free(prog);
+                return NULL;
+            }
+            prog->srcline = ns;
             capacity *= 2;
-            if (capacity > MAX_PROGRAM_LINES) capacity = MAX_PROGRAM_LINES;
-            prog->lines = (char **)realloc(prog->lines, capacity * sizeof(char *));
-            prog->srcline = (int *)realloc(prog->srcline, capacity * sizeof(int));
-        }
-        if (prog->nlines >= MAX_PROGRAM_LINES) {
-            printf("Program too long (max %d lines).\n", MAX_PROGRAM_LINES);
-            break;
         }
 
         {
