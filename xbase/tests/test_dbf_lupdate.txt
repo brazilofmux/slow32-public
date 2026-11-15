@@ -20,6 +20,12 @@ GO TOP
 USE
 USE LUPT
 ? "after reading:", DTOC(LUPDATE())
+@ 1,1 GET NAME
+READ
+
+USE
+USE LUPT
+? "after a GET left as it was:", DTOC(LUPDATE())
 REPLACE NAME WITH "two"
 USE
 USE LUPT

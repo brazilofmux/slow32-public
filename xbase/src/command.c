@@ -7473,7 +7473,10 @@ void cmd_api_replace_abort(cmd_replace_state_t *st) {
 
 /* alias->field := value (alias NULL: the current work area): the current
  * record's field, through the REPLACE steps so the indexes keep up. */
-int cmd_api_field_assign(const char *alias, const char *field, const value_t *val) {
+/* only_changed: nothing is written when the field already holds what the
+ * value formats to -- a GET accepted as it stood leaves the record (and
+ * its last-update date) alone, as dBASE's READ does */
+static int field_assign(const char *alias, const char *field, const value_t *val, int only_changed) {
     int saved, area, fi;
     dbf_t *db;
     replace_state_t st;
@@ -7494,12 +7497,35 @@ int cmd_api_field_assign(const char *alias, const char *field, const value_t *va
         return -1;
     }
     dbf_read_record(db, db->current_record);
-    replace_begin(db, &st);
-    replace_set(db, &st, fi, val);
+    if (only_changed && db->fields[fi].type != 'M') {
+        char before[256], after[256];
+        int was_dirty = db->record_dirty;
+        dbf_get_field_raw(db, fi, before, sizeof(before));
+        replace_begin(db, &st);
+        replace_set(db, &st, fi, val);
+        dbf_get_field_raw(db, fi, after, sizeof(after));
+        if (strcmp(before, after) == 0) {
+            db->record_dirty = was_dirty;
+            area_set_current_idx(saved);
+            ctx_setup();
+            return 0;
+        }
+    } else {
+        replace_begin(db, &st);
+        replace_set(db, &st, fi, val);
+    }
     replace_finish(db, &st);
     area_set_current_idx(saved);
     ctx_setup();
     return 0;
+}
+
+int cmd_api_field_assign(const char *alias, const char *field, const value_t *val) {
+    return field_assign(alias, field, val, 0);
+}
+
+int cmd_api_field_assign_changed(const char *alias, const char *field, const value_t *val) {
+    return field_assign(alias, field, val, 1);
 }
 int cmd_get_deleted(void)               { return set_opts.deleted; }
 

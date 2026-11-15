@@ -18,6 +18,13 @@ one
 . Database LUPT.DBF opened with 1 record(s).
 . 
 after reading: 80.01.02
+. 
+one
+. 
+. Database closed.
+. Database LUPT.DBF opened with 1 record(s).
+. 
+after a GET left as it was: 80.01.02
 . . Database closed.
 . Database LUPT.DBF opened with 1 record(s).
 . 

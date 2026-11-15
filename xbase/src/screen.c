@@ -777,11 +777,12 @@ static void get_store_value(get_entry_t *g, const value_t *v) {
          * and kept none of its own) */
         /* ... and as REPLACE stores it: formatted for the field (a number
          * right-justified, as dBASE keeps it -- its string, written raw,
-         * left-justified one), the indexes kept up */
+         * left-justified one), the indexes kept up; and only a change, as
+         * dBASE's READ writes (an untouched record keeps its date) */
         expr_ctx_t *fctx = cmd_get_expr_ctx();
         dbf_t *fdb = fctx->db;
         if (fdb && dbf_is_open(fdb))
-            cmd_api_field_assign(NULL, fdb->fields[g->field_index].name, v);
+            cmd_api_field_assign_changed(NULL, fdb->fields[g->field_index].name, v);
         return;
     }
     if (g->varname[0]) memvar_set(cmd_get_memvar_store(), g->varname, v);

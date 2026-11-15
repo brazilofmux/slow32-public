@@ -71,6 +71,7 @@ void cmd_api_replace_end(cmd_replace_state_t *st);
 void cmd_api_replace_abort(cmd_replace_state_t *st);
 int  cmd_is_command_word(const char *ident);
 int  cmd_api_field_assign(const char *alias, const char *field, const value_t *val);
+int  cmd_api_field_assign_changed(const char *alias, const char *field, const value_t *val);   /* writes only a change */
 int cmd_get_deleted(void);
 int cmd_get_softseek(void);
 int cmd_get_unique(void);
