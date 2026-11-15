@@ -1042,15 +1042,18 @@ void screen_read(void) {
             str_copy(buf, scr.gets[i].initial, sizeof(buf));
             len = strlen(buf);
             if (scr.gets[i].type == VAL_NUM) {
-                /* a number sits right-justified in its field, and the
-                 * first digit typed replaces it (Clipper's numeric GET;
-                 * "20" over 10 became 200 here) */
+                /* a number sits right-justified in its field.  Compiled,
+                 * the first digit typed replaces it (Clipper's numeric
+                 * GET; "20" over 10 became 200 here); interpreted, typing
+                 * overwrites from the left and leaves the rest, as dBASE
+                 * III does ("1" over 0 is 10 -- Teacher's Pet's Quicksilver
+                 * build, a dBASE III compiler, edits so) */
                 if (len < fwidth) {
                     memmove(buf + (fwidth - len), buf, (size_t)len + 1);
                     memset(buf, ' ', (size_t)(fwidth - len));
                     len = fwidth;
                 }
-                pic.clear = 1;
+                if (getsys_style()) pic.clear = 1;
             }
             /* Pad to field width */
             while (len < fwidth && len < 255) { buf[len++] = ' '; }

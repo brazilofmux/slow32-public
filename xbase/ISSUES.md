@@ -374,3 +374,13 @@ when a table is changed; Teacher's Pet's Quicksilver build does, and a
 table ours had written still carried its creation date.  dbf_t.modified is
 set by a record write, a count write or a new end; dbf_close stamps today
 then.  A table only read keeps its date.  Test: test_dbf_lupdate.
+
+### A numeric GET in the interpreter cleared on the first key, as Clipper's does — RESOLVED 2026-11-15
+
+User ruling (2026-11-15): the interpreter edits as dBASE III does, a
+compiled program as Clipper does.  Teacher's Pet's Quicksilver build
+shows dBASE III's numeric GET: the cursor at the left, typing overwrites
+and leaves the rest ("1" over 0 in "##" is 10).  Both engines cleared the
+field on the first key; the clear is Clipper's alone now (getsys_style(),
+which a compiled program's runtime turns on).  Test: test_get_overtype
+(term service, keys piped, as the INKEY cases).
