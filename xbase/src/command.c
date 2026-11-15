@@ -7504,6 +7504,13 @@ static int field_assign(const char *alias, const char *field, const value_t *val
         replace_begin(db, &st);
         replace_set(db, &st, fi, val);
         dbf_get_field_raw(db, fi, after, sizeof(after));
+        /* a blank number is zero: accepted as it stood it stays blank, as
+         * dBASE leaves it (a type's empty weight under Teacher's Pet's
+         * Quicksilver build) */
+        if ((db->fields[fi].type == 'N' || db->fields[fi].type == 'F') &&
+            before[strspn(before, " ")] == '\0' && val->type == VAL_NUM && val->num == 0)
+            dbf_set_field_raw(db, fi, before);
+        dbf_get_field_raw(db, fi, after, sizeof(after));
         if (strcmp(before, after) == 0) {
             db->record_dirty = was_dirty;
             area_set_current_idx(saved);

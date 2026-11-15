@@ -41,5 +41,16 @@ h = FOPEN("GETN.DBF")
 x = FSEEK(h, 130, 0)
 ? "record: [" + FREAD(h, 12) + "]"
 x = FCLOSE(h)
+? "--- A blank number accepted as it stood stays blank ---"
+USE GETN
+APPEND BLANK
+@ 1,1 GET A PICTURE "##"
+READ
+
+USE
+h = FOPEN("GETN.DBF")
+x = FSEEK(h, 142, 0)
+? "record 2: [" + FREAD(h, 12) + "]"
+x = FCLOSE(h)
 ERASE GETN.DBF
 QUIT

@@ -41,5 +41,15 @@ record: [ 5  2.57   ]
 . Database closed.
 . . . 
 record: [ 7 12.5cd  ]
+. . 
+--- A blank number accepted as it stood stays blank ---
+. Database GETN.DBF opened with 1 record(s).
+. Record 2 added.
+. 
+ 0
+. 
+. Database closed.
+. . . 
+record 2: [           ]
 . . File erased.
 . 
