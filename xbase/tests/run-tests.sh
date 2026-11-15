@@ -139,6 +139,20 @@ else
     echo "  FAIL: test_prn_file"; echo "$prn_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1))
 fi
 
+# Index files in this interpreter's format before dBASE III's (NDX2,
+# tests/ndx2) are converted when opened: they walk as fresh ones do, and
+# are dBASE's afterwards (no NDX2 magic left)
+TOTAL=$((TOTAL + 1))
+cp "$BASDIR"/tests/ndx2/* "$BASDIR/tests/"
+conv_out=$( cd "$BASDIR/tests" && printf 'DO NDX2CONV\nQUIT\n' | "$EMU" $EMU_ARGS "$DBASE" 2>&1 | filter_output )
+conv_magic=$(cd "$BASDIR/tests" && cat OLDC.NDX OLDN.NDX OLDD.NDX OLDCD.NDX OLDCF.NDX | LC_ALL=C grep -c '2XDN' || true)
+if echo "$conv_out" | grep -q 'converted: .T. .T. .T. .T. .T.' &&
+   echo "$conv_out" | grep -q 'FOR kept: .T.' && [ "$conv_magic" = 0 ]; then
+    echo "  PASS: test_ndx2_convert"; PASS=$((PASS + 1))
+else
+    echo "  FAIL: test_ndx2_convert"; echo "$conv_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1))
+fi
+
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT

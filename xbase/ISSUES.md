@@ -528,3 +528,53 @@ each, every seventh record's key replaced, the order walked), is 4,600
 lines, and the interpreter refused it: a program was held to 2,000
 lines.  The table grows now, and running out of memory says so.  Under
 stage08 the compiled test then ran off its stack -- selfhost ISSUES-119.
+
+### An index was this interpreter's own format: dBASE's and Quicksilver's could not be opened — RESOLVED 2026-11-15 (user ruling)
+
+`.NDX` files were NDX2, a B+ tree of 4 KB pages with leaf links, by the
+ruling of 2026-10-29 (REINDEX the interchange).  Teacher's Pet's grade
+report then matched its Quicksilver build but for one line, and that line
+came from the disc's own GRADES index: 2,557 entries for 2,550 records,
+seven records indexed twice.  Quicksilver walked it as it was; we could
+only rebuild it.  Asked whether xbase should read and write dBASE III's
+format, the user chose read and write.
+
+The pages are dBASE III's now: 512 bytes, a 16-bit key count and items of
+(left page, record number, key); an internal key is the last key under
+its left page (the separator had been the right page's first key, and
+the insert, split, borrow and bulk-build code follow the new rule);
+numeric and date keys are IEEE doubles, a date its Julian day (a date had
+been its YYYYMMDD, key type 2: gone); the header has the key length,
+keys per page and item size, which a reader takes as given (the disc has
+items of 20 and 22 bytes for 11- and 13-byte keys).  The file keeps no
+leaf links or entry count: opening reads the internal pages level by
+level and rebuilds both.  DESCENDING and FOR, which dBASE III has not,
+sit in header bytes it leaves zero (byte 22, and the FOR after the key
+expression's NUL).  NDX2 and NDX1 files are converted when opened.
+
+Held to Quicksilver on Teacher's Pet: its build prints the grade report
+from the files xbase writes, both of ours print Quicksilver's from the
+disc's damaged ones (26,943 bytes, the repeated grades included), and
+after each of 27 edit and report sessions on the disc's files the three
+leave indexes that walk the same.  An emptied page there has the count
+0x80000000: the count is read, as Quicksilver reads it, by its low 16
+bits.  Tests: xbc/tests/ndxkeep.prg (kept up, reopened, against fresh
+builds), xbase test_ndx2_convert (tests/ndx2, made by the build before).
+
+### SET ORDER TO took only a literal — RESOLVED 2026-11-15
+
+`SET ORDER TO n` with n a variable, or any expression, left the order as
+it was, silently, in both engines (the compiled program hands SET ORDER
+to the interpreter's code).  It takes a numeric expression now, and TO
+alone is natural order, as in dBASE III.  Found when a test walking
+each order by `SET ORDER TO o` passed by walking the first four times.
+
+### A record added or changed went into a FOR index whatever its condition said — RESOLVED 2026-11-15
+
+INDEX ON ... FOR built the index right, but APPEND, REPLACE, GATHER and
+BROWSE kept it up as if it had no condition: a blank record appended went
+in, and a record changed out of the condition stayed.  A record's entry
+is now its key only while the condition holds (compiled the first time,
+for an index opened from its file): changing into it inserts, out of it
+removes.
+

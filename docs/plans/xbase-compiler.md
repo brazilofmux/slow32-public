@@ -97,8 +97,10 @@ waits for a measurement that asks for it.
 
 ## Not in scope
 
-- `.NDX` compatibility with real dBASE: our NDX2 is fine, and reindexing
-  is the interchange, as it was in the period (ruled 2026-10-29).
+- (`.NDX` compatibility with real dBASE was listed here, ruled 2026-10-29;
+  the ruling gave way on 2026-11-15, when a recovered Quicksilver program's
+  own index files were the last difference left: the files are dBASE III's
+  now, read and written.)
 - (Clipper 5's code blocks, objects and preprocessor were listed here
   "until a real program needs one"; the Clipper bar of 2026-10-29 made
   them in scope, and all three are done.)

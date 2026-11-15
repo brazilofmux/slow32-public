@@ -25,7 +25,7 @@ src/memvar.c     — Memory variable store (256 vars)
 src/set.c        — SET option management
 src/program.c    — PRG file execution, control flow, procedures, functions
 src/screen.c     — @SAY/@GET/READ, boxes, CLEAR, SET COLOR
-src/index.c      — NDX index files (B+ tree, 4KB pages, NDX2 format)
+src/index.c      — NDX index files (dBASE III format: B+ tree, 512-byte pages)
 src/report.c     — FRM report definitions and report generation
 src/label.c      — LBL label definitions and label generation
 src/date.c       — Date arithmetic and formatting
@@ -287,14 +287,22 @@ Cross-area field access: `alias->fieldname`.
 
 ## Index System
 
-B+ tree implementation with 4KB pages (NDX2 format). Leaf pages are
-doubly-linked for efficient sequential traversal. Variable fanout adapts to
-key length (e.g., 170 keys/page for 20-byte keys). Incremental index
-maintenance: APPEND, REPLACE, PACK, ZAP, and APPEND FROM all update active
-indexes automatically without requiring REINDEX. Backward-compatible reader
-for old NDX1 flat-array format. Multiple indexes per work area via SET INDEX
-TO or USE...INDEX. SET ORDER TO selects controlling index. REINDEX rebuilds
-from current data.
+`.NDX` files are dBASE III's: 512-byte pages, an internal key the last
+key under its left page, numeric and date keys stored as doubles (a date
+its Julian day), key length and keys per page in the header.  An index
+built by dBASE III or Quicksilver opens here, and one built here opens
+there: Teacher's Pet's Quicksilver build prints its grade report from the
+files this interpreter writes, and this interpreter prints Quicksilver's
+from the disc's own.  The file keeps no links between leaves; opening
+rebuilds them from the tree, and the entry count with them.  Two things
+dBASE III has not, DESCENDING and FOR, are kept in header bytes dBASE
+leaves zero.  This interpreter's own formats before (NDX2, NDX1) are
+converted to dBASE's when opened.  Incremental index maintenance:
+APPEND, REPLACE, PACK, ZAP, and APPEND FROM all update active indexes
+(a FOR index takes or drops a record as its condition says) without
+requiring REINDEX. Multiple indexes per work area via SET INDEX TO or
+USE...INDEX. SET ORDER TO <expN> selects controlling index. REINDEX
+rebuilds from current data.
 
 ## Screen I/O
 

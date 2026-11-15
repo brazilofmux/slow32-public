@@ -198,6 +198,28 @@ static void index_sync(index_t *idx, dbf_t *db) {
     if (index_current_recno(idx) != want) index_seek(idx, key, 0);
 }
 
+/* The current record's key for idx, or "" when it is not in idx: its
+ * FOR condition is false, or the key did not evaluate.  A record added
+ * or changed went into a FOR index whatever its condition said; the
+ * condition is compiled the first time, an opened index has only its
+ * text. */
+static void index_entry_key(index_t *idx, char *keybuf) {
+    keybuf[0] = '\0';
+    if (idx->for_expr[0]) {
+        value_t c;
+        int rc;
+        if (!idx->for_ast && !strchr(idx->for_expr, '&')) {
+            const char *err = NULL;
+            idx->for_ast = ast_compile(idx->for_expr, &memvar_store, &err);
+        }
+        rc = idx->for_ast ? ast_eval(idx->for_ast, &expr_ctx, &c)
+                          : ast_eval_dynamic(idx->for_expr, &expr_ctx, &c);
+        if (rc != 0) { expr_ctx.error = NULL; return; }
+        if ((c.type == VAL_LOGIC && !c.logic) || (c.type == VAL_NUM && c.num == 0.0)) return;
+    }
+    if (eval_index_key(idx, keybuf) != 0) keybuf[0] = '\0';
+}
+
 /* Insert current record into all active indexes for current work area */
 static void indexes_insert_current(dbf_t *db) {
     work_area_t *wa = cur_wa();
@@ -207,9 +229,8 @@ static void indexes_insert_current(dbf_t *db) {
         index_t *idx = &wa->indexes[i];
         if (idx->active) {
             char keybuf[MAX_INDEX_KEY + 1];
-            if (eval_index_key(idx, keybuf) == 0) {
-                index_insert(idx, keybuf, db->current_record);
-            }
+            index_entry_key(idx, keybuf);
+            if (keybuf[0]) index_insert(idx, keybuf, db->current_record);
         }
     }
 }
@@ -233,9 +254,7 @@ static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
     for (i = 0; i < wa->num_indexes; i++) {
         index_t *idx = &wa->indexes[i];
         keys[i][0] = '\0';
-        if (idx->active) {
-            eval_index_key(idx, keys[i]);
-        }
+        if (idx->active) index_entry_key(idx, keys[i]);
     }
 }
 
@@ -249,18 +268,20 @@ static int indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1])
     int i;
     ctx_setup();
 
-    /* Phase 1: evaluate new keys and check UNIQUE constraints */
+    /* Phase 1: evaluate new keys and check UNIQUE constraints ("" is a
+     * record out of the index, before or after: see index_entry_key) */
     for (i = 0; i < wa->num_indexes; i++) {
         changed[i] = 0;
         index_t *idx = &wa->indexes[i];
-        if (idx->active && eval_index_key(idx, new_keys[i]) == 0) {
-            if (memcmp(old_keys[i], new_keys[i], idx->key_len) != 0) {
-                changed[i] = 1;
-                if (idx->unique &&
-                    index_key_exists(idx, new_keys[i], db->current_record)) {
-                    prog_error_fmt(ERR_UNIQUE, "Uniqueness violation on index %s", idx->filename);
-                    return -1;
-                }
+        if (!idx->active) continue;
+        index_entry_key(idx, new_keys[i]);
+        if (!old_keys[i][0] != !new_keys[i][0] ||
+            (new_keys[i][0] && memcmp(old_keys[i], new_keys[i], idx->key_len) != 0)) {
+            changed[i] = 1;
+            if (new_keys[i][0] && idx->unique &&
+                index_key_exists(idx, new_keys[i], db->current_record)) {
+                prog_error_fmt(ERR_UNIQUE, "Uniqueness violation on index %s", idx->filename);
+                return -1;
             }
         }
     }
@@ -269,8 +290,8 @@ static int indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1])
     for (i = 0; i < wa->num_indexes; i++) {
         if (changed[i]) {
             index_t *idx = &wa->indexes[i];
-            index_remove(idx, old_keys[i], db->current_record);
-            index_insert(idx, new_keys[i], db->current_record);
+            if (old_keys[i][0]) index_remove(idx, old_keys[i], db->current_record);
+            if (new_keys[i][0]) index_insert(idx, new_keys[i], db->current_record);
             index_flush(idx);
         }
     }
@@ -6566,17 +6587,27 @@ static void h_set(dbf_t *db, lexer_t *l) {
     } else if (cmd_kw(l, "ORDER")) {
         lex_next(l);
         if (cmd_kw(l, "TO")) {
+            /* SET ORDER TO <expN>, any numeric expression (a literal was
+             * all it read: SET ORDER TO n left the order as it was); TO
+             * alone is natural order */
+            char rest[256];
+            const char *p;
+            value_t ov;
+            int n = 0;
             lex_next(l);
-            if (l->current.type == TOK_NUMBER) {
-                int n = (int)l->current.num_val;
-                if (n >= 0 && n <= cur_wa()->num_indexes) {
-                    cur_wa()->order = n;
-                    if (set_opts.talk) {
-                        if (n == 0) printf("Natural record order.\n");
-                        else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
-                    }
+            lex_get_remaining(l, rest, sizeof(rest));
+            p = skip_ws(rest);
+            if (*p) {
+                if (ast_eval_adv(&expr_ctx, &p, &ov) != 0) { report_expr_error(); return; }
+                if (ov.type != VAL_NUM) { prog_error(ERR_TYPE_MISMATCH, "Data type mismatch"); return; }
+                n = (int)ov.num;
+            }
+            if (n >= 0 && n <= cur_wa()->num_indexes) {
+                cur_wa()->order = n;
+                if (set_opts.talk) {
+                    if (n == 0) printf("Natural record order.\n");
+                    else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
                 }
-                lex_next(l);
             }
         }
     } else if (cmd_kw(l, "KEY")) {

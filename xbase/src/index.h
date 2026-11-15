@@ -6,9 +6,21 @@
 #include "dbf.h"
 #include "expr.h"
 
+/* An .NDX file is dBASE III's: 512-byte pages, page 0 the header (root
+ * page, page count, key length, keys per page, key type 0 character or
+ * 1 numeric/date, item size, unique flag, key expression).  A page is a
+ * key count and items of (left page, record number, key); a leaf's left
+ * pages are 0, an internal page's key is the last key under its left
+ * page, and its last item holds only the rightmost page.  Numeric and
+ * date keys are IEEE doubles, a date its Julian day.  This interpreter's
+ * own formats before it, NDX2 and NDX1, are converted when opened. */
+#define NDX_PAGE        512
+#define NDX_EXPR_ROOM   488         /* header bytes 24..511 */
+#define NDX_FLAG_DESC   0x01        /* header byte 22, ours (dBASE leaves it 0): DESCENDING */
+#define NDX_FLAG_FOR    0x02        /* ... a FOR condition follows the key expression's NUL */
 #define NDX2_MAGIC      0x4E445832  /* "NDX2" */
-#define NDX1_MAGIC      0x4E445831  /* "NDX1" - old format, read-only compat */
-#define NDX_PAGE_SIZE   4096
+#define NDX1_MAGIC      0x4E445831  /* "NDX1" */
+#define NDX2_PAGE_SIZE  4096
 #define MAX_INDEX_KEY   100
 #define MAX_INDEXES     7
 
@@ -29,7 +41,8 @@ typedef struct ndx_page {
     /* Internal node: child page numbers */
     int *children;      /* malloc'd [max_keys+1] -- internal only */
 
-    /* Leaf node: doubly-linked chain */
+    /* Leaf node: doubly-linked chain (in memory only: index_t's leaf_link
+     * keeps it for pages out of the cache; the file has no such links) */
     int next_leaf;      /* next leaf page number (0 = none) */
     int prev_leaf;      /* prev leaf page number (0 = none) */
 
@@ -50,15 +63,22 @@ typedef struct {
     char key_expr[256];
     struct ast_node *key_ast; /* cached key expression AST (NULL if dynamic) */
     int key_has_macro;        /* expression contains &macro; must eval dynamically */
-    int key_len;            /* actual key length for this index */
-    int key_type;           /* 0=char, 1=numeric, 2=date */
+    int key_len;            /* key length in memory: a numeric/date key is 16
+                               characters that sort as the double does */
+    int key_type;           /* 0=char, 1=numeric or date */
+    int disk_key_len;       /* key length in the file (8 for numeric/date) */
+    int item_size;          /* bytes per item in a page */
+    int keys_per_page;      /* the header's keys per page */
+    int alloc_keys;         /* key slots a page's arrays hold */
     int max_keys_leaf;      /* max keys per leaf page */
     int max_keys_internal;  /* max keys per internal page */
+    int *leaf_link;         /* [2*page]: next and previous leaf of a leaf page */
+    int leaf_link_cap;      /* pages leaf_link has room for */
 
     /* Tree structure */
     int root_page;          /* page number of root */
     int first_leaf;         /* page number of first leaf (for GO TOP) */
-    int free_page_head;     /* head of free page list (0 = none) */
+    int free_page_head;     /* head of free page list (0 = none; not kept in the file) */
     int num_pages;          /* total pages in file */
     int nentries;           /* total entries */
 
@@ -95,7 +115,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
                 const char *for_expr, int descending);
 
 /* Format an evaluated expression value into a canonical index key string
-   for the given key type (0=char, 1=numeric, 2=date). */
+   for the given key type (0=char, 1=numeric or date). */
 void index_format_key_value(int key_type, const value_t *val, char *buf, int size);
 
 /* Write index to .NDX file */

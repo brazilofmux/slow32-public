@@ -34,7 +34,7 @@ speed.  Summer '87 programs are the subset they are.
 | Directives (preprocessor) | 10 | all ten in s32-xbc (step 7), #command's full grammar; the interpreter has none |
 | Classes (Error, Get, TBrowse, TBColumn) | 4 | all four (steps 8, 9); the `:` send operator |
 | Get System | 10 | the Get class, GETNEW, READMODAL, READVAR, UPDATED, READEXIT / READINSERT / READKILL, GETACTIVE over xbase's @ SAY/GET/READ (step 9) |
-| Drivers (RDD) | 31 | DBF/NDX2 only, by design (NDX ruling 2026-10-29) |
+| Drivers (RDD) | 31 | DBF and dBASE III .NDX only (NDX2, the ruling of 2026-10-29, gave way to dBASE III's format 2026-11-15: Quicksilver and xbase read each other's) |
 
 The missing functions fall in clusters: arrays (AADD, ASIZE, ATAIL,
 AFILL, ACLONE, AEVAL, ARRAY), code blocks (EVAL, AEVAL, DBEVAL,

@@ -262,7 +262,9 @@ B+ tree with 4KB pages (NDX2 format). Doubly-linked leaf chain for
 efficient sequential traversal. Variable fanout adapts to key length.
 Incremental index maintenance: APPEND, REPLACE, PACK, ZAP, and
 APPEND FROM all update active indexes automatically. Backward-compatible
-reader for old NDX1 flat-array format.
+reader for old NDX1 flat-array format.  (2026-11-15: the pages became
+dBASE III's own, 512 bytes, so its files and Quicksilver's open here and
+ours there; NDX2 and NDX1 files are converted when opened.)
 
 ---
 

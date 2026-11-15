@@ -1,0 +1,6 @@
+
+char: .T. numeric: .T. date: .T. FOR: .T.
+FOR entries:        593
+seek char: .T.          5
+seek numeric: .T.        462
+seek date: .T.        130
