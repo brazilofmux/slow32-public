@@ -49,6 +49,7 @@ run_one eqkeys "$CLIP_DIR/out" || fail=1
 run_one dupspan "$CLIP_DIR/out" || fail=1
 run_one ndxkeep "$CLIP_DIR/out" || fail=1
 run_one mvscope "$CLIP_DIR/out" || fail=1
+run_one macrocmd "$CLIP_DIR/out" || fail=1
 run_one func || fail=1
 run_one funcpriv || fail=1
 run_one funclocal || fail=1

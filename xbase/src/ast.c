@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include "report.h"
 #include <errno.h>
 #include "ast.h"
 #include "gc.h"
@@ -1135,6 +1136,13 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
                 prog_error_args(ops, 2, "/", 1340, "Division by zero");
             }
             if (prog_error_substitute(ctx, ERR_DIV_ZERO, "Division by zero", result)) return 0;
+            if (!report_clipper_layout()) {
+                /* dBASE III: no error, an overflow -- shown as asterisks,
+                 * false to every comparison, an overflow still after
+                 * more arithmetic (as a NaN is) */
+                *result = num_result(op, NAN, left, right);
+                return 0;
+            }
             ctx->error = "Division by zero";
             return -1;
         }
@@ -1189,6 +1197,10 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
 
         if (left->type == VAL_NUM && right->type == VAL_NUM) {
             double d = left->num - right->num;
+            if (isnan(d)) {   /* an overflow (1/0): every comparison false, <> as well (dBASE III) */
+                *result = val_logic(0);
+                return 0;
+            }
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
             if (!left->ext && !right->ext) {   /* inline texts: as before */

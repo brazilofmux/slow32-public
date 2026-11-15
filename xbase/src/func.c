@@ -605,7 +605,7 @@ static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
             snprintf(buf, sizeof(buf), "%*.*f", width, dec, n);
         else  /* half away from zero, in a double: no 32-bit wrap */
             snprintf(buf, sizeof(buf), "%*.0f", width, n >= 0.0 ? floor(n + 0.5) : -floor(0.5 - n));
-        if ((int)strlen(buf) > width) {   /* too wide: asterisks, as Clipper */
+        if ((int)strlen(buf) > width || !isfinite(n)) {   /* too wide, or an overflow: asterisks */
             memset(buf, '*', width);
             buf[width] = '\0';
         }
@@ -742,9 +742,9 @@ static int fn_mod(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "MOD requires (number, divisor)";
         return -1;
     }
-    if (args[1].num == 0.0) {
-        ctx->error = "Division by zero in MOD";
-        return -1;
+    if (args[1].num == 0.0) {   /* MOD(x, 0) is x: dBASE III's, and Clipper's MOD.PRG */
+        *result = args[0];
+        return 0;
     }
     *result = val_num(fmod(args[0].num, args[1].num));
     return 0;
@@ -1123,7 +1123,7 @@ static void transform_number(const value_t *v, const char *picture, char *out, i
     {
         char *dot = strchr(num, '.');
         int intlen = dot ? (int)(dot - num) : (int)strlen(num);
-        if (intlen > ndig) {   /* too wide: asterisks */
+        if (intlen > ndig || !isfinite(v->num)) {   /* too wide, or an overflow: asterisks */
             memset(digits, '*', (size_t)(ndig + ndec));
             digits[ndig + ndec] = '\0';
         } else {

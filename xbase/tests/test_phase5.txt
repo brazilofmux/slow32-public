@@ -10,7 +10,7 @@
 STORE 0 TO err_code
 STORE "" TO err_msg
 ON ERROR DO ERRHAND
-? 1 / 0
+? 2 * "abc"
 ? err_code
 ? err_msg
 ON ERROR

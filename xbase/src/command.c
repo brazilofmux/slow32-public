@@ -1400,22 +1400,22 @@ int parse_clauses(lexer_t *l, clause_t *c) {
     while (l->current.type != TOK_EOF) {
         if (cmd_kw(l, "FOR")) {
             lex_next(l);
-            const char *start = l->token_start;
+            const char *cond = lex_src(l), *start = cond;   /* the line's text: FOR &c TO n lost its TO from the expansion */
             value_t dummy;
             ast_eval_adv(&expr_ctx, &start, &dummy);
-            int len = (int)(start - l->token_start);
+            int len = (int)(start - cond);
             if (len > (int)sizeof(c->for_cond) - 1) len = sizeof(c->for_cond) - 1;
-            memcpy(c->for_cond, l->token_start, len);
+            memcpy(c->for_cond, cond, len);
             c->for_cond[len] = '\0';
             lexer_init_ext(l, start, l->store);
         } else if (cmd_kw(l, "WHILE")) {
             lex_next(l);
-            const char *start = l->token_start;
+            const char *cond = lex_src(l), *start = cond;   /* the line's text: FOR &c TO n lost its TO from the expansion */
             value_t dummy;
             ast_eval_adv(&expr_ctx, &start, &dummy);
-            int len = (int)(start - l->token_start);
+            int len = (int)(start - cond);
             if (len > (int)sizeof(c->while_cond) - 1) len = sizeof(c->while_cond) - 1;
-            memcpy(c->while_cond, l->token_start, len);
+            memcpy(c->while_cond, cond, len);
             c->while_cond[len] = '\0';
             lexer_init_ext(l, start, l->store);
         } else if (cmd_kw(l, "TO")) {
@@ -1848,173 +1848,150 @@ static void cmd_count(dbf_t *db, lexer_t *l) {
     }
 }
 
+/* SUM and AVERAGE, dBASE III's: a list of numeric expressions (every
+ * numeric field when none is given), the clauses, and TO a list of
+ * variables.  A total keeps its expression's decimals (a field N(7,3)
+ * sums to three); an average does too in the interpreter, as dBASE's
+ * (AVERAGE of an N(5) field holding 20 and 31 shows 26, and is 25.5),
+ * and has SET DECIMALS in a compiled program, as Clipper's. */
+#define MAX_AGG_EXPRS 32
 typedef struct {
-    char expr[256];
-    double total;
+    int n;
+    char expr[MAX_AGG_EXPRS][256];
+    double total[MAX_AGG_EXPRS];
+    int ndec[MAX_AGG_EXPRS];
+    int seen;            /* a record evaluated: ndec is its expressions' */
+    const char *verb;
 } agg_ctx_t;
 
-static int sum_cb(dbf_t *db, uint32_t recno, void *userdata) {
+static int agg_cb(dbf_t *db, uint32_t recno, void *userdata) {
     agg_ctx_t *ctx = (agg_ctx_t *)userdata;
-    value_t val;
+    int i;
     (void)db; (void)recno;
-
-    if (ast_eval_dynamic(ctx->expr, &expr_ctx, &val) != 0) {
-        report_expr_error();
-        return REC_ERROR;
+    for (i = 0; i < ctx->n; i++) {
+        value_t val;
+        if (ast_eval_dynamic(ctx->expr[i], &expr_ctx, &val) != 0) {
+            report_expr_error();
+            return REC_ERROR;
+        }
+        if (val.type != VAL_NUM) {
+            printf("%s requires numeric expression.\n", ctx->verb);
+            return REC_ERROR;
+        }
+        if (!ctx->seen) ctx->ndec[i] = val.ndec;
+        ctx->total[i] += val.num;
     }
-    if (val.type != VAL_NUM) {
-        printf("SUM requires numeric expression.\n");
-        return REC_ERROR;
-    }
-    ctx->total += val.num;
+    ctx->seen = 1;
     return REC_CONTINUE;
 }
 
-static void cmd_sum(dbf_t *db, lexer_t *l) {
+static int agg_clause_kw(lexer_t *l) {
+    return cmd_kw(l, "FOR") || cmd_kw(l, "WHILE") || cmd_kw(l, "TO") ||
+           cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST");
+}
+
+static void cmd_aggregate(dbf_t *db, lexer_t *l, int average) {
     clause_t c;
     agg_ctx_t actx;
-    int count;
+    char vars[MAX_AGG_EXPRS][MEMVAR_NAMELEN];
+    char rest[512];
+    int nvars = 0, count, i;
+    size_t rl = 0;
+    lexer_t rl_lex;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
-
+    memset(&actx, 0, sizeof actx);
+    actx.verb = average ? "AVERAGE" : "SUM";
     clause_init(&c);
     c.scope.type = SCOPE_ALL_DEFAULT;
 
-    if (l->current.type == TOK_EOF) {
-        printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
-        return;
-    }
-
-    /* Optional leading scope (ALL/NEXT/RECORD/REST) */
+    /* a scope may come first */
     if (cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST")) {
         if (parse_clauses(l, &c) < 0) return;
     }
 
-    /* Parse expression, then trailing clauses (FOR/WHILE/scope) */
-    {
-        const char *expr_start = l->token_start;
-        lexer_t tmp = *l;
-        while (tmp.current.type != TOK_EOF) {
-            if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
-                cmd_kw(&tmp, "TO") ||
-                cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
-                cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
-                break;
-            }
-            lex_next(&tmp);
+    /* the expressions, each to a comma at its own level (the line's text:
+     * a macro is evaluated with the record, as in REPLACE) */
+    while (l->current.type != TOK_EOF && !agg_clause_kw(l)) {
+        const char *start = lex_src(l);
+        int depth = 0, len;
+        if (actx.n >= MAX_AGG_EXPRS) { prog_error(ERR_SYNTAX, "Too many expressions"); return; }
+        while (l->current.type != TOK_EOF &&
+               !(depth == 0 && (l->current.type == TOK_COMMA || agg_clause_kw(l)))) {
+            if (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET) depth++;
+            else if ((l->current.type == TOK_RPAREN || l->current.type == TOK_RBRACKET) && depth > 0) depth--;
+            lex_next(l);
         }
-        {
-            int len = (int)(tmp.token_start - expr_start);
-            if (len >= (int)sizeof(actx.expr)) len = (int)sizeof(actx.expr) - 1;
-            memcpy(actx.expr, expr_start, len);
-            actx.expr[len] = '\0';
-            trim_right(actx.expr);
-        }
-        if (actx.expr[0] == '\0') {
-            printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>] [TO <var>]\n");
-            return;
-        }
-        lexer_init_ext(l, tmp.token_start, l->store);
-        if (parse_clauses(l, &c) < 0) return;
+        len = (int)(lex_src(l) - start);
+        if (len >= (int)sizeof actx.expr[0]) len = (int)sizeof actx.expr[0] - 1;
+        memcpy(actx.expr[actx.n], start, (size_t)len);
+        actx.expr[actx.n][len] = '\0';
+        trim_right(actx.expr[actx.n]);
+        if (actx.expr[actx.n][0]) actx.n++;
+        if (l->current.type == TOK_COMMA) lex_next(l);
+    }
+    if (actx.n == 0) {   /* every numeric field */
+        for (i = 0; i < db->field_count && actx.n < MAX_AGG_EXPRS; i++)
+            if (db->fields[i].type == 'N' || db->fields[i].type == 'F')
+                str_copy(actx.expr[actx.n++], db->fields[i].name, sizeof actx.expr[0]);
     }
 
-    actx.total = 0.0;
+    /* the clauses, TO's list of variables taken out of them */
+    rest[0] = '\0';
+    while (l->current.type != TOK_EOF) {
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            while (l->current.type == TOK_IDENT && !agg_clause_kw(l)) {
+                if (nvars < MAX_AGG_EXPRS) str_copy(vars[nvars++], l->current.text, MEMVAR_NAMELEN);
+                lex_next(l);
+                if (l->current.type != TOK_COMMA) break;
+                lex_next(l);
+            }
+            continue;
+        }
+        {
+            const char *start = lex_src(l);
+            size_t n;
+            lex_next(l);
+            while (l->current.type != TOK_EOF && !cmd_kw(l, "TO")) lex_next(l);
+            n = (size_t)(lex_src(l) - start);
+            if (rl + n + 2 < sizeof rest) {
+                memcpy(rest + rl, start, n);
+                rl += n;
+                rest[rl++] = ' ';
+                rest[rl] = '\0';
+            }
+        }
+    }
+    lexer_init_ext(&rl_lex, rest, l->store);
+    if (parse_clauses(&rl_lex, &c) < 0) return;
 
-    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, sum_cb, &actx);
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, agg_cb, &actx);
     if (count < 0) return;
-    if (count >= 0) {
-        value_t v = val_num(actx.total);
-        char buf[64];
-        val_to_string(&v, buf, sizeof(buf));
-        if (set_opts.talk) {
-            printf("%d record(s) summed\n", count);
-            printf("      SUM: %s\n", buf);
+    if (set_opts.talk) printf("%d record(s) %s\n", count, average ? "averaged" : "summed");
+    for (i = 0; i < actx.n; i++) {
+        value_t v;
+        if (!average)
+            v = val_num_dec(actx.total[i], actx.ndec[i], 0);
+        else if (count == 0)   /* none: 0, no error (Clipper's AVERAGE, Harbour's) */
+            v = val_num_dec(0, 0, 0);
+        else
+            v = val_num_dec(actx.total[i] / count,
+                            report_clipper_layout() ? set_opts.decimals : actx.ndec[i], 0);
+        if (set_opts.talk && count > 0) {
+            char buf[64];
+            val_to_string(&v, buf, sizeof(buf));
+            printf("%9s: %s\n", average ? "AVERAGE" : "SUM", buf);
         }
-        if (c.to_var[0]) {
-            value_t tv = val_num(actx.total);
-            memvar_set(&memvar_store, c.to_var, &tv);
-        }
+        if (i < nvars) memvar_set(&memvar_store, vars[i], &v);
     }
 }
 
-static void cmd_average(dbf_t *db, lexer_t *l) {
-    clause_t c;
-    agg_ctx_t actx;
-    int count;
-
-    if (!dbf_is_open(db)) {
-        prog_error(ERR_NO_DATABASE, "No database in use");
-        return;
-    }
-
-    clause_init(&c);
-    c.scope.type = SCOPE_ALL_DEFAULT;
-
-    if (l->current.type == TOK_EOF) {
-        printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
-        return;
-    }
-
-    /* Optional leading scope (ALL/NEXT/RECORD/REST) */
-    if (cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST")) {
-        if (parse_clauses(l, &c) < 0) return;
-    }
-
-    /* Parse expression, then trailing clauses */
-    {
-        const char *expr_start = l->token_start;
-        lexer_t tmp = *l;
-        while (tmp.current.type != TOK_EOF) {
-            if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
-                cmd_kw(&tmp, "TO") ||
-                cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
-                cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
-                break;
-            }
-            lex_next(&tmp);
-        }
-        {
-            int len = (int)(tmp.token_start - expr_start);
-            if (len >= (int)sizeof(actx.expr)) len = (int)sizeof(actx.expr) - 1;
-            memcpy(actx.expr, expr_start, len);
-            actx.expr[len] = '\0';
-            trim_right(actx.expr);
-        }
-        if (actx.expr[0] == '\0') {
-            printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>] [TO <var>]\n");
-            return;
-        }
-        lexer_init_ext(l, tmp.token_start, l->store);
-        if (parse_clauses(l, &c) < 0) return;
-    }
-
-    actx.total = 0.0;
-
-    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, sum_cb, &actx);
-    if (count < 0) return;
-    if (count > 0) {
-        value_t v = val_num(actx.total / count);
-        char buf[64];
-        val_to_string(&v, buf, sizeof(buf));
-        if (set_opts.talk) {
-            printf("%d record(s) averaged\n", count);
-            printf("  AVERAGE: %s\n", buf);
-        }
-        if (c.to_var[0]) {
-            value_t tv = val_num_dec(actx.total / count, set_opts.decimals, 0);   /* a computed value */
-            memvar_set(&memvar_store, c.to_var, &tv);
-        }
-    } else if (count == 0) {   /* none: 0, no error (Clipper's AVERAGE, Harbour's) */
-        if (set_opts.talk) printf("0 record(s) averaged\n");
-        if (c.to_var[0]) {
-            value_t tv = val_num_dec(0, 0, 0);   /* the plain 0 nothing was divided into */
-            memvar_set(&memvar_store, c.to_var, &tv);
-        }
-    }
-}
+static void cmd_sum(dbf_t *db, lexer_t *l) { cmd_aggregate(db, l, 0); }
+static void cmd_average(dbf_t *db, lexer_t *l) { cmd_aggregate(db, l, 1); }
 
 /* ---- CALCULATE ---- */
 enum { AGG_SUM, AGG_AVG, AGG_MIN, AGG_MAX, AGG_CNT };
@@ -2285,7 +2262,7 @@ static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
         return -1;
     }
 
-    expr_start = l->token_start;
+    expr_start = lex_src(l);   /* the line's text, &macros and all */
 
     while (l->current.type != TOK_EOF) {
         if (paren_depth == 0 && bracket_depth == 0) {
@@ -2309,7 +2286,7 @@ static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
         lex_next(l);
     }
 
-    expr_len = (int)(l->token_start - expr_start);
+    expr_len = (int)(lex_src(l) - expr_start);
     while (expr_len > 0 &&
            (expr_start[expr_len - 1] == ' ' || expr_start[expr_len - 1] == '\t'))
         expr_len--;
@@ -2532,7 +2509,7 @@ static int parse_replace_pairs(dbf_t *db, const char *body, const char *extra_st
         }
         (*npairs)++;
 
-        lexer_init_ext(&parse_l, parse_l.token_start, expr_ctx.vars);
+        lexer_init_ext(&parse_l, lex_src(&parse_l), expr_ctx.vars);
         if (parse_l.current.type == TOK_COMMA) lex_next(&parse_l);
     }
     return 0;
@@ -2560,8 +2537,10 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         if (parse_clauses(l, &c) < 0) return;
     }
 
-    /* The field list/expression, then the clauses */
-    const char *body_start = l->token_start;
+    /* The field list/expression, then the clauses -- from the line
+     * itself: REPLACE &fld WITH ... read from the macro's expansion
+     * had the field and nothing after it */
+    const char *body_start = lex_src(l);
 
     /* To find the end of the field list, we need to scan ahead for FOR/WHILE/ALL/NEXT etc. */
     lexer_t temp_l = *l;
@@ -3101,7 +3080,7 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     (void)db;
 
     /* Expression start */
-    const char *expr_start = l->token_start;
+    const char *expr_start = lex_src(l);
     lexer_t tmp = *l;
     while (tmp.current.type != TOK_EOF && !cmd_kw(&tmp, "TO"))
         lex_next(&tmp);
@@ -3111,7 +3090,7 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
         return;
     }
 
-    int len = (int)(tmp.token_start - expr_start);
+    int len = (int)(lex_src(&tmp) - expr_start);
     if (len >= (int)sizeof(expr_str)) len = (int)sizeof(expr_str) - 1;
     memcpy(expr_str, expr_start, len);
     expr_str[len] = '\0';
@@ -4201,6 +4180,18 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
         return;
     }
 
+    if (!report_clipper_layout()) {   /* the interpreter reads it as dBASE III does */
+        if (csv_import_dbase(filename, quote_char, append_row_cb, &ctx) < 0) {
+            file_not_found(filename);
+            return;
+        }
+        indexes_flush_all();
+        dbf_write_header_counts(db);
+        db->header_dirty = 0;
+        if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
+        return;
+    }
+
     fp = fopen(filename, "rb");
     if (!fp) {
         file_not_found(filename);
@@ -4994,7 +4985,7 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
     lex_next(l); /* skip ON */
 
     /* Find TO keyword or end */
-    const char *expr_start = l->token_start;
+    const char *expr_start = lex_src(l);
     while (l->current.type != TOK_EOF && !cmd_kw(l, "TO"))
         lex_next(l);
 
@@ -5004,11 +4995,16 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
     }
 
     {
-        int len = (int)(l->token_start - expr_start);
+        int len = (int)(lex_src(l) - expr_start);
         if (len > (int)sizeof(key_expr) - 1) len = (int)sizeof(key_expr) - 1;
         memcpy(key_expr, expr_start, len);
         key_expr[len] = '\0';
         trim_right(key_expr);
+        if (strchr(key_expr, '&')) {   /* the key the macro names, as dBASE keeps it */
+            char raw[sizeof key_expr];
+            str_copy(raw, key_expr, sizeof raw);
+            lex_expand_macros(raw, l->store, key_expr, sizeof key_expr);
+        }
     }
 
     if (!cmd_kw(l, "TO")) {
@@ -5034,14 +5030,19 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
 
     if (cmd_kw(l, "FOR")) {
         lex_next(l); /* skip FOR */
-        const char *for_start = l->token_start;
+        const char *for_start = lex_src(l);
         while (l->current.type != TOK_EOF && !cmd_kw(l, "DESCENDING") && !cmd_kw(l, "ASCENDING"))
             lex_next(l);
-        int flen = (int)(l->token_start - for_start);
+        int flen = (int)(lex_src(l) - for_start);
         if (flen > (int)sizeof(for_cond) - 1) flen = (int)sizeof(for_cond) - 1;
         memcpy(for_cond, for_start, flen);
         for_cond[flen] = '\0';
         trim_right(for_cond);
+        if (strchr(for_cond, '&')) {
+            char raw[sizeof for_cond];
+            str_copy(raw, for_cond, sizeof raw);
+            lex_expand_macros(raw, l->store, for_cond, sizeof for_cond);
+        }
     }
 
     if (cmd_kw(l, "DESCENDING")) {
@@ -6467,8 +6468,10 @@ static void h_close(dbf_t *db, lexer_t *l) {
         cmd_close_all();
         lex_next(l);
     } else if (cmd_kw(l, "ALL")) {
+        /* every file, the procedure file too; the variables stay (CLEAR
+         * ALL releases those -- dBASE III's, Clipper's; the lab's
+         * correlation program reads a date after its CLOSE ALL) */
         cmd_close_all();
-        memvar_release_all(&memvar_store);
         prog_set_procedure(NULL);
         lex_next(l);
     } else if (cmd_kw(l, "INDEX")) {
@@ -6644,7 +6647,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 cur_wa()->relation_block = NULL;
                 cur_wa()->relation_target = -1;
             } else {
-                const char *expr_start = l->token_start;
+                const char *expr_start = lex_src(l);
                 while (l->current.type != TOK_EOF && !cmd_kw(l, "INTO"))
                     lex_next(l);
                 
@@ -6653,7 +6656,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                     return;
                 }
                 
-                int len = (int)(l->token_start - expr_start);
+                int len = (int)(lex_src(l) - expr_start);
                 if (len >= (int)sizeof(cur_wa()->relation_expr))
                     len = sizeof(cur_wa()->relation_expr) - 1;
                 memcpy(cur_wa()->relation_expr, expr_start, len);
@@ -7773,7 +7776,7 @@ static void h_define(dbf_t *db, lexer_t *l) {
         } else {
             /* Evaluate expression for prompt text */
             value_t pv;
-            const char *ep = l->token_start;
+            const char *ep = lex_src(l);
             if (ep && ast_eval_adv(cmd_get_expr_ctx(), &ep, &pv) == 0) {
                 val_to_string(&pv, prompt, sizeof(prompt));
                 trim_right(prompt);
@@ -7843,7 +7846,7 @@ static void h_define(dbf_t *db, lexer_t *l) {
             lex_next(l);
         } else {
             value_t pv;
-            const char *ep = l->token_start;
+            const char *ep = lex_src(l);
             if (ep && ast_eval_adv(cmd_get_expr_ctx(), &ep, &pv) == 0) {
                 val_to_string(&pv, prompt, sizeof(prompt));
                 trim_right(prompt);

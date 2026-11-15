@@ -103,6 +103,12 @@ token_type_t lex_peek(lexer_t *l);
 
 /* Return remaining unconsumed input, expanding macros if necessary.
    Result is stored in out_buf. */
+/* Where the current token stands in the line itself: at the & of the
+ * macro it came out of, where token_start is in the expansion */
+const char *lex_src(const lexer_t *l);
+/* src with its &macros replaced by the variables' text (INDEX ON &k keeps
+ * the key itself, as dBASE writes it in the header) */
+void lex_expand_macros(const char *src, memvar_store_t *store, char *dst, int size);
 void lex_get_remaining(lexer_t *l, char *out_buf, int size);
 void lex_macro_expand(const char *src, memvar_store_t *store, char *out, int size);
 

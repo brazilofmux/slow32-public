@@ -10,9 +10,9 @@ xBase interpreter 1.0
 . 
 Type mismatch in +
 . . . . . . 
-        21
+        15
 . 
-Division by zero
+Type mismatch in * or /
 . . . . *** No database in use
 . 
         36

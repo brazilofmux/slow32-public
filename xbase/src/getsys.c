@@ -118,7 +118,12 @@ static void get_format(expr_ctx_t *ctx, const value_t *v, const char *picture, c
             else if (*p == '9' || *p == '#') { if (seen) d++; w++; }
             else if (*p == ',') w++;
         }
-        if (w > 0) snprintf(out, size, "%*.*f", w + (d ? 1 : 0), d, v->num);
+        if (w > 0 && !isfinite(v->num)) {   /* an overflow: asterisks */
+            int k = w + (d ? 1 : 0);
+            if (k > size - 1) k = size - 1;
+            memset(out, '*', (size_t)k);
+            out[k] = '\0';
+        } else if (w > 0) snprintf(out, size, "%*.*f", w + (d ? 1 : 0), d, v->num);
         else val_to_display(v, out, size);
         return;
     }

@@ -36,6 +36,14 @@ static int lex_push_macro(lexer_t *l, const char *text);
 static void macro_expand_into(const char *src, memvar_store_t *store,
                               char *dst, int size, int depth);
 
+void lex_expand_macros(const char *src, memvar_store_t *store, char *dst, int size) {
+    macro_expand_into(src, store, dst, size, 0);
+}
+
+const char *lex_src(const lexer_t *l) {
+    return l->token_src ? l->token_src : l->token_start ? l->token_start : "";
+}
+
 void lex_get_remaining(lexer_t *l, char *out_buf, int size) {
     /* from the input itself: a token read out of a macro has the rest of
      * the line after the macro, not just the rest of its expansion (CREATE

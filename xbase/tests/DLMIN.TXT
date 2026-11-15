@@ -1,0 +1,7 @@
+R0001 first line
+"R0002 quoted, with comma",ignored
+   R0003 leading blanks
+"R0004 with ""inner"" quotes"
+
+X0006 last line read
+no line end: not read

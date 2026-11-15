@@ -1,0 +1,12 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. . . . . . . . . . 
+         6
+[R0001 first line]
+[R0002 quoted, with comma]
+[R0003 leading blanks]
+[R0004 with]
+[]
+[X0006 last line read]
+. . 

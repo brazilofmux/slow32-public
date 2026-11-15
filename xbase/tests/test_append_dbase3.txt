@@ -1,0 +1,12 @@
+* APPEND FROM ... DELIMITED as dBASE III PLUS reads it (the lab's LDAS
+* loads an analyser's capture so): a field's leading blanks go, a quoted
+* field ends at its next quote (no doubled quote inside), an empty line
+* is a record, a last line with no line end is not read.  The interpreter
+* only: a compiled program reads the file as before.
+SET TALK OFF
+x = DBCREATE("DLM", {{"DATA", "C", 40, 0}})
+USE DLM
+APPEND FROM DLMIN.TXT DELIMITED
+DO DLMREAD
+USE
+QUIT

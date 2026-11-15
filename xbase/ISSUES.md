@@ -681,6 +681,60 @@ test_do_prg, test_procedure and test_phase5 read a program's variable at
 the prompt after it ended, and now see none.  The user's ledger reports
 and Teacher's Pet are unchanged.
 
+### The lab's Quicksilver programs: macros in commands, SUM lists, a zero divisor, ten-character names — RESOLVED 2026-11-15
+
+Five programs from the hospital laboratory's discs, Quicksilver-built
+(the correlation study CORRPT, donor labels GR/ADDLAB, the analyser
+capture loader LDAS, and ND), run beside their own executables under an
+emulated PC, and beside dBASE III PLUS where the two part.  Synthetic
+data stood in for the donor table and the capture file; the correlation
+tables hold specimen QC, compared by checksum.  CORRPT now prints what
+its Quicksilver build prints, byte for byte, in both engines, and leaves
+its tables the same; GR's labels match; LDAS reads its file as dBASE
+does.  What it took:
+
+- **A command with a macro lost the rest of its line, and could
+  overwrite memory.**  A token read out of a macro's expansion has its
+  token_start in the expansion, so the text a command measured from it
+  -- REPLACE &fld WITH e (the field, then nothing: "Expected expression
+  after WITH", or a silent 0), FOR &c and WHILE &c (TO n lost), SUM,
+  AVERAGE and STORE of &e -- was cut off at the expansion's end.  INDEX
+  ON &k TO f measured from the expansion to the line's TO: a negative
+  length, and memcpy wrote past the key (the DBT faulted; memcheck named
+  the read).  They measure in the line itself now (lex_src: the & of
+  the macro); INDEX ON writes the expanded key in the header, as dBASE.
+- **SUM and AVERAGE took one expression.**  dBASE III's take a list
+  (none: every numeric field) TO a list; `SUM a, b TO x, y FOR c` summed
+  a, ignored b and y and the FOR.  A total keeps its expression's
+  decimals; an average does too in the interpreter, as dBASE's (an N(5)
+  field averaging 25.5 shows 26), and has SET DECIMALS compiled, as
+  Clipper's.
+- **A zero divisor stopped the interpreter.**  dBASE III gives no error:
+  an overflow, shown as asterisks, false to every comparison (= and <>
+  too), still one after more arithmetic; a field given it is filled
+  with asterisks.  The interpreter does that now (a NaN); a program's
+  error handler still sees the error, and a compiled program raises it
+  as Clipper's.  MOD(x, 0) is x (it was an error).
+- **A name past ten characters was not its field's.**  COR_PER's field
+  is P_URIC_ACI; the program says p_URIC_ACID.  dBASE and Clipper keep
+  ten characters; field lookup kept them all.
+- **CLOSE ALL released the variables** (CORRPT's date was gone for its
+  second report).  It closes files; CLEAR ALL releases.
+- **APPEND FROM ... DELIMITED read a CSV**: a doubled quote kept, leading
+  blanks kept, a last line without a line end read.  dBASE III PLUS
+  ends a quoted field at its next quote, drops the blanks, and does not
+  read that line; the interpreter reads it so now (Quicksilver itself
+  differs from dBASE on two of the three).  A compiled program reads as
+  before.
+
+Left as they are: PACK shortens the file, where dBASE leaves the old
+records' bytes past the end; the widths dBASE gives computed numbers
+(24/4 shows "  6.00", a product wider) are not ours; TALK's SUM and
+AVERAGE layout, and NDX() without the drive.  Tests: xbc/tests/macrocmd.prg
+(both engines), test_div_overflow and test_append_dbase3 (the build
+before fails both); ONERR2 and test_phase5 catch a type mismatch where
+they caught a zero divisor.
+
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 
 `SET ORDER TO n` with n a variable, or any expression, left the order as

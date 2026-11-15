@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include "field.h"
 #include "util.h"
 #include "date.h"
@@ -24,6 +25,7 @@ int field_format_numeric(char *buf, int field_len, int decimals, const char *val
     char tmp[64];
 
     v = atof(value);
+    if (value[0] == '*' || !isfinite(v)) v = 1e300;   /* an overflow stays one: asterisks below */
     /* decimals==0 used (int)v, which wraps at 2³¹ on ILP32. N width is
      * up to 19; %.0f keeps values that fit in double. */
     snprintf(tmp, sizeof(tmp), "%*.*f", field_len, decimals > 0 ? decimals : 0, v);

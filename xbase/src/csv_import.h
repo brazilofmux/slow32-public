@@ -30,4 +30,10 @@ int  csv_parser_feed(csv_parser_t *p, const char *data, int len, int is_eof);
 /* BLANK mode: simple space-delimited line reader (no Ragel needed) */
 int csv_import_blank(const char *filename, csv_row_cb cb, void *ud);
 
+/* dBASE III's own reading of a delimited file (APPEND FROM ... DELIMITED,
+ * the interpreter's): a field's leading blanks go; a field in quotes ends
+ * at the next quote, whatever follows it (no doubled quote inside); a
+ * last line with no line end is not read.  -1: the file did not open. */
+int csv_import_dbase(const char *filename, char quote_char, csv_row_cb cb, void *ud);
+
 #endif

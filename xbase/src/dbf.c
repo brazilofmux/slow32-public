@@ -490,10 +490,18 @@ int dbf_flush_record(dbf_t *db) {
     return 0;
 }
 
+/* A name's first ten characters are the field's: dBASE and Clipper keep
+ * ten (a field name has no more), so p_URIC_ACID names P_URIC_ACI, as
+ * the lab's correlation program counts on */
 int dbf_find_field(const dbf_t *db, const char *name) {
     int i;
-    char c0 = name[0];
+    char c0 = name[0], tenth[11];
     if (c0 >= 'a' && c0 <= 'z') c0 -= 32;   /* field names are stored upper-case */
+    if (strlen(name) > 10) {
+        memcpy(tenth, name, 10);
+        tenth[10] = '\0';
+        name = tenth;
+    }
     for (i = 0; i < db->field_count; i++) {
         if (db->fields[i].name[0] == c0 && str_icmp(db->fields[i].name, name) == 0)
             return i;

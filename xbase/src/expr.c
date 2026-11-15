@@ -80,6 +80,13 @@ void val_to_display(const value_t *v, char *buf, int size) {
             while (a >= 10.0 && digits < 40) { a /= 10.0; digits++; }
             width = digits + 1 > 10 ? digits + 1 : 10;
         }
+        if (!isfinite(v->num)) {   /* dBASE's overflow (1/0): asterisks across the field */
+            int w = width + (dec > 0 ? dec + 1 : 0);
+            if (w > size - 1) w = size - 1;
+            memset(buf, '*', (size_t)w);
+            buf[w] = '\0';
+            return;
+        }
         snprintf(buf, size, "%*.*f", width + (dec > 0 ? dec + 1 : 0), dec, v->num);
         return;
     }
@@ -197,6 +204,10 @@ void val_to_string(const value_t *v, char *buf, int size) {
     case VAL_NUM: {
         /* Print integer if no fractional part, else strip trailing zeros */
         double n = v->num;
+        if (!isfinite(n)) {   /* an overflow (1/0): asterisks, which a field takes as one */
+            str_copy(buf, "**********", size);
+            return;
+        }
         /* Check if it's an integer value */
         if (n >= -2147483647.0 && n <= 2147483647.0) {
             int i = (int)n;

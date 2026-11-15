@@ -20,15 +20,16 @@ ON ERROR
 ? "Has Uniqueness:", IIF("Uniqueness" $ errmsg, "YES", "NO")
 ? "Record count:", RECCOUNT()
 
-* --- Test 2: Division by zero (sanity) ---
-? "--- Test 2: Division by zero ---"
+* --- Test 2: Type mismatch (sanity; a zero divisor is no error to
+* dBASE III, only an overflow, so it no longer serves) ---
+? "--- Test 2: Type mismatch ---"
 errcode = 0
 errmsg = ""
 ON ERROR DO ERRHAND2
-x = 1/0
+x = 1 + "abc"
 ON ERROR
-? "Error code:", errcode
-? "Has division:", IIF("ivision" $ errmsg, "YES", "NO")
+? "Caught:", IIF(errcode > 0, "YES", "NO")
+? "Has mismatch:", IIF("ismatch" $ errmsg .OR. "rgument" $ errmsg, "YES", "NO")
 
 * --- Test 3: Record range (GO past end) ---
 ? "--- Test 3: Record range ---"

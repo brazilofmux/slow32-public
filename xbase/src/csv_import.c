@@ -346,3 +346,50 @@ int csv_import_blank(const char *filename, csv_row_cb cb, void *ud) {
     fclose(fp);
     return 0;
 }
+
+int csv_import_dbase(const char *filename, char quote_char, csv_row_cb cb, void *ud) {
+    FILE *fp;
+    char line[4096];
+    int line_number = 0;
+    static csv_row_t row;
+
+    fp = fopen(filename, "rb");
+    if (!fp) return -1;
+    while (fgets(line, sizeof(line), fp)) {
+        int len = (int)strlen(line);
+        const char *s = line;
+        if (len == 0 || line[len - 1] != '\n') break;   /* no line end: dBASE stops */
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = '\0';
+        line_number++;
+        row.num_fields = 0;
+        for (;;) {
+            const char *start, *end;
+            int n;
+            while (*s == ' ') s++;
+            if (quote_char && *s == quote_char) {
+                start = ++s;
+                while (*s && *s != quote_char) s++;
+                end = s;
+                while (*s && *s != ',') s++;   /* past the closing quote, to the comma */
+            } else {
+                start = s;
+                while (*s && *s != ',') s++;
+                end = s;
+            }
+            n = (int)(end - start);
+            if (n >= CSV_MAX_FIELD_LEN) n = CSV_MAX_FIELD_LEN - 1;
+            if (row.num_fields < CSV_MAX_FIELDS) {
+                memcpy(row.fields[row.num_fields], start, (size_t)n);
+                row.fields[row.num_fields][n] = '\0';
+                row.num_fields++;
+            }
+            if (*s != ',') break;
+            s++;
+        }
+        if (cb(line_number, &row, ud)) break;
+    }
+    fclose(fp);
+    return 0;
+}
+

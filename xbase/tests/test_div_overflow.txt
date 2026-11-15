@@ -1,0 +1,14 @@
+* A zero divisor is no error to dBASE III: an overflow, shown as
+* asterisks, false to every comparison (1/0 > 0, and <> too), still one after
+* more arithmetic; MOD(x, 0) is x.  (The lab's correlation program
+* divides by a count that can be 0.)  The interpreter only: a compiled
+* program raises it, as Clipper's does.
+SET TALK OFF
+n = 0
+? 1/n
+? IIF(1/n > 0, "gt", "not gt"), IIF(0/n = 0, "eq", "not eq"), IIF(1/n <> 0, "ne", "not ne")
+x = 1/n
+? x * 0, TYPE("x")
+? STR(1/n, 5, 1), TRANSFORM(1/n, "999.9")
+? MOD(5, n)
+QUIT
