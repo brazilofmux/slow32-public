@@ -4,6 +4,12 @@
 #include "expr.h"
 
 #define MEMVAR_MAX     256
+/* Slots past MEMVAR_MAX that only an error handler running takes: the
+ * default handler's parameter has a slot when a program has filled the
+ * rest (its report, not a second failure, says so) */
+#define MEMVAR_RESERVE 4
+#define MEMVAR_SLOTS   (MEMVAR_MAX + MEMVAR_RESERVE)
+extern int memvar_reserve_open;   /* >0 while an error handler runs */
 #define MEMVAR_NAMELEN  33
 #define MEMVAR_SIGNIFICANT 10   /* Clipper keeps ten characters of a name, and programs lean on it (RL's frm_pagehdr is its .MEM's FRM_PAGEHD) */
 
@@ -35,11 +41,11 @@ typedef struct {
 #define MEMVAR_BUCKETS 512   /* power of two */
 
 typedef struct memvar_store {
-    memvar_t vars[MEMVAR_MAX];
+    memvar_t vars[MEMVAR_SLOTS];
     /* The used slots chained by name hash: a lookup visits the slots whose
      * names share a bucket, not every live slot */
     short bucket[MEMVAR_BUCKETS];
-    short next[MEMVAR_MAX];
+    short next[MEMVAR_SLOTS];
     int count;
     int hw;             /* slots at or above this index are unused: a lookup walks hw slots, not 256 */
     int current_depth;  /* updated on push/pop frame */

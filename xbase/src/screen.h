@@ -173,6 +173,7 @@ void screen_keyboard(const char *s);    /* KEYBOARD: clear the typeahead, stuff 
 void screen_clear_typeahead(void);
 int screen_key_pending(void);
 void scoreboard_message(const char *msg);   /* GETSYS's row-0 message, until a key waits */           /* a key waiting in any buffer or at the terminal */
+int screen_answer_key(void);           /* a question's answer: typed ahead, then the terminal; -1 at end */
 int screen_getkey(void);                /* an editor's next key: the buffers, then the terminal */
 int screen_input_ended(void);           /* the terminal's input has ended: no key will come */
 const char *screen_read_var(void);   /* the GET being read; "" outside a READ */

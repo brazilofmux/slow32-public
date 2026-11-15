@@ -617,6 +617,46 @@ ours; its INDEX ON tree, read; the build before fails all five and walks
 dBASE's file out of order).  xbc/tests/dupspan.prg checked record order
 among equal keys after REPLACEs; it checks key order now.
 
+### An error in a program was reported and passed over; dBASE III asks Cancel, Ignore, or Suspend — RESOLVED 2026-11-15 (user ruling)
+
+The interpreter printed `*** message in FILE line N` and went on with
+the next statement, taken to be dBASE III's way (ruling of 2026-10-30:
+compiled programs are Clipper's, the interpreter dBASE's).  dBASE III
+PLUS itself, run under an emulated PC, shows the message, a `?` under
+the line, the line, `Called from - C:NAME.prg` for each program it was
+called from (the innermost first, procedures by their file), and asks
+`Cancel, Ignore, or Suspend? (C, I, or S)`: one key, either case, the
+word shown after the question; Enter is Cancel; another key is no
+answer.  Cancel says `Do cancelled` and releases the program's
+variables, Ignore goes on with the next statement, Suspend says `Do
+suspended` and RESUME goes on after the failing one.  The CANCEL and
+SUSPEND commands say the same words (they said `*** Cancelled` and
+`Suspended.`).  Told this, the user ruled the split stands: the
+interpreter asks as dBASE does, compiled programs stop as Clipper's.
+
+Now so.  Where the `?` goes is dBASE's parser's own; ours stands two
+past an unknown name the line has (y = nosuch + 1: under the +, as
+dBASE puts it), else in the second column.  Our messages keep their own
+words ("Variable not found: nosuch", where dBASE says "Variable not
+found.").  At the dot prompt dBASE asks "Do you want some help? (Y/N)",
+which opens its help text; that we have not, and an error there is
+still reported with `***`.  A Cancel in a function the prompt's command
+called is carried out when the command ends.
+
+Two faults the question found.  SET ESCAPE's look for Esc before each
+program line keeps any other key typed ahead, and a line read at the
+prompt (or by ACCEPT, INPUT, CREATE) took stdin alone: a program's run
+cost the next command its first characters.  read_line takes what was
+typed ahead first now.  And a compiled program that had filled the
+variable table could not run its default error handler (the handler's
+parameter wants a slot): it printed the interpreter's `***` and went
+on.  Four slots past the limit open while a handler runs, and it
+reports and quits as Clipper's does.  Tests: test_error_ask (each
+answer, nested calls, typed-ahead text whole; the build before fails
+it); test_edge_varstore, test_index_keyerr, test_stress_index and
+test_udf_overflow answer Ignore; the xbc oracle lines up the new report
+with a compiled program's (73 agree).
+
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 
 `SET ORDER TO n` with n a variable, or any expression, left the order as

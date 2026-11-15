@@ -106,12 +106,19 @@ static void slot_free(memvar_store_t *store, int i) {
     store->vars[i].used = 0;
 }
 
+int memvar_reserve_open;
+
+/* Where a new variable may go: the reserve too while a handler runs */
+static int memvar_free_limit(void) {
+    return memvar_reserve_open > 0 ? MEMVAR_SLOTS : MEMVAR_MAX;
+}
+
 static void hw_grow(memvar_store_t *store, int i) { if (i + 1 > store->hw) store->hw = i + 1; }
 static void hw_shrink(memvar_store_t *store) { while (store->hw > 0 && !store->vars[store->hw - 1].used) store->hw--; }
 
 void memvar_init(memvar_store_t *store) {
     int i;
-    for (i = 0; i < MEMVAR_MAX; i++)
+    for (i = 0; i < MEMVAR_SLOTS; i++)
         store->vars[i].used = 0;
     for (i = 0; i < MEMVAR_BUCKETS; i++)
         store->bucket[i] = -1;
@@ -180,7 +187,7 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     }
 
     /* Find free slot */
-    for (i = 0; i < MEMVAR_MAX; i++) {
+    for (i = 0; i < memvar_free_limit(); i++) {
         if (!store->vars[i].used) {
             str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
             store->vars[i].hash = name_hash(store->vars[i].name);
@@ -214,7 +221,7 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
     }
 
     /* Find free slot */
-    for (i = 0; i < MEMVAR_MAX; i++) {
+    for (i = 0; i < memvar_free_limit(); i++) {
         if (!store->vars[i].used) {
             str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
             store->vars[i].hash = name_hash(store->vars[i].name);
@@ -339,7 +346,7 @@ void memvar_release_locals(memvar_store_t *store, int depth) {
 
 void memvar_release_all(memvar_store_t *store) {
     int i;
-    for (i = 0; i < MEMVAR_MAX; i++) {
+    for (i = 0; i < MEMVAR_SLOTS; i++) {
         if (!store->vars[i].used) continue;
         /* Only release variables created at or below current scope */
         if (store->vars[i].scope_depth < store->current_depth) continue;
@@ -356,7 +363,7 @@ int memvar_pattern_match(const char *name, const char *pat) {
 
 int memvar_release_matching(memvar_store_t *store, const char *pattern, int like) {
     int i, count = 0;
-    for (i = 0; i < MEMVAR_MAX; i++) {
+    for (i = 0; i < MEMVAR_SLOTS; i++) {
         if (!store->vars[i].used) continue;
         /* Only release variables created at or below current scope */
         if (store->vars[i].scope_depth < store->current_depth) continue;
@@ -422,7 +429,7 @@ void memvar_display(const memvar_store_t *store) {
     char buf[256];
     int shown = 0;
 
-    for (i = 0; i < MEMVAR_MAX; i++) {
+    for (i = 0; i < MEMVAR_SLOTS; i++) {
         if (!store->vars[i].used) continue;
         val_to_string(&store->vars[i].val, buf, sizeof(buf));
         switch (store->vars[i].val.type) {

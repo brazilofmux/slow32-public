@@ -5,14 +5,20 @@ xBase interpreter 1.0
 --- Filling variable store ---
 Created 254 + 2 loop vars = 256 total
 --- 257th variable (should fail) ---
-*** Too many memory variables in VARSTORE.PRG line 14
-
+Too many memory variables
+ ?
+STORE 999 TO OVERFLOW1
+Called from - VARSTORE.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
 --- DECLARE array when store is full ---
-*** Too many memory variables in VARSTORE.PRG line 17
-
+Too many memory variables
+ ?
+DECLARE full_arr[3]
+Called from - VARSTORE.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
 After full DECLARE (should not have succeeded)
 --- Release vars, then DECLARE ---
 Array[1]:         42
 Array[2]:         99
 --- Done ---
-. 
+. . 

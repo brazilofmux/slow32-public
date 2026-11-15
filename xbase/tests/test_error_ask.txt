@@ -1,0 +1,10 @@
+SET TALK OFF
+DO ERRASK
+I
+DO ERRASK
+S
+? "suspended, x is", x
+RESUME
+DO ERRASK
+C? "typed ahead, whole"
+QUIT

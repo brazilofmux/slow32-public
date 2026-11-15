@@ -152,6 +152,7 @@ Test:  `bash tests/run-tests.sh`
 | CANCEL | `CANCEL` |
 | ON ERROR | `ON ERROR DO <procedure>` or `ON ERROR` (clear) |
 | RETRY | `RETRY` (re-execute failed line, in error handler only) |
+| (no handler) | in a program, dBASE III's report: the message, a `?` under the line, the line, `Called from - NAME.prg` for each program, and `Cancel, Ignore, or Suspend? (C, I, or S)` -- one key; Enter is Cancel ("Do cancelled"), Suspend stops for RESUME ("Do suspended"); at the prompt, `*** message` |
 | SUSPEND | `SUSPEND` (pause program, return to dot prompt) |
 | RESUME | `RESUME` (continue after SUSPEND) |
 | QUIT | `QUIT` |

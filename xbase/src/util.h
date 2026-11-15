@@ -39,6 +39,9 @@ void path_normalize(char *s);
 
 /* Read line from stdin, strip CR/LF. Returns length or -1 on EOF */
 int read_line(char *buf, int size);
+/* A key typed ahead (0: none; 13 ends a line), taken before stdin:
+ * the screen sets it */
+extern int (*read_line_typed_ahead)(void);
 
 /* strncpy that always NUL-terminates */
 void str_copy(char *dst, const char *src, int n);

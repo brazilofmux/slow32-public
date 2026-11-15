@@ -6766,7 +6766,7 @@ static void h_save(dbf_t *db, lexer_t *l) {
     mem_file_name(fname, sizeof(fname), fname);
     fp = fopen(fname, "wb");
     if (!fp) { prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname); return; }
-    for (j = 0; j < MEMVAR_MAX; j++) {
+    for (j = 0; j < MEMVAR_SLOTS; j++) {
         const memvar_t *mv = &memvar_store.vars[j];
         unsigned char head[32];
         if (!mv->used || !mem_name_matches(mv->name, skel, like)) continue;
@@ -6887,7 +6887,7 @@ static void h_restore(dbf_t *db, lexer_t *l) {
              * keeps apart; a variable of ours whose first ten match (RL's
              * frm_pagehdr, frm_colcount) is the one restored */
             int j, found = 0;
-            for (j = 0; j < MEMVAR_MAX; j++) {
+            for (j = 0; j < MEMVAR_SLOTS; j++) {
                 if (memvar_store.vars[j].used && strncasecmp(memvar_store.vars[j].name, name, 10) == 0 &&
                     (strlen(name) < 10 ? str_icmp(memvar_store.vars[j].name, name) == 0 : 1)) {
                     memvar_set(&memvar_store, memvar_store.vars[j].name, &v);

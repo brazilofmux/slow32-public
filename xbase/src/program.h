@@ -126,6 +126,7 @@ void prog_public(struct lexer *l);
 void prog_for(const char *arg);
 void prog_next(void);
 void prog_cancel(void);
+void prog_cancel_pending(void);   /* the Cancel an error was answered with, once unwound */
 void prog_local(struct lexer *l);
 void prog_static(struct lexer *l);
 

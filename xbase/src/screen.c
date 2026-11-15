@@ -55,7 +55,10 @@ static int scr_rows = 25, scr_cols = 80;
 /* Function keys as dBASE III and Clipper number them (inkey.ch): F1 is
  * 28, F2 to F10 are -1 to -9 */
 
+static int typeahead_next(void);
+
 void screen_init(void) {
+    read_line_typed_ahead = typeahead_next;
     memset(&scr, 0, sizeof(scr));
     scr.fg_color = 7; /* white */
     scr.bg_color = 0; /* black */
@@ -2484,6 +2487,28 @@ int screen_inkey(double timeout) {
         if (screen_check_key_handler(c)) return 0;
         return c;
     }
+}
+
+/* A key that answers a question (dBASE's Cancel, Ignore, or Suspend):
+ * what is typed ahead first -- SET ESCAPE's look for Esc keeps the rest
+ * there -- then the terminal, or stdin without one; no SET KEY handler
+ * runs.  -1 when input has ended; Enter is 13. */
+int screen_answer_key(void) {
+    int k;
+    if (pushed_key > 0) { k = pushed_key; pushed_key = 0; return k; }
+    if ((k = typeahead_next()) != 0) return k;
+#if HAS_TERM
+    if (scr.term_available) {
+        if (input_ended) return -1;
+        term_set_raw(1);
+        k = read_dbase_key();
+        term_set_raw(0);
+        return k == KEY_NONE ? -1 : k;
+    }
+#endif
+    fflush(stdout);
+    k = getchar();
+    return k < 0 ? -1 : k == '\n' ? 13 : k;
 }
 
 int screen_lastkey(void) {

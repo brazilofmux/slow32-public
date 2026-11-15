@@ -113,9 +113,11 @@ keys_for() {
 
 # A compiled program stops at an error no handler of its own answers, as
 # Clipper's does (the default handler prints "Error BASE/1020 ..." and the
-# calls, and quits); the interpreter reports it and goes on, as dBASE does
-# (user ruling, 2026-10-30).  Such a pair agrees "to its error" when the
-# two print the same up to it -- the interpreter's "*** " report, the
+# calls, and quits); the interpreter asks Cancel, Ignore, or Suspend, as
+# dBASE III does (user rulings, 2026-10-30 and 2026-11-15).  Such a pair
+# agrees "to its error" when the two print the same up to it -- the
+# interpreter's report (the message, a "?" under the line, the line, then
+# "Called from - NAME.prg" lines; "*** " for an error at the prompt), the
 # compiled program's Alert -- and the compiled one ends with its calls.
 # The byte offset of the first match of ERE in FILE; nothing when none.
 # (grep -b would do it, but BusyBox's grep, the Alpine images', has no -b.)
@@ -123,9 +125,18 @@ match_offset() {   # match_offset FILE ERE
     LC_ALL=C awk -v re="$2" '{ if (match($0, re)) { print n + RSTART - 1; exit } n += length($0) + 1 }' "$1"
 }
 
+# The byte offset of the interpreter's first error report: its message,
+# three lines above the first "Called from - ", or a "*** " report
+interp_error_offset() {   # interp_error_offset FILE
+    LC_ALL=C awk '{ off[NR] = n + 0; n += length($0) + 1 }
+        /^Called from - / && NR > 3 { a = off[NR - 3]; exit }
+        s == "" && match($0, /[*][*][*] /) { s = off[NR] + RSTART - 1 }
+        END { if (a != "" && (s == "" || a < s)) print a; else if (s != "") print s }' "$1"
+}
+
 upto_error() {   # upto_error INTERP CLIP: 0 when they agree to the first error
     local i c ni nc t
-    ni=$(match_offset "$1" '[*][*][*] ')
+    ni=$(interp_error_offset "$1")
     nc=$(match_offset "$2" 'Error [A-Za-z]+/[0-9]+  ')
     [ -n "$ni" ] && [ -n "$nc" ] || return 1
     grep -q '^Called from ' "$2" || return 1

@@ -55,9 +55,17 @@ void trim_right(char *s) {
     s[len] = '\0';
 }
 
+int (*read_line_typed_ahead)(void);
+
 int read_line(char *buf, int size) {
     int c, i = 0;
     fflush(stdout);
+    /* keys typed ahead first: a program's look for Esc keeps them, and
+     * the line went on without its first characters */
+    while (read_line_typed_ahead && (c = read_line_typed_ahead()) != 0) {
+        if (c == 13) { buf[i] = '\0'; return i; }
+        if (c > 0 && c < 256 && c != '\n' && i < size - 1) buf[i++] = (char)c;
+    }
     while (i < size - 1) {
         c = getchar();
         if (c == -1) {  /* EOF */

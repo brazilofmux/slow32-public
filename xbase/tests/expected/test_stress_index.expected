@@ -19,18 +19,24 @@ Order 1 top: RN  1
 Order 2 top: RN  1
 --- Unique index ---
 Count:          3
-*** Uniqueness violation on index UNIQIDX.NDX in STRESS_INDEX.PRG line 60
-
+Uniqueness violation on index UNIQIDX.NDX
+ ?
+REPLACE NAME WITH "AAA", VAL WITH 4
+Called from - STRESS_INDEX.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
 After dup:          4
 AAA val: .T.     1
 --- Unique REPLACE ---
 Before: BBB     2
-*** Uniqueness violation on index UNIQIDX.NDX in STRESS_INDEX.PRG line 70
-
+Uniqueness violation on index UNIQIDX.NDX
+ ?
+REPLACE NAME WITH "AAA"
+Called from - STRESS_INDEX.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
 After: BBB     2
 --- Delete pack reindex ---
 After pack:          3
 AAA: .T.     1
 CCC: .T.     3
 BBB: .F.
-. 
+. . 

@@ -1,7 +1,18 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. . . *** UDF recursion overflow in UDFDEPTH.PRG line 6
-. 
+. . . UDF recursion overflow
+ ?
+RETURN RECURSE(n - 1) + 1
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Called from - UDFDEPTH.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
+. . 
 AFTER
 . 

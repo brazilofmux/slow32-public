@@ -21,6 +21,7 @@ int main(void) {
     prog_init();
 
     for (;;) {
+        prog_cancel_pending();
         if (!cmd_output_at_line_start())
             printf("\n");   /* ? leaves the line open: the prompt starts its own */
         printf(". ");

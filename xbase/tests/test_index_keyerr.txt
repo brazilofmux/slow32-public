@@ -7,4 +7,5 @@ DT
 D
 
 DO IDXERR
+I
 QUIT

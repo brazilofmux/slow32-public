@@ -12,6 +12,7 @@
 #include "set.h"
 #include "ast.h"
 #include "screen.h"
+#include "report.h"
 #include <ctype.h>
 #include <strings.h>
 
@@ -40,6 +41,9 @@ static struct {
 static value_t error_block;    /* VAL_NIL: none posted */
 static value_t break_value;
 static int break_pending;      /* a BREAK is on its way to RECOVER */
+static int cancel_pending;     /* Cancel, answered to an error: every level of
+                                * the program stops at its next statement, and
+                                * the program is cancelled when they have */
 
 value_t prog_get_errorblock(void) {
     return error_block;
@@ -210,7 +214,9 @@ static int handler_at_failure(expr_ctx_t *ctx, int code, const char *description
     arg = val_object(o);
     error_state.in_handler = 1;
     *r = val_nil();
+    memvar_reserve_open++;   /* its parameter has a slot when the program has filled the rest */
     (void)ast_eval_block(ctx, &error_block, &arg, 1, r);
+    memvar_reserve_open--;
     error_state.in_handler = 0;
     return !break_pending;
 }
@@ -714,6 +720,76 @@ const char *prog_normalize_line(const char *line, prog_block_stack_t *st, char *
     return line;
 }
 
+/* Where dBASE III marks the error under its line: two past an unknown
+ * name where the line has it (y = nosuch + 1: under the +), else the
+ * second column, as for an unknown verb.  dBASE's own column is wherever
+ * its parser stood, which this follows only so far. */
+static int error_mark_column(const char *message, const char *line) {
+    const char *name = NULL, *at;
+    size_t n;
+    if (strncmp(message, "Variable not found: ", 20) == 0) name = message + 20;
+    else if (strncmp(message, "Field not found: ", 17) == 0) name = message + 17;
+    if (name && (n = strlen(name)) > 0)
+        for (at = line; *at; at++)
+            if (strncasecmp(at, name, n) == 0 &&
+                (at == line || !is_ident_char(at[-1])) && !is_ident_char(at[n]))
+                return (int)(at - line + n + 1);
+    return 1;
+}
+
+/* "Called from - SUB.prg": the program's file, its .PRG as dBASE shows
+ * the extension it supplies (the drive dBASE puts before it, we have not) */
+static void print_called_from(const program_t *prog) {
+    char name[sizeof prog->filename];
+    size_t n;
+    str_copy(name, prog->filename, (int)sizeof name);
+    n = strlen(name);
+    if (n > 4 && strcasecmp(name + n - 4, ".PRG") == 0) memcpy(name + n - 4, ".prg", 4);
+    printf("Called from - %s\n", name);
+}
+
+/* An error no handler took, in a program, as dBASE III reports it: the
+ * message, a mark under the line, the line, each program it was called
+ * from (the innermost first), and a question answered by one key --
+ * C, I or S, in either case; Enter, or no more input, is Cancel; any
+ * other key is not an answer.  Cancel ends the program (once every level
+ * of it has stopped), Ignore goes on with the next statement, Suspend
+ * stops at the prompt for RESUME. */
+static void prog_error_ask(const char *message) {
+    program_t *prog = state.current_prog;
+    const char *line = state.pc < prog->nlines ? skip_ws(prog->lines[state.pc]) : "";
+    int d, c;
+
+    printf("%s\n%*s?\n%s\n", message, error_mark_column(message, line), "", line);
+    print_called_from(prog);
+    for (d = state.call_depth; d > 0; d--)
+        if (state.call_stack[d - 1].caller_prog)
+            print_called_from(state.call_stack[d - 1].caller_prog);
+    printf("Cancel, Ignore, or Suspend? (C, I, or S) ");
+    fflush(stdout);
+    for (;;) {
+        c = screen_answer_key();
+        if (c < 0 || c == 13 || c == 'C' || c == 'c') {
+            printf("Cancel");
+            cancel_pending = 1;
+            state.running = 0;
+            return;
+        }
+        /* the word on the question's line; what follows starts the next */
+        if (c == 'I' || c == 'i') { printf("Ignore"); return; }
+        if (c == 'S' || c == 's') { printf("Suspend"); prog_suspend(); return; }
+    }
+}
+
+/* After a run, or at the prompt (an error in a function the prompt's
+ * command called): the Cancel an error was answered with */
+void prog_cancel_pending(void) {
+    if (cancel_pending) {
+        cancel_pending = 0;
+        prog_cancel();
+    }
+}
+
 void prog_error(int code, const char *message) {
     error_state.code = code;
     str_copy(error_state.message, message, sizeof(error_state.message));
@@ -754,7 +830,9 @@ void prog_error(int code, const char *message) {
         ctx = cmd_get_expr_ctx();
         error_state.in_handler = 1;
         r = val_nil();
+        memvar_reserve_open++;   /* its parameter has a slot when the program has filled the rest */
         (void)ast_eval_block(ctx, &error_block, &arg, 1, &r);
+        memvar_reserve_open--;
         error_state.in_handler = 0;
         if (break_pending) goto recover;
         /* .T. from the handler asks for the operation again, where the
@@ -806,7 +884,12 @@ recover:
         message = "BREAK without BEGIN SEQUENCE";
     }
 
-    /* No handler — print error with context */
+    /* No handler.  In a program, dBASE III's way: Cancel, Ignore, or
+     * Suspend.  At the prompt, the message. */
+    if (state.running && state.current_prog && !report_clipper_layout()) {
+        prog_error_ask(message);
+        return;
+    }
     if (error_state.lineno > 0 && error_state.program[0]) {
         printf("*** %s in %s line %d\n", message,
                error_state.program, error_state.lineno);
@@ -875,7 +958,7 @@ void prog_suspend(void) {
 
     /* Pause execution — prog_run() exits when running == 0 */
     state.running = 0;
-    printf("Suspended.\n");
+    printf("Do suspended\n");   /* dBASE III's words */
 }
 
 void prog_resume(void) {
@@ -895,6 +978,7 @@ void prog_resume(void) {
     /* Continue execution */
     state.running = 1;
     prog_run();
+    prog_cancel_pending();
 }
 
 int prog_is_running(void) {
@@ -1867,7 +1951,7 @@ static void prog_run(void) {
     state.running = 1;
 
     for (;;) {
-    while (state.running && state.current_prog && state.pc < state.current_prog->nlines) {
+    while (state.running && !cancel_pending && state.current_prog && state.pc < state.current_prog->nlines) {
         char *p;
         int quit;
 
@@ -2087,6 +2171,7 @@ static void prog_run(void) {
  * procedure's, a main program's) go when it ends, as a frame's do */
 static void prog_run_top(void) {
     prog_run();
+    prog_cancel_pending();
     memvar_release_locals(cmd_get_memvar_store(), 0);
 }
 
@@ -3390,7 +3475,7 @@ void prog_cancel(void) {
         prog_free(state.current_prog);
         state.current_prog = NULL;
     }
-    printf("*** Cancelled\n");
+    printf("Do cancelled\n");   /* dBASE III's words */
 }
 
 /* ---- Execute one line in program context ---- */

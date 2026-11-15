@@ -1,0 +1,42 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. . 
+before
+in ERRASK2
+Variable not found: nosuch
+           ?
+y = nosuch + 1
+Called from - ERRASK2.prg
+Called from - ERRASK.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
+after the error
+back in ERRASK          1
+. . 
+before
+in ERRASK2
+Variable not found: nosuch
+           ?
+y = nosuch + 1
+Called from - ERRASK2.prg
+Called from - ERRASK.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Suspend
+Do suspended
+. . 
+suspended, x is          1
+. 
+after the error
+back in ERRASK          1
+. 
+before
+in ERRASK2
+Variable not found: nosuch
+           ?
+y = nosuch + 1
+Called from - ERRASK2.prg
+Called from - ERRASK.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Cancel
+Do cancelled
+. 
+typed ahead, whole
+. 
