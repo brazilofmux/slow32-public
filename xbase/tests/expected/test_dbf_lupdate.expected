@@ -1,0 +1,27 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+--- A table written to has today as its last update; one only read keeps its date ---
+. Enter field definitions (blank name to finish):
+Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
+Database LUPT.DBF created with 1 field(s).
+. Database LUPT.DBF opened with 0 record(s).
+. Record 1 added.
+. . Database closed.
+. . . . . . Database LUPT.DBF opened with 1 record(s).
+. 
+set back: 80.01.02
+. . 
+one   
+. Database closed.
+. Database LUPT.DBF opened with 1 record(s).
+. 
+after reading: 80.01.02
+. . Database closed.
+. Database LUPT.DBF opened with 1 record(s).
+. 
+after writing: .T.
+. Database closed.
+. File erased.
+. 

@@ -1,0 +1,29 @@
+? "--- A table written to has today as its last update; one only read keeps its date ---"
+CREATE LUPT
+NAME
+C
+6
+
+USE LUPT
+APPEND BLANK
+REPLACE NAME WITH "one"
+USE
+h = FOPEN("LUPT.DBF", 2)
+x = FSEEK(h, 1, 0)
+x = FWRITE(h, CHR(80) + CHR(1) + CHR(2))
+x = FCLOSE(h)
+SET DATE ANSI
+USE LUPT
+? "set back:", DTOC(LUPDATE())
+GO TOP
+? NAME
+USE
+USE LUPT
+? "after reading:", DTOC(LUPDATE())
+REPLACE NAME WITH "two"
+USE
+USE LUPT
+? "after writing:", LUPDATE() = DATE()
+USE
+ERASE LUPT.DBF
+QUIT

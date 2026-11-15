@@ -29,6 +29,7 @@ typedef struct {
     int record_dirty;
     int header_dirty;                /* record_count changed, needs write */
     int end_dirty;                   /* records appended: the 0x1A end byte moves at close */
+    int modified;                    /* written to: the header's last-update date is stamped at close */
     long file_pos;                   /* tracked file position, -1 = unknown */
 
     /* Record cache (read-ahead window) */

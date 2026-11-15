@@ -95,6 +95,27 @@ static uint32_t read_le32(const unsigned char *p) {
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/* Today as the header's last-update date: year - 1900, month, day */
+static void dbf_today(unsigned char *ymd) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    ymd[0] = (unsigned char)(t ? t->tm_year : 126);
+    ymd[1] = (unsigned char)(t ? t->tm_mon + 1 : 1);
+    ymd[2] = (unsigned char)(t ? t->tm_mday : 1);
+}
+
+/* A table written to has the day of the change as its last update, as
+ * dBASE III keeps it (LUPDATE()); stamped once, at close */
+static void dbf_stamp_date(dbf_t *db) {
+    unsigned char ymd[3];
+    dbf_today(ymd);
+    fseek(db->fp, 1, 0);
+    fwrite(ymd, 1, 3, db->fp);
+    fflush(db->fp);
+    db->file_pos = -1; db->last_op = 0;
+    db->modified = 0;
+}
+
 int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
     FILE *fp;
     unsigned char hdr[32];
@@ -127,13 +148,7 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
         memset(hdr, 0, 32);
         hdr[0] = has_memo ? 0x83 : 0x03; /* 0x83 = dBase III with memo */
     }
-    {
-        time_t now = time(NULL);
-        struct tm *t = localtime(&now);
-        hdr[1] = (unsigned char)(t ? t->tm_year : 126);  /* year - 1900 */
-        hdr[2] = (unsigned char)(t ? t->tm_mon + 1 : 1); /* month 1-12 */
-        hdr[3] = (unsigned char)(t ? t->tm_mday : 1);    /* day 1-31 */
-    }
+    dbf_today(hdr + 1);
     write_le32(hdr + 4, 0);          /* record count = 0 */
     write_le16(hdr + 8, hdr_size);
     write_le16(hdr + 10, rec_size);
@@ -222,6 +237,7 @@ int dbf_open(dbf_t *db, const char *filename) {
     db->record_dirty = 0;
     db->header_dirty = 0;
     db->end_dirty = 0;
+    db->modified = 0;
     db->file_pos = -1; db->last_op = 0;
     dbf_cache_init(db);
 
@@ -249,6 +265,8 @@ void dbf_close(dbf_t *db) {
     }
     if (db->end_dirty)
         dbf_set_end(db);
+    if (db->modified)
+        dbf_stamp_date(db);
     dbf_memo_close(db);
     fclose(db->fp);
     db->fp = NULL;
@@ -440,6 +458,7 @@ int dbf_flush_record(dbf_t *db) {
     db->file_pos = pos + db->record_size;
     db->last_op = 2;
     db->record_dirty = 0;
+    db->modified = 1;
 
     /* Sync our own cache so subsequent reads don't restore stale data */
     if (db->cache_buf && db->cache_count > 0 &&
@@ -526,6 +545,7 @@ int dbf_write_header_counts(dbf_t *db) {
     write_le32(buf, db->record_count);
     fwrite(buf, 1, 4, db->fp);
     db->file_pos = -1; db->last_op = 0;
+    db->modified = 1;
     return 0;
 }
 
@@ -543,6 +563,7 @@ int dbf_set_end(dbf_t *db) {
     fflush(db->fp);
     db->file_pos = -1; db->last_op = 0;
     db->end_dirty = 0;
+    db->modified = 1;
     return ftruncate(fileno(db->fp), end + 1) == 0 ? 0 : -1;
 }
 

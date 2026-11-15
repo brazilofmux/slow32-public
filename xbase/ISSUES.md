@@ -366,3 +366,11 @@ of no width, so `@ 4,41 SAY T_quar` after a one-column GET printed ten
 columns where Quicksilver (and Clipper) print one.  getsys_number_from_text
 (getsys.c) sizes the number by the GET's field, for the Get object's
 untransform and for the editor alike.  Test: test_get_var.
+
+### A table's last-update date was never changed after CREATE — RESOLVED 2026-11-15
+
+dBASE III stamps the header's date (bytes 1-3, what LUPDATE() reports)
+when a table is changed; Teacher's Pet's Quicksilver build does, and a
+table ours had written still carried its creation date.  dbf_t.modified is
+set by a record write, a count write or a new end; dbf_close stamps today
+then.  A table only read keeps its date.  Test: test_dbf_lupdate.
