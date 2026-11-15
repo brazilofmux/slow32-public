@@ -649,12 +649,28 @@ void screen_get(int row, int col, const char *varname, const char *picture,
                 val_to_string(&(value_t){.type=VAL_NUM,.num=nv},
                               scr.gets[scr.ngets].initial,
                               sizeof(scr.gets[scr.ngets].initial));
+            } else if (db->fields[fi].type == 'D' || db->fields[fi].type == 'L') {
+                /* a date edits as a date (through SET DATE) and a logical as
+                 * a logical: given back as the raw text, "19940124" stored
+                 * through REPLACE's path was no date at all, and an accepted
+                 * date field came back blank */
+                value_t fv;
+                if (db->fields[fi].type == 'D') {
+                    fv = val_date(date_from_dbf(raw));
+                    scr.gets[scr.ngets].type = VAL_DATE;
+                } else {
+                    fv = val_logic(raw[0] == 'T' || raw[0] == 't' || raw[0] == 'Y' || raw[0] == 'y');
+                    scr.gets[scr.ngets].type = VAL_LOGIC;
+                }
+                val_to_string(&fv, scr.gets[scr.ngets].initial, sizeof(scr.gets[scr.ngets].initial));
             } else {
                 scr.gets[scr.ngets].type = VAL_CHAR;
                 str_copy(scr.gets[scr.ngets].initial, raw,
                          sizeof(scr.gets[scr.ngets].initial));
             }
             scr.gets[scr.ngets].width = db->fields[fi].length;
+            if (scr.gets[scr.ngets].type == VAL_DATE)   /* as SET DATE shows it (ten with CENTURY) */
+                scr.gets[scr.ngets].width = (int)strlen(scr.gets[scr.ngets].initial);
         } else {
             scr.gets[scr.ngets].initial[0] = '\0';
             scr.gets[scr.ngets].type = VAL_CHAR;
@@ -689,7 +705,14 @@ static void get_show_initial(const get_entry_t *g) {
         const char *sp = strchr(g->picture, ' ');
         if (g->picture[0] != '@' || (sp && sp[1])) {   /* a template, not functions alone */
             value_t a[2], r;
-            a[0] = val_str(g->initial);
+            char full[256];   /* a field's blank value is "": as wide as its GET */
+            int n = (int)strlen(g->initial);
+            str_copy(full, g->initial, sizeof(full));
+            if (n < g->width && g->width < (int)sizeof(full)) {
+                memset(full + n, ' ', (size_t)(g->width - n));
+                full[g->width] = '\0';
+            }
+            a[0] = val_str(full);
             a[1] = val_str(g->picture);
             if (func_call(cmd_get_expr_ctx(), "TRANSFORM", a, 2, &r) == 0 && r.type == VAL_CHAR)
                 str_copy(shown, val_text(&r), sizeof(shown));
@@ -1062,6 +1085,7 @@ void screen_read(void) {
             char shown[256];
             char stale[256];    /* dBASE III: what the field showed, still shown past what is typed */
             int stale_hi = -1;  /* positions below it show the edit; -1: none */
+            char start_buf[256];   /* the field as editing began: left so, it is not assigned */
             parse_get_picture(scr.gets[i].picture, &pic);
             if (scr.gets[i].type == VAL_DATE && !pic.tmpl[0]) {
                 /* a date edits through the date format: digits where the
@@ -1113,6 +1137,7 @@ void screen_read(void) {
                 for (k = 0; k < fwidth && pic.tmpl[k]; k++)
                     if (get_picture_literal(&pic, k)) buf[k] = pic.tmpl[k];
             }
+            str_copy(start_buf, buf, sizeof(start_buf));
             if (have_kept) {
                 /* edited again after a refused value: the text as it was
                  * typed, the cursor home (GETSYS's oGet:home()) */
@@ -1211,6 +1236,10 @@ void screen_read(void) {
             /* Store value back */
             {
                 value_t v;
+                /* a GET left as it began is not assigned, as dBASE's READ
+                 * and Clipper's Get (oGet:changed) leave it: a blank
+                 * "999-9999" field shows "   -    " and kept its blanks */
+                int untouched = strcmp(buf, start_buf) == 0;
                 /* a string keeps the GET's width -- SPACE(3) accepted as
                  * it stood is three blanks, "A" typed into it "A  " (dBASE
                  * III, Clipper; it was cut to its last non-blank, so an
@@ -1270,7 +1299,7 @@ void screen_read(void) {
                     value_t old_val, res;
                     int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
                     int ok;
-                    get_store_value(&scr.gets[i], &v);
+                    if (!untouched) get_store_value(&scr.gets[i], &v);
                     if (scr.gets[i].valid_ast)
                         ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
@@ -1291,7 +1320,7 @@ void screen_read(void) {
                         }
                         { str_copy(kept_edit, buf, sizeof(kept_edit)); have_kept = 1; refused = 1; continue; }  /* re-edit field */
                     }
-                } else {
+                } else if (!untouched) {
                     get_store_value(&scr.gets[i], &v);
                 }
                 {   /* UPDATED() */

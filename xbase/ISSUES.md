@@ -424,3 +424,17 @@ screen, under its Quicksilver build, shows the telephone GET as
 draws a character GET with a template through TRANSFORM (which already
 matched Harbour's), as get_show_value does after an edit.  Test:
 test_template_get.
+
+### Date and logical field GETs edited raw text; an untouched GET was assigned — RESOLVED 2026-11-15
+
+A field GET on a D or L field was set up as a character GET holding the
+raw record text ("19940124").  With the field GET storing through
+REPLACE's path (earlier the same day) an accepted date came back blank,
+and before it a typed date was lost.  D fields now edit as dates (SET
+DATE, ten wide with CENTURY) and L fields as logicals.  And READ assigned
+every GET it passed through: a blank "999-9999" telephone field, drawn
+"   -    ", was stored as that.  dBASE's READ and Clipper's Get assign
+only a GET whose buffer changed; one left as it began is not assigned.
+A blank field's value is padded to its width before TRANSFORM draws it.
+Tests: test_field_get_kept, test_field_get_typed (both fail on the build
+of the day before).

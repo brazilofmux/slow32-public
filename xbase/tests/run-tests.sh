@@ -122,6 +122,8 @@ run_inkey test_get_overtype GETOVR.PRG $'1\r' $'^ 1$'
 run_inkey test_typeahead TYPEAHD.PRG "A" $'^ *65$'
 run_inkey test_char_get CHARGET.PRG $'qr\r' $'^Qr\\[   \\]$'
 run_inkey test_template_get TMPLGET.PRG $'\r' '2;2H   -    '
+run_inkey test_field_get_kept FLDGET.PRG $'\r\r' '^01/24/94\[        \]$'
+run_inkey test_field_get_typed FLDGET.PRG '0225955551234' '^02/25/95\[555-1234\]$'
 
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
