@@ -341,3 +341,14 @@ of the 80 recovered sources carry them).  prog_fgets (program.c) cuts a
 line at a 0x1A and ends the file there; the interpreter's loader and
 s32-xbc both read through it.  Test: xbc/tests/dosend.prg and dosendp.prg
 (text after the padding, which must not run), in the suite and the oracle.
+
+### A field GET wrote its value's string raw: numbers left-justified, indexes not kept — RESOLVED 2026-11-15
+
+Teacher's Pet's System Options screen GETs two N(2) fields; accepting
+them unchanged rewrote " 5" as "5 " in the table, where its Quicksilver
+build left the record as it was.  get_store_value (screen.c) put
+val_to_string's text into the record with dbf_set_field_raw: no field
+formatting (a number left-justified, decimals unaligned) and no index
+update, so a GET on a key field left its index stale.  It stores through
+cmd_api_field_assign now, REPLACE's path.  Test: test_get_field_num (the
+record's bytes after READ, kept and typed; the old build fails it).

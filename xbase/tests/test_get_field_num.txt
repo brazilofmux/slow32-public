@@ -1,0 +1,45 @@
+? "--- A field GET stores as REPLACE does: a number right-justified ---"
+CREATE GETN
+A
+N
+2
+0
+B
+N
+5
+1
+C
+C
+4
+
+USE GETN
+APPEND BLANK
+REPLACE A WITH 5, B WITH 2.5, C WITH "ab"
+@ 1,1 GET A PICTURE "##"
+@ 2,1 GET B
+@ 3,1 GET C
+READ
+
+
+7
+? "A=" + STR(A, 2), "B=" + STR(B, 5, 1), "C=[" + C + "]"
+USE
+h = FOPEN("GETN.DBF")
+x = FSEEK(h, 130, 0)
+? "record: [" + FREAD(h, 12) + "]"
+x = FCLOSE(h)
+USE GETN
+@ 1,1 GET A PICTURE "##"
+@ 2,1 GET B
+@ 3,1 GET C
+READ
+7
+12.5
+cd
+USE
+h = FOPEN("GETN.DBF")
+x = FSEEK(h, 130, 0)
+? "record: [" + FREAD(h, 12) + "]"
+x = FCLOSE(h)
+ERASE GETN.DBF
+QUIT

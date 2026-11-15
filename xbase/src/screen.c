@@ -775,14 +775,13 @@ static void get_store_value(get_entry_t *g, const value_t *v) {
          * of the field's name once, and the next GET on the field found
          * that memvar first (DBU's second field showed the first's name
          * and kept none of its own) */
+        /* ... and as REPLACE stores it: formatted for the field (a number
+         * right-justified, as dBASE keeps it -- its string, written raw,
+         * left-justified one), the indexes kept up */
         expr_ctx_t *fctx = cmd_get_expr_ctx();
         dbf_t *fdb = fctx->db;
-        if (fdb && dbf_is_open(fdb)) {
-            char fraw[256];
-            val_to_string(v, fraw, sizeof(fraw));
-            dbf_set_field_raw(fdb, g->field_index, fraw);
-            dbf_flush_record(fdb);
-        }
+        if (fdb && dbf_is_open(fdb))
+            cmd_api_field_assign(NULL, fdb->fields[g->field_index].name, v);
         return;
     }
     if (g->varname[0]) memvar_set(cmd_get_memvar_store(), g->varname, v);
