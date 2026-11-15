@@ -18,6 +18,6 @@ xBase interpreter 1.0
 . 
          0
 . . . . . . . . . . . 
-Report Title        Page 1
-============[FF][CR]
+Report Title        Page 1[CR]
+============[CR][FF]
 . . 

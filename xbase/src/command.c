@@ -5443,7 +5443,7 @@ static char *report_find_next_kw(char *p) {
 /* ---- REPORT FORM ---- */
 static void cmd_report_form(dbf_t *db, lexer_t *l) {
     char filename[64];
-    FILE *outfile = NULL;
+    FILE *outfile = NULL, *spool = NULL;
     int own;
     frm_def_t *def;
     clause_t c;
@@ -5488,11 +5488,19 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
         return;
     }
 
-    /* Determine output destination: TO FILE's, TO PRINTER's (SET PRINTER
-     * TO's file; the console without one), or the console */
+    /* Determine output destination: TO FILE's, TO PRINTER's, or the
+     * console.  The printer's copy is spooled and sent through the printer
+     * stream, which ends its lines as the printer port is given them (CR
+     * LF) and keeps PROW() */
     own = outfile != NULL;
-    if (!outfile)
-        outfile = c.to_print && cmd_get_printer_fp() ? cmd_get_printer_fp() : stdout;
+    if (!outfile) {
+        if (c.to_print && cmd_get_printer_fp()) {
+            spool = tmpfile();
+            outfile = spool ? spool : cmd_get_printer_fp();
+        } else {
+            outfile = stdout;
+        }
+    }
 
     ctx_setup();
     /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
@@ -5506,6 +5514,16 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
                         c.plain, c.summary, c.noeject, outfile);
 
     free(def);
+    if (spool) {
+        char chunk[513];
+        size_t n;
+        rewind(spool);
+        while ((n = fread(chunk, 1, sizeof(chunk) - 1, spool)) > 0) {
+            chunk[n] = '\0';
+            screen_print_stream(chunk, 1);
+        }
+        fclose(spool);
+    }
     if (own)
         fclose(outfile);
 }

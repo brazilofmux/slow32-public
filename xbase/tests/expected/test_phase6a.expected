@@ -27,6 +27,12 @@ Report definition TESTRPT.FRM created.
         *** Total ***
 .                                        160000.00
         *** Total ***
+. . . . . . . 
+        John         Smith         25   50000.00[CR]
+        Jane         Doe           30   65000.00[CR]
+        Bob          Jones         35   45000.00[CR]
+                                       160000.00[CR]
+        *** Total ***[CR]
 . . File erased.
 . File erased.
 . 

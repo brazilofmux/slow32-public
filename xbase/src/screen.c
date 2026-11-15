@@ -2165,11 +2165,13 @@ int screen_get_col(void) {
 int screen_get_prow(void) { return print_row; }
 int screen_get_pcol(void) { return print_col; }
 
+static int prn_last;   /* the last byte the printer was sent */
+
 /* EJECT: a form feed to a printer file; on the console, which has no
  * pages, a line that says where one would be */
 void screen_eject(void) {
     FILE *fp = cmd_get_printer_fp();
-    if (fp) { fputs("\f\r", fp); fflush(fp); }
+    if (fp) { fputs("\r\f", fp); fflush(fp); prn_last = '\f'; }   /* carriage home, then the page: what dBASE sends the port */
     else out_console("\n--- PAGE ---\n");
     print_row = 0;
     print_col = 0;
@@ -2181,7 +2183,18 @@ static void printer_put(const char *s, size_t n, int write) {
     char buf[256];
     FILE *fp = cmd_get_printer_fp();
     if (!write || !n) return;
-    if (fp) { fwrite(s, 1, n, fp); fflush(fp); return; }
+    if (fp) {
+        /* a new line is CR LF, as the printer port is given it (Teacher's
+         * Pet's Quicksilver build prints so); a CR already sent stands */
+        size_t k;
+        for (k = 0; k < n; k++) {
+            if (s[k] == '\n' && prn_last != '\r') fputc('\r', fp);
+            fputc(s[k], fp);
+            prn_last = (unsigned char)s[k];
+        }
+        fflush(fp);
+        return;
+    }
     while (n) {
         size_t k = n < sizeof(buf) - 1 ? n : sizeof(buf) - 1;
         memcpy(buf, s, k);

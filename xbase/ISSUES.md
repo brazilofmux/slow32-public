@@ -452,3 +452,11 @@ written; nothing printed reaches the screen.  This is what lets
 Teacher's Pet's reports be held byte for byte to its Quicksilver build's
 (dos-monster -prn).  Tests: test_phase2 (reads PRN.TXT back),
 test_prn_file ($XBASE_PRN).
+
+The printer's lines (same day): what dBASE sends the port, a new line is
+CR LF and EJECT is CR then form feed; ours wrote LF, and form feed then
+CR.  printer_put sends CR LF for every new line not already after a CR,
+and REPORT FORM TO PRINT is spooled through the printer stream (it wrote
+the file itself, LF alone).  Teacher's Pet's student list now prints the
+same 3,285 bytes as its Quicksilver build (dos-monster -prn), both
+engines.  Tests: test_phase2, test_phase6a (REPORT TO PRINT).
