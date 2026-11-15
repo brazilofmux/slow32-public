@@ -23,3 +23,15 @@ xBase interpreter 1.0
 . 
  12.50
 . 
+--- A string read through a GET keeps the GET's width ---
+. . 
+     
+. 
+. 
+[ab   ]          5
+. . 
+   
+. 
+. 
+[   ]          3
+. 

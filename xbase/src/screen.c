@@ -971,6 +971,17 @@ static value_t get_text_value(const get_entry_t *g, const char *buf, int *bad) {
         while (*p == ' ') p++;
         return val_logic(*p == 'T' || *p == 't' || *p == 'Y' || *p == 'y');
     }
+    {   /* a string as wide as its GET: line mode's text is the line alone
+         * ("ab" for SPACE(5) is "ab   ", as the editor leaves it) */
+        char pad[256];
+        int n = (int)strlen(buf);
+        if (n < g->width && g->width < (int)sizeof(pad)) {
+            memcpy(pad, buf, (size_t)n);
+            memset(pad + n, ' ', (size_t)(g->width - n));
+            pad[g->width] = '\0';
+            return val_str(pad);
+        }
+    }
     return val_str(buf);
 }
 
@@ -1046,7 +1057,16 @@ void screen_read(void) {
                 pic.tmpl[k] = '\0';
             }
             fwidth = scr.gets[i].width;
-            if (pic.tmpl[0]) fwidth = (int)strlen(pic.tmpl);
+            if (pic.tmpl[0]) {
+                fwidth = (int)strlen(pic.tmpl);
+                /* a template longer than a string edits only the string:
+                 * PICTURE "!A" over SPACE(1) is one column, and the GET is
+                 * left when it is typed (Teacher's Pet's comment letter
+                 * under its Quicksilver build; Harbour's Get alike).  With
+                 * @R the literals are not kept, and the template is longer */
+                if (scr.gets[i].type == VAL_CHAR && !pic.literal_r && scr.gets[i].width < fwidth)
+                    fwidth = scr.gets[i].width;
+            }
             if (fwidth > 255) fwidth = 255;
             if (fwidth < 1) fwidth = 1;
             dwidth = (pic.scroll > 0 && pic.scroll < fwidth) ? pic.scroll : fwidth;
@@ -1175,7 +1195,11 @@ void screen_read(void) {
             /* Store value back */
             {
                 value_t v;
-                trim_right(buf);
+                /* a string keeps the GET's width -- SPACE(3) accepted as
+                 * it stood is three blanks, "A" typed into it "A  " (dBASE
+                 * III, Clipper; it was cut to its last non-blank, so an
+                 * untouched blank answer came back empty) */
+                if (scr.gets[i].type != VAL_CHAR) trim_right(buf);
                 {
                     int bad;
                     v = get_text_value(&scr.gets[i], buf, &bad);

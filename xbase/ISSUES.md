@@ -399,3 +399,18 @@ read_dbase_key translates it, F-keys included), and ended input is not
 polled again.  Found running Teacher's Pet in the interpreter with piped
 keys, beside its Quicksilver build.  Test: test_typeahead (the old build
 loses the key and loops until its timeout).
+
+### Character GETs: a long template widened the field, and the value came back trimmed — RESOLVED 2026-11-15
+
+Teacher's Pet's comment screen GETs SPACE(1) with PICTURE "!A"; its
+Quicksilver build leaves the GET as the letter is typed, and Harbour's Get
+is one column wide too.  Ours made the field the template's width and
+waited for a second key.  And the value went back cut to its last
+non-blank: SPACE(3) accepted as it stood came back "" (so `c = " "` was
+false and the program took the blank answer for a letter), "ab" typed for
+SPACE(5) came back two long.  dBASE III and Clipper keep the GET's width.
+The editor clamps a character field to the string when the template is
+longer (not under @R, whose literals are not kept); the value is trimmed
+only for numbers, dates and logicals; get_text_value pads a string to its
+GET's width (line mode's text is the line alone).  Tests:
+test_char_get, test_get_var.
