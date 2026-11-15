@@ -863,6 +863,16 @@ static int get_picture_accept(const get_picture_t *pic, int pos, int key) {
     }
 }
 
+/* The field as it shows during an edit: the edit below stale_hi, the old
+ * text past it (dBASE III's numeric GET); the edit alone when stale_hi < 0 */
+static const char *get_shown(const char *buf, const char *stale, int stale_hi, int fwidth, char *out) {
+    int k;
+    if (stale_hi < 0) return buf;
+    for (k = 0; k < fwidth && k < 255; k++) out[k] = k < stale_hi ? buf[k] : stale[k];
+    out[k] = '\0';
+    return out;
+}
+
 static void get_paint(const get_entry_t *g, const char *buf, int fwidth, int dwidth, int win, int pos) {
     int fi;
     term_begin_update();
@@ -1022,6 +1032,9 @@ void screen_read(void) {
              * "@KS30" made a field four wide). */
             get_picture_t pic;
             int fwidth, dwidth, win = 0, first_key = 1;
+            char shown[256];
+            char stale[256];    /* dBASE III: what the field showed, still shown past what is typed */
+            int stale_hi = -1;  /* positions below it show the edit; -1: none */
             parse_get_picture(scr.gets[i].picture, &pic);
             if (scr.gets[i].type == VAL_DATE && !pic.tmpl[0]) {
                 /* a date edits through the date format: digits where the
@@ -1042,18 +1055,18 @@ void screen_read(void) {
             str_copy(buf, scr.gets[i].initial, sizeof(buf));
             len = strlen(buf);
             if (scr.gets[i].type == VAL_NUM) {
-                /* a number sits right-justified in its field.  Compiled,
-                 * the first digit typed replaces it (Clipper's numeric
-                 * GET; "20" over 10 became 200 here); interpreted, typing
-                 * overwrites from the left and leaves the rest, as dBASE
-                 * III does ("1" over 0 is 10 -- Teacher's Pet's Quicksilver
-                 * build, a dBASE III compiler, edits so) */
+                /* a number sits right-justified in its field, and the
+                 * first digit typed replaces it ("20" over 10 became 200
+                 * here).  Interpreted, the old digits stay on the screen
+                 * past what is typed until the GET is left, as dBASE III
+                 * shows it -- Teacher's Pet's Quicksilver build shows "10"
+                 * as "1" is typed over 0, and takes 1 */
                 if (len < fwidth) {
                     memmove(buf + (fwidth - len), buf, (size_t)len + 1);
                     memset(buf, ' ', (size_t)(fwidth - len));
                     len = fwidth;
                 }
-                if (getsys_style()) pic.clear = 1;
+                pic.clear = 1;
             }
             /* Pad to field width */
             while (len < fwidth && len < 255) { buf[len++] = ' '; }
@@ -1081,6 +1094,7 @@ void screen_read(void) {
 
             for (;;) {
                 key = screen_getkey();
+                if (!(key >= 32 && key <= 255)) stale_hi = -1;   /* edited otherwise: the field as it is */
                 if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) {
                     /* a SET KEY handler ran; CLEAR GETS in it ends the READ,
                      * as Clipper's does (RL's F10: CLEAR GETS, exit_status := .T.) */
@@ -1125,19 +1139,26 @@ void screen_read(void) {
                 } else if (key >= 32 && key <= 255) {
                     int ch = get_picture_accept(&pic, pos, key);
                     if (ch == 0) continue;   /* the template refuses it */
-                    if (first_key && pic.clear) { memset(buf, ' ', (size_t)fwidth); pos = 0; }
+                    if (first_key && pic.clear) {
+                        if (!getsys_style() && scr.gets[i].type == VAL_NUM) {
+                            str_copy(stale, buf, sizeof(stale));
+                            stale_hi = 0;
+                        }
+                        memset(buf, ' ', (size_t)fwidth); pos = 0;
+                    }
                     first_key = 0;
                     if (get_insert_mode) {
                         memmove(buf + pos + 1, buf + pos, (size_t)(fwidth - pos - 1));
                     }
                     buf[pos] = (char)ch;
                     pos++;
+                    if (stale_hi >= 0 && pos > stale_hi) stale_hi = pos;
                     /* a literal in the template is stepped over */
                     while (pos < fwidth && pic.tmpl[0] && get_picture_literal(&pic, pos)) pos++;
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
                             last_key = 13;
-                            get_paint(&scr.gets[i], buf, fwidth, dwidth, win, fwidth - 1);   /* the last character shows */
+                            get_paint(&scr.gets[i], get_shown(buf, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, fwidth - 1);   /* the last character shows */
                             break;  /* auto-advance: field full, CONFIRM OFF */
                         }
                         pos = fwidth - 1;
@@ -1146,7 +1167,7 @@ void screen_read(void) {
                 first_key = 0;
                 if (pos < win) win = pos;
                 if (pos >= win + dwidth) win = pos - dwidth + 1;
-                get_paint(&scr.gets[i], buf, fwidth, dwidth, win, pos);
+                get_paint(&scr.gets[i], get_shown(buf, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, pos);
             }
 
             if (escaped) break;  /* Escape exits READ without storing */

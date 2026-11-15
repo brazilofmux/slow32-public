@@ -379,11 +379,14 @@ then.  A table only read keeps its date.  Test: test_dbf_lupdate.
 
 User ruling (2026-11-15): the interpreter edits as dBASE III does, a
 compiled program as Clipper does.  Teacher's Pet's Quicksilver build
-shows dBASE III's numeric GET: the cursor at the left, typing overwrites
-and leaves the rest ("1" over 0 in "##" is 10).  Both engines cleared the
-field on the first key; the clear is Clipper's alone now (getsys_style(),
-which a compiled program's runtime turns on).  Test: test_get_overtype
-(term service, keys piped, as the INKEY cases).
+shows dBASE III's numeric GET: "1" typed over 0 in "##" shows "10" -- the
+old digit stays on the screen past what is typed -- and the value taken
+is 1, the field cleared as Clipper clears it.  (A first change took the
+"10" on the screen for the value; the next screen, where the program
+finds type 1, corrected it.)  So the value is cleared in both engines,
+and in the interpreter the old text stays shown past what is typed until
+the GET is left or edited otherwise (get_shown).  Test: test_get_overtype
+(term service, keys piped, as the INKEY cases; the value is 1).
 
 ### Keys typed while a program ran were thrown away; ended input was polled forever — RESOLVED 2026-11-15
 
