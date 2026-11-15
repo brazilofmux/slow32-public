@@ -938,8 +938,13 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
         }
     }
 
-    /* node is now a leaf. Insert into it. */
+    /* node is now a leaf. Insert into it: among equal keys, in record order
+     * (an appended record after the ones already there) */
     pos = page_lower_bound(idx, node, padded);
+    if (!idx->unique)
+        while (pos < node->nkeys && node->recnos[pos] < recno &&
+               key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0)
+            pos++;
     if (idx->unique) {
         if (pos < node->nkeys &&
             key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0) {
@@ -1258,7 +1263,12 @@ static int key_entry_cmp(const void *a, const void *b, void *userdata) {
     const key_entry_t *ka = (const key_entry_t *)a;
     const key_entry_t *kb = (const key_entry_t *)b;
     int cmp = key_cmp(ka->key, kb->key, idx->key_len);
-    return cmp;
+    if (cmp) return cmp;
+    /* equal keys in record order, as dBASE's and Clipper's indexes keep
+     * them (qsort is not stable: they came out scrambled, and Teacher's
+     * Pet's grade report, walking a student's grades by an index on the
+     * student alone, lost the date order its copy had) */
+    return ka->recno < kb->recno ? -1 : ka->recno > kb->recno;
 }
 
 /* ---- Determine key type/length from DBF field definitions (no records needed) ---- */

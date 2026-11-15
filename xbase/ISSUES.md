@@ -491,3 +491,19 @@ the record number breaks the tie); and a SORT that selects nothing makes
 its table, empty, where it refused ("No records to sort") and the
 program's next USE failed.  Test: xbc/tests/sortkeys.prg (old build fails
 every line), suite and oracle.
+
+### Equal keys in an index were in no particular order — RESOLVED 2026-11-15
+
+dBASE's and Clipper's indexes keep equal keys in record order; ours did
+not.  INDEX ON sorted with qsort, which is not stable, and an insert went
+ahead of the equal keys already in its leaf.  Teacher's Pet's grade
+report copies a student's grades in date order and walks them through an
+index on the student alone: under its Quicksilver build the dates come
+out in order, here they broke off partway along the line.  The build
+breaks ties on the record number, and an insert goes after the equal keys
+with smaller record numbers.  (An insert into a run of equal keys that
+spans leaves, of a record older than some of them, can still land at the
+start of the last leaf's run.)  The user's ledger reports, run with and
+without the change, differ only where equal-key lines were summed in a
+different order: "-0.00" became "0.00" on two lines.  Test:
+xbc/tests/eqkeys.prg (the old build fails it).
