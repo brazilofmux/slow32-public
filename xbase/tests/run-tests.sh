@@ -119,6 +119,7 @@ run_inkey test_inkey_poll INKPOLL.PRG "" $'^ *0$'
 run_inkey test_inkey_timeout INKWAIT.PRG "" $'^ *0$'
 run_inkey test_inkey_key INKWAIT.PRG "A" $'^ *65$'
 run_inkey test_get_overtype GETOVR.PRG $'1\r' $'^10$'
+run_inkey test_typeahead TYPEAHD.PRG "A" $'^ *65$'
 
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \

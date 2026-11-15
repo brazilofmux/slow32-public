@@ -2468,13 +2468,18 @@ int screen_check_key_handler(int keycode) {
     return 0;
 }
 
+/* SET ESCAPE's check between statements: Esc interrupts; any other key
+ * typed while the program runs is kept for the next read, as dBASE's
+ * type-ahead keeps it (it was thrown away); ended input is not polled
+ * again (a pipe at its end reads ready forever) */
 int screen_check_escape(void) {
 #if HAS_TERM
-    if (scr.term_available) {
-        if (term_kbhit()) {
-            int ch = term_getkey();
-            if (ch == 27) return 1;
-            /* Not Esc — discard (can't push back) */
+    if (scr.term_available && !input_ended && term_kbhit()) {
+        int k = read_dbase_key();
+        if (k == 27) return 1;
+        if (k != 0 && k != KEY_NONE) {   /* F-keys are negative */
+            if (typeahead_head >= typeahead_len) typeahead_head = typeahead_len = 0;
+            if (typeahead_len < TYPEAHEAD_MAX) typeahead[typeahead_len++] = k;
         }
     }
 #endif

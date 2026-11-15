@@ -384,3 +384,15 @@ and leaves the rest ("1" over 0 in "##" is 10).  Both engines cleared the
 field on the first key; the clear is Clipper's alone now (getsys_style(),
 which a compiled program's runtime turns on).  Test: test_get_overtype
 (term service, keys piped, as the INKEY cases).
+
+### Keys typed while a program ran were thrown away; ended input was polled forever — RESOLVED 2026-11-15
+
+SET ESCAPE's check between statements (screen_check_escape) read any key
+waiting and, unless it was Esc, discarded it ("can't push back") -- dBASE
+keeps type-ahead for the next read.  And once piped input had ended, the
+terminal kept reading ready and the check read end of input before every
+statement.  A key other than Esc goes to the type-ahead buffer now (as
+read_dbase_key translates it, F-keys included), and ended input is not
+polled again.  Found running Teacher's Pet in the interpreter with piped
+keys, beside its Quicksilver build.  Test: test_typeahead (the old build
+loses the key and loops until its timeout).
