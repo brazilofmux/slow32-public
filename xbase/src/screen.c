@@ -1007,7 +1007,7 @@ static value_t get_text_value(const get_entry_t *g, const char *buf, int *bad) {
     }
     if (g->type == VAL_LOGIC) {
         const char *p = buf;
-        while (*p == ' ') p++;
+        while (*p == ' ' || *p == '.') p++;   /* ".T." as a logical is shown */
         return val_logic(*p == 'T' || *p == 't' || *p == 'Y' || *p == 'y');
     }
     {   /* a string as wide as its GET: line mode's text is the line alone

@@ -29,4 +29,20 @@ t = SPACE(3)
 READ
 
 ? "[" + t + "]", LEN(t)
+? "--- A logical accepted as it stood stays true (".T." read back was false) ---"
+lv = .T.
+@ 6,1 GET lv
+READ
+
+? lv
+x = DBCREATE("LGT", {{"L", "L", 1, 0}})
+USE LGT
+APPEND BLANK
+REPLACE L WITH .T.
+@ 7,1 GET L
+READ
+
+? L
+USE
+ERASE LGT.DBF
 QUIT

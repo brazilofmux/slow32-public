@@ -35,3 +35,19 @@ xBase interpreter 1.0
 . 
 [   ]          3
 . 
+--- A logical accepted as it stood stays true (
+. . 
+.T.
+. 
+. 
+.T.
+. . Database LGT.DBF opened with 0 record(s).
+. Record 1 added.
+. . 
+.T.
+. 
+. 
+.T.
+. Database closed.
+. File erased.
+. 
