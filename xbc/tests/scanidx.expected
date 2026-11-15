@@ -1,0 +1,6 @@
+
+SCAN: abcd
+SCAN REST from b: bcd
+SCAN NEXT 2 from a: ab
+COPY TO: abcd
+COPY TO SDF: abcd

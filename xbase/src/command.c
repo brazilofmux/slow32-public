@@ -1655,6 +1655,60 @@ int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end) {
     return 0;
 }
 
+/* A scope's records in the order dBASE walks them: the controlling
+ * index's, stepped live as SKIP steps it (a key changed on the way moves
+ * the walk, as it does there), else record numbers.  COPY TO and SCAN
+ * walked record numbers under an index (Teacher's Pet's grade report,
+ * held to its Quicksilver build, printed its grades out of order).
+ * rec_cursor_first gives the first record, 0 when there is none. */
+uint32_t rec_cursor_first(rec_cursor_t *rc, dbf_t *db, const scope_t *s) {
+    uint32_t start, end, r;
+    memset(rc, 0, sizeof(*rc));
+    rc->idx = s->type == SCOPE_RECORD ? NULL : controlling_index();
+    if (!rc->idx) {
+        if (scope_bounds(db, s, &start, &end) < 0 || start < 1 || start > end || start > db->record_count) return 0;
+        rc->cur = start;
+        rc->end = end;
+        return start;
+    }
+    switch (s->type) {
+    case SCOPE_ALL: case SCOPE_ALL_DEFAULT:
+        index_top(rc->idx);
+        break;
+    case SCOPE_NEXT: case SCOPE_DEFAULT:
+        rc->limited = 1;
+        rc->remaining = s->type == SCOPE_NEXT ? s->count : 1;
+        /* fall through: from the current record */
+    default:
+        if (db->current_record == 0 || db->current_record > db->record_count) return 0;
+        index_sync(rc->idx, db);
+        break;
+    }
+    r = index_current_recno(rc->idx);
+    if (r == 0 || r > db->record_count || (rc->limited && rc->remaining == 0)) return 0;
+    if (rc->limited) rc->remaining--;
+    return r;
+}
+
+/* The next record from the current one -- where the walk's body left the
+ * pointer, as SCAN's SKIP steps from it */
+uint32_t rec_cursor_next(rec_cursor_t *rc, dbf_t *db) {
+    uint32_t r;
+    if (db->current_record == 0 || db->current_record > db->record_count) return 0;
+    if (!rc->idx) {
+        rc->cur = db->current_record;
+        if (rc->cur >= rc->end || rc->cur >= db->record_count) return 0;
+        return ++rc->cur;
+    }
+    if (rc->limited && rc->remaining == 0) return 0;
+    index_sync(rc->idx, db);
+    if (index_next(rc->idx) < 0) return 0;
+    r = index_current_recno(rc->idx);
+    if (r == 0 || r > db->record_count) return 0;
+    if (rc->limited) rc->remaining--;
+    return r;
+}
+
 static int locate_cb(dbf_t *db, uint32_t recno, void *userdata) {
     (void)db;
     cur_wa()->locate_last_rec = recno;
@@ -3541,11 +3595,12 @@ static int has_extension(const char *filename);
 static void copy_to_sdf(dbf_t *db, const char *filename,
                          int *field_indices, int nfields,
                          int use_all_fields,
-                         uint32_t start, uint32_t end,
+                         const scope_t *scope,
                          const char *cond_str)
 {
     FILE *fp;
     uint32_t i;
+    rec_cursor_t rc;
     int f, fc, count = 0;
 
     fp = fopen(filename, "wb");
@@ -3556,7 +3611,7 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
 
     fc = use_all_fields ? db->field_count : nfields;
 
-    for (i = start; i <= end; i++) {
+    for (i = rec_cursor_first(&rc, db, scope); i; i = rec_cursor_next(&rc, db)) {
         char raw[256];
 
         dbf_read_record(db, i);
@@ -3612,12 +3667,13 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
 static void copy_to_delimited(dbf_t *db, const char *filename,
                                int *field_indices, int nfields,
                                int use_all_fields,
-                               uint32_t start, uint32_t end,
+                               const scope_t *scope,
                                const char *cond_str,
                                char quote_char, int blank_mode)
 {
     FILE *fp;
     uint32_t i;
+    rec_cursor_t rc;
     int f, fc, count = 0;
 
     fp = fopen(filename, "wb");
@@ -3628,7 +3684,7 @@ static void copy_to_delimited(dbf_t *db, const char *filename,
 
     fc = use_all_fields ? db->field_count : nfields;
 
-    for (i = start; i <= end; i++) {
+    for (i = rec_cursor_first(&rc, db, scope); i; i = rec_cursor_next(&rc, db)) {
         char raw[256];
         int first = 1;
 
@@ -3704,6 +3760,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     int nfields = 0;
     int use_all_fields;
     scope_t scope;
+    rec_cursor_t rc;
     const char *cond_str = NULL;
     uint32_t start, end, i;
     dbf_t dest;
@@ -3769,7 +3826,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         }
 
         copy_to_delimited(db, filename, field_indices, nfields, use_all_fields,
-                          start, end, cond_str, quote_char, blank_mode);
+                          &scope, cond_str, quote_char, blank_mode);
         return;
     }
 
@@ -3798,7 +3855,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         }
 
         copy_to_sdf(db, filename, field_indices, nfields, use_all_fields,
-                     start, end, cond_str);
+                     &scope, cond_str);
         return;
     }
 
@@ -3860,7 +3917,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         return;
     }
 
-    for (i = start; i <= end; i++) {
+    for (i = rec_cursor_first(&rc, db, &scope); i; i = rec_cursor_next(&rc, db)) {
         char raw[256];
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;

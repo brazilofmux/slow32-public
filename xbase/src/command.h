@@ -5,6 +5,17 @@
 #include "memvar.h"
 #include "expr.h"
 #include "clause.h"
+#include "index.h"
+
+/* A scope's records in walk order: the controlling index's, else record
+ * numbers (command.c) */
+typedef struct {
+    index_t *idx;
+    uint32_t cur, end, remaining;
+    int limited;
+} rec_cursor_t;
+uint32_t rec_cursor_first(rec_cursor_t *rc, dbf_t *db, const scope_t *s);
+uint32_t rec_cursor_next(rec_cursor_t *rc, dbf_t *db);
 #include "set.h"
 #include "index.h"
 

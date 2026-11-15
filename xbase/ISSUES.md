@@ -460,3 +460,19 @@ and REPORT FORM TO PRINT is spooled through the printer stream (it wrote
 the file itself, LF alone).  Teacher's Pet's student list now prints the
 same 3,285 bytes as its Quicksilver build (dos-monster -prn), both
 engines.  Tests: test_phase2, test_phase6a (REPORT TO PRINT).
+
+### SCAN and COPY TO walked record numbers under an index — RESOLVED 2026-11-15
+
+dBASE processes a scope in the controlling index's order.  COPY TO (and
+its SDF and DELIMITED forms) and SCAN -- the interpreter's and the one
+compiled programs use -- stepped record numbers whatever index was in
+control; the commands built on process_records did not.  Teacher's Pet's
+grade report copies the grades through their period+student+date index
+and re-indexes the copy on period+student: under its Quicksilver build
+each student's grades come out in date order, here in record order, and
+the printer, sent to columns behind its head, overprinted the line.
+rec_cursor_first/next (command.c) walk a scope in index order, live, from
+the current record (SCAN's step goes from where its body left the
+pointer, as dBASE's SKIP does); COPY TO and both SCANs walk with it.
+Test: xbc/tests/scanidx.prg (SCAN, SCAN REST, SCAN NEXT, COPY TO, COPY TO
+SDF under an index; the old build fails every line), suite and oracle.

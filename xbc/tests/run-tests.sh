@@ -43,6 +43,7 @@ run_one doproc || fail=1
 run_one setproc || fail=1
 run_one listed "$CLIP_DIR/out" listlib.prg listsub.prg || fail=1
 run_one dosend "$CLIP_DIR/tests" || fail=1
+run_one scanidx "$CLIP_DIR/out" || fail=1
 run_one func || fail=1
 run_one funcpriv || fail=1
 run_one funclocal || fail=1

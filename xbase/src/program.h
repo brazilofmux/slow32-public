@@ -4,6 +4,7 @@
 #include "expr.h"
 #include "memvar.h"
 #include "clause.h"
+#include "command.h"
 
 struct lexer;
 
@@ -75,8 +76,8 @@ typedef struct {
     double step_val;
     /* SCAN loop fields */
     clause_t scan_clause;
-    uint32_t scan_current;
-    uint32_t scan_end;
+    uint32_t scan_current;    /* the record the walk is on; 0 past its end */
+    rec_cursor_t scan_rc;     /* the walk: the controlling index's order */
     /* IF nesting depth at loop entry (for LOOP/EXIT unwinding) */
     int if_depth_at_entry;
 } loop_entry_t;
@@ -223,7 +224,8 @@ void prog_set_pcount_hook(int (*hook)(void));
  * (0); close after leaving early (EXIT).  The interpreter's own walk. */
 typedef struct {
     clause_t c;
-    uint32_t cur, end;
+    uint32_t cur;             /* the record the walk is on; 0 past its end */
+    rec_cursor_t rc;          /* the walk: the controlling index's order */
     int open;
 } prog_scan_t;
 int prog_scan_open(prog_scan_t *s, const char *arg);

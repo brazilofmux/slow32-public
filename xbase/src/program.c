@@ -2877,10 +2877,10 @@ void prog_scan(const char *arg) {
     loop->type = 2; /* SCAN */
     loop->if_depth_at_entry = if_depth;
     loop->scan_clause = c;
-    loop->scan_end = end;
 
     /* Position to start of scan */
-    if (start < 1 || start > end || start > db->record_count) {
+    loop->scan_current = rec_cursor_first(&loop->scan_rc, db, &loop->scan_clause.scope);
+    if (!loop->scan_current) {
         clause_free_ast(&loop->scan_clause);
         state.loop_depth--; /* Exit SCAN */
         {
@@ -2890,11 +2890,10 @@ void prog_scan(const char *arg) {
         }
         return;
     }
-    dbf_read_record(db, start);
-    loop->scan_current = start;
+    dbf_read_record(db, loop->scan_current);
 
     /* Advance to first matching record */
-    while (loop->scan_current <= loop->scan_end) {
+    while (loop->scan_current) {
         int stop_scan = 0;
         int matched = scan_record_matches(loop, db, &stop_scan);
         if (matched < 0) {
@@ -2919,12 +2918,11 @@ void prog_scan(const char *arg) {
         }
         if (matched) break;
 
-        loop->scan_current++;
-        if (loop->scan_current <= loop->scan_end)
-            dbf_read_record(db, loop->scan_current);
+        loop->scan_current = rec_cursor_next(&loop->scan_rc, db);
+        if (loop->scan_current) dbf_read_record(db, loop->scan_current);
     }
 
-    if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+    if (!loop->scan_current) {
         clause_free_ast(&loop->scan_clause);
         state.loop_depth--; /* Exit SCAN */
         {
@@ -2944,14 +2942,13 @@ void prog_scan(const char *arg) {
  * failed, or an error), with the clause freed. */
 static int prog_scan_seek(prog_scan_t *s) {
     dbf_t *db = &area_get_current()->db;
-    while (s->cur <= s->end && s->cur <= db->record_count) {
+    while (s->cur) {
         int stop_scan = 0;
         int matched = scan_clause_matches(&s->c, db, &stop_scan);
         if (matched < 0 || stop_scan) break;
         if (matched) return 1;
-        s->cur++;
-        if (s->cur <= s->end)
-            dbf_read_record(db, s->cur);
+        s->cur = rec_cursor_next(&s->rc, db);
+        if (s->cur) dbf_read_record(db, s->cur);
     }
     prog_scan_close(s);
     return 0;
@@ -2981,17 +2978,20 @@ int prog_scan_open(prog_scan_t *s, const char *arg) {
             s->c.scope.count = 1;
         }
     }
-    if (scope_bounds(db, &s->c.scope, &start, &s->end) < 0) {
+    {
+        uint32_t end;
+        if (scope_bounds(db, &s->c.scope, &start, &end) < 0) {
+            prog_scan_close(s);
+            prog_error(ERR_SYNTAX, "Invalid scope");
+            return 0;
+        }
+    }
+    s->cur = rec_cursor_first(&s->rc, db, &s->c.scope);
+    if (!s->cur) {
         prog_scan_close(s);
-        prog_error(ERR_SYNTAX, "Invalid scope");
         return 0;
     }
-    if (start < 1 || start > s->end || start > db->record_count) {
-        prog_scan_close(s);
-        return 0;
-    }
-    dbf_read_record(db, start);
-    s->cur = start;
+    dbf_read_record(db, s->cur);
     return prog_scan_seek(s);
 }
 
@@ -3002,9 +3002,8 @@ int prog_scan_next(prog_scan_t *s) {
         prog_scan_close(s);
         return 0;
     }
-    s->cur++;
-    if (s->cur <= s->end)
-        dbf_read_record(db, s->cur);
+    s->cur = rec_cursor_next(&s->rc, db);
+    if (s->cur) dbf_read_record(db, s->cur);
     return prog_scan_seek(s);
 }
 
@@ -3033,13 +3032,12 @@ void prog_endscan(void) {
             return;
         }
 
-        /* Advance to next record */
-        loop->scan_current++;
-        if (loop->scan_current <= loop->scan_end)
-            dbf_read_record(db, loop->scan_current);
+        /* Advance to next record: from where the body left the pointer */
+        loop->scan_current = rec_cursor_next(&loop->scan_rc, db);
+        if (loop->scan_current) dbf_read_record(db, loop->scan_current);
 
         /* Search for next matching record */
-        while (loop->scan_current <= loop->scan_end) {
+        while (loop->scan_current) {
             int stop_scan = 0;
             int matched = scan_record_matches(loop, db, &stop_scan);
             if (matched < 0) {
@@ -3056,12 +3054,11 @@ void prog_endscan(void) {
             }
             if (matched) break;
 
-            loop->scan_current++;
-            if (loop->scan_current <= loop->scan_end)
-                dbf_read_record(db, loop->scan_current);
+            loop->scan_current = rec_cursor_next(&loop->scan_rc, db);
+            if (loop->scan_current) dbf_read_record(db, loop->scan_current);
         }
 
-        if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+        if (!loop->scan_current) {
             clause_free_ast(&loop->scan_clause);
             state.loop_depth--; /* Exit SCAN */
             state.pc++;
