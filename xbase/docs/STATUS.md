@@ -294,7 +294,11 @@ built by dBASE III or Quicksilver opens here, and one built here opens
 there: Teacher's Pet's Quicksilver build prints its grade report from the
 files this interpreter writes, and this interpreter prints Quicksilver's
 from the disc's own.  The file keeps no links between leaves; opening
-rebuilds them from the tree, and the entry count with them.  Two things
+rebuilds them from the tree, and the entry count with them.  The trees
+are dBASE III PLUS's too: INDEX ON lays pages out as it does, and kept up
+through appends and changes an index is byte for byte what dBASE III
+PLUS 1.1 leaves, splits and all (equal keys in the order they came, a
+blank date after every date).  Two things
 dBASE III has not, DESCENDING and FOR, are kept in header bytes dBASE
 leaves zero.  This interpreter's own formats before (NDX2, NDX1) are
 converted to dBASE's when opened.  Incremental index maintenance:

@@ -495,7 +495,9 @@ every line), suite and oracle.
 ### Equal keys in an index were in no particular order — RESOLVED 2026-11-15
 
 dBASE's and Clipper's indexes keep equal keys in record order; ours did
-not.  INDEX ON sorted with qsort, which is not stable, and an insert went
+not.  (So it was taken to be; dBASE III PLUS itself, run later, keeps them
+in the order they came, which INDEX ON and appends make record order --
+see "Index files were dBASE III's format but not its trees" below.)  INDEX ON sorted with qsort, which is not stable, and an insert went
 ahead of the equal keys already in its leaf.  Teacher's Pet's grade
 report copies a student's grades in date order and walks them through an
 index on the student alone: under its Quicksilver build the dates come
@@ -548,7 +550,8 @@ been its YYYYMMDD, key type 2: gone); the header has the key length,
 keys per page and item size, which a reader takes as given (the disc has
 items of 20 and 22 bytes for 11- and 13-byte keys).  The file keeps no
 leaf links or entry count: opening reads the internal pages level by
-level and rebuilds both.  DESCENDING and FOR, which dBASE III has not,
+level and rebuilds both (in key order since, depth first: dBASE's own
+trees are not level -- see below).  DESCENDING and FOR, which dBASE III has not,
 sit in header bytes it leaves zero (byte 22, and the FOR after the key
 expression's NUL).  NDX2 and NDX1 files are converted when opened.
 
@@ -560,6 +563,59 @@ leave indexes that walk the same.  An emptied page there has the count
 0x80000000: the count is read, as Quicksilver reads it, by its low 16
 bits.  Tests: xbc/tests/ndxkeep.prg (kept up, reopened, against fresh
 builds), xbase test_ndx2_convert (tests/ndx2, made by the build before).
+
+### Index files were dBASE III's format but not its trees — RESOLVED 2026-11-15
+
+The user found an unprotected dBASE III PLUS 1.1 (the copies on the
+discs are copy-protected, and were left so), and it runs under an
+emulated PC: an oracle for the index files themselves.  Its INDEX ON
+over 600 records wrote what ours did, byte for byte but for bytes it
+never sets.  Kept up through appends and changes, its trees and ours
+parted at once, and its own files showed a fault in ours:
+
+- **A dBASE index of about a thousand entries walked out of order.**
+  dBASE's INDEX ON fills each page and numbers it as it is finished --
+  a leaf, then any internal page that leaf filled -- and at the end
+  makes no page for a last child alone at its level: the child goes up
+  a level.  At 993 entries of a 6-byte key the root is over an internal
+  page of 32 leaves and over one leaf.  Opening rebuilt the leaf chain
+  level by level, taking every leaf to be at one depth: 78 entries out
+  of order, the last record wrong.  It walks the tree in key order now,
+  depth first, and our INDEX ON lays pages out as dBASE's does.
+- **A blank date sorted first; dBASE's key for it is 1.0E+100**, after
+  every date.
+- **Equal keys stay in the order they came** (the entry above took them
+  to be in record order): a record REPLACEd into a key goes after those
+  there, whatever their numbers.  An insert goes past every key equal to
+  it, down the tree and in its leaf.
+- A leaf splits with the larger half on the left, an internal page with
+  it on the right (32 keys: 15, one up, 16), and an internal page holds
+  as many keys as a leaf (one more than ours), its last child's pointer
+  after them.
+- A removal borrows from no page and merges none; a page left empty goes
+  out of its parent, and its number is never used again (the file keeps
+  no free list, and we kept one in memory).  An internal key is kept the
+  last key under its child: when that entry goes, the key becomes the
+  new last, up the tree through rightmost children.
+- APPEND BLANK puts a blank key in each index before the REPLACE, which
+  is why dBASE's first leaf seemed to split by a rule of its own.
+- The key expression is written with a space after it, then the NUL.
+- On an empty table an expression's key length is that of a blank
+  record (C + DTOC(D): C's width and 8); ours guessed 10 for anything
+  but fields joined by +.
+
+Held to dBASE III PLUS: four indexes (character, numeric, date, a
+compound) under 72 random programs -- tables of 0 to 700 records, keys
+of 2 to 30 bytes (12 to 42 to a page), up to 600 appends and key changes,
+few distinct keys or many, blank dates -- every index byte for byte the
+same but for what dBASE leaves as it finds it: the header past the
+expression, the high half of a page's count, a key's padding to its
+item, an internal page's last item past its pointer, a page past its
+items, and pages out of the tree.  Test: xbase test_dbase3_ndx
+(tests/dbase3: dBASE's own indexes, those bytes made 0, compared with
+ours; its INDEX ON tree, read; the build before fails all five and walks
+dBASE's file out of order).  xbc/tests/dupspan.prg checked record order
+among equal keys after REPLACEs; it checks key order now.
 
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 

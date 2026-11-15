@@ -153,6 +153,28 @@ else
     echo "  FAIL: test_ndx2_convert"; echo "$conv_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1))
 fi
 
+# Index files byte for byte as dBASE III PLUS writes them (tests/dbase3:
+# each .PRG run on its .DBF by dBASE itself, the indexes it left with
+# the bytes it never sets made 0 -- normalize.py says which): splits,
+# equal keys in the order they come, keys and pages that leave, blank
+# dates, a compound key; and INDEX ON's tree, one leaf a level up, which
+# xbase reads from dBASE's file in key order
+TOTAL=$((TOTAL + 1))
+d3dir=$(mktemp -d)
+cp "$BASDIR"/tests/dbase3/*.DBF "$BASDIR"/tests/dbase3/*.PRG "$d3dir/"
+cp "$BASDIR/tests/dbase3/BULKC.NDX" "$d3dir/BULKG.NDX"
+d3_out=$( cd "$d3dir" && printf 'DO NDXK\nDO BULK\nDO BULKW\nQUIT\n' | "$EMU" $EMU_ARGS "$DBASE" 2>&1 | filter_output )
+d3_bad=""
+for f in NDXKC NDXKN NDXKD NDXKX BULKC; do
+    cmp -s "$d3dir/$f.NDX" "$BASDIR/tests/dbase3/$f.NDX" || d3_bad="$d3_bad $f"
+done
+if [ -z "$d3_bad" ] && echo "$d3_out" | grep -q "dBASE's walk: *993 \.T\. *99984"; then
+    echo "  PASS: test_dbase3_ndx"; PASS=$((PASS + 1))
+else
+    echo "  FAIL: test_dbase3_ndx${d3_bad:+ (differ:$d3_bad)}"; echo "$d3_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1))
+fi
+rm -rf "$d3dir"
+
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT

@@ -87,7 +87,8 @@ void index_format_key_value(int key_type, const value_t *val, char *buf, int siz
         char tmp[17];
         double n = 0.0;
         if (val->type == VAL_NUM) n = val->num;
-        else if (val->type == VAL_DATE) n = (double)val->date;
+        /* a blank date is 1.0E+100 to dBASE: after every date */
+        else if (val->type == VAL_DATE) n = val->date ? (double)val->date : 1e100;
         else if (val->type == VAL_CHAR) n = atof(val->str);
         encode_sortable_double(n, tmp);
         str_copy(buf, tmp, size);
@@ -227,19 +228,6 @@ static void hash_remove(index_t *idx, ndx_page_t *p) {
     }
 }
 
-static void page_reclaim(index_t *idx, ndx_page_t *p) {
-    p->type = PAGE_FREE;
-    p->nkeys = 0;
-    if (p->children) {
-        memset(p->children, 0, (idx->alloc_keys + 1) * sizeof(int));
-    } else {
-        p->children = (int *)calloc(idx->alloc_keys + 1, sizeof(int));
-    }
-    p->children[0] = idx->free_page_head;
-    idx->free_page_head = p->page_no;
-    p->dirty = 1;
-}
-
 /* ---- Page allocation ---- */
 /* A page's arrays for its type, room for one key past the most a page
  * holds (an insert overflows before the split).  alloc_keys covers the
@@ -257,28 +245,6 @@ static int page_arrays(index_t *idx, ndx_page_t *p) {
 static ndx_page_t *page_new(index_t *idx, int type) {
     ndx_page_t *p;
     int pg_no;
-
-    if (idx->free_page_head > 0) {
-        pg_no = idx->free_page_head;
-        p = page_get(idx, pg_no);
-        if (p) {
-            idx->free_page_head = p->children[0];
-            /* Re-initialize reuse page.  Free all arrays and reallocate
-               for the target type to avoid buffer size mismatches when a
-               leaf page is recycled as internal (or vice versa). */
-            p->type = type;
-            p->nkeys = 0;
-            p->dirty = 1;
-            p->next_leaf = 0;
-            p->prev_leaf = 0;
-            free(p->keys);      p->keys = NULL;
-            free(p->recnos);    p->recnos = NULL;
-            free(p->children);  p->children = NULL;
-
-            if (page_arrays(idx, p) < 0) { page_free(p); return NULL; }
-            return p;
-        }
-    }
 
     pg_no = idx->num_pages;
     idx->num_pages++;
@@ -323,6 +289,13 @@ static uint32_t get32(const unsigned char *b) {
     return (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
 }
 
+/* the key expression (a space and a NUL after it, as dBASE writes it)
+   and the FOR (NUL-ended) fit in the header */
+static int header_expr_fits(const index_t *idx) {
+    return strlen(idx->key_expr) + 2 +
+           (idx->for_expr[0] ? strlen(idx->for_expr) + 1 : 0) <= NDX_EXPR_ROOM;
+}
+
 /* the header: dBASE III's fields, and ours where dBASE leaves zeros */
 static void header_image(const index_t *idx, unsigned char *buf) {
     int klen = (int)strlen(idx->key_expr);
@@ -335,9 +308,12 @@ static void header_image(const index_t *idx, unsigned char *buf) {
     buf[22] = (unsigned char)((idx->descending ? NDX_FLAG_DESC : 0) |
                               (idx->for_expr[0] ? NDX_FLAG_FOR : 0));
     buf[23] = (unsigned char)(idx->unique ? 1 : 0);
-    memcpy(buf + 24, idx->key_expr, (size_t)klen);   /* index_build kept both in NDX_EXPR_ROOM */
+    /* dBASE writes the expression with a space after it, then the NUL;
+       the reader trims the space (header_expr_fits made room for both) */
+    memcpy(buf + 24, idx->key_expr, (size_t)klen);
+    buf[24 + klen] = ' ';
     if (idx->for_expr[0])
-        memcpy(buf + 24 + klen + 1, idx->for_expr, strlen(idx->for_expr));
+        memcpy(buf + 24 + klen + 2, idx->for_expr, strlen(idx->for_expr));
 }
 
 static int page_flush(index_t *idx, int page_no) {
@@ -384,6 +360,15 @@ static int page_flush(index_t *idx, int page_no) {
 /* A page from the file.  A leaf's first item has no left page; a page
  * with no keys is an empty leaf unless its one pointer names another
  * page (dBASE leaves an emptied root's old pointer behind). */
+/* A page is a leaf when its first pointer is 0, or it has no keys and
+ * that pointer names no other page of the file (an empty leaf's is
+ * whatever was there); else it is internal, with its count's keys and
+ * one child more */
+static int page_is_leaf(const index_t *idx, int page_no, int n, uint32_t left0) {
+    return left0 == 0 ||
+           (n == 0 && (left0 >= (uint32_t)idx->num_pages || left0 == (uint32_t)page_no));
+}
+
 static ndx_page_t *page_read(index_t *idx, int page_no, unsigned char *buf) {
     ndx_page_t *p;
     int i, n, cap;
@@ -403,8 +388,7 @@ static ndx_page_t *page_read(index_t *idx, int page_no, unsigned char *buf) {
     if (!p) return NULL;
     p->page_no = page_no;
     p->nkeys = n;
-    p->type = (left0 == 0 || (n == 0 && (left0 >= (uint32_t)idx->num_pages || left0 == (uint32_t)page_no)))
-              ? PAGE_LEAF : PAGE_INTERNAL;
+    p->type = page_is_leaf(idx, page_no, n, left0) ? PAGE_LEAF : PAGE_INTERNAL;
     if (page_arrays(idx, p) < 0) { page_free(p); return NULL; }
 
     for (i = 0; i < n; i++, it += idx->item_size) {
@@ -472,7 +456,6 @@ static void free_all_pages(index_t *idx) {
     idx->cache_size = 0;
     idx->lru_head = NULL;
     idx->lru_tail = NULL;
-    idx->free_page_head = 0;
     if (idx->leaf_link)
         memset(idx->leaf_link, 0, (size_t)idx->leaf_link_cap * 2 * sizeof(int));
 }
@@ -519,12 +502,19 @@ void index_close(index_t *idx) {
 /* An item is the left page, the record number and the key rounded up to
  * four bytes; a page is a count and as many items as fit.  An internal
  * page needs one item more than its keys, for the rightmost page. */
+/* An internal page holds as many keys as a leaf, and its last child's
+ * pointer after them, where that fits (it does for every key dBASE
+ * takes, up to 100 bytes): dBASE fills its internal pages so */
+static int internal_capacity(int kpp, int isz) {
+    return 4 + kpp * isz + 4 <= NDX_PAGE ? kpp : kpp - 1;
+}
+
 static void compute_fanout(index_t *idx) {
     idx->disk_key_len = idx->key_type == 1 ? 8 : idx->key_len;
     idx->item_size = 8 + ((idx->disk_key_len + 3) & ~3);
     idx->keys_per_page = (NDX_PAGE - 4) / idx->item_size;
     idx->max_keys_leaf = idx->keys_per_page;
-    idx->max_keys_internal = idx->keys_per_page - 1;
+    idx->max_keys_internal = internal_capacity(idx->keys_per_page, idx->item_size);
     idx->alloc_keys = (NDX_PAGE - 4) / idx->item_size + 1;
 }
 
@@ -554,28 +544,6 @@ static int page_upper_bound(index_t *idx, ndx_page_t *page, const char *key) {
             hi = mid;
     }
     return lo;
-}
-
-/* Whether the last entry under page_no is at or past (key, recno): a
- * greater key, or the key with a greater record number.  An insert goes
- * into the first child, of those a run of equal keys spans, for which
- * this holds -- equal keys stay in record order when an older record
- * takes a key already there (a REPLACE), not only when one is appended. */
-static int last_entry_ge(index_t *idx, int page_no, const char *key, uint32_t recno) {
-    ndx_page_t *p = page_get(idx, page_no);
-    int ge = 0;
-    while (p && p->type == PAGE_INTERNAL) {
-        int child = p->children[p->nkeys];
-        page_put(p);
-        p = page_get(idx, child);
-    }
-    if (!p) return 0;
-    if (p->nkeys > 0) {
-        int c = key_cmp(page_key(idx, p, p->nkeys - 1), key, idx->key_len);
-        ge = c > 0 || (c == 0 && p->recnos[p->nkeys - 1] >= recno);
-    }
-    page_put(p);
-    return ge;
 }
 
 /* ---- Search: find leaf and position for key ---- */
@@ -849,14 +817,15 @@ static void leaf_insert_at(index_t *idx, ndx_page_t *leaf, int pos,
 }
 
 /* ---- Split a leaf page ---- */
-/* Splits 'leaf' in two. The right half goes into a new page.
+/* Splits 'leaf' in two. The right half goes into a new page; of an odd
+   count the left keeps the larger half, as dBASE's does.
    Returns the new page. Sets *split_key to the last key left behind: an
    internal key is the last key under its left page, as dBASE keeps it. */
 static ndx_page_t *leaf_split(index_t *idx, ndx_page_t *leaf, char *split_key) {
     ndx_page_t *right;
     int mid, i;
 
-    mid = leaf->nkeys / 2;
+    mid = (leaf->nkeys + 1) / 2;
     right = page_new(idx, PAGE_LEAF);
     if (!right) return NULL;
 
@@ -906,11 +875,13 @@ static void internal_insert_at(index_t *idx, ndx_page_t *node, int pos,
 }
 
 /* ---- Split an internal node ---- */
+/* The key at mid goes up; of an even count the right keeps the larger
+   half, as dBASE's does (32 keys: 15, one up, 16) */
 static ndx_page_t *internal_split(index_t *idx, ndx_page_t *node, char *promote_key) {
     ndx_page_t *right;
     int mid, i;
 
-    mid = node->nkeys / 2;
+    mid = (node->nkeys - 1) / 2;
     right = page_new(idx, PAGE_INTERNAL);
     if (!right) return NULL;
 
@@ -968,17 +939,15 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
         return 0;
     }
 
-    /* Walk down tree to find leaf: among the children a run of equal keys
-     * spans (lo to hi), the first whose last entry is at or past (key,
-     * recno) -- see last_entry_ge; a unique key goes where its equal
-     * would be */
+    /* Walk down tree to find leaf: past every key equal to it, as dBASE
+     * goes, so that equal keys stay in the order they came -- by record
+     * number only as INDEX ON leaves them, or as records are appended (a
+     * record REPLACEd into a key goes after the records there, whatever
+     * their numbers); a unique key goes where its equal would be */
     node = page_get(idx, idx->root_page);
     while (node->type == PAGE_INTERNAL) {
-        int hi = page_upper_bound(idx, node, padded);
-        pos = page_lower_bound(idx, node, padded);
-        if (!idx->unique)
-            while (pos < hi && !last_entry_ge(idx, node->children[pos], padded, recno))
-                pos++;
+        pos = idx->unique ? page_lower_bound(idx, node, padded)
+                          : page_upper_bound(idx, node, padded);
         path[depth] = node->page_no;
         path_pos[depth] = pos;
         depth++;
@@ -989,13 +958,9 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
         }
     }
 
-    /* node is now a leaf. Insert into it: among equal keys, in record order
-     * (an appended record after the ones already there) */
-    pos = page_lower_bound(idx, node, padded);
-    if (!idx->unique)
-        while (pos < node->nkeys && node->recnos[pos] < recno &&
-               key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0)
-            pos++;
+    /* node is now a leaf. Insert into it: after the equal keys */
+    pos = idx->unique ? page_lower_bound(idx, node, padded)
+                      : page_upper_bound(idx, node, padded);
     if (idx->unique) {
         if (pos < node->nkeys &&
             key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0) {
@@ -1096,8 +1061,40 @@ static void internal_remove_at(index_t *idx, ndx_page_t *node, int pos) {
     node->dirty = 1;
 }
 
-static int bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno) {
+/* A page out of the tree: dBASE never uses its number again (the file
+ * keeps no free list), nor do we */
+static void page_discard(index_t *idx, ndx_page_t *p) {
+    if (p->type == PAGE_LEAF) {
+        ndx_page_t *n;
+        if (p->prev_leaf && (n = page_get(idx, p->prev_leaf))) {
+            n->next_leaf = p->next_leaf; page_put(n);
+        }
+        if (p->next_leaf && (n = page_get(idx, p->next_leaf))) {
+            n->prev_leaf = p->prev_leaf; page_put(n);
+        }
+        if (idx->first_leaf == p->page_no) idx->first_leaf = p->next_leaf;
+    }
+    p->type = PAGE_FREE;
+    p->nkeys = 0;
+    p->dirty = 1;
+}
+
+/* What bt_remove did to a subtree */
+#define RM_FOUND 1   /* the entry was there, and is gone */
+#define RM_EMPTY 2   /* nothing is left under the page */
+#define RM_LAST  4   /* the last key under it changed, to *last */
+
+/* Removes (key, recno) from the subtree at page_no.  As dBASE does,
+ * nothing more than keeps the keys true: no page borrows from or merges
+ * with another.  An internal key is the last key under its child, so
+ * when that changes the key does; the rightmost child has no key, and
+ * its change is the parent's own, for the level above.  A page left
+ * with nothing goes out of its parent with one key: its own, or, the
+ * rightmost child's having none, the key before it -- whose child is
+ * then the rightmost, and its last key the parent's. */
+static int bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno, char *last) {
     ndx_page_t *node = page_get(idx, page_no);
+    int rc = 0, i;
     if (!node) return 0;
 
     if (node->type == PAGE_INTERNAL) {
@@ -1105,153 +1102,56 @@ static int bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno)
          * span several (routing to the last alone missed an entry in an
          * earlier one, and left it in the index) */
         int lo = page_lower_bound(idx, node, key), hi = page_upper_bound(idx, node, key);
-        int pos, removed = 0;
-        for (pos = lo; pos <= hi && !removed; pos++)
-            removed = bt_remove(idx, node->children[pos], key, recno);
-        if (!removed) {
-            page_put(node);
-            return 0;
-        }
+        int pos;
+        for (pos = lo; pos <= hi && !rc; pos++)
+            rc = bt_remove(idx, node->children[pos], key, recno, last);
         pos--;   /* the child that held it */
-        
-        /* Check for underflow in the child we just returned from */
-        ndx_page_t *child = page_get(idx, node->children[pos]);
-        int min_keys = (child->type == PAGE_LEAF) ? ((idx->max_keys_leaf + 1) / 2) : ((idx->max_keys_internal + 1) / 2);
-        
-        if (child->nkeys < min_keys && child->page_no != idx->root_page) {
-            /* Try to borrow from siblings */
-            ndx_page_t *left = NULL, *right = NULL;
-            if (pos > 0) left = page_get(idx, node->children[pos-1]);
-            if (pos < node->nkeys) right = page_get(idx, node->children[pos+1]);
-
-            if (left && left->nkeys > min_keys) {
-                /* Borrow from left */
-                if (child->type == PAGE_LEAF) {
-                    leaf_insert_at(idx, child, 0, page_key(idx, left, left->nkeys - 1), left->recnos[left->nkeys - 1]);
-                    left->nkeys--;
-                    left->dirty = 1;
-                    /* the left page's key: its new last */
-                    memcpy(page_key(idx, node, pos - 1), page_key(idx, left, left->nkeys - 1), idx->key_len);
-                    node->dirty = 1;
-                } else {
-                    /* Internal borrow: rotate through parent */
-                    for (int i = child->nkeys; i > 0; i--) {
-                        memcpy(page_key(idx, child, i), page_key(idx, child, i - 1), idx->key_len);
-                        child->children[i + 1] = child->children[i];
-                    }
-                    child->children[1] = child->children[0];
-                    memcpy(page_key(idx, child, 0), page_key(idx, node, pos - 1), idx->key_len);
-                    child->children[0] = left->children[left->nkeys];
-                    child->nkeys++;
-                    child->dirty = 1;
-                    memcpy(page_key(idx, node, pos - 1), page_key(idx, left, left->nkeys - 1), idx->key_len);
-                    left->nkeys--;
-                    left->dirty = 1;
-                    node->dirty = 1;
-                }
-            } else if (right && right->nkeys > min_keys) {
-                /* Borrow from right */
-                if (child->type == PAGE_LEAF) {
-                    leaf_insert_at(idx, child, child->nkeys, page_key(idx, right, 0), right->recnos[0]);
-                    leaf_remove_at(idx, right, 0);
-                    /* the child's key: the entry it took, now its last */
-                    memcpy(page_key(idx, node, pos), page_key(idx, child, child->nkeys - 1), idx->key_len);
-                    node->dirty = 1;
-                } else {
-                    /* Internal borrow: rotate through parent */
-                    memcpy(page_key(idx, child, child->nkeys), page_key(idx, node, pos), idx->key_len);
-                    child->children[child->nkeys + 1] = right->children[0];
-                    child->nkeys++;
-                    child->dirty = 1;
-                    memcpy(page_key(idx, node, pos), page_key(idx, right, 0), idx->key_len);
-                    right->children[0] = right->children[1];
-                    internal_remove_at(idx, right, 0);
-                    node->dirty = 1;
-                }
+        if (rc & RM_EMPTY) {
+            ndx_page_t *child = page_get(idx, node->children[pos]);
+            if (child) { page_discard(idx, child); page_put(child); }
+            rc = RM_FOUND;
+            if (node->nkeys == 0) {
+                rc |= RM_EMPTY;   /* its only child: nothing left under it */
+            } else if (pos < node->nkeys) {
+                for (i = pos; i < node->nkeys - 1; i++)
+                    memcpy(page_key(idx, node, i), page_key(idx, node, i + 1), idx->key_len);
+                for (i = pos; i < node->nkeys; i++)
+                    node->children[i] = node->children[i + 1];
+                node->nkeys--;
             } else {
-                /* Must merge */
-                if (left) {
-                    /* Merge child into left */
-                    if (child->type == PAGE_LEAF) {
-                        for (int i = 0; i < child->nkeys; i++) {
-                            leaf_insert_at(idx, left, left->nkeys, page_key(idx, child, i), child->recnos[i]);
-                        }
-                        if (idx->first_leaf == child->page_no) idx->first_leaf = left->page_no;
-                        left->next_leaf = child->next_leaf;
-                        if (child->next_leaf) {
-                            ndx_page_t *next = page_get(idx, child->next_leaf);
-                            if (next) { next->prev_leaf = left->page_no; next->dirty = 1; page_put(next); }
-                        }
-                    } else {
-                        /* Internal merge: pull down parent separator */
-                        memcpy(page_key(idx, left, left->nkeys), page_key(idx, node, pos - 1), idx->key_len);
-                        left->children[left->nkeys + 1] = child->children[0];
-                        left->nkeys++;
-                        for (int i = 0; i < child->nkeys; i++) {
-                            memcpy(page_key(idx, left, left->nkeys), page_key(idx, child, i), idx->key_len);
-                            left->children[left->nkeys + 1] = child->children[i + 1];
-                            left->nkeys++;
-                        }
-                    }
-                    left->dirty = 1;
-                    internal_remove_at(idx, node, pos - 1);
-                    page_reclaim(idx, child);
-                } else if (right) {
-                    /* Merge right into child */
-                    if (child->type == PAGE_LEAF) {
-                        for (int i = 0; i < right->nkeys; i++) {
-                            leaf_insert_at(idx, child, child->nkeys, page_key(idx, right, i), right->recnos[i]);
-                        }
-                        if (idx->first_leaf == right->page_no) idx->first_leaf = child->page_no;
-                        child->next_leaf = right->next_leaf;
-                        if (right->next_leaf) {
-                            ndx_page_t *next = page_get(idx, right->next_leaf);
-                            if (next) { next->prev_leaf = child->page_no; next->dirty = 1; page_put(next); }
-                        }
-                    } else {
-                        /* Internal merge: pull down parent separator */
-                        memcpy(page_key(idx, child, child->nkeys), page_key(idx, node, pos), idx->key_len);
-                        child->children[child->nkeys + 1] = right->children[0];
-                        child->nkeys++;
-                        for (int i = 0; i < right->nkeys; i++) {
-                            memcpy(page_key(idx, child, child->nkeys), page_key(idx, right, i), idx->key_len);
-                            child->children[child->nkeys + 1] = right->children[i + 1];
-                            child->nkeys++;
-                        }
-                    }
-                    child->dirty = 1;
-                    internal_remove_at(idx, node, pos);
-                    page_reclaim(idx, right);
-                }
+                memcpy(last, page_key(idx, node, node->nkeys - 1), idx->key_len);
+                node->nkeys--;
+                rc |= RM_LAST;
             }
-            if (left) page_put(left);
-            if (right) page_put(right);
+            node->dirty = 1;
+        } else if ((rc & RM_LAST) && pos < node->nkeys) {
+            memcpy(page_key(idx, node, pos), last, idx->key_len);
+            node->dirty = 1;
+            rc &= ~RM_LAST;
         }
-        page_put(child);
-        page_put(node);
-        return 1;
     } else {
         /* Leaf: find exact key+recno and remove */
-        int found = -1;
-        for (int i = 0; i < node->nkeys; i++) {
-            if (key_cmp(page_key(idx, node, i), key, idx->key_len) == 0 && node->recnos[i] == recno) {
-                found = i;
+        for (i = 0; i < node->nkeys; i++)
+            if (key_cmp(page_key(idx, node, i), key, idx->key_len) == 0 && node->recnos[i] == recno)
                 break;
-            }
-        }
-        if (found >= 0) {
-            leaf_remove_at(idx, node, found);
+        if (i < node->nkeys) {
+            leaf_remove_at(idx, node, i);
             idx->nentries--;
-            page_put(node);
-            return 1;
+            rc = RM_FOUND;
+            if (node->nkeys == 0) {
+                rc |= RM_EMPTY;
+            } else if (i == node->nkeys) {
+                memcpy(last, page_key(idx, node, node->nkeys - 1), idx->key_len);
+                rc |= RM_LAST;
+            }
         }
     }
     page_put(node);
-    return 0;
+    return rc;
 }
 
 int index_remove(index_t *idx, const char *key, uint32_t recno) {
-    char padded[MAX_INDEX_KEY];
+    char padded[MAX_INDEX_KEY], last[MAX_INDEX_KEY];
     int removed;
 
     if (!idx->active || idx->nentries == 0) return -1;
@@ -1263,30 +1163,21 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
         memcpy(padded, key, len);
     }
 
-    removed = bt_remove(idx, idx->root_page, padded, recno);
+    removed = bt_remove(idx, idx->root_page, padded, recno, last);
     if (!removed) return -1;
-
-    /* Check if root needs to be collapsed */
-    ndx_page_t *root = page_get(idx, idx->root_page);
-    if (root && root->type == PAGE_INTERNAL && root->nkeys == 0) {
-        int new_root = root->children[0];
-        page_reclaim(idx, root);
-        idx->root_page = new_root;
-        /* Also update first_leaf if we collapsed to nothing */
-        if (idx->nentries == 0) idx->first_leaf = 0;
-    }
-    if (root) page_put(root);
-
-    if (idx->nentries == 0 && idx->root_page != 0) {
-        /* Tree is entirely empty, but might have a single leaf left as root */
-        ndx_page_t *r = page_get(idx, idx->root_page);
-        if (r && r->nkeys == 0) {
-            /* Keep it as empty leaf root or just let it be. 
-               Standard dBase behavior is often to keep an empty root page. */
+    if (removed & RM_EMPTY) {
+        /* the root has nothing under it: an empty root leaf, as a leaf
+         * root left empty is (a FOR index can lose every entry) */
+        ndx_page_t *root = page_get(idx, idx->root_page);
+        if (root && root->type == PAGE_INTERNAL) {
+            ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
+            page_discard(idx, root);
+            if (!leaf) { page_put(root); return -1; }
+            idx->root_page = idx->first_leaf = leaf->page_no;
+            page_put(leaf);
         }
-        if (r) page_put(r);
+        if (root) page_put(root);
     }
-
     return 0;
 }
 
@@ -1302,7 +1193,6 @@ void index_clear(index_t *idx) {
         hash_add(idx, hdr);
     }
     idx->num_pages = 1;
-    idx->free_page_head = 0;
     idx->nentries = 0;
     idx->iter_page = -1;
     idx->iter_pos = -1;
@@ -1326,27 +1216,67 @@ static int key_entry_cmp(const void *a, const void *b, void *userdata) {
     const key_entry_t *kb = (const key_entry_t *)b;
     int cmp = key_cmp(ka->key, kb->key, idx->key_len);
     if (cmp) return cmp;
-    /* equal keys in record order, as dBASE's and Clipper's indexes keep
-     * them (qsort is not stable: they came out scrambled, and Teacher's
-     * Pet's grade report, walking a student's grades by an index on the
+    /* equal keys in record order, as dBASE's INDEX ON leaves them
+     * (qsort is not stable: they came out scrambled, and Teacher's Pet's
+     * grade report, walking a student's grades by an index on the
      * student alone, lost the date order its copy had) */
     return ka->recno < kb->recno ? -1 : ka->recno > kb->recno;
 }
 
-/* The last key under a page of a tree being built (its pages all cached) */
-static const char *subtree_last_key(index_t *idx, ndx_page_t *p) {
-    while (p && p->type == PAGE_INTERNAL)
-        p = hash_lookup(idx, p->children[p->nkeys]);
-    return p && p->nkeys > 0 ? page_key(idx, p, p->nkeys - 1) : NULL;
+/* bulk_load's pages not yet under a parent: at each level, a page
+ * number and the last key under it, for each child of the page that
+ * level will make next */
+typedef struct {
+    int per;          /* children an internal page takes */
+    int *page;        /* [level * per + i] */
+    char *last;       /* [(level * per + i) * key_len] */
+    int cnt[33];
+} bulk_t;
+
+static int bulk_add(index_t *idx, bulk_t *b, int lvl, int pg, const char *last);
+
+/* the page of level lvl's children, handed to the level above */
+static int bulk_up(index_t *idx, bulk_t *b, int lvl) {
+    ndx_page_t *parent = page_new(idx, PAGE_INTERNAL);
+    int j, n = b->cnt[lvl], pg;
+    char last[MAX_INDEX_KEY];
+    if (!parent) return -1;
+    for (j = 0; j < n; j++) {
+        parent->children[j] = b->page[lvl * b->per + j];
+        if (j < n - 1)
+            memcpy(page_key(idx, parent, j), b->last + (size_t)(lvl * b->per + j) * idx->key_len, idx->key_len);
+    }
+    parent->nkeys = n - 1;
+    memcpy(last, b->last + (size_t)(lvl * b->per + n - 1) * idx->key_len, idx->key_len);
+    b->cnt[lvl] = 0;
+    pg = parent->page_no;
+    page_put(parent);
+    return bulk_add(idx, b, lvl + 1, pg, last);
 }
 
-/* A tree from n sorted entries, bottom up, as full as its pages go: the
- * header page, the leaves, then each level of internal pages, whose
- * keys are the last key under each child but the rightmost.  No entries
- * is one empty root leaf.  The pages stay in the cache for index_write. */
+/* a finished page goes under the page level lvl is making, which is
+ * made when it is full */
+static int bulk_add(index_t *idx, bulk_t *b, int lvl, int pg, const char *last) {
+    int i;
+    if (lvl >= 33) return -1;
+    i = b->cnt[lvl]++;
+    b->page[lvl * b->per + i] = pg;
+    memcpy(b->last + (size_t)(lvl * b->per + i) * idx->key_len, last, idx->key_len);
+    return b->cnt[lvl] == b->per ? bulk_up(idx, b, lvl) : 0;
+}
+
+/* A tree from n sorted entries, as dBASE's INDEX ON writes one: every
+ * page full, and numbered as it is finished -- a leaf, then any internal
+ * page that leaf filled, and so on up.  At the end, what is left at each
+ * level, from the leaves up, is made a page; one page left alone is not
+ * given a parent but goes up a level as it is, so the leaves need not all
+ * be at one depth (index_walk).  An internal key is the last key under
+ * its child; the rightmost child has none.  No entries is one empty root
+ * leaf.  The pages stay in the cache for index_write. */
 static int bulk_load(index_t *idx, const key_entry_t *entries, int n) {
-    ndx_page_t **level = NULL;
-    int nlevel, i;
+    bulk_t b;
+    int i, lvl, rc = 0;
+    ndx_page_t *prev = NULL;
 
     free_all_pages(idx);
     idx->nentries = 0;
@@ -1358,67 +1288,53 @@ static int bulk_load(index_t *idx, const key_entry_t *entries, int n) {
         hash_add(idx, hdr);
         idx->num_pages = 1;
     }
+    memset(&b, 0, sizeof b);
+    b.per = idx->max_keys_internal + 1;
+    b.page = (int *)malloc((size_t)33 * b.per * sizeof(int));
+    b.last = (char *)malloc((size_t)33 * b.per * idx->key_len);
+    if (!b.page || !b.last) { free(b.page); free(b.last); return -1; }
 
-    nlevel = n > 0 ? (n + idx->max_keys_leaf - 1) / idx->max_keys_leaf : 1;
-    level = (ndx_page_t **)malloc((size_t)nlevel * sizeof(ndx_page_t *));
-    if (!level) return -1;
-    for (i = 0; i < nlevel; i++) {
+    for (i = 0; rc == 0 && (i < n || i == 0); i += idx->max_keys_leaf) {
         ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
-        int j, count = n - i * idx->max_keys_leaf;
-        if (!leaf) { free(level); return -1; }
+        int j, count = n - i;
+        if (!leaf) { rc = -1; break; }
         if (count > idx->max_keys_leaf) count = idx->max_keys_leaf;
-        if (count < 0) count = 0;
         for (j = 0; j < count; j++) {
-            const key_entry_t *e = &entries[i * idx->max_keys_leaf + j];
-            memcpy(page_key(idx, leaf, j), e->key, idx->key_len);
-            leaf->recnos[j] = e->recno;
+            memcpy(page_key(idx, leaf, j), entries[i + j].key, idx->key_len);
+            leaf->recnos[j] = entries[i + j].recno;
         }
         leaf->nkeys = count;
         idx->nentries += count;
-        if (i > 0) {
-            leaf->prev_leaf = level[i - 1]->page_no;
-            level[i - 1]->next_leaf = leaf->page_no;
+        if (prev) {
+            leaf->prev_leaf = prev->page_no;
+            prev->next_leaf = leaf->page_no;
+            page_put(prev);
+        } else {
+            idx->first_leaf = leaf->page_no;
         }
-        level[i] = leaf;
+        prev = leaf;
+        rc = bulk_add(idx, &b, 0, leaf->page_no, count ? page_key(idx, leaf, count - 1) : leaf->keys);
+        if (n == 0) break;
     }
-    idx->first_leaf = level[0]->page_no;
-
-    while (nlevel > 1) {
-        /* children shared out evenly: a last page with one child alone
-         * would have no key, and a reader could take it for a leaf */
-        int per = idx->max_keys_internal + 1;   /* children a page takes */
-        int nup = (nlevel + per - 1) / per, c = 0;
-        ndx_page_t **up = (ndx_page_t **)malloc((size_t)nup * sizeof(ndx_page_t *));
-        if (!up) goto fail;
-        for (i = 0; i < nup; i++) {
-            ndx_page_t *parent = page_new(idx, PAGE_INTERNAL);
-            int j, kids = nlevel / nup + (i < nlevel % nup);
-            if (!parent) { free(up); goto fail; }
-            for (j = 0; j < kids; j++, c++) {
-                parent->children[j] = level[c]->page_no;
-                if (j < kids - 1) {
-                    const char *last = subtree_last_key(idx, level[c]);
-                    if (!last) { free(up); goto fail; }
-                    memcpy(page_key(idx, parent, j), last, idx->key_len);
-                }
-            }
-            parent->nkeys = kids - 1;
-            up[i] = parent;
+    if (prev) page_put(prev);
+    /* what is left, from the leaves up; the last page alone is the root */
+    for (lvl = 0; rc == 0; lvl++) {
+        int above = 0, k;
+        for (k = lvl + 1; k < 33; k++) above += b.cnt[k];
+        if (b.cnt[lvl] == 1 && above == 0) {
+            idx->root_page = b.page[lvl * b.per];
+            break;
         }
-        for (i = 0; i < nlevel; i++) page_put(level[i]);
-        free(level);
-        level = up;
-        nlevel = nup;
+        if (b.cnt[lvl] == 1) {
+            b.cnt[lvl] = 0;
+            rc = bulk_add(idx, &b, lvl + 1, b.page[lvl * b.per], b.last + (size_t)lvl * b.per * idx->key_len);
+        } else if (b.cnt[lvl] > 1) {
+            rc = bulk_up(idx, &b, lvl);
+        }
     }
-    idx->root_page = level[0]->page_no;
-    page_put(level[0]);
-    free(level);
-    return 0;
-
-fail:
-    for (i = 0; i < nlevel; i++) page_put(level[i]);
-    free(level);
-    return -1;
+    free(b.page);
+    free(b.last);
+    return rc;
 }
 
 /* ---- Determine key type/length from DBF field definitions (no records needed) ---- */
@@ -1490,6 +1406,44 @@ static void index_probe_key_from_schema(index_t *idx, dbf_t *db, const char *key
     idx->key_len = 10;
 }
 
+/* The key's type and length, from what the records gave (key_type_set
+ * when one did; max_len the longest character key).  With no record to
+ * go by, the key of a blank record, as dBASE takes it (C + DTOC(D) on an
+ * empty table: C's width and 8), else what the schema says. */
+static void index_key_info_set(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
+                               const char *key_expr, int key_type_set, int max_len) {
+    if (!key_type_set) {
+        char *saved = (char *)malloc(db->record_size);
+        value_t val;
+        int ok = 0;
+        if (saved) {
+            memcpy(saved, db->record_buf, db->record_size);
+            memset(db->record_buf, ' ', db->record_size);
+            ok = (idx->key_ast ? ast_eval(idx->key_ast, ctx, &val)
+                               : ast_eval_dynamic(key_expr, ctx, &val)) == 0;
+            memcpy(db->record_buf, saved, db->record_size);
+            free(saved);
+        }
+        if (!ok) {
+            index_probe_key_from_schema(idx, db, key_expr);
+            return;
+        }
+        idx->key_type = (val.type == VAL_NUM || val.type == VAL_DATE) ? 1 : 0;
+        if (idx->key_type == 0) {
+            char keybuf[MAX_INDEX_KEY + 1];
+            index_format_key_value(0, &val, keybuf, sizeof(keybuf));
+            max_len = (int)strlen(keybuf);
+        }
+    }
+    if (idx->key_type == 1) {
+        idx->key_len = 16;   /* sortable transformed IEEE-754 hex */
+    } else {
+        if (max_len < 1) max_len = 1;
+        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
+        idx->key_len = max_len;
+    }
+}
+
 /* ---- Probe key type and length without storing entries (O(1) memory) ---- */
 static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
                                   const char *key_expr) {
@@ -1534,16 +1488,7 @@ static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
         if (len > max_len) max_len = len;
     }
 
-    if (!key_type_set) {
-        /* No records — fall back to schema-based probe */
-        index_probe_key_from_schema(idx, db, key_expr);
-    } else if (idx->key_type == 1) {
-        idx->key_len = 16;
-    } else {
-        if (max_len < 1) max_len = 1;
-        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
-        idx->key_len = max_len;
-    }
+    index_key_info_set(idx, db, ctx, key_expr, key_type_set, max_len);
 }
 
 /* ---- Incremental build: insert records one-by-one (O(1) extra memory) ---- */
@@ -1611,8 +1556,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         if (idx->for_ast) { ast_free(idx->for_ast); idx->for_ast = NULL; }
     }
     idx->descending = descending;
-    /* the key expression and the FOR, each NUL-ended, go in the header */
-    if (strlen(idx->key_expr) + 1 + (idx->for_expr[0] ? strlen(idx->for_expr) + 1 : 0) > NDX_EXPR_ROOM) {
+    if (!header_expr_fits(idx)) {
         ctx->error = "Index expression and FOR condition too long for an index file";
         idx->for_expr[0] = '\0';
         return -2;
@@ -1707,16 +1651,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         }
     }
 
-    if (!key_type_set) {
-        /* No records — fall back to schema-based probe */
-        index_probe_key_from_schema(idx, db, key_expr);
-    } else if (idx->key_type == 1) {
-        idx->key_len = 16; /* sortable transformed IEEE-754 hex */
-    } else {
-        if (max_len < 1) max_len = 1;
-        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
-        idx->key_len = max_len;
-    }
+    index_key_info_set(idx, db, ctx, key_expr, key_type_set, max_len);
 
     compute_fanout(idx);
 
@@ -1810,74 +1745,70 @@ void index_flush(index_t *idx) {
 }
 
 /* ---- Open: the leaf chain and entry count the file does not keep ---- */
-/* Every internal page is read, level by level from the root, its
- * children in order; the leaves are the last level (a B-tree's leaves
- * are all at one depth), and of each only its count is read.  A page
- * named twice, or out of the file, is not an index of ours to open. */
+/* The tree is walked in key order, depth first, and its leaves, as they
+ * are met, are the chain.  Its leaves need not be at one depth: dBASE's
+ * INDEX ON makes no page for a last child alone at a level, the child
+ * goes up a level instead (993 entries of a 6-byte key: a root over an
+ * internal page of 32 leaves and over one leaf).  Of a page only its
+ * count and first pointer are read until it is known to be internal
+ * (page_is_leaf).  A page named twice,
+ * or out of the file, or a tree deeper than 32, is not an index to open. */
 static int index_walk(index_t *idx) {
-    int *level, *next, nlevel = 1, depth = 0, i;
-    unsigned char cnt[4];
+    struct { int page, next; } stack[33];
+    unsigned char head[8], *seen;
+    int sp = 0, prev = 0;
     ndx_page_t *p;
 
-    /* the depth, down the leftmost pages */
-    for (i = idx->root_page;;) {
-        p = page_get(idx, i);
-        if (!p) return -1;
-        if (p->type == PAGE_LEAF) { page_put(p); break; }
-        i = p->children[0];
-        page_put(p);
-        if (++depth > 32) return -1;
-    }
-
-    level = (int *)malloc(sizeof(int));
-    if (!level) return -1;
-    level[0] = idx->root_page;
-    while (depth-- > 0) {
-        int n = 0, cap = nlevel * 8 + 8;
-        next = (int *)malloc((size_t)cap * sizeof(int));
-        if (!next) { free(level); return -1; }
-        for (i = 0; i < nlevel; i++) {
-            int j;
-            p = page_get(idx, level[i]);
-            if (!p || p->type != PAGE_INTERNAL) { if (p) page_put(p); free(next); free(level); return -1; }
-            for (j = 0; j <= p->nkeys; j++) {
-                if (n == cap) {
-                    int *g = (int *)realloc(next, (size_t)(cap *= 2) * sizeof(int));
-                    if (!g) { page_put(p); free(next); free(level); return -1; }
-                    next = g;
-                }
-                next[n++] = p->children[j];
-            }
-            page_put(p);
-        }
-        free(level);
-        level = next;
-        nlevel = n;
-        if (nlevel > idx->num_pages) { free(level); return -1; }
-    }
-
-    if (leaf_link_room(idx, idx->num_pages) < 0) { free(level); return -1; }
+    if (leaf_link_room(idx, idx->num_pages) < 0) return -1;
+    seen = (unsigned char *)calloc((size_t)idx->num_pages, 1);
+    if (!seen) return -1;
     idx->nentries = 0;
-    for (i = 0; i < nlevel; i++) {
-        int pg = level[i];
-        if (idx->leaf_link[2 * pg] || idx->leaf_link[2 * pg + 1] || (i > 0 && pg == level[0])) {
-            free(level); return -1;   /* named twice */
-        }
-        leaf_link_set(idx, pg, i + 1 < nlevel ? level[i + 1] : 0, i > 0 ? level[i - 1] : 0);
-        fseek(idx->fp, (long)pg * NDX_PAGE, SEEK_SET);
-        if (fread(cnt, 4, 1, idx->fp) != 1) { free(level); return -1; }
-        idx->nentries += get16(cnt);   /* as page_read reads it */
-    }
-    idx->first_leaf = level[0];
-    free(level);
-    /* the leaf the depth was found through was read before its links */
-    for (i = 0; i < PAGE_HASH_SIZE; i++)
-        for (p = idx->page_hash[i]; p; p = p->hash_next)
-            if (p->type == PAGE_LEAF && p->page_no < idx->leaf_link_cap) {
-                p->next_leaf = idx->leaf_link[2 * p->page_no];
-                p->prev_leaf = idx->leaf_link[2 * p->page_no + 1];
+    idx->first_leaf = 0;
+    stack[sp].page = idx->root_page; stack[sp].next = -1; sp++;
+    while (sp > 0) {
+        int pg = stack[sp - 1].page, n;
+        if (stack[sp - 1].next < 0) {   /* first met */
+            if (pg <= 0 || pg >= idx->num_pages || seen[pg]) goto bad;
+            seen[pg] = 1;
+            fseek(idx->fp, (long)pg * NDX_PAGE, SEEK_SET);
+            if (fread(head, 8, 1, idx->fp) != 1) goto bad;
+            n = get16(head);   /* as page_read reads it */
+            if (page_is_leaf(idx, pg, n, get32(head + 4))) {
+                if (prev) idx->leaf_link[2 * prev] = pg;
+                else idx->first_leaf = pg;
+                leaf_link_set(idx, pg, 0, prev);
+                idx->nentries += n;
+                prev = pg;
+                sp--;
+                continue;
             }
+            stack[sp - 1].next = 0;
+        }
+        p = page_get(idx, pg);
+        if (!p || p->type != PAGE_INTERNAL) { if (p) page_put(p); goto bad; }
+        if (stack[sp - 1].next > p->nkeys) { page_put(p); sp--; continue; }
+        if (sp == 33) { page_put(p); goto bad; }
+        stack[sp].page = p->children[stack[sp - 1].next++];
+        stack[sp].next = -1;
+        sp++;
+        page_put(p);
+    }
+    free(seen);
+    if (!idx->first_leaf) return -1;
+    /* leaves read before their links (the root, if a leaf) take them now */
+    {
+        int i;
+        for (i = 0; i < PAGE_HASH_SIZE; i++)
+            for (p = idx->page_hash[i]; p; p = p->hash_next)
+                if (p->type == PAGE_LEAF && p->page_no < idx->leaf_link_cap) {
+                    p->next_leaf = idx->leaf_link[2 * p->page_no];
+                    p->prev_leaf = idx->leaf_link[2 * p->page_no + 1];
+                }
+    }
     return 0;
+bad:
+    free(seen);
+    return -1;
 }
 
 /* dBASE III's header, checked as far as it can be */
@@ -1900,7 +1831,7 @@ static int read_dbase_header(index_t *idx, const unsigned char *buf, long file_s
     idx->item_size = isz;
     idx->keys_per_page = kpp;
     idx->max_keys_leaf = kpp;
-    idx->max_keys_internal = kpp - 1;
+    idx->max_keys_internal = internal_capacity(kpp, isz);
     idx->alloc_keys = (NDX_PAGE - 4) / isz + 1;
     idx->unique = buf[23] ? 1 : 0;
     idx->descending = (buf[22] & NDX_FLAG_DESC) ? 1 : 0;
@@ -1917,7 +1848,6 @@ static int read_dbase_header(index_t *idx, const unsigned char *buf, long file_s
         memcpy(idx->for_expr, buf + 24 + explen + 1, (size_t)flen);
         idx->for_expr[flen] = '\0';
     }
-    idx->free_page_head = 0;
     return 0;
 }
 
@@ -2031,8 +1961,7 @@ int index_read(index_t *idx, const char *filename) {
         entry_list_t l = { NULL, 0, 0 };
         int rc = magic == NDX2_MAGIC ? read_ndx2_entries(idx, fp, &l) : read_ndx1_entries(idx, fp, &l);
         fclose(fp);
-        if (rc == 0 && strlen(idx->key_expr) + 1 +
-                       (idx->for_expr[0] ? strlen(idx->for_expr) + 1 : 0) > NDX_EXPR_ROOM)
+        if (rc == 0 && !header_expr_fits(idx))
             rc = -1;
         if (rc == 0) {
             compute_fanout(idx);

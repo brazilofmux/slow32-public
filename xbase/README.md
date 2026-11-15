@@ -82,8 +82,9 @@ memory variables with `PRIVATE`/`PUBLIC`/`LOCAL`, macro substitution,
 - `UPDATE ON` searches the target for each key rather than walking two
   sorted files, so it needs neither sorted (`RANDOM` is accepted); `JOIN`
   and `TOTAL` leave memo fields out of the file they write.
-- `.NDX` files are dBASE III's, read and written (an index from the
-  interpreter's own earlier format is converted when opened). No
+- `.NDX` files are dBASE III's, read and written, and kept up as dBASE
+  III PLUS keeps them, byte for byte (an index from the interpreter's
+  own earlier format is converted when opened). No
   `.NTX`, `.MDX` or `.CDX`.
 - `CREATE` makes the file but does not leave it in use; `USE` it.
 - Fixed limits (`src/*.h`): 255 characters per line (continuations

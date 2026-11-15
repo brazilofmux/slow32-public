@@ -2,6 +2,8 @@
 * record (it landed part-way, right of the separator), and changing a
 * key removes the old entry wherever in the run it is (a removal routed
 * right of the separator missed it and left it in the index)
+* -- the walk in key order; equal keys keep the order they came in, as
+* dBASE keeps them, so a record REPLACEd into a run is not in record order
 x = DBCREATE("DSP", {{"K", "C", 8, 0}, {"T", "N", 5, 0}})
 USE DSP
 APPEND BLANK
@@ -4586,10 +4588,10 @@ ok = .T.
 prev = ""
 GO TOP
 DO WHILE .NOT. EOF()
-   IF K + STR(RECNO(), 5) < prev
+   IF K < prev
       ok = .F.
    ENDIF
-   prev = K + STR(RECNO(), 5)
+   prev = K
    n = n + 1
    SKIP
 ENDDO

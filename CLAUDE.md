@@ -395,6 +395,15 @@ cd ~/slow-32/sqlite && ./check-stage08.sh
 # ~30 seconds.
 cd ~/slow-32 && bash xbc/tests/run-stage08.sh
 
+# xBase's .NDX files held to dBASE III PLUS 1.1 itself, byte for byte:
+# random programs of appends and key changes on four indexes, run by
+# dBASE under ~/x86's dos-monster and by xbase.  It found a dBASE index
+# of ~1,000 entries walking out of order here, blank dates sorting first,
+# and dBASE keeping equal keys in the order they came (xbase ISSUES).
+# After a change to xbase/src/index.c.  Needs DBASE3=<a dBASE III PLUS
+# 1.1 directory> (the script says what goes in it); exit 2 without.
+cd ~/slow-32/xbase/tests/dbase3 && DBASE3=... ./ndxfuzz.py run -n 50
+
 # And for a C LIBRARY change -- either one: the tree has two, runtime/
 # (clang-built programs) and selfhost/stage08/libc (the kit's), with some
 # sources built into both (printf, dtoa, time_std.c, strerror.c).  Each

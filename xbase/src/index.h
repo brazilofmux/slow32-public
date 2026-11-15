@@ -78,7 +78,6 @@ typedef struct {
     /* Tree structure */
     int root_page;          /* page number of root */
     int first_leaf;         /* page number of first leaf (for GO TOP) */
-    int free_page_head;     /* head of free page list (0 = none; not kept in the file) */
     int num_pages;          /* total pages in file */
     int nentries;           /* total entries */
 
