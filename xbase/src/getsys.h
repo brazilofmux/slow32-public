@@ -29,6 +29,7 @@ void getsys_set_postblock(value_t *obj, const char *text);   /* READ via a progr
 int getsys_has_block(const value_t *obj);          /* the Get reads and writes through a block */
 int getsys_varget(const value_t *obj, value_t *out);
 int getsys_varput(const value_t *obj, const value_t *v);
+value_t getsys_number_from_text(const char *buf, const char *picture);   /* a numeric GET's buffer, as wide as it */
 int fn_getreader(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_getapplykey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
 int fn_getprevalidate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);

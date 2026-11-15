@@ -1,0 +1,21 @@
+? "--- A GET on a variable named x stores into it (the GET's block named its parameter x) ---"
+x = 0
+@ 1,1 GET x PICTURE "##"
+READ
+3
+? "[" + LTRIM(STR(x)) + "]"
+b = MEMVARBLOCK("x")
+y = EVAL(b, 7)
+? "[" + LTRIM(STR(x)) + "]"
+? "--- A number read through a GET is as wide as the GET (a one-column GET's shows one column) ---"
+n = 0
+@ 2,1 GET n PICTURE "#"
+READ
+4
+? n
+d = 0
+@ 3,1 GET d PICTURE "999.99"
+READ
+12.5
+? d
+QUIT

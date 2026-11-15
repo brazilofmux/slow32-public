@@ -352,3 +352,17 @@ formatting (a number left-justified, decimals unaligned) and no index
 update, so a GET on a key field left its index stale.  It stores through
 cmd_api_field_assign now, REPLACE's path.  Test: test_get_field_num (the
 record's bytes after READ, kept and typed; the old build fails it).
+
+### A GET on a variable named x never stored; a number read through a GET was ten wide — RESOLVED 2026-11-15
+
+Two defects in the GET path, found by running Teacher's Pet against its
+Quicksilver build.  (1) A variable's GET reads and writes through a block,
+{|x| IIF(PCOUNT() == 0, <target>, <target> := x)}; a variable named x was
+hidden by the parameter, and READ assigned the parameter to itself -- the
+variable kept its old value.  MEMVARBLOCK and FIELDBLOCK built their
+blocks the same way.  The parameter is _1 now, as Clipper's preprocessor
+names it.  (2) The GET editor gave back val_num(atof(buffer)), a number
+of no width, so `@ 4,41 SAY T_quar` after a one-column GET printed ten
+columns where Quicksilver (and Clipper) print one.  getsys_number_from_text
+(getsys.c) sizes the number by the GET's field, for the Get object's
+untransform and for the editor alike.  Test: test_get_var.

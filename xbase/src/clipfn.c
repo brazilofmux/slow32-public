@@ -479,11 +479,12 @@ static int fn_fieldput(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     return 0;
 }
 
-/* The set-get blocks: {|x| IF(x == NIL, ref, ref := x)} over a field, a
- * field of another work area, or a memory variable */
+/* The set-get blocks: {|_1| IF(_1 == NIL, ref, ref := _1)} over a field, a
+ * field of another work area, or a memory variable (_1: a parameter named
+ * x hid a variable or field named x) */
 static int setget_block(expr_ctx_t *ctx, const char *ref, value_t *result) {
     char text[400];
-    snprintf(text, sizeof(text), "{|x| IIF(x == NIL, %s, %s := x)}", ref, ref);
+    snprintf(text, sizeof(text), "{|_1| IIF(_1 == NIL, %s, %s := _1)}", ref, ref);
     return ast_eval_dynamic(text, ctx, result);
 }
 

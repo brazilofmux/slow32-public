@@ -1,0 +1,25 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+--- A GET on a variable named x stores into it (the GET's block named its parameter x) ---
+. . 
+ 0
+. 
+. 
+[3]
+. . . 
+[7]
+. 
+--- A number read through a GET is as wide as the GET (a one-column GET's shows one column) ---
+. . 
+0
+. 
+. 
+4
+. . 
+     0
+. 
+. 
+ 12.50
+. 

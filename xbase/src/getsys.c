@@ -143,27 +143,29 @@ static void get_format(expr_ctx_t *ctx, const value_t *v, const char *picture, c
 }
 
 /* The value a buffer holds, by the Get's type */
+/* A numeric GET's edit buffer as a number as wide as the buffer, as the
+ * field shows it (Harbour, Clipper: a "999" field gives back a number
+ * three wide, and dBASE's memory variable takes the GET's width too);
+ * nwidth counts the digits before the point, as VAL's does */
+value_t getsys_number_from_text(const char *buf, const char *picture) {
+    const char *p = picture ? picture : "";
+    int d = 0, seen = 0, dec, w;
+    for (; *p; p++) {
+        if (*p == '.') seen = 1;
+        else if (seen && (*p == '9' || *p == '#')) d++;
+    }
+    dec = seen ? d : (strchr(buf, '.') ? (int)strlen(strchr(buf, '.') + 1) : 0);
+    w = (int)strlen(buf) - (dec > 0 ? dec + 1 : 0);
+    return val_num_dec(atof(buf), dec, w > 0 ? w : 1);
+}
+
 static value_t get_untransform(expr_ctx_t *ctx, object_t *o) {
     const char *buf = iv_str(o, "buffer");
     const char *type = iv_str(o, "type");
     value_t v, a;
     switch (type[0]) {
-    case 'N': {
-        const char *p = iv_str(o, "picture");
-        int d = 0, seen = 0;
-        for (; *p; p++) {
-            if (*p == '.') seen = 1;
-            else if (seen && (*p == '9' || *p == '#')) d++;
-        }
-        /* as wide as the edit buffer, as the field shows it (Harbour,
-         * Clipper: a "999" field gives back a number three wide); nwidth
-         * counts the digits before the point, as VAL's does */
-        {
-            int dec = seen ? d : (strchr(buf, '.') ? (int)strlen(strchr(buf, '.') + 1) : 0);
-            int w = (int)strlen(buf) - (dec > 0 ? dec + 1 : 0);
-            return val_num_dec(atof(buf), dec, w > 0 ? w : 1);
-        }
-    }
+    case 'N':
+        return getsys_number_from_text(buf, iv_str(o, "picture"));
     case 'D':
         a = val_str(buf);
         if (func_call(ctx, "CTOD", &a, 1, &v) == 0) {
@@ -705,7 +707,9 @@ value_t getsys_note_get(int row, int col, const char *varname, const char *pictu
 
 /* @ GET on something that is not a plain variable -- an array element, an
  * alias->field -- gets the block Clipper's preprocessor would give it,
- * {|x| IIF(PCOUNT() == 0, <target>, <target> := x)}, reading and storing
+ * {|_1| IIF(PCOUNT() == 0, <target>, <target> := _1)}, reading and storing
+ * (_1, as Clipper's preprocessor names it: a parameter named x hid a
+ * variable named x, and its GET stored the parameter into itself)
  * through the expression each time (RL's @ 11,09 GET chdr_lines[ar_index]) */
 value_t getsys_note_get_expr(int row, int col, const char *target, const char *picture,
                              const char *valid_expr, const char *when_expr) {
@@ -714,7 +718,7 @@ value_t getsys_note_get_expr(int row, int col, const char *target, const char *p
     char text[1200];
     value_t block, v, list;
     object_t *o;
-    snprintf(text, sizeof(text), "{|x| IIF(PCOUNT() == 0, %s, %s := x)}", target, target);
+    snprintf(text, sizeof(text), "{|_1| IIF(PCOUNT() == 0, %s, %s := _1)}", target, target);
     block = block_from_text(ctx, text);
     o = get_new(ctx, row, col, block.type == VAL_BLOCK ? &block : NULL, target, picture, NULL);
     if (!o) return val_nil();

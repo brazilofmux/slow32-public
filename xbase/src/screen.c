@@ -934,7 +934,19 @@ void scoreboard_message(const char *msg) {
  * SET DATE (*bad set when the text is not a date), a logical from T/Y */
 static value_t get_text_value(const get_entry_t *g, const char *buf, int *bad) {
     *bad = 0;
-    if (g->type == VAL_NUM) return val_num(atof(buf));
+    if (g->type == VAL_NUM) {
+        /* as wide as the GET's field, not as what was typed: line mode's
+         * text is the line alone ("60" in a ten-wide GET) */
+        char num[256];
+        int w = get_picture_window(g->picture, g->width), n = (int)strlen(buf);
+        if (w > (int)sizeof(num) - 1) w = (int)sizeof(num) - 1;
+        if (n < w) {
+            memset(num, ' ', (size_t)(w - n));
+            str_copy(num + (w - n), buf, sizeof(num) - (size_t)(w - n));
+            return getsys_number_from_text(num, g->picture);
+        }
+        return getsys_number_from_text(buf, g->picture);
+    }
     if (g->type == VAL_DATE) {
         int32_t d = date_from_display(buf, cmd_get_date_format(), cmd_get_epoch());
         const char *p;
