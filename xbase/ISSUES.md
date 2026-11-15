@@ -414,3 +414,13 @@ longer (not under @R, whose literals are not kept); the value is trimmed
 only for numbers, dates and logicals; get_text_value pads a string to its
 GET's width (line mode's text is the line alone).  Tests:
 test_char_get, test_get_var.
+
+### A GET with a template was drawn without its literals until it was reached — RESOLVED 2026-11-15
+
+READ drew each GET's value as it stood; a template's literals appeared
+only when the editor reached the field.  Teacher's Pet's new-student
+screen, under its Quicksilver build, shows the telephone GET as
+"   -    " while the name GETs above it are edited.  get_show_initial
+draws a character GET with a template through TRANSFORM (which already
+matched Harbour's), as get_show_value does after an edit.  Test:
+test_template_get.

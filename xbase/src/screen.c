@@ -681,6 +681,22 @@ static void get_show_initial(const get_entry_t *g) {
     char shown[256];
     int w = get_picture_window(g->picture, (int)strlen(g->initial));
     str_copy(shown, g->initial, sizeof(shown));
+    if (g->type == VAL_CHAR && g->picture[0]) {
+        /* through the picture, as a Get displays its buffer: a template's
+         * literals stand in a blank field ("999-9999" over eight blanks
+         * shows "   -    ", as Teacher's Pet's Quicksilver build shows the
+         * telephone of a new student) */
+        const char *sp = strchr(g->picture, ' ');
+        if (g->picture[0] != '@' || (sp && sp[1])) {   /* a template, not functions alone */
+            value_t a[2], r;
+            a[0] = val_str(g->initial);
+            a[1] = val_str(g->picture);
+            if (func_call(cmd_get_expr_ctx(), "TRANSFORM", a, 2, &r) == 0 && r.type == VAL_CHAR)
+                str_copy(shown, val_text(&r), sizeof(shown));
+            else
+                cmd_get_expr_ctx()->error = NULL;
+        }
+    }
     if (g->type == VAL_NUM) {
         /* a number sits right-justified in its field, as the editor shows it
          * (RL's "@ 06,16 GET lbl_height PICTURE "999"" showed "5  ") */

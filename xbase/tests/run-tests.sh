@@ -121,6 +121,7 @@ run_inkey test_inkey_key INKWAIT.PRG "A" $'^ *65$'
 run_inkey test_get_overtype GETOVR.PRG $'1\r' $'^ 1$'
 run_inkey test_typeahead TYPEAHD.PRG "A" $'^ *65$'
 run_inkey test_char_get CHARGET.PRG $'qr\r' $'^Qr\\[   \\]$'
+run_inkey test_template_get TMPLGET.PRG $'\r' '2;2H   -    '
 
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
