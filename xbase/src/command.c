@@ -5492,7 +5492,7 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
      * TO's file; the console without one), or the console */
     own = outfile != NULL;
     if (!outfile)
-        outfile = c.to_print && set_opts.printer_fp ? set_opts.printer_fp : stdout;
+        outfile = c.to_print && cmd_get_printer_fp() ? cmd_get_printer_fp() : stdout;
 
     ctx_setup();
     /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
@@ -5771,21 +5771,30 @@ const char *cmd_get_path(void) {
 int  cmd_output_at_line_start(void)     { return out_at_line_start(); }
 void cmd_output_set_line_start(int bol) { out_set_line_start(bol); }
 
+/* The printer: SET PRINTER TO's file, else PRN -- dBASE's printer port --
+ * which is a file here: $XBASE_PRN, or PRN.TXT in the current directory,
+ * opened (afresh) the first time something is printed.  Printed output
+ * never lands on the screen.  NULL only when that file cannot be made. */
+static FILE *prn_file;
 FILE *cmd_get_printer_fp(void) {
-    return set_opts.printer_fp;
+    const char *name;
+    if (set_opts.printer_fp) return set_opts.printer_fp;
+    if (!prn_file) {
+        name = getenv("XBASE_PRN");
+        prn_file = fopen(name && *name ? name : "PRN.TXT", "wb");
+    }
+    return prn_file;
 }
 
 /* The console stream (?, ??, QOUT, LIST, DISPLAY): the screen unless SET
  * CONSOLE is off, the printer under SET PRINTER ON or a command's TO
- * PRINTER, the alternate file under SET ALTERNATE ON.  With no SET
- * PRINTER TO file the console stands in for the printer, and text
- * already on it is not written twice. */
+ * PRINTER, the alternate file under SET ALTERNATE ON. */
 static int stream_to_printer;
 
 void cmd_output(const char *s) {
     if (set_opts.console) out_console(s);
     if (set_opts.printer_on || stream_to_printer)
-        screen_print_stream(s, set_opts.printer_fp || !set_opts.console);
+        screen_print_stream(s, 1);
     if (set_opts.alternate_on && set_opts.alternate_fp)
         fputs(s, set_opts.alternate_fp);
 }

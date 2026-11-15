@@ -438,3 +438,17 @@ only a GET whose buffer changed; one left as it began is not assigned.
 A blank field's value is padded to its width before TRANSFORM draws it.
 Tests: test_field_get_kept, test_field_get_typed (both fail on the build
 of the day before).
+
+### The printer was the screen — RESOLVED 2026-11-15 (user ruling)
+
+With no SET PRINTER TO file, printed output (SET DEVICE TO PRINTER's
+@SAY, ? under SET PRINTER ON, REPORT FORM TO PRINT) went to the console
+and landed on the screen among the program's own output, and EJECT wrote
+"--- PAGE ---" there.  dBASE sends it to PRN, the printer port.  User
+ruling (2026-11-15): the printer is a file, in both engines -- SET
+PRINTER TO's, else $XBASE_PRN, else PRN.TXT in the current directory,
+made afresh when something is first printed and flushed as it is
+written; nothing printed reaches the screen.  This is what lets
+Teacher's Pet's reports be held byte for byte to its Quicksilver build's
+(dos-monster -prn).  Tests: test_phase2 (reads PRN.TXT back),
+test_prn_file ($XBASE_PRN).

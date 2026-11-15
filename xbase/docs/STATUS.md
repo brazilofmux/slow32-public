@@ -302,8 +302,9 @@ Uses terminal service negotiation (term.h API). Falls back to line-mode
 output when terminal service is unavailable. PICTURE masks support:
 `9` (digit), `A` (alpha), `X` (any), `!` (uppercase), `#` (digit/space/sign).
 Box drawing with single/double line characters. SET DEVICE TO PRINT
-routes @SAY to sequential output with printer position tracking.
-RANGE validation on @GET fields. EJECT resets printer position.
+routes @SAY to the printer with position tracking: SET PRINTER TO's file,
+else PRN, a file here (`$XBASE_PRN`, default `PRN.TXT`).  RANGE validation
+on @GET fields. EJECT writes a form feed and resets the printer position.
 
 ## Test Suite
 

@@ -45,7 +45,7 @@ filter_output() {
 
 # Clean up any leftover files from previous runs
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
-    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT
+    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT
 
 for testfile in "$BASDIR"/tests/*.txt; do
     [ -f "$testfile" ] || continue
@@ -55,7 +55,7 @@ for testfile in "$BASDIR"/tests/*.txt; do
 
     # Clean files before each test
     rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
-        "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/RESULT*.TXT
+        "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/RESULT*.TXT
 
     # Run test from tests/ directory so .DBF files are created there
     actual=$( cd "$BASDIR/tests" && cat "$testfile" | "$EMU" $EMU_ARGS "$DBASE" 2>&1 | filter_output )
@@ -126,9 +126,22 @@ run_inkey test_template_get TMPLGET.PRG $'\r' '2;2H   -    '
 run_inkey test_field_get_kept FLDGET.PRG $'\r\r' '^01/24/94\[        \]$'
 run_inkey test_field_get_typed FLDGET.PRG '0225955551234' '^02/25/95\[555-1234\]$'
 
+# The printer is PRN, a file: $XBASE_PRN names it (PRN.TXT without it), and
+# what only the printer is given never reaches the screen
+TOTAL=$((TOTAL + 1))
+prn_out=$( cd "$BASDIR/tests" && printf 'SET CONSOLE OFF\nSET PRINTER ON\n? "to the printer"\nSET PRINTER OFF\nSET CONSOLE ON\nEJECT\nQUIT\n' |
+    env XBASE_PRN="$BASDIR/tests/RESULT_PRN.TXT" "$EMU" $EMU_ARGS "$DBASE" 2>&1 | filter_output )
+if grep -q "to the printer" "$BASDIR/tests/RESULT_PRN.TXT" 2>/dev/null &&
+   [ "$(LC_ALL=C tr -cd '\f' < "$BASDIR/tests/RESULT_PRN.TXT" | wc -c | tr -d ' ')" = 1 ] &&
+   ! echo "$prn_out" | grep -q "to the printer\|PAGE"; then
+    echo "  PASS: test_prn_file"; PASS=$((PASS + 1))
+else
+    echo "  FAIL: test_prn_file"; echo "$prn_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1))
+fi
+
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
-    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT
+    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT
 
 echo ""
 echo "$PASS/$TOTAL passed, $FAIL failed"

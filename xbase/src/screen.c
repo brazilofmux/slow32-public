@@ -2169,7 +2169,7 @@ int screen_get_pcol(void) { return print_col; }
  * pages, a line that says where one would be */
 void screen_eject(void) {
     FILE *fp = cmd_get_printer_fp();
-    if (fp) fputs("\f\r", fp);
+    if (fp) { fputs("\f\r", fp); fflush(fp); }
     else out_console("\n--- PAGE ---\n");
     print_row = 0;
     print_col = 0;
@@ -2181,7 +2181,7 @@ static void printer_put(const char *s, size_t n, int write) {
     char buf[256];
     FILE *fp = cmd_get_printer_fp();
     if (!write || !n) return;
-    if (fp) { fwrite(s, 1, n, fp); return; }
+    if (fp) { fwrite(s, 1, n, fp); fflush(fp); return; }
     while (n) {
         size_t k = n < sizeof(buf) - 1 ? n : sizeof(buf) - 1;
         memcpy(buf, s, k);

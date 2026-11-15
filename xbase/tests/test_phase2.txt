@@ -27,4 +27,11 @@ EJECT
 SET CONSOLE OFF
 SET CONSOLE ON
 
+* The printer is PRN, a file here (PRN.TXT): what was printed, the form
+* feed EJECT wrote shown as [FF]
+h = FOPEN("PRN.TXT")
+p = FREAD(h, 400)
+x = FCLOSE(h)
+? STRTRAN(STRTRAN(p, CHR(12), "[FF]"), CHR(13), "[CR]")
+
 QUIT

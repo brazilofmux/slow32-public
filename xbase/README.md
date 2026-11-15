@@ -92,7 +92,11 @@ memory variables with `PRIVATE`/`PUBLIC`/`LOCAL`, macro substitution,
   fields, 32 nested calls.
 - Several SET options are accepted and ignored (`STATUS`, `SCOREBOARD`,
   `MENU`, `INTENSITY`, `FUNCTION`, `PRINT`, `HELP`); the table in
-  STATUS.md marks them. "Printer" output goes to stdout.
+  STATUS.md marks them.
+- The printer is a file: `SET PRINTER TO <file>`'s, else PRN, which is
+  `$XBASE_PRN` or `PRN.TXT` in the current directory, made afresh when
+  something is first printed (compiled programs alike).  Nothing printed
+  reaches the screen; EJECT writes a form feed there.
 
 ## More
 
