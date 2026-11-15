@@ -2210,7 +2210,7 @@ static int load_prg(const char *path) {
         return -1;
     }
     mark_loaded(path);
-    while (fgets(buf, sizeof(buf), in)) {
+    while (prog_fgets(buf, sizeof(buf), in)) {
         const char *p;
         int rc;
         rtrim(buf);
@@ -2218,7 +2218,7 @@ static int load_prg(const char *path) {
         /* a continued statement is known by its last line, as Clipper
          * numbers it; each line it took is counted */
         while (prog_cut_continuation(buf)) {   /* a ; before a trailing comment continues too */
-            if (!fgets(next, sizeof(next), in)) {
+            if (!prog_fgets(next, sizeof(next), in)) {
                 break;
             }
             lineno++;

@@ -277,5 +277,8 @@ int prog_is_declaration(const char *text);
 /* 1 when the line ends in a continuation ; (a trailing && or // comment
  * after it allowed, as Clipper allows): the ; and the comment are cut */
 int prog_cut_continuation(char *line);
+/* fgets for program text: a 0x1A (DOS end of file) ends the file, as dBASE
+ * reads it -- editors of the day padded sources out with them */
+char *prog_fgets(char *buf, int size, FILE *fp);
 
 #endif

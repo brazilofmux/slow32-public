@@ -544,6 +544,20 @@ void prog_get_compiled_loc(const char **file, int *line) {
 
 /* ---- Clipper's spellings at load time (program.h) ---- */
 
+/* A line of program text, cut at a 0x1A: the file ends there (the rest is
+ * the padding a DOS editor or COPY left), so the next read finds the end. */
+char *prog_fgets(char *buf, int size, FILE *fp) {
+    char *z;
+    if (!fgets(buf, size, fp)) return NULL;
+    z = memchr(buf, 0x1A, strlen(buf));
+    if (z) {
+        *z = '\0';
+        fseek(fp, 0, SEEK_END);
+        if (z == buf) return NULL;
+    }
+    return buf;
+}
+
 int prog_cut_continuation(char *line) {
     char *p, *end;
     char quote = 0;
@@ -977,14 +991,14 @@ static program_t *prog_load(const char *filename) {
 
     prog_block_stack_t blocks = { { 0 }, 0 };   /* for bare END (prog_normalize_line) */
     int fileline = 0;
-    while (fgets(line, sizeof(line), fp)) {
+    while (prog_fgets(line, sizeof(line), fp)) {
         trim_right(line);
         fileline++;
 
         /* Line continuation: ; at end */
         while (prog_cut_continuation(line)) {   /* a ; before a trailing comment continues too */
             char next[MAX_LINE_LEN]; /* remove ; */
-            if (!fgets(next, sizeof(next), fp)) break;
+            if (!prog_fgets(next, sizeof(next), fp)) break;
             fileline++;
             trim_right(next);
             /* The continuation's indentation is one blank: it separates the

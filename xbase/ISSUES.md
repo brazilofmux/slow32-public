@@ -330,3 +330,14 @@ records the user had removed.  `dbf_set_end` writes the byte and truncates
 after it: at CREATE (after no records), PACK, ZAP, and at close when
 records were appended.  Test: tests/test_dbf_end.txt (file lengths and the
 last byte through FSEEK/FREAD).
+
+### A 0x1A in a program file was read as program text — RESOLVED 2026-11-15
+
+DOS editors and COPY padded sources out with 0x1A, the end-of-file byte,
+and dBASE stops reading a .PRG at the first one.  We read on: Teacher's
+Pet's TPSO.PRG, as recovered, ends in a run of them, and both engines
+reported "Unrecognized command" on the line after its last statement (45
+of the 80 recovered sources carry them).  prog_fgets (program.c) cuts a
+line at a 0x1A and ends the file there; the interpreter's loader and
+s32-xbc both read through it.  Test: xbc/tests/dosend.prg and dosendp.prg
+(text after the padding, which must not run), in the suite and the oracle.
