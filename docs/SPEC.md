@@ -1742,6 +1742,7 @@ These change what a guest observes but are chosen by whoever runs the host.
 | `S32_FAULT=OP:N:ERR[,…]` (≤ 16) | fail the Nth request of kind OP (OPEN, CLOSE, READ, WRITE, SEEK, STAT, FLUSH, READ_DIRECT, FTRUNCATE, UNLINK, RENAME, ACCESS, LSTAT) with errno ERR (number or name); N 0 = every one; requests on fds 0–2 are not counted |
 | `S32_MMIO_TRACE` | request tracing on host stderr |
 | `S32_EMU` | emulator used by EXEC if the host's own path is unknown |
+| `S32_TERM_KEYMARK` | the term service writes `ESC ] 9999 BEL` to stdout before each byte it reads from the keyboard (READ_KEY, READ_CHAR), so a harness can cut a full-screen program's output into one screen per key |
 | `S32_TUBE_KEYS`, `S32_TUBE_DUMP`, `S32_TUBE_DUMP_FULL`, `S32_TUBE_PORT` | tube key injection, headless journal, port-file path (`docs/TUBE.md` sections 2, 6, 7) |
 | `TZ`, umask, current directory, environment | host process state seen through GETTZ, OPEN/MKDIR modes, relative paths, ENVP/GETENV |
 

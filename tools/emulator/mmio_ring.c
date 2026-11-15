@@ -743,8 +743,15 @@ static void term_emit_cell(const term_cell_t *c) {
 
 // one byte of keyboard input: the one READ_CHAR gave back first, then the
 // stdin prefix file, then stdin; false at end of input
+// S32_TERM_KEYMARK set: each byte read from the keyboard is announced on
+// stdout first by OSC 9999 (ESC ] 9999 BEL), which terminals ignore, so a
+// harness piping keys in can cut the output into the screen as it stood
+// at each key, as dos-monster's -K trace does for DOS programs.
 static bool term_key_byte(term_state_t *ts, unsigned char *b) {
+    static int keymark = -1;
     if (ts->key_pushback >= 0) { *b = (unsigned char)ts->key_pushback; ts->key_pushback = -1; return true; }
+    if (keymark < 0) keymark = getenv("S32_TERM_KEYMARK") != NULL;
+    if (keymark) { fputs("\033]9999\007", stdout); fflush(stdout); }
     ssize_t n = stdin_prefix_read(b, 1);
     if (n != 1) n = read(STDIN_FILENO, b, 1);
     return n == 1;
