@@ -314,3 +314,19 @@ REPLACE-then-SKIP loop, one per APPEND). The next steps of size would be a
 parsed-statement cache per line and a write-back cache block; both are
 design changes rather than fixes.
 
+
+### A table had no end byte, and PACK and ZAP left deleted records in the file — RESOLVED 2026-11-15
+
+Found running Teacher's Pet beside its own 1980s build (WordTech Quicksilver
+1.2c under a DOS emulator) on the same tables: its index program PACKs every
+table, and afterwards ours were the old length with the header's count
+lower, the deleted records still on disk past the last live one, and no
+0x1A after it.  dBASE III ends a table with 0x1A straight after the last
+record and nothing past it; ours never wrote that byte -- not at CREATE,
+APPEND, PACK or ZAP -- and PACK and ZAP never shortened the file.  Readers
+here go by the header's count, so no answer changed; another program
+reading to the end of the file, or anyone looking at it, would find the
+records the user had removed.  `dbf_set_end` writes the byte and truncates
+after it: at CREATE (after no records), PACK, ZAP, and at close when
+records were appended.  Test: tests/test_dbf_end.txt (file lengths and the
+last byte through FSEEK/FREAD).

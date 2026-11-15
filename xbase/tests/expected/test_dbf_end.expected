@@ -1,0 +1,43 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+--- A table ends with 0x1A after its last record, and nothing past it ---
+. Enter field definitions (blank name to finish):
+Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
+Database ENDT.DBF created with 2 field(s).
+. Database ENDT.DBF opened with 0 record(s).
+. . 
+empty:         98
+. . 
+last byte:         26
+. . Record 1 added.
+. . Record 2 added.
+. . Record 3 added.
+. . Record 4 added.
+. . Record 5 added.
+. . Database closed.
+. . 
+five:        168
+. . 
+last byte:         26
+. . Database ENDT.DBF opened with 5 record(s).
+. . 1 record deleted.
+. . 1 record deleted.
+. 3 record(s) remaining.
+. . 
+packed:        140
+. . 
+last byte:         26
+. . 
+      1  R1           1 
+      2  R3           3 
+      3  R5           5 
+. Zap complete.
+. . 
+zapped:         98
+. . 
+last byte:         26
+. . Database closed.
+. File erased.
+. 

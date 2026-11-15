@@ -28,6 +28,7 @@ typedef struct {
     char record_buf[DBF_MAX_RECORD_SIZE];
     int record_dirty;
     int header_dirty;                /* record_count changed, needs write */
+    int end_dirty;                   /* records appended: the 0x1A end byte moves at close */
     long file_pos;                   /* tracked file position, -1 = unknown */
 
     /* Record cache (read-ahead window) */
@@ -71,6 +72,7 @@ int  dbf_find_field(const dbf_t *db, const char *name);
 int  dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize);
 int  dbf_set_field_raw(dbf_t *db, int idx, const char *value);
 int  dbf_write_header_counts(dbf_t *db);
+int  dbf_set_end(dbf_t *db);
 void dbf_cache_invalidate(dbf_t *db);
 
 /* Memo (.DBT) functions */

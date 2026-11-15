@@ -152,6 +152,8 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
     /* Header terminator */
     term = 0x0D;
     fwrite(&term, 1, 1, fp);
+    term = 0x1A;                     /* end of file, after no records */
+    fwrite(&term, 1, 1, fp);
 
     fclose(fp);
     return 0;
@@ -218,6 +220,8 @@ int dbf_open(dbf_t *db, const char *filename) {
 
     db->current_record = 0;
     db->record_dirty = 0;
+    db->header_dirty = 0;
+    db->end_dirty = 0;
     db->file_pos = -1; db->last_op = 0;
     dbf_cache_init(db);
 
@@ -243,6 +247,8 @@ void dbf_close(dbf_t *db) {
         dbf_write_header_counts(db);
         db->header_dirty = 0;
     }
+    if (db->end_dirty)
+        dbf_set_end(db);
     dbf_memo_close(db);
     fclose(db->fp);
     db->fp = NULL;
@@ -270,6 +276,7 @@ int dbf_append_blank_ex(dbf_t *db, int eager) {
 
     db->record_count++;
     db->current_record = db->record_count;
+    db->end_dirty = 1;
 
     /* Fill record buffer with spaces, deletion flag = ' ' */
     memset(db->record_buf, ' ', db->record_size);
@@ -520,6 +527,23 @@ int dbf_write_header_counts(dbf_t *db) {
     fwrite(buf, 1, 4, db->fp);
     db->file_pos = -1; db->last_op = 0;
     return 0;
+}
+
+/* The file ends where dBASE III ends it: the 0x1A byte after the last
+ * record, and nothing past it -- PACK and ZAP leave no deleted record's
+ * bytes behind, and a table grown by APPEND gets its end byte back. */
+int dbf_set_end(dbf_t *db) {
+    long end;
+    if (!db->fp) return -1;
+    if (db->record_dirty)
+        dbf_flush_record(db);
+    end = (long)db->header_size + (long)db->record_count * db->record_size;
+    fseek(db->fp, end, 0);
+    fputc(0x1A, db->fp);
+    fflush(db->fp);
+    db->file_pos = -1; db->last_op = 0;
+    db->end_dirty = 0;
+    return ftruncate(fileno(db->fp), end + 1) == 0 ? 0 : -1;
 }
 
 /* ---- Memo (.DBT) support ---- */

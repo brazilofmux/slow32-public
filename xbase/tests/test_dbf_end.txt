@@ -1,0 +1,53 @@
+? "--- A table ends with 0x1A after its last record, and nothing past it ---"
+CREATE ENDT
+NAME
+C
+10
+N
+N
+3
+0
+
+USE ENDT
+h = FOPEN("ENDT.DBF")
+? "empty:", FSEEK(h, 0, 2)
+x = FSEEK(h, -1, 2)
+? "last byte:", ASC(FREAD(h, 1))
+x = FCLOSE(h)
+APPEND BLANK
+REPLACE NAME WITH "R1", N WITH 1
+APPEND BLANK
+REPLACE NAME WITH "R2", N WITH 2
+APPEND BLANK
+REPLACE NAME WITH "R3", N WITH 3
+APPEND BLANK
+REPLACE NAME WITH "R4", N WITH 4
+APPEND BLANK
+REPLACE NAME WITH "R5", N WITH 5
+USE
+h = FOPEN("ENDT.DBF")
+? "five:", FSEEK(h, 0, 2)
+x = FSEEK(h, -1, 2)
+? "last byte:", ASC(FREAD(h, 1))
+x = FCLOSE(h)
+USE ENDT
+GO 2
+DELETE
+GO 4
+DELETE
+PACK
+h = FOPEN("ENDT.DBF")
+? "packed:", FSEEK(h, 0, 2)
+x = FSEEK(h, -1, 2)
+? "last byte:", ASC(FREAD(h, 1))
+x = FCLOSE(h)
+LIST
+ZAP
+h = FOPEN("ENDT.DBF")
+? "zapped:", FSEEK(h, 0, 2)
+x = FSEEK(h, -1, 2)
+? "last byte:", ASC(FREAD(h, 1))
+x = FCLOSE(h)
+USE
+ERASE ENDT.DBF
+QUIT
