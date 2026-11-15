@@ -61,6 +61,9 @@ else
     echo "  FAIL errquit (does not compile)"; fail=1
 fi
 
+echo "=== host emission (LOCAL vs PRIVATE) ==="
+bash "$CLIP_DIR/tests/run-host-local.sh" || fail=1
+
 if [ "$fail" -ne 0 ]; then
     echo "=== TESTS FAILED ==="
     exit 1

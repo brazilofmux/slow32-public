@@ -2,7 +2,7 @@
 # Host s32-xbc emission check for LOCAL vs PRIVATE (GitHub issue 113).
 set -euo pipefail
 CLIP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-(cd "$CLIP_DIR" && gcc -Wall -Wextra -O2 -o s32-xbc s32-xbc.c)
+"$CLIP_DIR/build.sh" > /dev/null
 mkdir -p "$CLIP_DIR/out"
 
 "$CLIP_DIR/s32-xbc" "$CLIP_DIR/tests/funclocal.prg" -o "$CLIP_DIR/out/funclocal.c"
