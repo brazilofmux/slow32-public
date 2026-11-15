@@ -388,6 +388,7 @@ static int seq_depth;
 static int seq_unwind(void);
 static int break_to_caller(void);
 static void pop_frame(void);
+static void prog_run_end(void);
 
 /* ---- Synchronous procedure call support ---- */
 /* When prog_call_sync is active, pop_frame stops execution when
@@ -978,7 +979,7 @@ void prog_resume(void) {
     /* Continue execution */
     state.running = 1;
     prog_run();
-    prog_cancel_pending();
+    prog_run_end();
 }
 
 int prog_is_running(void) {
@@ -1857,12 +1858,15 @@ static void pop_frame(void) {
      * the variable it shadowed, not on the LOCAL */
     memvar_release_locals(store, store->current_depth);
 
-    /* Restore PRIVATE variables */
-    restore_privates(frame);
+    /* What the frame made without declaring it goes, as dBASE and
+     * Clipper release it (a PRIVATE's earlier value comes back below) */
+    memvar_release_made(store, store->current_depth, 0);
 
-    /* Restore memvar scope depth to caller's level */
+    /* Restore memvar scope depth to caller's level, then the PRIVATEs'
+     * values there: a variable the restore makes again is the caller's */
     store->current_depth = state.call_depth;
     store->live_max = state.call_depth;
+    restore_privates(frame);
 
     /* Write back by-reference parameters to caller's variables */
     for (i = 0; i < frame->with_argc; i++) {
@@ -2169,10 +2173,24 @@ static void prog_run(void) {
 /* ---- DO command: DO <file> or DO WHILE <cond> ---- */
 /* A program run from the prompt: its top level's LOCALs (the entry
  * procedure's, a main program's) go when it ends, as a frame's do */
-static void prog_run_top(void) {
-    prog_run();
+static unsigned top_run_mark;   /* born_serial when the prompt's DO began */
+
+/* A run from the prompt has ended, or stopped: a Cancel answered to an
+ * error is carried out, and unless it is suspended (RESUME goes on with
+ * them) the variables the program made go, as dBASE releases them --
+ * PUBLICs, and what the prompt made before, stay */
+static void prog_run_end(void) {
+    memvar_store_t *store = cmd_get_memvar_store();
     prog_cancel_pending();
-    memvar_release_locals(cmd_get_memvar_store(), 0);
+    if (suspended.valid) return;
+    memvar_release_made(store, 0, top_run_mark);
+    memvar_release_locals(store, 0);
+}
+
+static void prog_run_top(void) {
+    top_run_mark = cmd_get_memvar_store()->born_serial;
+    prog_run();
+    prog_run_end();
 }
 
 void prog_do(const char *arg) {
@@ -3330,7 +3348,8 @@ static void prog_declare(lexer_t *l, int kind) {
             /* Create variable if it doesn't exist */
             if (memvar_find(store, name, &existing) != 0) {
                 value_t v = val_logic(0); /* PUBLIC vars default to .F. */
-                memvar_set(store, name, &v);
+                if (memvar_set(store, name, &v) == 0)
+                    memvar_mark_public(store, name);
             }
         } else if (kind == 'L' && local_ok) {
             /* A fresh LOCAL at this depth.  It shadows a PRIVATE or PUBLIC of
@@ -3460,10 +3479,16 @@ void prog_local(lexer_t *l) {
 /* ---- CANCEL ---- */
 void prog_cancel(void) {
     /* Abort all program execution */
+    memvar_store_t *store = cmd_get_memvar_store();
     while (state.call_depth > 0) {
+        memvar_release_locals(store, state.call_depth);
+        memvar_release_made(store, state.call_depth, 0);
+        store->current_depth = state.call_depth - 1;
         restore_privates(&state.call_stack[state.call_depth - 1]);
         state.call_depth--;
     }
+    store->current_depth = 0;
+    store->live_max = 0;
     state.running = 0;
     state.loop_depth = 0;
     if_skip = 0;

@@ -7,6 +7,5 @@ In greet: x=999
 After call: x=100
 In addnums: 10 + 20 = 30
 After addnums: result= 30
-. 
-Final x=100
+. *** Variable not found: x
 . 

@@ -657,6 +657,30 @@ it); test_edge_varstore, test_index_keyerr, test_stress_index and
 test_udf_overflow answer Ignore; the xbc oracle lines up the new report
 with a compiled program's (73 agree).
 
+### A variable a procedure made outlived it — RESOLVED 2026-11-15
+
+dBASE III and Clipper release, when a program or procedure returns, the
+variables it made without declaring them: x = 1 in a procedure makes a
+private variable of it.  Both engines kept every such variable (only a
+PRIVATE declaration was undone on return), so a program's work was
+still there at the dot prompt and a procedure's scratch variables in its
+caller.  dBASE III PLUS, run beside it: `w = 3` in a procedure, then
+TYPE("w") in its caller, is "U"; a program's x at the dot prompt is
+"Variable not found."; a cancelled program's variables are gone.
+
+A variable now records when it was made (a serial) and whether PUBLIC
+made it.  A frame's return releases what was made at its depth, PUBLICs
+and LOCALs aside, before the PRIVATEs' earlier values come back (at the
+caller's depth: they had been made again at the callee's); a run from
+the prompt releases at its end what it made at the top level, unless it
+is suspended; CANCEL does both for every level.  The compiled program's
+return (clip_leave) does the same.  A variable the callee finds already
+made is the caller's and keeps what it is given, as before.  Tests:
+xbc/tests/mvscope.prg (both engines; the oracle holds them together);
+test_do_prg, test_procedure and test_phase5 read a program's variable at
+the prompt after it ended, and now see none.  The user's ledger reports
+and Teacher's Pet are unchanged.
+
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 
 `SET ORDER TO n` with n a variable, or any expression, left the order as

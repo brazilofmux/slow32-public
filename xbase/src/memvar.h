@@ -36,6 +36,8 @@ typedef struct {
     unsigned hash;      /* of the (upper-case) name: rejects a slot without a string compare */
     int scope_depth;    /* call_depth at which this var was created */
     int is_local;       /* 1 = LOCAL variable, only visible at exact scope */
+    int is_public;      /* PUBLIC: no program's return releases it */
+    unsigned born;      /* store->born_serial when it was made: what a run made */
 } memvar_t;
 
 #define MEMVAR_BUCKETS 512   /* power of two */
@@ -51,6 +53,7 @@ typedef struct memvar_store {
     int current_depth;  /* updated on push/pop frame */
     int nlocal;         /* LOCAL slots in use: none (a dBASE program's case), and a
                            name is never asked whether it is one */
+    unsigned born_serial;  /* counts variables made (memvar_t.born) */
     int live_max;       /* the deepest live frame: a block is evaluated at its
                            maker's depth, so a call made from it takes a depth
                            above every live frame, not maker + 1 (which was a
@@ -81,6 +84,11 @@ int  memvar_set_local(memvar_store_t *store, const char *name, const value_t *va
 int  memvar_release(memvar_store_t *store, const char *name);
 void memvar_release_locals(memvar_store_t *store, int depth);
 void memvar_release_all(memvar_store_t *store);
+/* A program's own variables when it returns: those made at depth since
+ * serial after, but PUBLICs and LOCALs (dBASE and Clipper release what a
+ * program made without declaring it) */
+void memvar_release_made(memvar_store_t *store, int depth, unsigned after);
+void memvar_mark_public(memvar_store_t *store, const char *name);
 int  memvar_release_matching(memvar_store_t *store, const char *pattern, int like);
 int  memvar_pattern_match(const char *name, const char *pat);   /* * and ? in pat */
 void memvar_norm(char *dst, const char *name);   /* upper case, ten characters; dst holds MEMVAR_NAMELEN */

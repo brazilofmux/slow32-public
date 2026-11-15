@@ -124,6 +124,7 @@ void memvar_init(memvar_store_t *store) {
         store->bucket[i] = -1;
     store->count = 0;
     store->hw = 0;
+    store->born_serial = 0;
     store->nlocal = 0;
 }
 
@@ -196,6 +197,8 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
             slot_link(store, i);
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 0;
+            store->vars[i].is_public = 0;
+            store->vars[i].born = ++store->born_serial;
             store->count++;
             hw_grow(store, i);
             return 0;
@@ -230,6 +233,8 @@ int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val
             slot_link(store, i);
             store->vars[i].scope_depth = store->current_depth;
             store->vars[i].is_local = 1;
+            store->vars[i].is_public = 0;
+            store->vars[i].born = ++store->born_serial;
             store->nlocal++;
             store->count++;
             hw_grow(store, i);
@@ -342,6 +347,26 @@ void memvar_release_locals(memvar_store_t *store, int depth) {
         store->count--;
     }
     hw_shrink(store);
+}
+
+void memvar_release_made(memvar_store_t *store, int depth, unsigned after) {
+    int i;
+    for (i = 0; i < store->hw; i++) {
+        const memvar_t *v = &store->vars[i];
+        if (!v->used || v->is_local || v->is_public || v->scope_depth != depth || v->born <= after)
+            continue;
+        slot_free(store, i);
+        store->count--;
+    }
+    hw_shrink(store);
+}
+
+void memvar_mark_public(memvar_store_t *store, const char *name) {
+    char uname[MEMVAR_NAMELEN];
+    int i;
+    memvar_norm(uname, name);
+    i = memvar_slot(store, uname, name_hash(uname));
+    if (i >= 0) store->vars[i].is_public = 1;
 }
 
 void memvar_release_all(memvar_store_t *store) {

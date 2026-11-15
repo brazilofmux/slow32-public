@@ -638,8 +638,13 @@ void clip_leave(clip_scope_t *s) {
         clip_seq_top = clip_seq_top->prev;
     }
     clip_scope_top = s->prev;
-    /* LOCALs first, so a PRIVATE restore lands on what it shadowed */
+    /* LOCALs first, so a PRIVATE restore lands on what it shadowed; then
+     * what the call made without declaring it, a PRIVATE in Clipper; then,
+     * at the caller's depth, the PRIVATEs' earlier values */
     memvar_release_locals(store, store->current_depth);
+    memvar_release_made(store, store->current_depth, 0);
+    store->current_depth = s->prev_depth;
+    store->live_max = s->prev_live_max;
     for (i = 0; i < s->count; i++) {
         if (s->valid[i]) {
             memvar_set(store, s->names[i], &s->saved[i]);
@@ -648,8 +653,6 @@ void clip_leave(clip_scope_t *s) {
         }
     }
     s->count = 0;
-    store->current_depth = s->prev_depth;
-    store->live_max = s->prev_live_max;
     prog_set_compiled_loc(s->at_file, s->at_line);
 }
 
