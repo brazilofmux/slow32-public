@@ -783,6 +783,15 @@ the build before fails it); 94 expected outputs follow the new display.
 
 Not done: the drive (C:) dBASE puts before file names.
 
+### dupspan.prg took the builder half an hour to compile — RESOLVED 2026-11-16
+
+xbc/tests/dupspan.prg (526c10de) was 4,600 straight lines; stage08 cc
+took 374 s on it here and about 30 minutes on the builder, nearly all of
+the slow32:xbase gate.  The same records and changes are loops over a
+string of keys now (one letter a record), and compile in 0.6 s; the
+output is unchanged, and the build before the fix it tests still fails
+it.  The compiler's side is selfhost ISSUES-120.
+
 ### A parameter kept its argument's width — RESOLVED 2026-11-15
 
 dBASE III sizes a parameter as a variable given the same value: DO P

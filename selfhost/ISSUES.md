@@ -4144,3 +4144,26 @@ ones have run).  Two things then had to change:
 different types in neighbouring statements; complex temporaries in two
 statements.  The xbc test that found it (`xbc/tests/dupspan.prg`) runs
 under stage08 in `xbc/tests/run-stage08.sh`.
+
+### 120. [OPEN 2026-11-16] Compile time superlinear in a function's size, and far worse after nested ?: chains
+
+xbc/tests/dupspan.prg as written in 526c10de -- 4,600 straight lines, one
+xbc `main` of 9,205 lines of C (1.27 MB) -- took stage08 cc 374 s on the
+M5 (slow32-dbt) and about 30 minutes on the builder's c6i, where it
+became nearly all of the slow32:xbase gate (1 min the round before).  The
+test is loops now (0.6 s); the compiler is not fixed.  Measured, the same
+program cut down (xbc's C; stage08 cc on slow32-dbt, M5):
+
+- straight APPEND BLANK / REPLACE pairs: 1,000 records 4,022 lines 7 s,
+  2,000 records 8,020 lines 26 s -- quadratic in the function;
+- 100 records then 100 `REPLACE K WITH IIF(K = "a", "c...", IIF(K = "b",
+  "a...", "b..."))` (two nested ?: per line, each arm a value_t call):
+  822 lines, 12 s; with 285 such lines, 1,562 lines, 13 s -- the cost is
+  not per IIF line but something they set off;
+- 2,000 records then the 285: 374 s.
+
+Reproduce: the old test is `git show 526c10de:xbc/tests/dupspan.prg`;
+`XBC_WORK=dir XBC_CC=stage08 bash xbc/compile-prg.sh dupspan.prg d.s32x`
+leaves dir/dupspan.c.  Not yet looked into: which pass (the narration
+cc.s32x writes on stderr has per-pass lines to time).  clang compiles
+the same C in seconds.
