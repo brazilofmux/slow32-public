@@ -7,7 +7,7 @@ Database TEST.DBF created with 2 field(s).
 . . 
 Structure for database: TEST.dbf
 Number of data records:       0
-Date of last update   : 11/15/26
+Date of last update   : TODAY
 Field  Field Name  Type       Width    Dec
     1  NAME        Character     20
     2  AGE         Numeric        3

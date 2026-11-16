@@ -13,7 +13,7 @@ Database LSTRUC.DBF created with 5 field(s).
 . 
 Structure for database: LSTRUC.dbf
 Number of data records:       2
-Date of last update   : 11/15/26
+Date of last update   : TODAY
 Field  Field Name  Type       Width    Dec
     1  NAME        Character     20
     2  AGE         Numeric        3
@@ -26,7 +26,7 @@ Field  Field Name  Type       Width    Dec
 . 
 Structure for database: LSTRUC.dbf
 Number of data records:       2
-Date of last update   : 11/15/26
+Date of last update   : TODAY
 Field  Field Name  Type       Width    Dec
     1  NAME        Character     20
     2  AGE         Numeric        3

@@ -9,7 +9,7 @@ Database SRC.DBF created with 2 field(s).
 . . . 
 Structure for database: EMPTY.dbf
 Number of data records:       0
-Date of last update   : 11/15/26
+Date of last update   : TODAY
 Field  Field Name  Type       Width    Dec
     1  NAME        Character     15
     2  VAL         Numeric        5

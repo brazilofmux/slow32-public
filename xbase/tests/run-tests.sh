@@ -40,8 +40,15 @@ filter_output() {
         -e "instructions/second" \
         -e "^Error: Read out of bounds" \
         -e "^Error: Write out of bounds" \
+        | sed "s#: $TODAY\$#: TODAY#" \
         || true
 }
+
+# LIST STRUCTURE's "Date of last update" is today for a table just written
+# (dBASE's): the expected files say TODAY, and today here is the date the
+# interpreter sees in this same environment (a builder in UTC is a day
+# ahead of the Mac in the evening)
+TODAY=$(date +%m/%d/%y)
 
 # Clean up any leftover files from previous runs
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
