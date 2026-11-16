@@ -125,14 +125,41 @@ static int ho_copy_prop(void) {
  * which edges exist took it for one: after full unrolling, every copy's
  * `if (i != 7)` folded, and return pinning put the stale argument and
  * the value an emitter-folded ADDI chain reads in r1 together. */
+/* Each block's phis, listed when ho_const_fold first drops an edge:
+ * the drop scanned every instruction for them, once an edge -- a tenth
+ * of stage08's time on xbc's long mains (selfhost ISSUES-120).  The
+ * fold makes no phis and moves none, so the lists hold for the pass. */
+static int *ho_bphi;     /* block -> its first phi, -1 none */
+static int *ho_phi_nx;   /* phi -> the next phi in its block */
+static int ho_phi_listed;
+
+static void ho_phi_list(void) {
+    int b;
+    int i;
+    b = 0;
+    while (b < bb_nblk) { ho_bphi[b] = -1; b = b + 1; }
+    i = h_ninst - 1;
+    while (i >= 0) {
+        b = h_blk[i];
+        if (h_kind[i] == HI_PHI && b >= 0 && b < bb_nblk) {
+            ho_phi_nx[i] = ho_bphi[b];
+            ho_bphi[b] = i;
+        }
+        i = i - 1;
+    }
+    ho_phi_listed = 1;
+}
+
 static void ho_phi_drop_pred(int b, int pred) {
     int i;
     int j;
     int base;
     int cnt;
     if (b < 0 || pred < 0) return;
-    i = 0;
-    while (i < h_ninst) {
+    if (!ho_phi_listed) ho_phi_list();
+    if (b >= bb_nblk) return;
+    i = ho_bphi[b];
+    while (i >= 0) {
         if (h_kind[i] == HI_PHI && h_blk[i] == b && h_pbase[i] >= 0) {
             base = h_pbase[i];
             cnt = h_pcnt[i];
@@ -150,7 +177,7 @@ static void ho_phi_drop_pred(int b, int pred) {
                 j = j + 1;
             }
         }
-        i = i + 1;
+        i = ho_phi_nx[i];
     }
 }
 
@@ -169,6 +196,7 @@ static int ho_const_fold(void) {
     int ci;
 
     changed = 0;
+    ho_phi_listed = 0;
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
@@ -1931,6 +1959,7 @@ static int ho_dead_slots(void) {
     int n;
     int r;
     int any;
+    int unknown;
     int changed;
 
     if (ssa_fn_setjmp) return 0;
@@ -1943,19 +1972,18 @@ static int ho_dead_slots(void) {
         i = i + 1;
     }
     if (!any) return 0;
+    unknown = 0;
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
         if (k != HI_NOP) {
             r = al_root[i];
-            if (h_cbase[i] >= 0 && hi_nargs(i) == 0) {
-                /* an argument list on a kind not known here: keep all */
-                j = 0;
-                while (j < h_ninst) {
-                    if (h_kind[j] == HI_ALLOCA) ho_ds_bad[j] = 1;
-                    j = j + 1;
-                }
-            }
+            /* an argument list on a kind not known here: keep all.  Not
+             * a call without arguments: that is a known kind with none,
+             * and it rescanned the function once a call -- a sixth of
+             * stage08's time on xbc's long mains (selfhost ISSUES-120),
+             * and no slot's stores were ever dropped beside one */
+            if (h_cbase[i] >= 0 && !hi_args_known(k)) unknown = 1;
             /* fine: the address a STORE writes, or the base of a step off
              * the same root; anything else reads the slot or lets its
              * address out */
@@ -1970,6 +1998,13 @@ static int ho_dead_slots(void) {
             }
         }
         i = i + 1;
+    }
+    if (unknown) {
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_ALLOCA) ho_ds_bad[i] = 1;
+            i = i + 1;
+        }
     }
     changed = 0;
     i = 0;
@@ -2064,6 +2099,8 @@ static void ho_tables(void) {
     hir_inst_table((char **)&ho_use, (int)sizeof(int));
     hir_inst_table((char **)&ho_phi_vouched, (int)sizeof(char));
     hir_inst_table((char **)&ho_cse_next, (int)sizeof(int));
+    hir_inst_table((char **)&ho_phi_nx, (int)sizeof(int));
+    hir_blk_table((char **)&ho_bphi, (int)sizeof(int));
 #ifndef S12CC_X64_HOST
     hir_inst_table((char **)&ho_kb, (int)sizeof(unsigned int));
     hir_inst_table((char **)&ho_ds_bad, (int)sizeof(char));

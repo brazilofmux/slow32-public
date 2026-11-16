@@ -87,8 +87,20 @@ static int *ra_csplit_head;
 static int *ra_csplit_next;
 static int ra_split_orig;
 static int ra_stat_csplit;
-static int *ra_after_stamp;
-static int ra_after_tick;
+/* The call splitter's readers (ra_u_build): one entry a read, listed
+ * by the value read. */
+static int *ra_u_inst;   /* the reading instruction */
+static int *ra_u_slot;   /* -1 src1, -2 src2, >= 0 an h_carg index, <= -3 phi argument -3-p */
+static int *ra_u_pos;    /* the instruction it reads at; -1 a phi argument */
+static int *ra_u_blk;    /* a phi argument's block */
+static int *ra_u_next;
+static int ra_u_n;
+static int ra_u_cap;
+static int *ra_u_head;   /* a value's first reader, -1 none */
+static int *ra_pos_blk;  /* the block whose range holds an instruction, -1 none */
+static int *ra_dpre;     /* dominator-tree preorder, -1 unreached */
+static int *ra_dlast;    /* the last preorder number in the block's subtree */
+static int *ra_dord;     /* blocks in preorder */
 static char *ra_is_csplit;   /* COPY dest of a call split: always callee-saved */
 static int *ra_dom_wl;      /* dom-tree walk for after-use rewire */
 static void ra_dump_signed(int v);       /* diagnostics; defined near the dump */
@@ -4623,6 +4635,9 @@ static void ra_tables(void) {
     ra_tables_done = 1;
     hir_inst_table((char **)&ra_act, (int)sizeof(int));
     hir_blk_table((char **)&ra_dom_wl, (int)sizeof(int));
+    hir_blk_table((char **)&ra_dpre, (int)sizeof(int));
+    hir_blk_table((char **)&ra_dlast, (int)sizeof(int));
+    hir_blk_table((char **)&ra_dord, (int)sizeof(int));
     hir_blk_table((char **)&ra_blk_last, (int)sizeof(int));
     hir_blk_table((char **)&ra_bvis, (int)sizeof(int));
     hir_blk_table((char **)&ra_bwl, (int)sizeof(int));
@@ -4640,7 +4655,8 @@ static void ra_tables(void) {
     hir_inst_table((char **)&ra_web_e, (int)sizeof(int));
     hir_inst_table((char **)&ra_csplit_head, (int)sizeof(int));
     hir_inst_table((char **)&ra_csplit_next, (int)sizeof(int));
-    hir_inst_table((char **)&ra_after_stamp, (int)sizeof(int));
+    hir_inst_table((char **)&ra_u_head, (int)sizeof(int));
+    hir_inst_table((char **)&ra_pos_blk, (int)sizeof(int));
     hir_inst_table((char **)&ra_is_csplit, (int)sizeof(char));
     hir_inst_table((char **)&ra_arg_pref_phys, (int)sizeof(int));
     hir_inst_table((char **)&ra_reg, (int)sizeof(int));
@@ -4923,140 +4939,250 @@ static void ra_mark_call_crossing(void) {
     }
 }
 
-static void ra_after_mark(int v) {
-    if (v >= 0 && v < hir_inst_cap) ra_after_stamp[v] = ra_after_tick;
-}
-
-static int ra_after_has(int v) {
-    if (v < 0 || v >= hir_inst_cap) return 0;
-    return ra_after_stamp[v] == ra_after_tick;
-}
-
-/* nw < 0: mark uses.  nw >= 0: rewrite old -> nw. */
+/* Rewrite one instruction's reads of old to nw: operands, call
+ * arguments, and the call-split copies hanging off it. */
 static void ra_csplit_on_inst(int i, int old, int nw) {
     int j;
     int n;
     int base;
     int sp;
-    if (nw < 0) {
-        if (h_src1[i] >= 0) ra_after_mark(h_src1[i]);
-        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i]))
-            ra_after_mark(h_src2[i]);
-    } else {
-        if (h_src1[i] == old) h_src1[i] = nw;
-        if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
-    }
+    if (h_src1[i] == old) h_src1[i] = nw;
+    if (h_src2[i] == old && ho_src2_is_ref(h_kind[i])) h_src2[i] = nw;
     if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) &&
         h_cbase[i] >= 0) {
         n = h_val[i];
         base = h_cbase[i];
         j = 0;
         while (j < n) {
-            if (nw < 0) ra_after_mark(h_carg[base + j]);
-            else if (h_carg[base + j] == old) h_carg[base + j] = nw;
+            if (h_carg[base + j] == old) h_carg[base + j] = nw;
             j = j + 1;
         }
     }
     sp = ra_csplit_head[i];
     while (sp >= 0) {
-        if (nw < 0) ra_after_mark(h_src1[sp]);
-        else if (h_src1[sp] == old) h_src1[sp] = nw;
+        if (h_src1[sp] == old) h_src1[sp] = nw;
         sp = ra_csplit_next[sp];
     }
 }
 
-/* Phi args on edges that are after the call: the predecessor is the
- * call block, or is strictly dominated by it (every path through that
- * pred already went through the call). */
-static void ra_csplit_on_phis(int b, int cb, int old, int nw) {
-    int phi;
+/* ----------------------------------------------------------------
+ * Reads after a call.  ra_split_one splits a call's argument when it
+ * is also read after the call, and makes those reads name the copy.
+ * It walked everything after each call to find them -- the rest of the
+ * call's block and every block the call's block dominates -- and so
+ * cost calls x instructions: half of stage08's time on xbc's long
+ * mains (selfhost ISSUES-120).  Each value's readers are listed once
+ * instead, and a reader is after the call c, in block cb, where that
+ * walk looked:
+ *   - later in cb, or in a block cb strictly dominates (a split copy
+ *     reads at the instruction it was made for, as it was visited);
+ *   - a phi argument on an edge from cb or a block cb dominates, the
+ *     phi in a successor of cb or a block cb strictly dominates.
+ * Splitting only adds copies to blocks, so the dominator tree's
+ * preorder numbers answer "dominates" for the whole pass.
+ * ---------------------------------------------------------------- */
+
+static void ra_u_room(int need) {
+    if (need <= ra_u_cap) return;
+    if (ra_u_cap == 0) {
+        tab_add((char **)&ra_u_inst, (int)sizeof(int), TAB_RA_USE, 0);
+        tab_add((char **)&ra_u_slot, (int)sizeof(int), TAB_RA_USE, 0);
+        tab_add((char **)&ra_u_pos, (int)sizeof(int), TAB_RA_USE, 0);
+        tab_add((char **)&ra_u_blk, (int)sizeof(int), TAB_RA_USE, 0);
+        tab_add((char **)&ra_u_next, (int)sizeof(int), TAB_RA_USE, 0);
+    }
+    tab_grow(TAB_RA_USE, &ra_u_cap, 8192, need);
+}
+
+static void ra_u_add(int v, int inst, int slot, int pos, int blk) {
+    if (v < 0 || v >= h_ninst) return;
+    ra_u_room(ra_u_n + 1);
+    ra_u_inst[ra_u_n] = inst;
+    ra_u_slot[ra_u_n] = slot;
+    ra_u_pos[ra_u_n] = pos;
+    ra_u_blk[ra_u_n] = blk;
+    ra_u_next[ra_u_n] = ra_u_head[v];
+    ra_u_head[v] = ra_u_n;
+    ra_u_n = ra_u_n + 1;
+}
+
+static void ra_u_set(int u, int nw) {
+    int s;
+    int i;
+    s = ra_u_slot[u];
+    i = ra_u_inst[u];
+    if (s == -1) h_src1[i] = nw;
+    else if (s == -2) h_src2[i] = nw;
+    else if (s >= 0) h_carg[s] = nw;
+    else h_pval[-3 - s] = nw;
+}
+
+/* a dominates b (a == b included) */
+static int ra_dom_le(int a, int b) {
+    if (a == b) return 1;
+    if (a < 0 || b < 0 || a >= bb_nblk || b >= bb_nblk) return 0;
+    if (ra_dpre[a] < 0 || ra_dpre[b] < 0) return 0;
+    return ra_dpre[a] <= ra_dpre[b] && ra_dpre[b] <= ra_dlast[a];
+}
+
+static void ra_u_dom_order(void) {
+    int b;
+    int k;
     int j;
-    int pred;
-    int a;
-    phi = ssa_phi_head[b];
-    while (phi >= 0) {
-        if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
-            j = 0;
-            while (j < h_pcnt[phi]) {
-                pred = h_pblk[h_pbase[phi] + j];
-                if (pred == cb ||
-                    (pred >= 0 && pred < bb_nblk &&
-                     licm_dominates(cb, pred))) {
-                    a = h_pval[h_pbase[phi] + j];
-                    if (nw < 0) {
-                        if (a >= 0) ra_after_mark(a);
-                    } else if (a == old) {
-                        h_pval[h_pbase[phi] + j] = nw;
-                    }
+    int n;
+    int sp;
+    int p;
+    b = 0;
+    while (b < bb_nblk) { ra_dpre[b] = -1; b = b + 1; }
+    n = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        if (ssa_idom[b] < 0 || ssa_idom[b] == b) {
+            ra_dom_wl[0] = b;
+            sp = 1;
+            while (sp > 0) {
+                sp = sp - 1;
+                k = ra_dom_wl[sp];
+                if (k < 0 || k >= bb_nblk || ra_dpre[k] >= 0) continue;
+                ra_dpre[k] = n;
+                ra_dlast[k] = n;
+                ra_dord[n] = k;
+                n = n + 1;
+                j = 0;
+                while (j < ssa_dtc_cnt[k] && sp < hir_blk_cap) {
+                    ra_dom_wl[sp] = ssa_dtc[ssa_dtc_base[k] + j];
+                    sp = sp + 1;
+                    j = j + 1;
                 }
+            }
+        }
+        b = b + 1;
+    }
+    /* children come after their parent in preorder: walk it backwards */
+    j = n - 1;
+    while (j >= 0) {
+        k = ra_dord[j];
+        p = ssa_idom[k];
+        if (p >= 0 && p < bb_nblk && p != k && ra_dpre[p] >= 0 &&
+            ra_dlast[k] > ra_dlast[p])
+            ra_dlast[p] = ra_dlast[k];
+        j = j - 1;
+    }
+}
+
+static void ra_u_build(void) {
+    int i;
+    int j;
+    int n;
+    int b;
+    int base;
+    int phi;
+    ra_u_n = 0;
+    i = 0;
+    while (i < h_ninst) { ra_u_head[i] = -1; ra_pos_blk[i] = -1; i = i + 1; }
+    b = 0;
+    while (b < bb_nblk) {
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            if (i >= 0 && i < h_ninst) ra_pos_blk[i] = b;
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        if (h_src1[i] >= 0) ra_u_add(h_src1[i], i, -1, i, -1);
+        if (h_src2[i] >= 0 && ho_src2_is_ref(h_kind[i])) ra_u_add(h_src2[i], i, -2, i, -1);
+        if ((h_kind[i] == HI_CALL || h_kind[i] == HI_CALLP) && h_cbase[i] >= 0) {
+            n = h_val[i];
+            base = h_cbase[i];
+            j = 0;
+            while (j < n) {
+                ra_u_add(h_carg[base + j], i, base + j, i, -1);
                 j = j + 1;
             }
         }
-        phi = ssa_phi_next[phi];
-    }
-}
-
-/* Blocks strictly dominated by the call's block: every path to them
- * went through the call, so uses there are after-uses.  A miss used
- * to cost the split (V stayed live-out and still crossed) rather
- * than correctness. */
-static void ra_csplit_on_dom(int cb, int old, int nw) {
-    int nwl;
-    int i;
-    int b;
-    int inst;
-    nwl = 0;
-    i = 0;
-    while (i < ssa_dtc_cnt[cb] && nwl < hir_blk_cap) {
-        ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[cb] + i];
-        nwl = nwl + 1;
         i = i + 1;
     }
-    while (nwl > 0) {
-        nwl = nwl - 1;
-        b = ra_dom_wl[nwl];
-        if (b >= 0 && b < bb_nblk) {
-            inst = bb_start[b];
-            while (inst < bb_end[b]) {
-                ra_csplit_on_inst(inst, old, nw);
-                inst = inst + 1;
+    b = 0;
+    while (b < bb_nblk) {
+        phi = ssa_phi_head[b];
+        while (phi >= 0) {
+            if (h_kind[phi] == HI_PHI && h_pbase[phi] >= 0) {
+                base = h_pbase[phi];
+                j = 0;
+                while (j < h_pcnt[phi]) {
+                    ra_u_add(h_pval[base + j], phi, -3 - (base + j), -1, b);
+                    j = j + 1;
+                }
             }
-            ra_csplit_on_phis(b, cb, old, nw);
-            i = 0;
-            while (i < ssa_dtc_cnt[b] && nwl < hir_blk_cap) {
-                ra_dom_wl[nwl] = ssa_dtc[ssa_dtc_base[b] + i];
-                nwl = nwl + 1;
-                i = i + 1;
-            }
+            phi = ssa_phi_next[phi];
         }
+        b = b + 1;
     }
+    ra_u_dom_order();
 }
 
-static void ra_mark_after_uses(int call) {
-    int i;
+/* Is reader u after the call c, in block cb? */
+static int ra_u_after(int u, int c, int cb) {
+    int p;
+    int b;
+    int pred;
     int si;
-    int s;
-    int cb;
-    ra_after_tick = ra_after_tick + 1;
-    if (ra_after_tick <= 0) {
-        i = 0;
-        while (i < hir_inst_cap) { ra_after_stamp[i] = 0; i = i + 1; }
-        ra_after_tick = 1;
+    p = ra_u_pos[u];
+    if (p >= 0) {
+        b = ra_pos_blk[p];
+        if (b < 0) return 0;
+        if (b == cb) return p > c;
+        return ra_dom_le(cb, b);
     }
-    cb = h_blk[call];
-    if (cb < 0) return;
-    i = call + 1;
-    while (i < bb_end[cb]) {
-        ra_csplit_on_inst(i, -1, -1);
-        i = i + 1;
-    }
+    pred = h_pblk[-3 - ra_u_slot[u]];
+    if (pred != cb && !(pred >= 0 && pred < bb_nblk && ra_dom_le(cb, pred))) return 0;
+    b = ra_u_blk[u];
+    if (b != cb && ra_dom_le(cb, b)) return 1;
     si = 0;
     while (si < ssa_nsucc[cb]) {
-        s = ssa_succ[ssa_soff[cb] + si];
-        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, -1, -1);
+        if (ssa_succ[ssa_soff[cb] + si] == b) return 1;
         si = si + 1;
     }
-    ra_csplit_on_dom(cb, -1, -1);
+    return 0;
+}
+
+static int ra_u_read_after(int v, int c) {
+    int u;
+    int cb;
+    cb = h_blk[c];
+    if (cb < 0 || v < 0 || v >= h_ninst) return 0;
+    u = ra_u_head[v];
+    while (u >= 0) {
+        if (ra_u_after(u, c, cb)) return 1;
+        u = ra_u_next[u];
+    }
+    return 0;
+}
+
+/* v's reads after c read nw instead, and move to nw's list */
+static void ra_u_rewire(int v, int nw, int c) {
+    int u;
+    int prev;
+    int next;
+    int cb;
+    cb = h_blk[c];
+    prev = -1;
+    u = ra_u_head[v];
+    while (u >= 0) {
+        next = ra_u_next[u];
+        if (ra_u_after(u, c, cb)) {
+            ra_u_set(u, nw);
+            if (prev < 0) ra_u_head[v] = next;
+            else ra_u_next[prev] = next;
+            ra_u_next[u] = ra_u_head[nw];
+            ra_u_head[nw] = u;
+        } else {
+            prev = u;
+        }
+        u = next;
+    }
 }
 
 static int ra_new_split_copy(int src, int blk) {
@@ -5125,26 +5251,6 @@ static int ra_new_split_copy(int src, int blk) {
     return cl;
 }
 
-static void ra_rewire_after(int old, int nw, int call) {
-    int i;
-    int cb;
-    int si;
-    int s;
-    cb = h_blk[call];
-    i = call + 1;
-    while (i < bb_end[cb]) {
-        ra_csplit_on_inst(i, old, nw);
-        i = i + 1;
-    }
-    si = 0;
-    while (si < ssa_nsucc[cb]) {
-        s = ssa_succ[ssa_soff[cb] + si];
-        if (s >= 0 && s < bb_nblk) ra_csplit_on_phis(s, cb, old, nw);
-        si = si + 1;
-    }
-    ra_csplit_on_dom(cb, old, nw);
-}
-
 static int ra_split_pairing = 0;  /* guards the fp64 partner recursion below */
 
 /* Does block a dominate block b (ssa_idom)? */
@@ -5179,19 +5285,19 @@ static int ra_split_one(int v, int call) {
      * original word from it.  Wrong code; LAPACK's ZLARTG under f77 (the
      * ZEC, ZGG, ZGD suites). */
     if (h_blk[v] != h_blk[call] && !ra_blk_dominates(h_blk[v], h_blk[call])) return -1;
-    if (!ra_after_has(v)) return -1;
+    if (!ra_u_read_after(v, call)) return -1;
     cp = ra_new_split_copy(v, h_blk[call]);
     if (cp < 0) return -1;
     ra_csplit_next[cp] = ra_csplit_head[call];
     ra_csplit_head[call] = cp;
-    ra_rewire_after(v, cp, call);
-    /* v's after-uses now all name cp, so v has none left.  Clear the
-     * stamp or the next ra_split_one(v, call) at this same call sees a
-     * stale "has after-uses" and splits v again into a copy nothing
-     * reads: an fp64 argument occupies TWO adjacent h_carg slots, so
-     * the argument loop calls us once per half and the second call
-     * re-split both halves. */
-    ra_after_stamp[v] = 0;
+    ra_u_head[cp] = -1;
+    ra_pos_blk[cp] = -1;
+    ra_u_add(v, cp, -1, call, -1);   /* the copy reads v at the call */
+    /* v's reads after the call now name cp, so a second
+     * ra_split_one(v, call) -- an fp64 argument fills TWO adjacent
+     * h_carg slots, and the argument loop asks once per half -- finds
+     * none and does not split v again into a copy nothing reads. */
+    ra_u_rewire(v, cp, call);
     ra_stat_csplit = ra_stat_csplit + 1;
     w = ra_pair_of[v];
     /* Split the fp64 partner too, but NEVER let that inner call take
@@ -5235,10 +5341,10 @@ static void ra_split_at_calls(void) {
         ra_is_csplit[i] = 0;
         i = i + 1;
     }
+    ra_u_build();
     c = ra_split_orig - 1;
     while (c >= 0) {
         if (h_kind[c] == HI_CALL || h_kind[c] == HI_CALLP) {
-            ra_mark_after_uses(c);
             if (h_cbase[c] >= 0) {
                 n = h_val[c];
                 base = h_cbase[c];

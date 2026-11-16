@@ -581,12 +581,15 @@ static int hi_src2_is_ref(int k) {
     return 0;
 }
 
+/* the kinds whose argument list hi_nargs knows */
+static int hi_args_known(int k) {
+    return k == HI_CALL || k == HI_CALLP ||
+           k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE;
+}
+
 static int hi_nargs(int i) {
-    int k;
     if (h_cbase[i] < 0) return 0;
-    k = h_kind[i];
-    if (k == HI_CALL || k == HI_CALLP ||
-        k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) return h_val[i];
+    if (hi_args_known(h_kind[i])) return h_val[i];
     return 0;
 }
 

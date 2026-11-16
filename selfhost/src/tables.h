@@ -84,6 +84,7 @@
 #define TAB_CG_JT    62    /* hir_codegen.h, jump table */
 #define TAB_CG_JTENT 63    /* hir_codegen.h, jump-table entry */
 #define TAB_CG_OUT   64    /* hir_codegen.h, the assembly text (a window with a file) */
+#define TAB_RA_USE   65    /* hir_regalloc.h, a read the call splitter tracks */
 
 /* each kind's owner, by its cap variable: a kind number given twice
  * (TAB_PP_FILES and TAB_PS_STRCAT were both 36 once, so the file names
@@ -161,6 +162,7 @@ static char *tab_kind_name(int kind) {
     if (kind == TAB_CG_JT) return "jump table";
     if (kind == TAB_CG_JTENT) return "jump-table entry";
     if (kind == TAB_CG_OUT) return "assembly text";
+    if (kind == TAB_RA_USE) return "call-split read";
     return "?";
 }
 

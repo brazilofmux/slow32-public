@@ -27,6 +27,15 @@ static int *hl_atag;   /* the inlined splice it belongs to (hl_inl_tag); 0 = the
 static int *hl_ainst;
 static int hl_nalloca;
 static int hl_alloca_cap;
+/* (slot, offset, splice) -> the first alloca with that key, so a lookup
+ * finds what the search of every alloca found, without the search: on
+ * xbc's long mains it was quadratic (selfhost ISSUES-120).  Open
+ * addressing; hl_apos[i] is where alloca i's key sits, -1 for a later
+ * alloca with a key already there (hl_emit_temp_alloca's can repeat). */
+static int *hl_ah;      /* alloca index, -1 empty */
+static int hl_ah_cap;   /* a power of two, or 0 */
+static int hl_ah_n;
+static int *hl_apos;
 
 /* room for n more allocas */
 static void hl_alloca_room(int n) {
@@ -36,8 +45,73 @@ static void hl_alloca_room(int n) {
         tab_add((char **)&hl_aslot, (int)sizeof(int), TAB_HL_ALLOCA, 0);
         tab_add((char **)&hl_atag, (int)sizeof(int), TAB_HL_ALLOCA, 0);
         tab_add((char **)&hl_ainst, (int)sizeof(int), TAB_HL_ALLOCA, 0);
+        tab_add((char **)&hl_apos, (int)sizeof(int), TAB_HL_ALLOCA, 0);
     }
     tab_grow(TAB_HL_ALLOCA, &hl_alloca_cap, 1024, hl_nalloca + n);
+}
+
+/* where the key is in hl_ah, or the empty place it would go */
+static int hl_ah_at(int offset, int slot_id, int tag) {
+    unsigned x;
+    int p;
+    int a;
+    x = (unsigned)offset * 40503 + (unsigned)slot_id * 9973 + (unsigned)tag * 31;
+    x = x ^ (x >> 13);
+    p = (int)(x & (unsigned)(hl_ah_cap - 1));
+    while (hl_ah[p] >= 0) {
+        a = hl_ah[p];
+        if (hl_aslot[a] == slot_id && hl_aoff[a] == offset && hl_atag[a] == tag) return p;
+        p = (p + 1) & (hl_ah_cap - 1);
+    }
+    return p;
+}
+
+static void hl_ah_grow(void) {
+    int i;
+    int p;
+    if (hl_ah) free(hl_ah);
+    hl_ah_cap = hl_ah_cap ? hl_ah_cap * 2 : 1024;
+    hl_ah = (int *)malloc((unsigned long)hl_ah_cap * sizeof(int));
+    if (!hl_ah) {
+        fdputs("s12cc: out of memory (allocas)\n", 2);
+        exit(1);
+    }
+    i = 0;
+    while (i < hl_ah_cap) { hl_ah[i] = -1; i = i + 1; }
+    i = 0;
+    while (i < hl_nalloca) {
+        if (hl_apos[i] >= 0) {
+            p = hl_ah_at(hl_aoff[i], hl_aslot[i], hl_atag[i]);
+            hl_ah[p] = i;
+            hl_apos[i] = p;
+        }
+        i = i + 1;
+    }
+}
+
+/* alloca i is new: key it, unless an earlier one has its key */
+static void hl_ah_note(int i) {
+    int p;
+    if ((hl_ah_n + 1) * 2 > hl_ah_cap) {
+        hl_apos[i] = -1;    /* not keyed yet: grow skips it */
+        hl_ah_grow();
+    }
+    p = hl_ah_at(hl_aoff[i], hl_aslot[i], hl_atag[i]);
+    if (hl_ah[p] >= 0) { hl_apos[i] = -1; return; }
+    hl_ah[p] = i;
+    hl_apos[i] = p;
+    hl_ah_n = hl_ah_n + 1;
+}
+
+/* a new function: empty the keys the last one left */
+static void hl_ah_reset(void) {
+    int i;
+    i = 0;
+    while (i < hl_nalloca) {
+        if (hl_apos[i] >= 0) hl_ah[hl_apos[i]] = -1;
+        i = i + 1;
+    }
+    hl_ah_n = 0;
 }
 
 /* Temp stack for merge values (&&, ||, ternary), structure returns,
@@ -307,12 +381,10 @@ static int hl_map_off(int off) {
 }
 
 static int hl_get_alloca_id(int offset, int ty, int slot_id) {
-    int i;
-    i = 0;
-    while (i < hl_nalloca) {
-        if (hl_aslot[i] == slot_id && hl_aoff[i] == offset &&
-            hl_atag[i] == hl_inl_tag) return hl_ainst[i];
-        i = i + 1;
+    int p;
+    if (hl_ah_cap > 0) {
+        p = hl_ah_at(offset, slot_id, hl_inl_tag);
+        if (hl_ah[p] >= 0) return hl_ainst[hl_ah[p]];
     }
     hl_alloca_room(1);
     hl_aoff[hl_nalloca] = offset;
@@ -320,6 +392,7 @@ static int hl_get_alloca_id(int offset, int ty, int slot_id) {
     hl_atag[hl_nalloca] = hl_inl_tag;
     hl_ainst[hl_nalloca] = hi_emit(HI_ALLOCA, ty, -1, -1, offset, NULL);
     hl_nalloca = hl_nalloca + 1;
+    hl_ah_note(hl_nalloca - 1);
     return hl_ainst[hl_nalloca - 1];
 }
 
@@ -349,6 +422,7 @@ static int hl_emit_temp_alloca(int ty, int offset) {
     hl_atag[hl_nalloca] = hl_inl_tag;
     hl_ainst[hl_nalloca] = inst;
     hl_nalloca = hl_nalloca + 1;
+    hl_ah_note(hl_nalloca - 1);
     return inst;
 }
 
@@ -5057,6 +5131,7 @@ static void hl_func(Node *fn) {
     int param_alloca;
 
     hir_reset();
+    if (hl_ah_cap > 0) hl_ah_reset();
     hl_nalloca = 0;
     hl_nctemp = 0;
     hl_inl_caller_sz = 0;

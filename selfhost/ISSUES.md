@@ -4202,3 +4202,31 @@ computes:
   lookup.
 
 The register allocator's own coloring (`gc_simplify`) is 4%.
+
+The first two are fixed (2026-11-16).  The call splitter lists each
+value's readers once (`ra_u_build`) and asks of an argument's own
+readers whether each is after the call, by the same rule the walk used
+(dominance from the dominator tree's preorder numbers); the dead-slot
+pass keeps all only for a kind whose argument list it does not know
+(`hi_args_known`), decided once.  1,000 records 7.0 s -> 2.0 s, 2,000
+26.4 s -> 6.5 s, the same assembly; stage08 compiles itself to the same
+bytes, with or without the dead-slot pass (-fopt).  The dead-slot pass
+now runs beside calls without arguments: of stage08's tests only
+test_typedef_shadow compiles differently (a register choice in main;
+it still passes).
+
+The other two followed the same day: `ho_const_fold` lists each block's
+phis the first time it drops an edge (`ho_phi_list`; the fold makes and
+moves no phis), and `hl_get_alloca_id` finds the first alloca with a key
+through a hash of (slot, offset, splice) -- the first, as the search
+found, since `hl_emit_temp_alloca` can repeat a key.  All four: 1,000
+records 7.0 s -> 1.25 s, 2,000 26.4 s -> 3.6 s, the same assembly, and
+the same self-compile.  2,000 still costs 2.9 times 1,000: not profiled
+again.
+
+Found on the way: `tests/test_dead_slots.c`'s check (scratch stores
+nothing) passes with the dead-slot pass masked off (`-fopt` without
+4096), on this compiler and the one before: a later pass drops those
+stores too, so the check no longer shows the pass at work.  A test of
+the zero-argument case was tried the same way and dropped for that
+reason.
