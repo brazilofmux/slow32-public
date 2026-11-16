@@ -756,12 +756,17 @@ static void print_called_from(const program_t *prog) {
  * other key is not an answer.  Cancel ends the program (once every level
  * of it has stopped), Ignore goes on with the next statement, Suspend
  * stops at the prompt for RESUME. */
+static int error_bare;   /* prog_error_bare: the question was the report */
+
 static void prog_error_ask(const char *message) {
     program_t *prog = state.current_prog;
     const char *line = state.pc < prog->nlines ? skip_ws(prog->lines[state.pc]) : "";
     int d, c;
 
-    printf("%s\n%*s?\n%s\n", message, error_mark_column(message, line), "", line);
+    if (!error_bare)
+        printf("%s\n%*s?\n%s\n", message, error_mark_column(message, line), "", line);
+    else
+        printf("\n");
     print_called_from(prog);
     for (d = state.call_depth; d > 0; d--)
         if (state.call_stack[d - 1].caller_prog)
@@ -897,6 +902,15 @@ recover:
     } else {
         printf("*** %s\n", message);
     }
+}
+
+/* An error whose report is a question already on the screen (SET
+ * SAFETY's "... overwrite it? (Y/N) No"): in a program, dBASE III goes
+ * straight to the calls and Cancel, Ignore, or Suspend */
+void prog_error_bare(int code, const char *message) {
+    error_bare = 1;
+    prog_error(code, message);
+    error_bare = 0;
 }
 
 void prog_error_fmt(int code, const char *fmt, ...) {

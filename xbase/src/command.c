@@ -51,6 +51,8 @@ static int list_value_width(dbf_t *db, int f) {
 }
 
 static void common_list_display(dbf_t *db, lexer_t *l, int is_display);
+static int create_table_asked(const char *filename, dbf_field_t *fields, int nfields);
+static int safety_yes(const char *question);
 
 /* SET TALK as dBASE III talks (the interpreter): a line through the
  * console stream -- the screen, the alternate file, the printer -- a
@@ -726,7 +728,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
         return;
     }
 
-    if (cmd_create_table(filename, fields, nfields) < 0) {
+    if (create_table_asked(filename, fields, nfields) < 0) {
         return;
     }
 
@@ -819,7 +821,7 @@ static int cmd_create_clipper(dbf_t *db, const char *arg) {
         }
         dbf_close(&ext);
         if (n == 0) { prog_error(ERR_CANNOT_CREATE, "No fields defined"); return 1; }
-        if (cmd_create_table(name, fields, n) < 0) return 1;
+        if (create_table_asked(name, fields, n) < 0) return 1;
         {
             int mi;
             for (mi = 0; mi < n; mi++) if (fields[mi].type == 'M') { dbf_memo_create(name); break; }
@@ -831,7 +833,7 @@ static int cmd_create_clipper(dbf_t *db, const char *arg) {
         str_copy(ext_fields[1].name, "FIELD_TYPE", DBF_MAX_FIELD_NAME); ext_fields[1].type = 'C'; ext_fields[1].length = 1;
         str_copy(ext_fields[2].name, "FIELD_LEN", DBF_MAX_FIELD_NAME);  ext_fields[2].type = 'N'; ext_fields[2].length = 3;
         str_copy(ext_fields[3].name, "FIELD_DEC", DBF_MAX_FIELD_NAME);  ext_fields[3].type = 'N'; ext_fields[3].length = 3;
-        if (cmd_create_table(name, ext_fields, 4) < 0) return 1;
+        if (create_table_asked(name, ext_fields, 4) < 0) return 1;
     }
     snprintf(use_line, sizeof(use_line), "%s%s%s%s", name, is_new ? " NEW" : "", alias[0] ? " ALIAS " : "", alias);
     cmd_use(cur_db(), use_line);
@@ -894,6 +896,54 @@ static int create_error(const char *subsystem, int subcode, const char *filename
     prog_error_detail(subsystem, 20, subcode, "Create error", filename, os, 1, 1);
     prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", filename);
     return prog_error_retry();
+}
+
+/* SET SAFETY as dBASE III asks (the interpreter; a compiled program and
+ * XBASE_WIDTHS=clipper never ask): "TC.ndx already exists, overwrite it?
+ * (Y/N)" before a command writes over a file -- the name with its
+ * default extension as dBASE shows one it supplied.  Y goes on; N, in a
+ * program, is an error reported by the question (Cancel, Ignore, or
+ * Suspend), at the prompt the command undone.  1 to write, 0 not to. */
+static int safety_yes(const char *question) {
+    int c;
+    cmd_output("\n");
+    cmd_output(question);
+    cmd_output(" (Y/N) ");
+    fflush(stdout);
+    for (;;) {
+        c = screen_answer_key();
+        if (c == 'Y' || c == 'y') { cmd_output("Yes"); return 1; }
+        if (c < 0 || c == 'N' || c == 'n') { cmd_output("No"); return 0; }
+    }
+}
+
+static int safety_ok_as(const char *filename, int as_typed) {
+    char shown[300], q[340];
+    size_t n;
+    FILE *fp;
+    if (!set_opts.safety || !val_dbase_widths()) return 1;
+    if (!(fp = fopen(filename, "rb"))) return 1;
+    fclose(fp);
+    str_copy(shown, filename, sizeof shown);
+    n = strlen(shown);
+    if (!as_typed && n > 4 && (strcasecmp(shown + n - 4, ".DBF") == 0 || strcasecmp(shown + n - 4, ".NDX") == 0 ||
+                  strcasecmp(shown + n - 4, ".MEM") == 0 || strcasecmp(shown + n - 4, ".TXT") == 0))
+        for (char *e = shown + n - 3; *e; e++) *e = (char)tolower((unsigned char)*e);
+    snprintf(q, sizeof q, "%s already exists, overwrite it?", shown);
+    if (safety_yes(q)) return 1;
+    if (prog_is_running()) {
+        snprintf(q, sizeof q, "%s already exists", shown);
+        prog_error_bare(ERR_CANNOT_CREATE, q);
+    }
+    return 0;
+}
+static int safety_ok(const char *filename) { return safety_ok_as(filename, 0); }
+
+/* A table a command makes (CREATE, COPY TO, SORT, TOTAL ...): SET SAFETY
+ * asked first; DBCREATE() does not ask */
+static int create_table_asked(const char *filename, dbf_field_t *fields, int nfields) {
+    if (!safety_ok(filename)) return -1;
+    return cmd_create_table(filename, fields, nfields);
 }
 
 /* dbf_create, a failure Clipper's create error: -1 when the table was not
@@ -3583,6 +3633,15 @@ static void cmd_zap(dbf_t *db) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
+    if (set_opts.safety && val_dbase_widths()) {   /* "Zap T.dbf? (Y/N)": No leaves it (dBASE) */
+        char q[300], shown[256];
+        size_t n;
+        str_copy(shown, db->filename, sizeof shown);
+        n = strlen(shown);
+        if (n > 4 && strcasecmp(shown + n - 4, ".DBF") == 0) memcpy(shown + n - 4, ".dbf", 4);
+        snprintf(q, sizeof q, "Zap %s?", shown);
+        if (!safety_yes(q)) return;
+    }
 
     db->record_count = 0;
     db->current_record = 0;
@@ -3836,6 +3895,7 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
     rec_cursor_t rc;
     int f, fc, count = 0;
 
+    if (!safety_ok(filename)) return;
     fp = fopen(filename, "wb");
     if (!fp) {
         prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
@@ -3910,6 +3970,7 @@ static void copy_to_delimited(dbf_t *db, const char *filename,
     rec_cursor_t rc;
     int f, fc, count = 0;
 
+    if (!safety_ok(filename)) return;
     fp = fopen(filename, "wb");
     if (!fp) {
         prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
@@ -4125,7 +4186,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         }
     }
 
-    if (cmd_create_table(filename, dest_fields, dest_nfields) < 0) {
+    if (create_table_asked(filename, dest_fields, dest_nfields) < 0) {
         return;
     }
 
@@ -4223,7 +4284,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
             fields[f].offset = off;
             off += fields[f].length;
         }
-        if (cmd_create_table(filename, fields, db->field_count) < 0) {
+        if (create_table_asked(filename, fields, db->field_count) < 0) {
             return;
         }
 
@@ -4282,7 +4343,7 @@ static void cmd_copy_structure_extended(dbf_t *db, const char *arg) {
     ext_fields[3].decimals = 0;
     ext_fields[3].offset = 14;
 
-    if (cmd_create_table(filename, ext_fields, 4) < 0) {
+    if (create_table_asked(filename, ext_fields, 4) < 0) {
         return;
     }
 
@@ -4981,7 +5042,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             fields[f].offset = off;
             off += fields[f].length;
         }
-        if (cmd_create_table(filename, fields, db->field_count) < 0) {
+        if (create_table_asked(filename, fields, db->field_count) < 0) {
             free(sort_entries);
             cleanup_sort_chunks(chunk_names, nchunks);
             return;
@@ -5192,6 +5253,7 @@ static void cmd_copy_file(const char *arg) {
         file_not_found(src);
         return;
     }
+    if (!safety_ok_as(dst, 1)) { fclose(fin); return; }   /* COPY FILE names it as typed */
     fout = fopen(dst, "wb");
     if (!fout) {
         fclose(fin);
@@ -5310,6 +5372,7 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
         return;
     }
 
+    if (!safety_ok(filename)) return;
     {   /* the file first, as Clipper makes it: a create error before the build */
         FILE *fp;
         while (!(fp = fopen(filename, "wb")))
@@ -7051,6 +7114,7 @@ static void h_save(dbf_t *db, lexer_t *l) {
     (void)all;
     if (!fname[0]) { prog_error(ERR_SYNTAX, "SAVE: TO <file> expected"); return; }
     mem_file_name(fname, sizeof(fname), fname);
+    if (!safety_ok(fname)) return;
     fp = fopen(fname, "wb");
     if (!fp) { prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname); return; }
     for (j = 0; j < MEMVAR_SLOTS; j++) {
@@ -7303,7 +7367,7 @@ static int create_and_open(dbf_t *dest, char *filename, dbf_field_t *fields, int
         fields[f].offset = off;
         off += fields[f].length;
     }
-    if (cmd_create_table(filename, fields, nfields) < 0) {
+    if (create_table_asked(filename, fields, nfields) < 0) {
         return -1;
     }
     dbf_init(dest);

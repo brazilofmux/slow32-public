@@ -233,6 +233,7 @@ int prog_scan_next(prog_scan_t *s);
 void prog_scan_close(prog_scan_t *s);
 void prog_get_compiled_loc(const char **file, int *line);
 void prog_error_fmt(int code, const char *fmt, ...);
+void prog_error_bare(int code, const char *message);   /* reported by a question already shown */
 int expr_error_code(const char *msg);
 int prog_get_error_code(void);
 const char *prog_get_error_message(void);

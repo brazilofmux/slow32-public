@@ -1,0 +1,13 @@
+* SET SAFETY ON (dBASE III's default) asks before a command writes over a
+* file and before ZAP: "SAFET2.dbf already exists, overwrite it? (Y/N)";
+* No in a program is an error the question reports (then Cancel, Ignore,
+* or Suspend), Yes goes on; ZAP's No leaves the table.  The interpreter
+* only: a compiled program never asks.
+SET TALK OFF
+x = DBCREATE("SAFET", {{"N", "N", 3, 0}})
+USE SAFET
+APPEND BLANK
+USE
+DO SAFEASK
+NIYNY
+QUIT

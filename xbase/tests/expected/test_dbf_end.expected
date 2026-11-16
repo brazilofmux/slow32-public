@@ -1,7 +1,7 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. 
+. . 
 --- A table ends with 0x1A after its last record, and nothing past it ---
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 

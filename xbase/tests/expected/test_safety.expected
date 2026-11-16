@@ -1,0 +1,15 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. . . . . . . . . . . 
+SAFET2.dbf already exists, overwrite it? (Y/N) No
+Called from - SAFEASK.prg
+Cancel, Ignore, or Suspend? (C, I, or S) Ignore
+after No
+SAFET2.dbf already exists, overwrite it? (Y/N) Yes
+after Yes
+Zap SAFET.dbf? (Y/N) No
+kept:          1
+Zap SAFET.dbf? (Y/N) Yes
+zapped:          0
+. . 

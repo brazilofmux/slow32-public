@@ -1,3 +1,4 @@
+SET SAFETY OFF
 SET TALK OFF
 * Phase 7: B-Tree Indexing Tests
 * Test 1: INDEX ON + SEEK (basic, existing behavior)

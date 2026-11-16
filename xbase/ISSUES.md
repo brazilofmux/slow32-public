@@ -781,9 +781,28 @@ interpreted, three totals of -0.00 show 0.00.  Test: test_dbase3_display
 (tests/dbase3/WIDTHS.TXT is dBASE III PLUS's own output for WIDTHS.PRG;
 the build before fails it); 94 expected outputs follow the new display.
 
-Not done: SET SAFETY's questions (dBASE asks before ZAP and before
-writing over a file; nothing here asks), and the drive (C:) dBASE puts
-before file names.
+Not done: the drive (C:) dBASE puts before file names.
+
+### SET SAFETY asked nothing — RESOLVED 2026-11-15
+
+dBASE III starts with SAFETY ON and asks before a command writes over a
+file -- CREATE, COPY TO (and STRUCTURE, DELIMITED, SDF), SORT, TOTAL,
+INDEX ON, SAVE TO, COPY FILE: "TC.ndx already exists, overwrite it?
+(Y/N)", the name as the command completed it (COPY FILE's as typed) --
+and before ZAP ("Zap T.dbf? (Y/N)").  The interpreter asks now, word for
+word as dBASE III PLUS does (each command measured, answered both ways).
+Yes goes on.  No to ZAP leaves the table; No to an overwrite, in a
+program, is an error the question itself reports: the "Called from"
+lines and Cancel, Ignore, or Suspend follow it directly.  No input (a
+script that has run out) answers No.  SET ALTERNATE TO does not ask, in
+dBASE either.  A compiled program and XBASE_WIDTHS=clipper never ask
+(Clipper has no such questions); DBCREATE() never asks.  The ledger's
+programs say SET SAFETY OFF beside SET TALK OFF now; their interpreted
+reports are byte-identical to the build before.  Test: test_safety; four
+tests that ZAP or write twice say SET SAFETY OFF.
+
+Seen, not done: dBASE refuses to SORT a table of one record ("Not
+enough records to sort."); xbase sorts it.
 
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 

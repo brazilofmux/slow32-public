@@ -1,3 +1,4 @@
+SET SAFETY OFF
 ? "--- A table ends with 0x1A after its last record, and nothing past it ---"
 CREATE ENDT
 NAME
