@@ -4145,6 +4145,20 @@ different types in neighbouring statements; complex temporaries in two
 statements.  The xbc test that found it (`xbc/tests/dupspan.prg`) runs
 under stage08 in `xbc/tests/run-stage08.sh`.
 
+**Follow-up (2026-11-16): cc-a64 sized its frames from the count.**  The
+builder's arm64 round failed in stage08-cross-a64's diff-test:
+`d40_varargs_double` and `d41_float_promote` printed wrong numbers and
+died (exit 139).  The SLOW-32 and x64 code generators find the frame's
+depth from the allocas themselves (`hcg_hir_frame_base`,
+`hx_hir_frame_base`), but cc-a64 takes `hl_temp_stack` as lowering
+leaves it, and the count now ends near the locals: spill slots and the
+varargs save area landed on live temporaries.  `hl_func` now leaves the
+deepest count the function reached (`hl_temp_max`) in `hl_temp_stack`,
+what every backend had before.  Nothing here runs cc-a64's output (it is
+Linux AArch64): `make test` under podman's arm64 Linux
+(`podman run --platform linux/arm64 ... gcc:latest`, on a copy of
+selfhost/) is 41/41 with this, and fails d40 as the builder did without.
+
 ### 120. [OPEN 2026-11-16] Compile time superlinear in a function's size, and far worse after nested ?: chains
 
 xbc/tests/dupspan.prg as written in 526c10de -- 4,600 straight lines, one

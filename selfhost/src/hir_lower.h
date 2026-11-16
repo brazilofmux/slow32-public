@@ -51,6 +51,9 @@ static void hl_alloca_room(int n) {
  * after later ones have run. */
 static int hl_temp_stack;
 static int hl_keep_temps;       /* 1: the function calls setjmp */
+static int hl_temp_max;         /* the deepest hl_temp_stack so far: what hl_func
+                                 * leaves in hl_temp_stack, the frame's size so far
+                                 * for a backend (cc-a64 sizes its frame from it) */
 
 /* --- Loop break/continue targets --- */
 static int *hl_break_blk;
@@ -4553,6 +4556,7 @@ static void hl_stmt(Node *n) {
     saved_stack = hl_temp_stack;
     saved_nctemp = hl_nctemp;
     hl_stmt_body(n);
+    if (hl_temp_stack > hl_temp_max) hl_temp_max = hl_temp_stack;
     if (hl_keep_temps) return;
     hl_temp_stack = saved_stack;
     /* sema's numbers are the unit's, but an inlined body is lowered at
@@ -5060,6 +5064,7 @@ static void hl_func(Node *fn) {
     hl_nparams = fn->nparams;  /* will be updated by param expansion for llong */
     hl_hi = -1;
     hl_temp_stack = fn->locals_size;
+    hl_temp_max = hl_temp_stack;
     hl_keep_temps = fn->calls_setjmp;
     hl_inl_tag = 0;
     hl_inl_serial = 0;
@@ -5254,4 +5259,9 @@ static void hl_func(Node *fn) {
             hi_emit(HI_RET, 0, -1, -1, 0, NULL);
         }
     }
+    /* Each statement gave its room back, so the count is near the
+     * locals again; the backends size the frame from it (before
+     * selfhost ISSUES-119 the count only grew, and cc-a64 still reads
+     * it: varargs functions overran their frames without this). */
+    hl_temp_stack = hl_temp_max;
 }
