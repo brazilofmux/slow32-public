@@ -1,6 +1,6 @@
 * dBASE III PLUS's own display, which the interpreter is held to: the
 * widths it gives numbers (literals, fields, variables, + - * /, the
-* functions), SET DECIMALS, a zero divisor, LIST and DISPLAY, and the
+* functions), SET DECIMALS, parameters, a zero divisor, LIST and DISPLAY, and the
 * TALK lines.  dBASE III PLUS 1.1 ran this on WIDTHS.DBF to make WIDTHS.TXT.
 SET TALK OFF
 SET SAFETY OFF
@@ -100,6 +100,8 @@ SET ALTERNATE ON
 ? -1 / 300
 ? TRANSFORM(A, "")
 ? A, F, x
+DO WPARM WITH 21, 1.5, 12345678901
+DO WPARM WITH j, F, A
 SET DECIMALS TO 0
 ? 1 / 3
 ? -1 / 3

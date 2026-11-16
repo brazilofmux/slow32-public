@@ -1296,8 +1296,8 @@ int ast_store_raw;   /* a GET's set-block running: its := stores as ast_store_va
 
 int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val) {
     value_t w;
-    if (val->type == VAL_NUM && val_dbase_widths() && !ast_store_raw) {
-        w = val_dbase_stored(val);
+    if (!ast_store_raw) {
+        w = val_as_variable(val);
         val = &w;
     }
     if (!ctx->vars || memvar_set(ctx->vars, name, val) != 0) {
@@ -1479,7 +1479,7 @@ static int ast_eval_block_in(expr_ctx_t *ctx, const value_t *bv, value_t *args, 
         if (bound[i]) memvar_set(store, b->cap_names[i], &b->cap_vals[i]);
     }
     for (i = 0; i < b->nparams; i++) {
-        value_t v = i < nargs ? args[i] : val_nil();
+        value_t v = i < nargs ? (ast_store_raw ? args[i] : val_as_variable(&args[i])) : val_nil();   /* a GET's set-block: the value as the GET read it */
         had[i] = memvar_find(store, b->params[i], &saved[i]) == 0;
         memvar_set(store, b->params[i], &v);
     }

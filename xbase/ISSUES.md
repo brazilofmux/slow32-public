@@ -783,6 +783,24 @@ the build before fails it); 94 expected outputs follow the new display.
 
 Not done: the drive (C:) dBASE puts before file names.
 
+### A parameter kept its argument's width — RESOLVED 2026-11-15
+
+dBASE III sizes a parameter as a variable given the same value: DO P
+WITH 21, 1.5, 12345678901 shows n as ten columns, 1.5 as ten and a
+decimal, the eleven digits as eleven; a field passed (WITH F, N 6.2) is a
+variable's width too.  The interpreter kept the argument's own width (21
+two columns).  PARAMETERS, FUNCTION f(a, b) and a code block's
+parameters take a variable's width now (val_as_variable, the one rule an
+assignment, a parameter and a function's result share), except a GET's
+set-block, whose value is the GET's own width.  Measured on dBASE III
+PLUS (tests/dbase3/WPARM.PRG, in test_dbase3_display; the build before
+fails it); test_do_with, test_set_proc and test_get_var follow it.
+
+The builder's round caught the code-block case: xbc/tests/smoke.sh, a
+Clipper program whose interpreter leg is held to Clipper's output, ran
+with dBASE's display; it runs with XBASE_WIDTHS=clipper now, as the
+oracle does.
+
 ### SET SAFETY asked nothing — RESOLVED 2026-11-15
 
 dBASE III starts with SAFETY ON and asks before a command writes over a

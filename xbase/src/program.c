@@ -1282,7 +1282,7 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
      * dBASE widths (dBASE III has no functions; a recursive one's result
      * grew a column a level) */
     *result = udf_return_val;
-    if (result->type == VAL_NUM && val_dbase_widths()) *result = val_dbase_stored(result);
+    *result = val_as_variable(result);
 
     /* Restore lightweight state — pop_frame already restored call stack properly */
     udf_restore_state(sv);
@@ -3268,7 +3268,7 @@ static void bind_declared_params(call_frame_t *frame) {
     p = skip_ws(p + 1);
     while (is_ident_start(*p) && i < MAX_FUNC_ARGS) {
         char name[MEMVAR_NAMELEN];
-        value_t v = i < frame->with_argc ? frame->with_args[i] : val_nil();
+        value_t v = i < frame->with_argc ? val_as_variable(&frame->with_args[i]) : val_nil();
         int j = 0;
         while (is_ident_char(*p) && j < MEMVAR_NAMELEN - 1) name[j++] = *p++;
         name[j] = '\0';
@@ -3314,7 +3314,8 @@ void prog_parameters(lexer_t *l) {
         }
         /* Bind from WITH argument if available, otherwise NIL */
         if (frame && param_idx < frame->with_argc) {
-            memvar_set(store, name, &frame->with_args[param_idx]);
+            value_t v = val_as_variable(&frame->with_args[param_idx]);
+            memvar_set(store, name, &v);
         } else {
             value_t nil = val_nil();
             memvar_set(store, name, &nil);

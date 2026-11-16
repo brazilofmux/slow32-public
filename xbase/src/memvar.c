@@ -177,6 +177,12 @@ int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
  * fits in ten columns, else as wide as the expression that made it
  * (x = x + 1 stays ten; 13 digits from a 25-wide product stay 25; an
  * overflow keeps the expression's whole width) */
+/* A value as a variable holds it: an assignment, a parameter (dBASE III
+ * sizes DO P WITH 21's n as x = 21's), a function's result */
+value_t val_as_variable(const value_t *v) {
+    return v->type == VAL_NUM && val_dbase_widths() ? val_dbase_stored(v) : *v;
+}
+
 value_t val_dbase_stored(const value_t *v) {
     value_t w = *v;
     int need = 99, whole = val_int_width(v) + (v->ndec > 0 ? v->ndec + 1 : 0);

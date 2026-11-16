@@ -50,7 +50,9 @@ if cmp -s want got.cn; then echo "smoke: compiled  OK"; else
     echo "smoke: compiled  DIFFER"; od -c got.c | head -20; fail=1
 fi
 
-printf 'SET TALK OFF\nDO SMOKE\nQUIT\n' | $XBASE_CMD > got.i 2>&1
+# the program is Clipper's (LOCAL, a code block), and so is what it must
+# print: the interpreter shows numbers as dBASE III does unless told
+printf 'SET TALK OFF\nDO SMOKE\nQUIT\n' | XBASE_WIDTHS=clipper $XBASE_CMD > got.i 2>&1
 # the banner (3 lines), the prompts of SET TALK OFF and DO, the QUIT prompt
 tail -n +4 got.i > t1
 if [ "$(head -c 4 t1)" = ". . " ]; then tail -c +5 t1 > t2; else cat t1 > t2; fi

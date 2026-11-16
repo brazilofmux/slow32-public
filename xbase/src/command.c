@@ -3413,7 +3413,7 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     }
 
     talk_value(&val);
-    if (val.type == VAL_NUM && val_dbase_widths()) val = val_dbase_stored(&val);   /* a variable's width (dBASE) */
+    val = val_as_variable(&val);
     memvar_set(&memvar_store, name, &val);
     /* STORE x TO a, b, c: the rest of the list */
     while (tmp.current.type == TOK_COMMA) {
@@ -8552,7 +8552,7 @@ int cmd_execute(dbf_t *db, char *line) {
                     return 0;
                 }
                 talk_value(&val);
-                if (val.type == VAL_NUM && val_dbase_widths()) val = val_dbase_stored(&val);   /* a variable's width (dBASE) */
+                val = val_as_variable(&val);
                 if (is_indexed) {
                     if (memvar_set_elem(&memvar_store, name, row, col, &val) == -2) {
                         prog_error(ERR_RECORD_RANGE, "Array index out of bounds");
