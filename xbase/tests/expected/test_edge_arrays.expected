@@ -3,7 +3,11 @@ xBase interpreter 1.0
 
 . 
 --- Array boundary conditions ---
-. . . . . . 
+. . . 
+First
+. 
+Last
+. . 
 --- arr[0] (below lower bound) ---
 . *** Array index out of bounds
 . . 
@@ -20,7 +24,9 @@ First
 Last
 . . 
 --- 2D array bounds ---
-. . . . 
+. . 
+OK
+. . 
 --- m[0,1] ---
 . *** Array index out of bounds
 . . 
@@ -34,4 +40,6 @@ Last
 . *** Array index out of bounds
 . . 
 --- STORE to array without index ---
-. . . 
+. 
+test
+. . 

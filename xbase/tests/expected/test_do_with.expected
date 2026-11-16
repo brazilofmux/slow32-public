@@ -2,8 +2,10 @@ SLOW-32 xBase
 xBase interpreter 1.0
 
 . 
+ 30
 Adding: 10 + 20
 Sum:  30
 Hello, Alice
+ 21
 Product: 21
 . 

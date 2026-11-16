@@ -4,15 +4,16 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database PEOPLE.DBF created with 2 field(s).
-. Database PEOPLE.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . . Enter field definitions (blank name to finish):
+. . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database ITEMS.DBF created with 2 field(s).
-. Database ITEMS.DBF opened with 0 record(s).
-. Record 1 added.
-. . . . 
+. . . 
+      1 record replaced
+. . . 
 Alice
 . 
 Widget

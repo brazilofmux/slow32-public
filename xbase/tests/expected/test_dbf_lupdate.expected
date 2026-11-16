@@ -6,35 +6,37 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database LUPT.DBF created with 1 field(s).
-. Database LUPT.DBF opened with 0 record(s).
-. Record 1 added.
-. . Database closed.
-. . . . . . Database LUPT.DBF opened with 1 record(s).
+. . . 
+      1 record replaced
+. . 
+         1
 . 
+         1
+. 
+         3
+. 
+.T.
+. . . 
 set back: 80.01.02
 . . 
 one   
-. Database closed.
-. Database LUPT.DBF opened with 1 record(s).
-. 
+. . . 
 after reading: 80.01.02
 . 
 one
 . 
-. Database closed.
-. Database LUPT.DBF opened with 1 record(s).
-. 
+. . . 
 after a GET left as it was: 80.01.02
-. . 1 record deleted.
-. Database closed.
-. Database LUPT.DBF opened with 1 record(s).
-. 
+. . 
+      1 record deleted
+. . . 
 after DELETE: 80.01.02
-. . 1 record recalled.
-. . Database closed.
-. Database LUPT.DBF opened with 1 record(s).
+. . 
+      1 record recalled
 . 
+      1 record replaced
+. . . 
 after writing: .T.
-. Database closed.
-. File erased.
+. . 
+File has been deleted.
 . 

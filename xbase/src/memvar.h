@@ -77,6 +77,7 @@ extern int memvar_locals_hidden;
 array_t *memvar_capture_cell(memvar_store_t *store, const char *name, const value_t *now);
 int  memvar_find(const memvar_store_t *store, const char *name, value_t *val);
 int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);
+value_t val_dbase_stored(const value_t *v);   /* a number as a variable holds it (dBASE widths) */
 int  memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols);
 int  memvar_set_elem(memvar_store_t *store, const char *name, int row, int col, const value_t *val);
 int  memvar_get_elem(const memvar_store_t *store, const char *name, int row, int col, value_t *val);

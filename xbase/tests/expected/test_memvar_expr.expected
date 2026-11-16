@@ -1,17 +1,27 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. . . 
-        30
 . 
-       200
+10
 . 
-       -10
+20
 . 
-         2.00
-. . 
+         30
+. 
+                  200
+. 
+        -10
+. 
+          2.00
+. 
+World
+. 
 Hello World
-. . . 
+. 
+.T.
+. 
+.F.
+. 
 .F.
 . 
 .T.

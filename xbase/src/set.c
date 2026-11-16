@@ -8,11 +8,15 @@
 #include "command.h"
 #include "screen.h"
 
+int set_heading_on(const set_options_t *opts) {
+    return opts->heading > 0 || (opts->heading < 0 && val_dbase_widths());
+}
+
 void set_init(set_options_t *opts) {
     opts->talk = 1;
     opts->deleted = 0;    /* OFF = show deleted records */
     opts->exact = 0;      /* OFF = prefix matching */
-    opts->heading = 0;   /* Clipper's LIST has no heading; SET HEADING ON gives dBASE III's */
+    opts->heading = -1;   /* each dialect's own: dBASE III's LIST is headed, Clipper's is not */
     opts->cursor = 1;
     opts->scoreboard = 1;
     opts->confirm = 0;
@@ -68,7 +72,7 @@ void set_display(const set_options_t *opts) {
     printf("TALK      = %s\n", opts->talk ? "ON" : "OFF");
     printf("DELETED   = %s\n", opts->deleted ? "ON" : "OFF");
     printf("EXACT     = %s\n", opts->exact ? "ON" : "OFF");
-    printf("HEADING   = %s\n", opts->heading ? "ON" : "OFF");
+    printf("HEADING   = %s\n", set_heading_on(opts) ? "ON" : "OFF");
     printf("CONFIRM   = %s\n", opts->confirm ? "ON" : "OFF");
     printf("BELL      = %s\n", opts->bell ? "ON" : "OFF");
     printf("SAFETY    = %s\n", opts->safety ? "ON" : "OFF");

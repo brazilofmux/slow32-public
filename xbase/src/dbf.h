@@ -74,6 +74,7 @@ int  dbf_find_field(const dbf_t *db, const char *name);
 int  dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize);
 int  dbf_set_field_raw(dbf_t *db, int idx, const char *value);
 int  dbf_write_header_counts(dbf_t *db);
+void dbf_last_update(dbf_t *db, int *y, int *m, int *d);   /* today once written to */
 int  dbf_set_end(dbf_t *db);
 void dbf_cache_invalidate(dbf_t *db);
 

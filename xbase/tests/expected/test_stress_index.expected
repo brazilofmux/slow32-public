@@ -4,8 +4,7 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database IDXTST.DBF created with 2 field(s).
-. Database IDXTST.DBF opened with 0 record(s).
-. 
+. . 
 --- Index order ---
 First: NAME  1    20
 Last: NAME 20     1
@@ -33,6 +32,7 @@ Uniqueness violation on index UNIQIDX.NDX
 REPLACE NAME WITH "AAA"
 Called from - STRESS_INDEX.prg
 Cancel, Ignore, or Suspend? (C, I, or S) Ignore
+      1 record replaced
 After: BBB     2
 --- Delete pack reindex ---
 After pack:          3

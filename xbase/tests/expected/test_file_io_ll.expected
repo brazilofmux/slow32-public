@@ -2,12 +2,16 @@ SLOW-32 xBase
 xBase interpreter 1.0
 
 . 
+         1
 File created, handle =          1
+        26
 Bytes written =         26
 FSEEK to start:          0
+Hello
 Read first 5 bytes: Hello
 FCLOSE: .T.
 --- Test FOPEN ---
+         1
 File opened for read, handle =          1
 FSEEK to end:         26
 File size (tell):         26

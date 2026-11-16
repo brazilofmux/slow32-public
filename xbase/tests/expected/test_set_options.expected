@@ -4,7 +4,7 @@ xBase interpreter 1.0
 . TALK      = ON
 DELETED   = OFF
 EXACT     = OFF
-HEADING   = OFF
+HEADING   = ON
 CONFIRM   = OFF
 BELL      = ON
 SAFETY    = ON

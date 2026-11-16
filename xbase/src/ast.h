@@ -101,6 +101,8 @@ int ast_eval_binop(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const valu
  * name one, FIELD-> a field of the current work area, another alias a
  * field there. */
 int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val);
+int ast_store_value(expr_ctx_t *ctx, const char *name, const value_t *val);   /* as it is: a GET's */
+extern int ast_store_raw;   /* >0: := stores as ast_store_value (a GET's set-block) */
 int ast_store_elem(expr_ctx_t *ctx, const char *name, const value_t *row,
                    const value_t *col, const value_t *val);
 int ast_store_alias_field(expr_ctx_t *ctx, const char *alias, const char *field,

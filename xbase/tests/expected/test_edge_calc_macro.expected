@@ -4,21 +4,29 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database ITEMS.DBF created with 2 field(s).
-. Database ITEMS.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
 . . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
 --- CALCULATE with macro expression ---
-. . 3 record(s)
+. 
+PRICE
+. 3 record(s)
 . 
 Sum:          7
-. . . 3 record(s)
+. . 
+PRICE * 2
+. 3 record(s)
 . 
 Doubled:         14
 . . 
 --- CALCULATE with macro in FOR ---
-. . 1 record(s)
+. 
+PRICE > 2
+. 1 record(s)
 . 
 Expensive:          3.50
 . . 
@@ -28,7 +36,9 @@ Expensive:          3.50
 Average:          2.33
 . . 
 --- Nested parens with macro ---
-. . 3 record(s)
+. 
+PRICE
+. 3 record(s)
 . 
 Nested:          8
 . . 

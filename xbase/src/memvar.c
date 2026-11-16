@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include "memvar.h"
@@ -170,6 +171,26 @@ int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
     if (i < 0) return -1;
     *val = store->vars[i].val;
     return 0;
+}
+
+/* A number as a variable holds it (dBASE III): ten wide when its value
+ * fits in ten columns, else as wide as the expression that made it
+ * (x = x + 1 stays ten; 13 digits from a 25-wide product stay 25; an
+ * overflow keeps the expression's whole width) */
+value_t val_dbase_stored(const value_t *v) {
+    value_t w = *v;
+    int need = 99, whole = val_int_width(v) + (v->ndec > 0 ? v->ndec + 1 : 0);
+    if (v->type != VAL_NUM) return w;
+    if (isfinite(v->num)) {
+        double a = fabs(v->num);
+        need = 1;
+        while (a >= 10.0 && need < 40) { a /= 10.0; need++; }
+        if (v->num < 0) need++;
+    }
+    if (need <= 10) w.nwidth = 10;
+    else if (need < 99) w.nwidth = (short)(whole > need ? whole : need);
+    else w.nwidth = (short)whole;
+    return w;
 }
 
 int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {

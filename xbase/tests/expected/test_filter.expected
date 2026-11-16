@@ -4,31 +4,39 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database PEOPLE.DBF created with 2 field(s).
-. Database PEOPLE.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
-. . Record 4 added.
-. . Record 5 added.
+. . . 
+      1 record replaced
 . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. 
 All records:
 Alice  25
+Record No.      2
 Bob  35
+Record No.      3
 Charlie  30
+Record No.      4
 David  20
+Record No.      5
 Eve  40
-Filter: AGE >= 30
-
+Record No.      6
 Filtered (AGE >= 30):
 Bob  35
+Record No.      3
 Charlie  30
+Record No.      5
 Eve  40
+Record No.      6
 Count:
-3 record(s)
-Filter removed.
-
+      3 records 
 After removing filter:
 Alice  25
+Record No.      2
 Bob  35
-. Database closed.
-. 
+. . 

@@ -4,7 +4,7 @@ xBase interpreter 1.0
 . . . . . TALK      = OFF
 DELETED   = OFF
 EXACT     = OFF
-HEADING   = OFF
+HEADING   = ON
 CONFIRM   = OFF
 BELL      = ON
 SAFETY    = ON
@@ -50,7 +50,7 @@ Pick:          2
 . . . . TALK      = OFF
 DELETED   = OFF
 EXACT     = OFF
-HEADING   = OFF
+HEADING   = ON
 CONFIRM   = OFF
 BELL      = ON
 SAFETY    = ON

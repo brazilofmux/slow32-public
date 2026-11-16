@@ -1,11 +1,13 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. . . Enter field definitions (blank name to finish):
+. . 
+XY
+. Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database RPARR.DBF created with 1 field(s).
-. Database RPARR.DBF opened with 0 record(s).
-. Record 1 added.
-. . 
+. . . 
+      1 record replaced
+. 
 XY        
 . 

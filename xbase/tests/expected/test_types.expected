@@ -4,15 +4,14 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Field name: Type (C/N/D/L/M): Field name: 
 Database ALLTYPE.DBF created with 4 field(s).
-. Database ALLTYPE.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
+. . . 
+      1 record replaced
 . . 
-      1  Jones              1234.56 03/15/99 T. 
-      2  Smith             99999.99 12/01/05 F. 
-. Record# 3
-      NAME: 
-    AMOUNT:           
-     HIRED:   /  /  
-    ACTIVE: .F.
+      1 record replaced
+. 
+Record#  NAME                AMOUNT HIRED    ACTIVE
+      1  Jones              1234.56 03/15/99 .T.
+      2  Smith             99999.99 12/01/05 .F.
+. 
+Record#  NAME                AMOUNT HIRED    ACTIVE
 . 

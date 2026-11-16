@@ -6,38 +6,67 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database ENDT.DBF created with 2 field(s).
-. Database ENDT.DBF opened with 0 record(s).
 . . 
+         1
+. 
 empty:         98
-. . 
+. 
+        97
+. 
 last byte:         26
-. . Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
-. . Record 4 added.
-. . Record 5 added.
-. . Database closed.
+. 
+.T.
 . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+         1
+. 
 five:        168
-. . 
+. 
+       167
+. 
 last byte:         26
-. . Database ENDT.DBF opened with 5 record(s).
-. . 1 record deleted.
-. . 1 record deleted.
-. 3 record(s) remaining.
+. 
+.T.
+. . . 
+      1 record deleted
 . . 
+      1 record deleted
+. 
+      3 records copied
+. 
+         1
+. 
 packed:        140
-. . 
+. 
+       139
+. 
 last byte:         26
+. 
+.T.
+. 
+Record#  NAME         N
+      1  R1           1
+      2  R3           3
+      3  R5           5
 . . 
-      1  R1           1 
-      2  R3           3 
-      3  R5           5 
-. Zap complete.
-. . 
+         1
+. 
 zapped:         98
-. . 
+. 
+        97
+. 
 last byte:         26
-. . Database closed.
-. File erased.
+. 
+.T.
+. . 
+File has been deleted.
 . 

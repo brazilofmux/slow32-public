@@ -197,13 +197,17 @@ for prg in "${CORPUS[@]}"; do
                 timeout 60 "$EMU" -q --deny term "$DBASE" >/dev/null 2>&1)
         done
     fi
+    # The interpreter shows its numbers, listings and TALK as dBASE III
+    # does; XBASE_WIDTHS=clipper has it show them as a compiled program
+    # does, so the two are held to the same output (dBASE's own display is
+    # held to dBASE III PLUS in the xbase suite).
     # DO by the file's own name: the interpreter then names the program as
     # the compiled one does, on any file system (and `DO case` would be
     # the start of a DO CASE)
     (cd "$wi" && { printf 'SET TALK OFF\nDO %s\n' "$(basename "$prg")"
                    [ "$haskeys" = 1 ] && cat "$OUT/$name.keysin"
                    printf 'QUIT\n'; } |
-        timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
+        XBASE_WIDTHS=clipper timeout 60 "$EMU" -q --deny term "$DBASE" 2>&1 | strip_interp) > "$OUT/$name.interp"
     if [ "$haskeys" = 1 ]; then
         (cd "$wc" && timeout 60 "$EMU" -q --deny term "$OUT/$name.s32x" < "$OUT/$name.keysin" 2>&1) > "$OUT/$name.clipraw"
     else

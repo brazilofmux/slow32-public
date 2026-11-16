@@ -735,6 +735,56 @@ AVERAGE layout, and NDX() without the drive.  Tests: xbc/tests/macrocmd.prg
 before fails both); ONERR2 and test_phase5 catch a type mismatch where
 they caught a zero divisor.
 
+### The interpreter showed numbers, listings and TALK as Clipper does — RESOLVED 2026-11-15
+
+dBASE III gives every number a width and shows it at that width; the
+interpreter used Clipper's automatic ten columns for nearly everything.
+Measured against dBASE III PLUS (268 expressions, every pair of seven
+field shapes under + * /), the rules, integer width n and decimals d:
+
+- a literal as wide as it is written (5 is one, 1. two); a field its own;
+- + and -: the wider n and one, the more d; *: n1 + n2 + 1, d1 + d2;
+  /: max(n1 + d2, n2 + d1) + 1, d the most of SET DECIMALS, d1 and d2;
+  a sign one column more;
+- an assignment's variable ten wide when its value fits in ten, else the
+  expression's whole width (x = x + 1 stays ten); a GET's variable its
+  picture's width; a function's result as a variable would hold it;
+- INT() the argument's whole width and no decimals; ROUND() one wider,
+  the argument's decimals, a half up (ROUND(-2.5, 0) is -2) and a
+  negative count to tens; MOD() as +, its remainder the divisor's sign
+  (MOD(-123, 7) is 3: it was -4, in both dialects); MAX/MIN the wider and
+  the more decimals; SQRT/LOG the argument's width, VAL the string's,
+  both SET DECIMALS; STR(n) ten and no decimals; DOW() two;
+- a number shown as zero without its sign (-1/300 is 0.00).
+
+LIST and DISPLAY are dBASE's: a heading (SET HEADING is on by default in
+the interpreter) of the expressions as typed, Record# unless OFF, each
+column as wide as its value or its heading, numbers right, the last
+column unpadded, a blank line after; DISPLAY with no list is the same
+row, not a column of fields, and past the end shows the heading alone.
+An expression list was taken as fields (LIST A * F listed A), a leading
+OFF dropped the list, and a logical showed as T.  LIST STRUCTURE is
+dBASE's layout, its last update today once the table has been written.
+TRANSFORM(n, "") is ten wide with SET DECIMALS.
+
+TALK speaks dBASE's lines, through the console stream (they never
+reached the alternate file): "      1 record replaced", "Record No.",
+"Record =", the count of COUNT, SUM's and AVERAGE's table, the value of
+an assignment, "No find.", INDEX's and SORT's percentages, "No records
+deleted" -- and nothing for USE, APPEND BLANK, SET FILTER and the rest
+dBASE says nothing for.  DELETE and RECALL past the end are no error.
+SORT takes ON before TO.  A compiled program keeps Clipper's display;
+XBASE_WIDTHS=clipper gives the interpreter it too, which the xbc oracle
+uses (the xbc compiler declares Clipper's rules itself: its parser had
+sized literals by dBASE's).  The ledger reports compiled are unchanged;
+interpreted, three totals of -0.00 show 0.00.  Test: test_dbase3_display
+(tests/dbase3/WIDTHS.TXT is dBASE III PLUS's own output for WIDTHS.PRG;
+the build before fails it); 94 expected outputs follow the new display.
+
+Not done: SET SAFETY's questions (dBASE asks before ZAP and before
+writing over a file; nothing here asks), and the drive (C:) dBASE puts
+before file names.
+
 ### SET ORDER TO took only a literal — RESOLVED 2026-11-15
 
 `SET ORDER TO n` with n a variable, or any expression, left the order as

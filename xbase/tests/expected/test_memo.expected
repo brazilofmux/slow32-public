@@ -4,17 +4,20 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Field name: 
 Database MTEST.DBF created with 2 field(s).
-. Database MTEST.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
+. . . 
+      1 record replaced
 . . 
-      1  Alice                 
-      2  Bob                   
-      3  Carol                 
-. . Record# 1
-      NAME: Alice
-     NOTES: This is a memo for Alice
+      1 record replaced
+. . 
+      1 record replaced
+. 
+Record#  NAME            NOTES
+      1  Alice           Memo
+      2  Bob             Memo
+      3  Carol           Memo
+. . 
+Record#  NAME            NOTES
+      1  Alice           Memo
 . 
 This is a memo for Alice
 . . 
@@ -22,12 +25,13 @@ Bob's memo text here
 . . 
 . 
          0
-. 3 record(s) copied.
-. Database MCOPY.DBF opened with 3 record(s).
 . 
-      1  Alice                 
-      2  Bob                   
-      3  Carol                 
+      3 records copied
+. . 
+Record#  NAME            NOTES
+      1  Alice           Memo
+      2  Bob             Memo
+      3  Carol           Memo
 . . 
 This is a memo for Alice
 . . 

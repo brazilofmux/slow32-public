@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 
 #include "lex.h"
+#include "report.h"
 #include "command.h"
 #include "func.h"
 #include "program.h"
@@ -3000,6 +3001,9 @@ int main(int argc, char **argv) {
     int i, j;
     int scan;
 
+    /* a Clipper compiler: literals, folding and widths by Clipper's rules,
+     * not the dBASE III ones the interpreter's parser uses by default */
+    report_set_clipper_layout(1);
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             outpath = argv[++i];

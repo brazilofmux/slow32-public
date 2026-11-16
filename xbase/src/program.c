@@ -1264,8 +1264,11 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     builtin_depth = saved_builtin_depth;
     udf_call_nesting--;
 
-    /* Capture return value */
+    /* Capture return value: a number as a variable would hold it, under
+     * dBASE widths (dBASE III has no functions; a recursive one's result
+     * grew a column a level) */
     *result = udf_return_val;
+    if (result->type == VAL_NUM && val_dbase_widths()) *result = val_dbase_stored(result);
 
     /* Restore lightweight state — pop_frame already restored call stack properly */
     udf_restore_state(sv);

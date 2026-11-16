@@ -590,9 +590,15 @@ static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "STR requires (number [, width [, decimals]])";
         return -1;
     }
-    if (nargs < 2 || args[1].type != VAL_NUM) {
+    if ((nargs < 2 || args[1].type != VAL_NUM) && val_dbase_widths()) {
+        /* no width: ten columns and no decimals (dBASE III) */
+        double n = args[0].num;
+        snprintf(buf, sizeof(buf), "%10.0f", floor(n + 0.5));   /* half up, as dBASE's ROUND */
+        val_unsign_zero(buf);
+        if (strlen(buf) > 10 || !isfinite(n)) { memset(buf, '*', 10); buf[10] = '\0'; }
+    } else if (nargs < 2 || args[1].type != VAL_NUM) {
         /* no width: the number as ? shows it, its own width and decimals
-         * (Clipper; dBASE III gave ten columns and no decimals) */
+         * (Clipper) */
         val_to_display(&args[0], buf, sizeof(buf));
     } else {
         int width = (int)args[1].num;
@@ -605,6 +611,7 @@ static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
             snprintf(buf, sizeof(buf), "%*.*f", width, dec, n);
         else  /* half away from zero, in a double: no 32-bit wrap */
             snprintf(buf, sizeof(buf), "%*.0f", width, n >= 0.0 ? floor(n + 0.5) : -floor(0.5 - n));
+        val_unsign_zero(buf);
         if ((int)strlen(buf) > width || !isfinite(n)) {   /* too wide, or an overflow: asterisks */
             memset(buf, '*', width);
             buf[width] = '\0';
@@ -628,7 +635,10 @@ static int fn_val(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         if (dot)
             while (dot[1 + dec] >= '0' && dot[1 + dec] <= '9') dec++;
         w = len - (dec > 0 ? dec + 1 : 0);
-        *result = val_num_dec(atof(s), dec, w > 0 ? w : 1);
+        if (val_dbase_widths())   /* as wide as the string, SET DECIMALS (dBASE) */
+            *result = val_num_dec(atof(s), val_set_decimals, len > 0 ? len : 1);
+        else
+            *result = val_num_dec(atof(s), dec, w > 0 ? w : 1);
     }
     return 0;
 }
@@ -704,7 +714,15 @@ static int fn_int(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "INT requires (number)";
         return -1;
     }
-    *result = val_num((double)(int)args[0].num);
+    {
+        double t = trunc(args[0].num);   /* not through an int: 2**31 wrapped */
+        if (val_dbase_widths()) {        /* the argument's whole width, no decimals (dBASE) */
+            const value_t *a = &args[0];
+            *result = val_num_dec(t, 0, val_int_width(a) + (a->ndec > 0 ? a->ndec + 1 : 0));
+        } else {
+            *result = val_num(t);
+        }
+    }
     return 0;
 }
 
@@ -717,11 +735,20 @@ static int fn_round(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     n = args[0].num;
     {
-        int dec = (int)args[1].num;
-        int i;
+        /* a half up in dBASE (ROUND(-2.5, 0) is -2), away from zero in
+         * Clipper (-3); a negative count rounds to tens, hundreds
+         * (ROUND(123, -1) is 120, both) */
+        int dec = (int)args[1].num, i, up = val_dbase_widths();
+        double r, s;
         p = 1.0;
-        for (i = 0; i < dec; i++) p *= 10.0;
-        *result = val_num_dec(floor(n * p + 0.5) / p, dec > 0 ? dec : 0, 0);
+        for (i = 0; i < (dec < 0 ? -dec : dec); i++) p *= 10.0;
+        s = dec >= 0 ? n * p : n / p;
+        s = (up || s >= 0) ? floor(s + 0.5) : -floor(-s + 0.5);
+        r = dec >= 0 ? s / p : s * p;
+        if (val_dbase_widths())   /* one wider, the argument's decimals (dBASE) */
+            *result = val_num_dec(r, args[0].ndec, val_int_width(&args[0]) + 1);
+        else
+            *result = val_num_dec(r, dec > 0 ? dec : 0, 0);
     }
     return 0;
 }
@@ -744,9 +771,23 @@ static int fn_mod(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     if (args[1].num == 0.0) {   /* MOD(x, 0) is x: dBASE III's, and Clipper's MOD.PRG */
         *result = args[0];
+        if (val_dbase_widths())   /* one wider, as dBASE shows it (MOD(5, 0) is " 5") */
+            *result = val_num_dec(args[0].num, args[0].ndec, val_int_width(&args[0]) + 1);
         return 0;
     }
-    *result = val_num(fmod(args[0].num, args[1].num));
+    {
+        /* the remainder on the divisor's side, as dBASE's MOD and CA's
+         * MOD.PRG give it: MOD(-123, 7) is 3, not fmod's -4 */
+        double a = args[0].num, b = args[1].num, r = fmod(a, b);
+        if (r != 0 && ((r < 0) != (b < 0))) r += b;
+        if (val_dbase_widths()) {
+            int nl = val_int_width(&args[0]), nr = val_int_width(&args[1]);
+            int dl = args[0].ndec, dr = args[1].ndec;
+            *result = val_num_dec(r, dl > dr ? dl : dr, (nl > nr ? nl : nr) + 1);
+        } else {
+            *result = val_num(r);
+        }
+    }
     return 0;
 }
 
@@ -756,7 +797,8 @@ static int fn_sqrt(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "SQRT requires (number)";
         return -1;
     }
-    *result = val_num_dec(my_sqrt(args[0].num), val_set_decimals, 0);
+    *result = val_num_dec(my_sqrt(args[0].num), val_set_decimals,
+                          val_dbase_widths() ? val_int_width(&args[0]) : 0);   /* the argument's width (dBASE) */
     return 0;
 }
 
@@ -767,6 +809,11 @@ static int fn_max(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     *result = args[0].num > args[1].num ? args[0] : args[1];   /* the argument, as it is */
+    if (val_dbase_widths()) {   /* the wider of the two, and the more decimals (dBASE) */
+        int nl = val_int_width(&args[0]), nr = val_int_width(&args[1]);
+        int dl = args[0].ndec, dr = args[1].ndec;
+        *result = val_num_dec(result->num, dl > dr ? dl : dr, nl > nr ? nl : nr);
+    }
     return 0;
 }
 
@@ -777,6 +824,11 @@ static int fn_min(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     *result = args[0].num < args[1].num ? args[0] : args[1];
+    if (val_dbase_widths()) {   /* the wider of the two, and the more decimals (dBASE) */
+        int nl = val_int_width(&args[0]), nr = val_int_width(&args[1]);
+        int dl = args[0].ndec, dr = args[1].ndec;
+        *result = val_num_dec(result->num, dl > dr ? dl : dr, nl > nr ? nl : nr);
+    }
     return 0;
 }
 
@@ -854,7 +906,8 @@ static int fn_dow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "DOW requires (date)";
         return -1;
     }
-    *result = val_num_dec(args[0].date == 0 ? 0 : (double)date_dow(args[0].date), 0, 3);   /* three wide, as YEAR()'s family */
+    *result = val_num_dec(args[0].date == 0 ? 0 : (double)date_dow(args[0].date), 0,
+                          val_dbase_widths() ? 2 : 3);   /* dBASE's two wide; Clipper's three, as YEAR()'s family */
     return 0;
 }
 
@@ -1113,7 +1166,14 @@ static void transform_number(const value_t *v, const char *picture, char *out, i
             paren_field(out, size);
             return;
         }
-        val_to_display(v, num, sizeof(num));
+        if (val_dbase_widths()) {   /* dBASE III: ten columns and SET DECIMALS */
+            value_t a = *v;
+            a.nwidth = 10;
+            a.ndec = (short)val_set_decimals;
+            val_to_display(&a, num, sizeof(num));
+        } else {
+            val_to_display(v, num, sizeof(num));
+        }
         q = skip_ws(num);
         snprintf(out, (size_t)size, "%s", left ? q : num);
         return;
@@ -1626,21 +1686,10 @@ static int fn_lupdate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         *result = val_date(0);
         return 0;
     }
-    /* Read bytes 1-3 from DBF header: YY, MM, DD */
     {
-        long pos = ftell(db->fp);
-        unsigned char hdr[4];
-        fseek(db->fp, 1, SEEK_SET);
-        if (fread(hdr, 1, 3, db->fp) == 3) {
-            int y = hdr[0] + 1900;
-            if (y < 1980) y += 100; /* Y2K: years < 80 are 2000s */
-            int m = hdr[1];
-            int d = hdr[2];
-            *result = val_date(date_to_jdn(y, m, d));
-        } else {
-            *result = val_date(0);
-        }
-        fseek(db->fp, pos, SEEK_SET);
+        int y, m, d;
+        dbf_last_update(db, &y, &m, &d);
+        *result = val_date(date_to_jdn(y, m, d));
     }
     return 0;
 }

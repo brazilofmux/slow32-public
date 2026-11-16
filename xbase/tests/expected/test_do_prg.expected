@@ -2,8 +2,10 @@ SLOW-32 xBase
 xBase interpreter 1.0
 
 . 
+World
 Hello, World
-        15
+10
+         15
 . 
 Back at dot prompt
 . *** Variable not found: name

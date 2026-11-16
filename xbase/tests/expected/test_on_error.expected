@@ -6,21 +6,29 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 Database ONERR2.DBF created with 2 field(s).
 . 
 --- Test 1: UNIQUE violation ---
-Database ONERR2.DBF opened with 0 record(s).
-Record 1 added.
-Record 2 added.
-2 record(s) indexed.
-Record 3 added.
+      1 record replaced
+      1 record replaced
+   00% indexed  100% indexed           2 Records indexed
+0
 
+       143
+Uniqueness violation on index ONERR2U.NDX
+      1 record replaced
 Error code:        143
 Has Uniqueness: YES
 Record count:          3
 --- Test 2: Type mismatch ---
+0
+
+        15
+Type mismatch in +
 Caught: YES
 Has mismatch: YES
 --- Test 3: Record range ---
-Error code:          5
-Database closed.
+0
 
+         5
+Record out of range
+Error code:          5
 Done
 . 

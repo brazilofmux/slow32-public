@@ -8,6 +8,7 @@
 #include "memvar.h"
 #include "set.h"
 #include "date.h"
+#include "report.h"
 #include "command.h"
 #include "ast.h"
 #include "util.h"
@@ -56,11 +57,38 @@ value_t val_num_dec(double n, int ndec, int nwidth) {
     return v;
 }
 
+/* XBASE_WIDTHS=clipper shows the interpreter's numbers, listings and TALK
+ * as a compiled program shows them (the xbc oracle holds the two to the
+ * same output; dBASE's own display is held to dBASE III PLUS apart) */
+int val_dbase_widths(void) {
+    static int clipper_env = -1;
+    if (clipper_env < 0) {
+        const char *e = getenv("XBASE_WIDTHS");
+        clipper_env = e && strcmp(e, "clipper") == 0;
+    }
+    return !report_clipper_layout() && !clipper_env;
+}
+
+/* A number shown as zero has no sign, as dBASE III shows it (-1/300 is
+ * 0.00, STR(-0.4) is 0); in place, in a formatted number */
+void val_unsign_zero(char *buf) {
+    char *minus = strchr(buf, '-'), *q;
+    if (!minus || !val_dbase_widths()) return;
+    for (q = buf; *q; q++)
+        if (*q >= '1' && *q <= '9') return;
+    *minus = ' ';
+}
+int val_int_width(const value_t *v) { return v->nwidth > 0 ? v->nwidth : 10; }
+
 value_t val_num_literal(double n, const char *text) {
     const char *dot = text ? strchr(text, '.') : NULL;
     int dec = 0;
     if (dot) {
         while (dot[1 + dec] >= '0' && dot[1 + dec] <= '9') dec++;
+    }
+    if (val_dbase_widths() && text) {   /* as wide as it is written: 5 one, 1. two, .5 one */
+        int w = (int)strlen(text) - (dec > 0 ? dec + 1 : 0);
+        return val_num_dec(n, dec, w > 0 ? w : 1);
     }
     return val_num_dec(n, dec, 0);
 }
@@ -88,6 +116,7 @@ void val_to_display(const value_t *v, char *buf, int size) {
             return;
         }
         snprintf(buf, size, "%*.*f", width + (dec > 0 ? dec + 1 : 0), dec, v->num);
+        val_unsign_zero(buf);
         return;
     }
     val_to_string(v, buf, size);

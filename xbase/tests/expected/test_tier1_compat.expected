@@ -41,8 +41,7 @@ UE
 . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database T1COMPAT.DBF created with 3 field(s).
-. Database T1COMPAT.DBF opened with 0 record(s).
-. 
+. . 
 .T.
 . 
          3
@@ -60,10 +59,14 @@ CITY
         39
 . 
 MYDB
-. Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
-. . 3 record(s) indexed.
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. 
+   00% indexed  100% indexed           3 Records indexed
 . 
 NAME
 . 
@@ -78,14 +81,16 @@ Bob  30
 .F.
 . 
 .F.
-. . . . 
+. . . 
+No find.
+. 
 .F.
-. . . . 2 record(s) indexed.
+. . . . 
+   00% indexed  100% indexed           2 Records indexed
 . 
          3
 . . . . 
 Alice
 . . 
 .T.
-. . Database closed.
-. 
+. . . 

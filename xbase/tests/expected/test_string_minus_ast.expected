@@ -4,8 +4,8 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database SMINUS.DBF created with 1 field(s).
-. Database SMINUS.DBF opened with 0 record(s).
-. Record 1 added.
-. . 
+. . . 
+      1 record replaced
+. 
 [AB    ]
 . 

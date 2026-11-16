@@ -175,6 +175,23 @@ else
 fi
 rm -rf "$d3dir"
 
+# The interpreter's display as dBASE III PLUS's own (tests/dbase3/WIDTHS.TXT
+# is what dBASE III PLUS 1.1 wrote running WIDTHS.PRG): number widths,
+# SET DECIMALS, a zero divisor, LIST and DISPLAY, the TALK lines
+TOTAL=$((TOTAL + 1))
+d3dir=$(mktemp -d)
+cp "$BASDIR"/tests/dbase3/WIDTHS.DBF "$BASDIR"/tests/dbase3/WIDTHS.PRG "$d3dir/"
+( cd "$d3dir" && printf 'DO WIDTHS\nQUIT\n' | "$EMU" $EMU_ARGS "$DBASE" >/dev/null 2>&1 )
+d3out=$(ls "$d3dir" | grep -i '^wout\.txt$' | head -1)
+if [ -n "$d3out" ] && cmp -s <(tr -d '\r' < "$d3dir/$d3out") "$BASDIR/tests/dbase3/WIDTHS.TXT"; then
+    echo "  PASS: test_dbase3_display"; PASS=$((PASS + 1))
+else
+    echo "  FAIL: test_dbase3_display"
+    [ -n "$d3out" ] && diff <(tr -d '\r' < "$d3dir/$d3out") "$BASDIR/tests/dbase3/WIDTHS.TXT" | head -5 | sed 's/^/      /'
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$d3dir"
+
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/PRN.TXT "$BASDIR"/tests/ALT*.TXT "$BASDIR"/tests/RESULT*.TXT

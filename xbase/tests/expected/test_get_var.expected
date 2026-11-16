@@ -3,51 +3,69 @@ xBase interpreter 1.0
 
 . 
 --- A GET on a variable named x stores into it (the GET's block named its parameter x) ---
-. . 
+. 
+0
+. 
  0
 . 
 . 
 [3]
-. . . 
+. 
+{||...}
+. 
+7
+. 
 [7]
 . 
 --- A number read through a GET is as wide as the GET (a one-column GET's shows one column) ---
-. . 
+. 
+0
+. 
 0
 . 
 . 
 4
-. . 
+. 
+0
+. 
      0
 . 
 . 
  12.50
 . 
 --- A string read through a GET keeps the GET's width ---
-. . 
+. 
+     
+. 
      
 . 
 . 
 [ab   ]          5
-. . 
+. 
+   
+. 
    
 . 
 . 
 [   ]          3
 . 
 --- A logical accepted as it stood stays true (
+. 
+.T.
+. 
+.T.
+. 
+. 
+.T.
+. 
+NIL
+. . . 
+      1 record replaced
+. 
+.T.
+. 
+. 
+.T.
 . . 
-.T.
-. 
-. 
-.T.
-. . Database LGT.DBF opened with 0 record(s).
-. Record 1 added.
-. . 
-.T.
-. 
-. 
-.T.
-. Database closed.
-. File erased.
+File has been deleted.
 . 

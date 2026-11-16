@@ -4,25 +4,22 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database PEOPLE.DBF created with 2 field(s).
-. Database PEOPLE.DBF opened with 0 record(s).
-. Record 1 added.
-. . Database closed.
-. File copied.
+. . . 
+      1 record replaced
+. . 
+    512 bytes copied
 . 
 Copied
-. Database BACKUP.DBF opened with 1 record(s).
-. . 
+. . . 
 Alice  25
-. Database closed.
-. File renamed.
-. 
+. . . 
 Renamed
-. Database SAVED.DBF opened with 1 record(s).
-. . 
+. . . 
 Alice  25
-. Database closed.
-. File erased.
+. . 
+File has been deleted.
 . 
 Erased
-. File erased.
+. 
+File has been deleted.
 . 

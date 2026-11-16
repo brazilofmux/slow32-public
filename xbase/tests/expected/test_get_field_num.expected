@@ -6,9 +6,9 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database GETN.DBF created with 3 field(s).
-. Database GETN.DBF opened with 0 record(s).
-. Record 1 added.
-. . 
+. . . 
+      1 record replaced
+. 
  5
 . 
 2.5
@@ -22,11 +22,15 @@ ab
 
 . 
 A= 5 B=  2.5 C=[7   ]
-. Database closed.
-. . . 
-record: [ 5  2.57   ]
-. . Database GETN.DBF opened with 1 record(s).
+. . 
+         1
 . 
+       130
+. 
+record: [ 5  2.57   ]
+. 
+.T.
+. . 
  5
 . 
 2.5
@@ -38,18 +42,27 @@ record: [ 5  2.57   ]
 
 
 
-. Database closed.
-. . . 
-record: [ 7 12.5cd  ]
 . . 
---- A blank number accepted as it stood stays blank ---
-. Database GETN.DBF opened with 1 record(s).
-. Record 2 added.
+         1
 . 
+       130
+. 
+record: [ 7 12.5cd  ]
+. 
+.T.
+. 
+--- A blank number accepted as it stood stays blank ---
+. . . 
  0
 . 
-. Database closed.
-. . . 
+. . 
+         1
+. 
+       142
+. 
 record 2: [           ]
-. . File erased.
+. 
+.T.
+. 
+File has been deleted.
 . 

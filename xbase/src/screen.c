@@ -935,11 +935,16 @@ static void get_show_value(const get_entry_t *g, const value_t *v) {
     int w;
     a[0] = *v;
     a[1] = val_str(g->picture);
-    if (func_call(cmd_get_expr_ctx(), "TRANSFORM", a, 2, &r) != 0 || r.type != VAL_CHAR) {
+    if (v->type == VAL_NUM && !g->picture[0]) {
+        /* no picture: the number at its own width (dBASE's TRANSFORM of an
+         * empty picture is ten and SET DECIMALS, which a GET does not show) */
+        val_to_display(v, shown, sizeof(shown));
+    } else if (func_call(cmd_get_expr_ctx(), "TRANSFORM", a, 2, &r) != 0 || r.type != VAL_CHAR) {
         cmd_get_expr_ctx()->error = NULL;
         return;
+    } else {
+        str_copy(shown, val_text(&r), sizeof(shown));
     }
-    str_copy(shown, val_text(&r), sizeof(shown));
     w = get_picture_window(g->picture, (int)strlen(shown));
     if (w < (int)strlen(shown)) shown[w] = '\0';
     screen_tgoto(g->row, g->col);

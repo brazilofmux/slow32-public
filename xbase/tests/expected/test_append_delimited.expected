@@ -4,35 +4,35 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database PEOPLE.DBF created with 4 field(s).
-. . Database PEOPLE.DBF opened with 0 record(s).
-. 3 record(s) appended.
+. . . 
+      3 records added
 . 
          3
 . 
-      1  Smith                John             35 123 Main St                    
-      2  Doe                  Jane             28 456 Oak Ave                    
-      3  O'Brien              Pat              42 789 Elm Dr                     
-. Database closed.
-. . . Enter field definitions (blank name to finish):
+Record#  LAST                 FIRST           AGE ADDR
+      1  Smith                John             35 123 Main St                   
+      2  Doe                  Jane             28 456 Oak Ave                   
+      3  O'Brien              Pat              42 789 Elm Dr                    
+. . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database PEOPLE2.DBF created with 4 field(s).
-. Database PEOPLE2.DBF opened with 0 record(s).
-. 2 record(s) appended.
+. . 
+      2 records added
 . 
          2
 . 
-      1  Smith                John             35 123_Main_St                    
-      2  Doe                  Jane             28 456_Oak_Ave                    
-. Database closed.
-. . . Enter field definitions (blank name to finish):
+Record#  LAST                 FIRST           AGE ADDR
+      1  Smith                John             35 123_Main_St                   
+      2  Doe                  Jane             28 456_Oak_Ave                   
+. . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database PEOPLE3.DBF created with 4 field(s).
-. Database PEOPLE3.DBF opened with 0 record(s).
-. 2 record(s) appended.
+. . 
+      2 records added
 . 
          2
 . 
-      1  Smith                John             35 123 Main St                    
-      2  O'Brien              Pat              42 789 Elm Dr                     
-. Database closed.
-. 
+Record#  LAST                 FIRST           AGE ADDR
+      1  Smith                John             35 123 Main St                   
+      2  O'Brien              Pat              42 789 Elm Dr                    
+. . 

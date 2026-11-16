@@ -2,9 +2,14 @@ SLOW-32 xBase
 xBase interpreter 1.0
 
 . 
+100
 Before call: x=100
+999
 In greet: x=999
 After call: x=100
+10
+20
+         30
 In addnums: 10 + 20 = 30
 After addnums: result= 30
 . *** Variable not found: x

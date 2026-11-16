@@ -104,6 +104,25 @@ static void dbf_today(unsigned char *ymd) {
     ymd[2] = (unsigned char)(t ? t->tm_mday : 1);
 }
 
+/* The table's last update, year (four digits), month, day: today once it
+ * has been written to (the header is stamped at close), else the header's */
+void dbf_last_update(dbf_t *db, int *y, int *m, int *d) {
+    unsigned char ymd[3] = { 0, 1, 1 };
+    if (db->modified || !db->fp) {
+        dbf_today(ymd);
+    } else {
+        long pos = ftell(db->fp);
+        fseek(db->fp, 1, SEEK_SET);
+        if (fread(ymd, 1, 3, db->fp) != 3) { ymd[0] = 0; ymd[1] = ymd[2] = 1; }
+        fseek(db->fp, pos, SEEK_SET);
+        db->file_pos = -1; db->last_op = 0;
+    }
+    *y = ymd[0] + 1900;
+    if (*y < 1980) *y += 100;   /* a two-digit year below 80 is 20xx */
+    *m = ymd[1];
+    *d = ymd[2];
+}
+
 /* A table written to has the day of the change as its last update, as
  * dBASE III keeps it (LUPDATE()); stamped once, at close */
 static void dbf_stamp_date(dbf_t *db) {

@@ -3,39 +3,54 @@ xBase interpreter 1.0
 
 . 
 --- FWRITE/FREAD edge cases ---
-. . . 
---- FWRITE zero bytes via 3rd arg ---
+. 
+         1
 . . 
+--- FWRITE zero bytes via 3rd arg ---
+. 
+         0
+. 
 Wrote:          0
 . . 
 --- FWRITE negative count ---
-. . 
+. 
+         0
+. 
 Wrote:          0
 . . 
 --- FWRITE normal for later read ---
-. . 
+. 
+         5
+. 
 Wrote:          5
 . . 
 --- FREAD zero count ---
 . 
 FSEEK:          0
-. . 
+. 
+. 
 Read zero: []
 . . 
 --- FREAD negative count ---
-. . 
+. 
+. 
 Read neg: []
 . . 
 --- FWRITE empty string ---
-. . 
+. 
+         0
+. 
 Wrote empty:          0
 . . 
 --- FREAD with invalid handle ---
-. . 
+. 
+. 
 Bad handle: []
 . . 
 --- FWRITE with invalid handle ---
-. . 
+. 
+         0
+. 
 Bad handle:          0
 . . 
 FCLOSE: .T.

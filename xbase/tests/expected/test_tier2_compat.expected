@@ -1,27 +1,54 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. . . . . . . . . 
+. . . . 
+Charlie
+. 
+Alice
+. 
+Bob
+. 
+David
+. 
+Eve
+. 
          5
 . 
          3
-. . 
+. 
+{...}
+. 
 Alice
 . 
 Bob
 . 
 Charlie
-. . 
+. 
+{...}
+. 
 Alice
 . 
 NIL
 . 
 Bob
-. . 
+. 
+{...}
+. 
 NIL
 . 
 Bob
-. . . . . . . . . . . 
+. . . . 
+X
+. 
+Y
+. 
+Z
+. 
+. 
+. 
+. 
+{...}
+. 
 X
 . 
 Y
@@ -56,28 +83,30 @@ Settings changed
 . . . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database SDFTEST.DBF created with 2 field(s).
-. Database SDFTEST.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . 2 record(s) copied.
-. Database closed.
-. . Enter field definitions (blank name to finish):
+. . . 
+      1 record replaced
+. . 
+      1 record replaced
+. 
+      2 records copied
+. . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database SDFTEST2.DBF created with 2 field(s).
-. Database SDFTEST2.DBF opened with 0 record(s).
-. 2 record(s) added.
+. . 2 record(s) added.
 . 
-      1  Alice                 25 
-      2  Bob                   30 
-. Database closed.
-. File erased.
-. File erased.
-. File erased.
+Record#  NAME                 AGE
+      1  Alice                 25
+      2  Bob                   30
+. . 
+File has been deleted.
+. 
+File has been deleted.
+. 
+File has been deleted.
 . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database AFTEST.DBF created with 4 field(s).
-. Database AFTEST.DBF opened with 0 record(s).
-. . 
+. . . 
          4
 . 
 FNAME
@@ -89,6 +118,6 @@ LNAME
 AGE
 . 
          3
-. Database closed.
-. File erased.
+. . 
+File has been deleted.
 . 

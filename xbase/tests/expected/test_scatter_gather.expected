@@ -4,10 +4,11 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Field name: 
 Database SCATTEST.DBF created with 4 field(s).
-. Database SCATTEST.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . . . 
+. . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . . 
 John      
 . 
 Smith     
@@ -15,16 +16,24 @@ Smith
  30
 . 
 .T.
-. . . . . 
+. 
+Bob
+. 
+99
+. . . 
 Bob        Smith       99 .T.
 . . . 
 Jane      
 . 
  25
-. . . . 
+. 
+Sue
+. . . 
 Sue        Doe         25 .F.
 . . . 
 Bob       
-. . . . 
+. 
+Max
+. . . 
 Max       
 . . 

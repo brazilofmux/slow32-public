@@ -78,6 +78,13 @@ void val_to_string(const value_t *v, char *buf, int size);
 void val_to_display(const value_t *v, char *buf, int size);
 /* A number with explicit decimals (and integer width, 0 = automatic) */
 value_t val_num_dec(double n, int ndec, int nwidth);
+/* dBASE III's widths (the interpreter's): every number carries the width
+ * of its integer part, a literal its text's, a sum one more than the
+ * wider, and so on (ast.c num_result); Clipper's, a compiled program's,
+ * leave most at the automatic width */
+int val_dbase_widths(void);
+int val_int_width(const value_t *v);   /* its integer width; the automatic one is ten */
+void val_unsign_zero(char *buf);        /* a formatted zero without its minus (dBASE) */
 /* A numeric literal: as many decimals as its text writes */
 value_t val_num_literal(double n, const char *text);
 /* SET DECIMALS and SET FIXED, which arithmetic and display read */

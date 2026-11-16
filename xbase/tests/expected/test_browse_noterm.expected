@@ -4,10 +4,11 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database TESTBR.DBF created with 2 field(s).
-. Database TESTBR.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . BROWSE requires terminal mode.
+. . . 
+      1 record replaced
+. . 
+      1 record replaced
+. BROWSE requires terminal mode.
 . EDIT requires terminal mode.
 . EDIT requires terminal mode.
 . 

@@ -4,40 +4,40 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Field name: Type (C/N/D/L/M): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database LSTRUC.DBF created with 5 field(s).
-. Database LSTRUC.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
+. . . 
+      1 record replaced
 . . 
+      1 record replaced
+. 
 --- LIST STRUCTURE ---
-. Structure for database: LSTRUC.DBF
-Number of records: 2
-Header size: 193
-Record size: 43
-Field  Name        Type  Width  Dec
-    1  NAME        C      20      0
-    2  AGE         N       3      0
-    3  HIRED       D       8      0
-    4  ACTIVE      L       1      0
-    5  SALARY      N      10      2
-** Total **                  43
+. 
+Structure for database: LSTRUC.dbf
+Number of data records:       2
+Date of last update   : 11/15/26
+Field  Field Name  Type       Width    Dec
+    1  NAME        Character     20
+    2  AGE         Numeric        3
+    3  HIRED       Date           8
+    4  ACTIVE      Logical        1
+    5  SALARY      Numeric       10      2
+** Total **                      43
 . 
 --- DISPLAY STRUCTURE ---
-. Structure for database: LSTRUC.DBF
-Number of records: 2
-Header size: 193
-Record size: 43
-Field  Name        Type  Width  Dec
-    1  NAME        C      20      0
-    2  AGE         N       3      0
-    3  HIRED       D       8      0
-    4  ACTIVE      L       1      0
-    5  SALARY      N      10      2
-** Total **                  43
+. 
+Structure for database: LSTRUC.dbf
+Number of data records:       2
+Date of last update   : 11/15/26
+Field  Field Name  Type       Width    Dec
+    1  NAME        Character     20
+    2  AGE         Numeric        3
+    3  HIRED       Date           8
+    4  ACTIVE      Logical        1
+    5  SALARY      Numeric       10      2
+** Total **                      43
 . 
 --- COPY STRUCTURE EXTENDED ---
 . 5 field(s) copied to LSEXT.DBF.
-. Database LSEXT.DBF opened with 5 record(s).
-. 
+. . 
 Extended structure DBF:
 . 
 Record 1:
@@ -53,7 +53,6 @@ ACTIVE     L   1   0
 SALARY     N  10   2
 . 
 Field count:          5
-. Database closed.
-. 
+. . 
 Done
 . 

@@ -201,8 +201,14 @@ static int get_varget(expr_ctx_t *ctx, object_t *o, value_t *result) {
 static int get_varput(expr_ctx_t *ctx, object_t *o, const value_t *v) {
     value_t *b = object_ivar(o, "block", 0);
     value_t a = *v, r;
-    if (b && b->type == VAL_BLOCK) return ast_eval_block(ctx, b, &a, 1, &r);
-    if (iv_str(o, "name")[0]) return ast_store_name(ctx, iv_str(o, "name"), v);
+    if (b && b->type == VAL_BLOCK) {   /* its set-block's := stores at the GET's width */
+        int rc;
+        ast_store_raw++;
+        rc = ast_eval_block(ctx, b, &a, 1, &r);
+        ast_store_raw--;
+        return rc;
+    }
+    if (iv_str(o, "name")[0]) return ast_store_value(ctx, iv_str(o, "name"), v);   /* at the GET's width, as dBASE keeps it */
     return 0;
 }
 

@@ -51,6 +51,40 @@ static int list_value_width(dbf_t *db, int f) {
 }
 
 static void common_list_display(dbf_t *db, lexer_t *l, int is_display);
+
+/* SET TALK as dBASE III talks (the interpreter): a line through the
+ * console stream -- the screen, the alternate file, the printer -- a
+ * newline first, as ? writes it; a compiled program keeps the older
+ * messages.  The words and widths are dBASE III PLUS's own. */
+static int talk_dbase(void) { return set_opts.talk && val_dbase_widths(); }
+static int talk_other(void) { return set_opts.talk && !val_dbase_widths(); }
+static void talk_line(const char *fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    cmd_output("\n");
+    cmd_output(buf);
+}
+static void talk_records(long n, const char *verb) {   /* "      2 records copied" */
+    talk_line("%7ld record%s %s", n, n == 1 ? "" : "s", verb);
+}
+/* the value a variable was given, as ? shows it (x = A + 1, STORE) */
+static void talk_value(const value_t *v) {
+    char buf[300];
+    if (!talk_dbase()) return;
+    switch (v->type) {
+    case VAL_NUM:   val_to_display(v, buf, sizeof buf); break;
+    case VAL_LOGIC: str_copy(buf, v->logic ? ".T." : ".F.", sizeof buf); break;
+    case VAL_CHAR:  str_copy(buf, val_text(v), sizeof buf); break;
+    default:        val_to_string(v, buf, sizeof buf); break;
+    }
+    talk_line("%s", buf);
+}
+static void talk_progress(long n, const char *what, const char *done) {   /* INDEX, SORT */
+    talk_line("   00%% %s  100%% %s%12ld Records %s", what, what, n, done);
+}
 static void cmd_list(dbf_t *db, lexer_t *l);
 static void cmd_display(dbf_t *db, lexer_t *l);
 static void cmd_display_structure(dbf_t *db);
@@ -959,7 +993,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             wa->locate_cond[0] = '\0';
             wa->locate_last_rec = 0;
             clear_filter(wa);
-            if (set_opts.talk) printf("Database closed.\n");
+            if (talk_other()) printf("Database closed.\n");
         }
         return;
     }
@@ -1083,7 +1117,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
      * record past the end, EOF() and BOF() both true */
     cmd_go(db, "TOP");
 
-    if (set_opts.talk)
+    if (talk_other())   /* dBASE says nothing */
         printf("Database %s opened with %d record(s).\n",
                db->filename, (int)db->record_count);
 }
@@ -1105,7 +1139,7 @@ static void cmd_append_blank(dbf_t *db) {
 
     expr_ctx.eof_flag = 0;
     expr_ctx.bof_flag = 0;
-    if (set_opts.talk)
+    if (talk_other())   /* dBASE says nothing */
         printf("Record %d added.\n", (int)db->record_count);
 }
 
@@ -1225,7 +1259,17 @@ static void cmd_go(dbf_t *db, const char *arg) {
 }
 
 /* ---- SKIP ---- */
+static void cmd_skip_move(dbf_t *db, const char *arg);
+
+/* SKIP, and with TALK dBASE III's "Record No." -- the record past the end
+ * when it went there */
 static void cmd_skip(dbf_t *db, const char *arg) {
+    cmd_skip_move(db, arg);
+    if (talk_dbase() && dbf_is_open(db))
+        talk_line("Record No.%7d", expr_ctx.eof_flag ? (int)db->record_count + 1 : (int)db->current_record);
+}
+
+static void cmd_skip_move(dbf_t *db, const char *arg) {
     const char *p;
     int n;
 
@@ -1734,7 +1778,8 @@ static int locate_cb(dbf_t *db, uint32_t recno, void *userdata) {
     (void)db;
     cur_wa()->locate_last_rec = recno;
     expr_ctx.found = 1;
-    if (set_opts.talk) printf("Record = %d\n", (int)recno);
+    if (talk_dbase()) talk_line("Record =%8d", (int)recno);
+    else if (set_opts.talk) printf("Record = %d\n", (int)recno);
     return REC_STOP; /* Stop after first match */
 }
 
@@ -1768,7 +1813,8 @@ static void cmd_locate(dbf_t *db, lexer_t *l) {
         expr_ctx.eof_flag = 1;
         dbf_move_eof(db);
         cur_wa()->locate_last_rec = 0;
-        if (set_opts.talk) printf("End of LOCATE scope\n");
+        if (talk_dbase()) talk_line("End of LOCATE scope");
+        else if (set_opts.talk) printf("End of LOCATE scope\n");
     }
 }
 
@@ -1816,7 +1862,8 @@ static void cmd_continue(dbf_t *db) {
     dbf_move_eof(db);
     expr_ctx.found = 0;
     expr_ctx.eof_flag = 1;
-    if (set_opts.talk) printf("End of LOCATE scope\n");
+    if (talk_dbase()) talk_line("End of LOCATE scope");
+    else if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
 /* ---- COUNT [scope] [FOR cond] ---- */
@@ -1840,7 +1887,8 @@ static void cmd_count(dbf_t *db, lexer_t *l) {
 
     count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, count_cb, NULL);
     if (count < 0) return;
-    if (set_opts.talk)
+    if (talk_dbase()) talk_records(count, "");
+    else if (set_opts.talk)
         printf("%d record(s)\n", count);
     if (c.to_var[0]) {
         value_t v = val_num((double)count);
@@ -1860,6 +1908,7 @@ typedef struct {
     char expr[MAX_AGG_EXPRS][256];
     double total[MAX_AGG_EXPRS];
     int ndec[MAX_AGG_EXPRS];
+    int width[MAX_AGG_EXPRS];   /* the expression's whole display width (dBASE's TALK) */
     int seen;            /* a record evaluated: ndec is its expressions' */
     const char *verb;
 } agg_ctx_t;
@@ -1878,7 +1927,10 @@ static int agg_cb(dbf_t *db, uint32_t recno, void *userdata) {
             printf("%s requires numeric expression.\n", ctx->verb);
             return REC_ERROR;
         }
-        if (!ctx->seen) ctx->ndec[i] = val.ndec;
+        if (!ctx->seen) {
+            ctx->ndec[i] = val.ndec;
+            ctx->width[i] = val_int_width(&val) + (val.ndec > 0 ? val.ndec + 1 : 0);
+        }
         ctx->total[i] += val.num;
     }
     ctx->seen = 1;
@@ -1971,7 +2023,26 @@ static void cmd_aggregate(dbf_t *db, lexer_t *l, int average) {
 
     count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, agg_cb, &actx);
     if (count < 0) return;
-    if (set_opts.talk) printf("%d record(s) %s\n", count, average ? "averaged" : "summed");
+    if (talk_dbase()) talk_records(count, average ? "averaged" : "summed");
+    else if (set_opts.talk) printf("%d record(s) %s\n", count, average ? "averaged" : "summed");
+    if (talk_dbase() && count > 0) {
+        /* the table dBASE III shows: each column as wide as the expression
+         * (a total three wider), or as its text; a blank between columns */
+        char head[1024] = "", vals[1024] = "";
+        for (i = 0; i < actx.n; i++) {
+            value_t v = val_num_dec(average ? actx.total[i] / count : actx.total[i], actx.ndec[i],
+                                    0);
+            int w = actx.width[i] + (average ? 0 : 3), t = (int)strlen(actx.expr[i]);
+            char num[64];
+            v.nwidth = (short)(w - (actx.ndec[i] > 0 ? actx.ndec[i] + 1 : 0));
+            val_to_display(&v, num, sizeof num);
+            if (t > w) w = t;
+            snprintf(head + strlen(head), sizeof head - strlen(head), "%s%*s", i ? " " : "", w, actx.expr[i]);
+            snprintf(vals + strlen(vals), sizeof vals - strlen(vals), "%s%*s", i ? " " : "", w, num);
+        }
+        talk_line("%s", head);
+        talk_line("%s", vals);
+    }
     for (i = 0; i < actx.n; i++) {
         value_t v;
         if (!average)
@@ -1980,8 +2051,8 @@ static void cmd_aggregate(dbf_t *db, lexer_t *l, int average) {
             v = val_num_dec(0, 0, 0);
         else
             v = val_num_dec(actx.total[i] / count,
-                            report_clipper_layout() ? set_opts.decimals : actx.ndec[i], 0);
-        if (set_opts.talk && count > 0) {
+                            val_dbase_widths() ? actx.ndec[i] : set_opts.decimals, 0);
+        if (talk_other() && count > 0) {
             char buf[64];
             val_to_string(&v, buf, sizeof(buf));
             printf("%9s: %s\n", average ? "AVERAGE" : "SUM", buf);
@@ -2561,17 +2632,23 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
 
     replace_ctx_t rctx = { pairs, npairs };
 
-    if (c.has_scope || c.for_cond[0] || c.while_cond[0]) {
-        /* Explicit scope or conditions: use process_records for index traversal */
-        process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET,
-                        replace_cb, &rctx);
-    } else {
-        /* Default NEXT 1: replace current physical record directly */
-        if (db->current_record > 0 && db->current_record <= db->record_count) {
-            dbf_read_record(db, db->current_record);
-            if (!skip_deleted(db->record_buf) && check_filter(db))
-                replace_cb(db, db->current_record, &rctx);
+    {
+        int replaced = 0;
+        if (c.has_scope || c.for_cond[0] || c.while_cond[0]) {
+            /* Explicit scope or conditions: use process_records for index traversal */
+            replaced = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET,
+                                       replace_cb, &rctx);
+        } else {
+            /* Default NEXT 1: replace current physical record directly */
+            if (db->current_record > 0 && db->current_record <= db->record_count) {
+                dbf_read_record(db, db->current_record);
+                if (!skip_deleted(db->record_buf) && check_filter(db)) {
+                    replace_cb(db, db->current_record, &rctx);
+                    replaced = 1;
+                }
+            }
         }
+        if (talk_dbase() && replaced >= 0) talk_records(replaced, "replaced");
     }
 
     for (int p = 0; p < npairs; p++) {
@@ -2774,12 +2851,51 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
 }
 
 /* ---- DISPLAY (enhanced with field list) ---- */
+/* A LIST column's value as dBASE III shows it: a number at its width, a
+ * logical .T./.F., a date as DTOC, text as it is; a memo field listed
+ * with all the others is "Memo".  1 for a number (right in its column),
+ * 0 otherwise, -1 when it could not be evaluated */
+static int list_dbase_value(dbf_t *db, const char *expr, int field, int all, char *out, int size) {
+    value_t v;
+    if (all && field >= 0 && db->fields[field].type == 'M') { str_copy(out, "Memo", size); return 0; }
+    if (ast_eval_dynamic(expr, &expr_ctx, &v) != 0) { report_expr_error(); return -1; }
+    switch (v.type) {
+    case VAL_NUM:   val_to_display(&v, out, size); return 1;
+    case VAL_LOGIC: str_copy(out, v.logic ? ".T." : ".F.", size); return 0;
+    case VAL_CHAR:  str_copy(out, val_text(&v), size); return 0;
+    default:        val_to_string(&v, out, size); return 0;
+    }
+}
+
+/* One column appended to row: a blank, then the text in the column's
+ * width, a number on the right; the last column is not padded (its
+ * heading ends with its text, its value with its own width) */
+static void list_dbase_cell(char *row, int size, const char *text, int width, int number,
+                            int last, int heading) {
+    size_t have = strlen(row);
+    int room = size - (int)have;
+    if (room <= 1) return;
+    if (number)
+        snprintf(row + have, (size_t)room, " %*s", width, text);
+    else if (last)
+        snprintf(row + have, (size_t)room, " %s", text);
+    else
+        snprintf(row + have, (size_t)room, " %-*s", width, text);
+    if (last && heading) trim_right(row);
+}
+
 static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     int f;
     char raw[256], display[256];
     int field_indices[DBF_MAX_FIELDS];
     int nfields = 0;
     int use_all_fields;
+    /* the list: each expression's text and, for a bare field, its field
+     * (Clipper's cells stay the field's own); dBASE III's columns, each as
+     * wide as its value or its heading */
+    static char exprs[DBF_MAX_FIELDS][256];
+    int colw[DBF_MAX_FIELDS], colnum[DBF_MAX_FIELDS];
+    int dbase = val_dbase_widths();
     FILE *to_file = NULL;
     clause_t c;
     int row_count = 0;
@@ -2823,6 +2939,9 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         c.scope.type = SCOPE_REST; c.has_scope = 1; lex_next(l);
     }
 
+    /* OFF may come before the list (LIST OFF A + 1) */
+    if (cmd_kw(l, "OFF")) { c.off = 1; lex_next(l); }
+
     /* Check if there's a field list before remaining clauses */
     if (l->current.type == TOK_IDENT &&
         !is_keyword(l->current.text, "FOR") &&
@@ -2830,10 +2949,29 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         !is_keyword(l->current.text, "TO") &&
         !is_keyword(l->current.text, "OFF")) {
 
-        const char *p = l->token_start;
-        nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
-        if (nfields < 0) return;
-        lexer_init_ext(l, p, l->store);
+        /* expressions, each to a comma at its own level, until a clause */
+        while (l->current.type != TOK_EOF && nfields < DBF_MAX_FIELDS &&
+               !cmd_kw(l, "FOR") && !cmd_kw(l, "WHILE") && !cmd_kw(l, "TO") &&
+               !cmd_kw(l, "OFF") && !cmd_kw(l, "ALL") && !cmd_kw(l, "NEXT") &&
+               !cmd_kw(l, "RECORD") && !cmd_kw(l, "REST")) {
+            const char *start = lex_src(l);
+            int depth = 0, len;
+            while (l->current.type != TOK_EOF &&
+                   !(depth == 0 && (l->current.type == TOK_COMMA || cmd_kw(l, "FOR") ||
+                                    cmd_kw(l, "WHILE") || cmd_kw(l, "TO") || cmd_kw(l, "OFF")))) {
+                if (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET) depth++;
+                else if ((l->current.type == TOK_RPAREN || l->current.type == TOK_RBRACKET) && depth > 0) depth--;
+                lex_next(l);
+            }
+            len = (int)(lex_src(l) - start);
+            if (len >= (int)sizeof exprs[0]) len = (int)sizeof exprs[0] - 1;
+            memcpy(exprs[nfields], start, (size_t)len);
+            exprs[nfields][len] = '\0';
+            trim_right(exprs[nfields]);
+            field_indices[nfields] = dbf_find_field(db, exprs[nfields]);
+            nfields++;
+            if (l->current.type == TOK_COMMA) lex_next(l);
+        }
     }
 
     if (parse_clauses(l, &c) < 0) return;
@@ -2892,7 +3030,30 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         has_limit = 1;
     }
 
-    if (set_opts.heading && !(is_display && use_all_fields)) {
+    if (use_all_fields && dbase) {   /* every field, by its name */
+        for (f = 0; f < db->field_count && f < DBF_MAX_FIELDS; f++) {
+            str_copy(exprs[f], db->fields[f].name, sizeof exprs[0]);
+            field_indices[f] = f;
+        }
+        nfields = f;
+    }
+    if (dbase) {
+        /* dBASE III's: each column as wide as the value where the walk
+         * begins, or as its heading */
+        for (f = 0; f < nfields; f++) {
+            char v[256];
+            colnum[f] = list_dbase_value(db, exprs[f], field_indices[f], use_all_fields, v, sizeof v);
+            if (colnum[f] < 0) { if (to_file) fclose(to_file); return; }
+            colw[f] = (int)strlen(v) > (int)strlen(exprs[f]) ? (int)strlen(v) : (int)strlen(exprs[f]);
+        }
+        if (set_heading_on(&set_opts)) {
+            char row[2048];
+            snprintf(row, sizeof row, "\n%s", c.off ? "" : "Record# ");
+            for (f = 0; f < nfields; f++)
+                list_dbase_cell(row, sizeof row, exprs[f], colw[f], colnum[f], f == nfields - 1, 1);
+            PRINT_TO(to_file, "%s", row);
+        }
+    } else if (set_heading_on(&set_opts) && !(is_display && use_all_fields)) {
         PRINT_TO(to_file, "\n");
         if (!c.off) PRINT_TO(to_file, "Record#");
         if (use_all_fields) {
@@ -2903,8 +3064,8 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         } else {
             for (f = 0; f < nfields; f++) {
                 int idx_f = field_indices[f];
-                int w = list_value_width(db, idx_f);
-                PRINT_TO(to_file, " %-*s", w, db->fields[idx_f].name);
+                if (idx_f < 0) { PRINT_TO(to_file, " %s", exprs[f]); continue; }
+                PRINT_TO(to_file, " %-*s", list_value_width(db, idx_f), db->fields[idx_f].name);
             }
         }
     }
@@ -2939,7 +3100,22 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 printf("\r                           \r");
             }
 
-            if (is_display && use_all_fields && !numbers_only) {
+            if (dbase && past_end) {
+                /* dBASE III shows the heading alone past the end */
+            } else if (dbase) {
+                char row[2048];
+                snprintf(row, sizeof row, "\n");
+                if (!c.off) snprintf(row + 1, sizeof row - 1, "%7d ", (int)current_rec);
+                for (f = 0; f < nfields; f++) {
+                    char v[256];
+                    if (list_dbase_value(db, exprs[f], field_indices[f], use_all_fields, v, sizeof v) < 0) {
+                        if (to_file) fclose(to_file);
+                        return;
+                    }
+                    list_dbase_cell(row, sizeof row, v, colw[f], colnum[f], f == nfields - 1, 0);
+                }
+                PRINT_TO(to_file, "%s", row);
+            } else if (is_display && use_all_fields && !numbers_only) {
                 PRINT_TO(to_file, "Record# %d\n", (int)current_rec);
                 for (f = 0; f < db->field_count; f++)
                     print_field_value(db, f, raw, display, to_file, 0, 0);
@@ -2954,8 +3130,17 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                     for (f = 0; f < db->field_count; f++)
                         list_cell(db, f, raw, display, list_value_width(db, f), row, (int)sizeof(row));
                 } else {
-                    for (f = 0; f < nfields; f++)
-                        list_cell(db, field_indices[f], raw, display, list_value_width(db, field_indices[f]), row, (int)sizeof(row));
+                    for (f = 0; f < nfields; f++) {
+                        if (field_indices[f] >= 0) {
+                            list_cell(db, field_indices[f], raw, display, list_value_width(db, field_indices[f]), row, (int)sizeof(row));
+                        } else {   /* an expression: its value as ? shows it */
+                            value_t v;
+                            if (ast_eval_dynamic(exprs[f], &expr_ctx, &v) != 0) { report_expr_error(); break; }
+                            val_to_display(&v, display, 256);
+                            strncat(row, " ", sizeof(row) - strlen(row) - 1);
+                            strncat(row, display, sizeof(row) - strlen(row) - 1);
+                        }
+                    }
                 }
                 PRINT_TO(to_file, "%s ", row);
             }
@@ -2977,6 +3162,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         if (c.scope.type == SCOPE_RECORD) break;
     }
 
+    if (dbase) PRINT_TO(to_file, "\n");   /* dBASE III ends a listing with its line */
     if (to_file) fclose(to_file);
     /* the pointer stays where the walk ended: after ALL, the end of the file */
 }
@@ -2998,6 +3184,29 @@ static void cmd_display_structure(dbf_t *db) {
         return;
     }
 
+    if (val_dbase_widths()) {   /* dBASE III's layout, a blank line before and after */
+        static const char *const names[] = { "Character", "Numeric", "Date", "Logical", "Memo", "Float" };
+        char name[128];
+        int y, m, d;
+        size_t n;
+        dbf_last_update(db, &y, &m, &d);
+        str_copy(name, db->filename, sizeof name);
+        n = strlen(name);
+        if (n > 4 && strcasecmp(name + n - 4, ".DBF") == 0) memcpy(name + n - 4, ".dbf", 4);
+        printf("\nStructure for database: %s\n", name);
+        printf("Number of data records:%8d\n", (int)db->record_count);
+        printf("Date of last update   : %02d/%02d/%02d\n", m, d, y % 100);
+        printf("Field  Field Name  Type       Width    Dec\n");
+        for (i = 0; i < db->field_count; i++) {
+            const char *t = strchr("CNDLMF", db->fields[i].type)
+                          ? names[strchr("CNDLMF", db->fields[i].type) - "CNDLMF"] : "?";
+            printf("%5d  %-10s  %-10s%6d", i + 1, db->fields[i].name, t, db->fields[i].length);
+            if (db->fields[i].decimals > 0) printf("%7d", db->fields[i].decimals);
+            printf("\n");
+        }
+        printf("** Total **%24d\n", (int)db->record_size);
+        return;
+    }
     printf("Structure for database: %s\n", db->filename);
     printf("Number of records: %d\n", (int)db->record_count);
     printf("Header size: %d\n", (int)db->header_size);
@@ -3153,6 +3362,8 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
         return;
     }
 
+    talk_value(&val);
+    if (val.type == VAL_NUM && val_dbase_widths()) val = val_dbase_stored(&val);   /* a variable's width (dBASE) */
     memvar_set(&memvar_store, name, &val);
     /* STORE x TO a, b, c: the rest of the list */
     while (tmp.current.type == TOK_COMMA) {
@@ -3242,13 +3453,18 @@ static void cmd_delete(dbf_t *db, lexer_t *l) {
 
     if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
+            if (val_dbase_widths()) {   /* no error to dBASE: nothing deleted */
+                if (talk_dbase()) talk_line("No records deleted");
+                return;
+            }
             prog_error(ERR_RECORD_RANGE, "No current record");
             return;
         }
         db->record_buf[0] = '*';
         db->record_dirty = 1;
         dbf_flush_record(db);
-        if (set_opts.talk) printf("1 record deleted.\n");
+        if (talk_dbase()) talk_records(1, "deleted");
+        else if (set_opts.talk) printf("1 record deleted.\n");
         return;
     }
 
@@ -3258,7 +3474,10 @@ static void cmd_delete(dbf_t *db, lexer_t *l) {
 
     count = process_records(db, &c, PROC_SKIP_DELETED_ANY | PROC_LEAVE_ON_MATCH, delete_cb, NULL);
     if (count < 0) return;
-    if (set_opts.talk) {
+    if (talk_dbase()) {
+        if (count == 0) talk_line("No records deleted");
+        else talk_records(count, "deleted");
+    } else if (set_opts.talk) {
         if (count == 1) printf("1 record deleted.\n");
         else printf("%d record(s) deleted.\n", count);
     }
@@ -3275,15 +3494,25 @@ static void cmd_recall(dbf_t *db, lexer_t *l) {
 
     if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
+            if (val_dbase_widths()) {   /* no error to dBASE: nothing recalled */
+                if (talk_dbase()) talk_line("No records recalled");
+                return;
+            }
             prog_error(ERR_RECORD_RANGE, "No current record");
             return;
         }
-        if (db->record_buf[0] == '*') {
-            db->record_buf[0] = ' ';
-            db->record_dirty = 1;
-            dbf_flush_record(db);
+        {
+            int was = db->record_buf[0] == '*';
+            if (was) {
+                db->record_buf[0] = ' ';
+                db->record_dirty = 1;
+                dbf_flush_record(db);
+            }
+            if (talk_dbase()) {
+                if (was) talk_records(1, "recalled");
+                else talk_line("No records recalled");
+            } else if (set_opts.talk) printf("1 record recalled.\n");
         }
-        if (set_opts.talk) printf("1 record recalled.\n");
         return;
     }
 
@@ -3294,7 +3523,10 @@ static void cmd_recall(dbf_t *db, lexer_t *l) {
     count = process_records(db, &c, PROC_REQUIRE_DELETED | PROC_LEAVE_ON_MATCH, recall_cb, NULL);
     if (count < 0) return;
 
-    if (set_opts.talk) {
+    if (talk_dbase()) {
+        if (count == 0) talk_line("No records recalled");
+        else talk_records(count, "recalled");
+    } else if (set_opts.talk) {
         if (count == 1) printf("1 record recalled.\n");
         else printf("%d record(s) recalled.\n", count);
     }
@@ -3341,7 +3573,8 @@ static void cmd_pack(dbf_t *db) {
     if (cur_wa()->num_indexes > 0)
         indexes_rebuild_all(db);
 
-    if (set_opts.talk) printf("%d record(s) remaining.\n", (int)dst);
+    if (talk_dbase()) talk_records((long)dst, "copied");   /* dBASE's PACK words */
+    else if (set_opts.talk) printf("%d record(s) remaining.\n", (int)dst);
 }
 
 /* ---- ZAP ---- */
@@ -3368,7 +3601,7 @@ static void cmd_zap(dbf_t *db) {
         db->next_memo_block = 1;
     }
 
-    if (set_opts.talk) printf("Zap complete.\n");
+    if (talk_other()) printf("Zap complete.\n");
 }
 
 /* ---- ACCEPT ---- */
@@ -3660,7 +3893,8 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
     }
 
     fclose(fp);
-    if (set_opts.talk) printf("%d record(s) copied.\n", count);
+    if (talk_dbase()) talk_records(count, "copied");
+    else if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY TO DELIMITED helper ---- */
@@ -3749,7 +3983,8 @@ static void copy_to_delimited(dbf_t *db, const char *filename,
     }
 
     fclose(fp);
-    if (set_opts.talk) printf("%d record(s) copied.\n", count);
+    if (talk_dbase()) talk_records(count, "copied");
+    else if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY TO [FIELDS ...] [scope] [DELIMITED] [FOR cond] ---- */
@@ -3958,7 +4193,8 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     }
 
     dbf_close(&dest);
-    if (set_opts.talk) printf("%d record(s) copied.\n", count);
+    if (talk_dbase()) talk_records(count, "copied");
+    else if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY STRUCTURE TO ---- */
@@ -4000,7 +4236,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
         }
     }
 
-    if (set_opts.talk) printf("Structure copied to %s.\n", filename);
+    if (talk_other()) printf("Structure copied to %s.\n", filename);
 }
 
 /* ---- COPY STRUCTURE EXTENDED TO ---- */
@@ -4176,7 +4412,8 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
         indexes_flush_all();
         dbf_write_header_counts(db);
         db->header_dirty = 0;
-        if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
+        if (talk_dbase()) talk_records(ctx.count, "added");
+        else if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
         return;
     }
 
@@ -4188,7 +4425,8 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
         indexes_flush_all();
         dbf_write_header_counts(db);
         db->header_dirty = 0;
-        if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
+        if (talk_dbase()) talk_records(ctx.count, "added");
+        else if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
         return;
     }
 
@@ -4218,7 +4456,8 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
     if (parser.error == 1)
         printf("CSV parse error at line %d.\n", parser.line_number);
 
-    if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
+    if (talk_dbase()) talk_records(ctx.count, "added");
+    else if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
 }
 
 /* ---- Parse filename without forcing .DBF extension ---- */
@@ -4458,7 +4697,8 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
 
     indexes_flush_all();
     dbf_close(&source);
-    if (set_opts.talk) printf("%d record(s) appended.\n", count);
+    if (talk_dbase()) talk_records(count, "added");
+    else if (set_opts.talk) printf("%d record(s) appended.\n", count);
 }
 
 /* ---- SORT TO file ON field [/A][/D][/C] [scope] [FOR cond] ---- */
@@ -4839,7 +5079,8 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
     dbf_close(&dest);
     free(sort_entries);
-    if (set_opts.talk) printf("%d record(s) sorted.\n", count);
+    if (talk_dbase()) talk_progress(count, "Sorted", "sorted");
+    else if (set_opts.talk) printf("%d record(s) sorted.\n", count);
 }
 
 /* ---- ERASE <file> ---- */
@@ -4858,6 +5099,8 @@ static void cmd_erase(const char *arg) {
     existing_case(filename);
     if (remove(filename) != 0) {
         file_not_found(filename);
+    } else if (talk_dbase()) {
+        talk_line("File has been deleted.");
     } else if (set_opts.talk) {
         printf("File erased.\n");   /* SET TALK's, like the other reports (Clipper's ERASE says nothing) */
     }
@@ -4910,8 +5153,8 @@ static void cmd_rename(const char *arg) {
             fclose(fout);
             remove(oldname);
         }
-        if (set_opts.talk) printf("File renamed.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
-    } else if (set_opts.talk) {
+        if (talk_other()) printf("File renamed.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
+    } else if (talk_other()) {   /* dBASE says nothing */
         printf("File renamed.\n");
     }
 }
@@ -4955,11 +5198,18 @@ static void cmd_copy_file(const char *arg) {
         prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create: %s", dst);
         return;
     }
-    while ((n = fread(buf, 1, sizeof(buf), fin)) > 0)
-        fwrite(buf, 1, n, fout);
-    fclose(fin);
-    fclose(fout);
-    if (set_opts.talk) printf("File copied.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
+    {
+        long bytes = 0;
+        while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+            fwrite(buf, 1, n, fout);
+            bytes += (long)n;
+        }
+        fclose(fin);
+        fclose(fout);
+        if (talk_dbase())   /* dBASE counts the 512-byte blocks it copied */
+            talk_line("%7ld bytes copied", (bytes + 511) / 512 * 512);
+        else if (set_opts.talk) printf("File copied.\n");   /* SET TALK's, as ERASE's (Clipper says nothing) */
+    }
 }
 
 /* ---- INDEX [UNIQUE] ON <expr> TO <file> [UNIQUE] ---- */
@@ -5103,7 +5353,8 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
         expr_ctx.bof_flag = 0;
     }
 
-    if (set_opts.talk) printf("%d record(s) indexed.\n", cur_wa()->indexes[0].nentries);
+    if (talk_dbase()) talk_progress(cur_wa()->indexes[0].nentries, "indexed", "indexed");
+    else if (set_opts.talk) printf("%d record(s) indexed.\n", cur_wa()->indexes[0].nentries);
 }
 
 /* ---- SET INDEX TO [file1 [, file2 ...]] ---- */
@@ -5120,7 +5371,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
 
     if (*p == '\0') {
         /* SET INDEX TO with no args = close all */
-        if (set_opts.talk) printf("Index closed.\n");
+        if (talk_other()) printf("Index closed.\n");
         return;
     }
 
@@ -5144,7 +5395,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
                 index_compile_key_ast(&cur_wa()->indexes[slot], &memvar_store);
                 cur_wa()->num_indexes++;
-                if (set_opts.talk) printf("Index %s opened (%d entries).\n", filename,
+                if (talk_other()) printf("Index %s opened (%d entries).\n", filename,
                        cur_wa()->indexes[slot].nentries);
             } else {
                 prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", filename);
@@ -5227,7 +5478,8 @@ static void seek_value(dbf_t *db, index_t *idx, const value_t *val) {
         }
     } else {
         cmd_seek_missed(db, idx);
-        if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
+        if (talk_dbase()) talk_line("No find.");
+        else if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
     }
     } /* match_len scope */
 }
@@ -5278,7 +5530,8 @@ static void cmd_find(dbf_t *db, const char *arg) {
         }
     } else {
         cmd_seek_missed(db, idx);
-        if (set_opts.talk) printf("Not found.\n");
+        if (talk_dbase()) talk_line("No find.");
+        else if (set_opts.talk) printf("Not found.\n");
     }
     } /* match_len scope */
 }
@@ -5304,6 +5557,14 @@ static void cmd_reindex(dbf_t *db) {
         char filename[64];
         str_copy(key_expr, idx->key_expr, sizeof(key_expr));
         str_copy(filename, idx->filename, sizeof(filename));
+        if (talk_dbase()) {   /* "Rebuilding index - TC.ndx", the extension as dBASE shows it */
+            char shown[64];
+            size_t k;
+            str_copy(shown, filename, sizeof shown);
+            k = strlen(shown);
+            if (k > 4 && strcasecmp(shown + k - 4, ".NDX") == 0) memcpy(shown + k - 4, ".ndx", 4);
+            talk_line("Rebuilding index - %s", shown);
+        }
 
         {
             int rc = index_build(idx, db, &expr_ctx, key_expr, filename,
@@ -5323,6 +5584,7 @@ static void cmd_reindex(dbf_t *db) {
             return;
         }
         total += idx->nentries;
+        if (talk_dbase()) talk_progress(idx->nentries, "indexed", "indexed");
     }
 
     /* Position to first entry in controlling index */
@@ -5338,7 +5600,7 @@ static void cmd_reindex(dbf_t *db) {
         }
     }
 
-    if (set_opts.talk) printf("%d record(s) reindexed.\n", total);
+    if (talk_other()) printf("%d record(s) reindexed.\n", total);
 }
 
 /* ---- Close all work areas ---- */
@@ -6454,6 +6716,28 @@ static void h_sort(dbf_t *db, lexer_t *l) {
         lex_next(l);
         char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_sort(db, arg);
+    } else if (cmd_kw(l, "ON")) {
+        /* SORT ON <keys> TO <file> [...]: dBASE III takes the clauses in
+         * either order; the TO's file put first, as cmd_sort reads them */
+        char rest[256], arg[300], file[128];
+        char *to = NULL, *q;
+        lex_get_remaining(l, rest, sizeof(rest));   /* from ON */
+        for (q = rest; *q; q++)
+            if ((q == rest || q[-1] == ' ') && str_nicmp(q, "TO", 2) == 0 && (q[2] == ' ' || q[2] == '\t')) {
+                to = q;
+                break;
+            }
+        if (!to) { printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n"); return; }
+        *to = '\0';
+        q = skip_ws(to + 2);
+        {
+            int n = 0;
+            while (*q && *q != ' ' && *q != '\t' && n < (int)sizeof(file) - 1) file[n++] = *q++;
+            file[n] = '\0';
+        }
+        trim_right(rest);
+        snprintf(arg, sizeof arg, "%s %s %s", file, rest, q);
+        cmd_sort(db, arg);
     } else printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
 }
 
@@ -6576,7 +6860,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
             char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
             if (arg[0] == '\0') {
                 clear_filter(cur_wa());
-                if (set_opts.talk) printf("Filter removed.\n");
+                if (talk_other()) printf("Filter removed.\n");
             } else {
                 const char *ast_err;
                 clear_filter(cur_wa());
@@ -6584,7 +6868,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 if (!strchr(cur_wa()->filter_cond, '&'))
                     cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
                 trim_right(arg);
-                if (set_opts.talk) printf("Filter: %s\n", arg);
+                if (talk_other()) printf("Filter: %s\n", arg);
             }
         }
     } else if (cmd_kw(l, "ORDER")) {
@@ -7178,7 +7462,10 @@ static void cmd_total(dbf_t *db, const char *arg) {
     if (count >= 0) total_flush(db, t);
     dbf_close(&dest);
     if (t->key_ast) ast_free(t->key_ast);
-    if (count >= 0 && set_opts.talk) {
+    if (count >= 0 && talk_dbase()) {
+        talk_line("%7d Record(s) totalled", count);   /* dBASE's words, both */
+        talk_line("%7d Records generated", t->generated);
+    } else if (count >= 0 && set_opts.talk) {
         printf("%d record(s) totalled\n", count);
         printf("%d record(s) generated\n", t->generated);
     }
@@ -8200,6 +8487,8 @@ int cmd_execute(dbf_t *db, char *line) {
                     report_expr_error();
                     return 0;
                 }
+                talk_value(&val);
+                if (val.type == VAL_NUM && val_dbase_widths()) val = val_dbase_stored(&val);   /* a variable's width (dBASE) */
                 if (is_indexed) {
                     if (memvar_set_elem(&memvar_store, name, row, col, &val) == -2) {
                         prog_error(ERR_RECORD_RANGE, "Array index out of bounds");

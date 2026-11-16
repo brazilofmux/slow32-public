@@ -1,15 +1,25 @@
 SLOW-32 xBase
 xBase interpreter 1.0
 
-. . 
+. 
+42
+. 
         42
-. . 
+. 
 Hello
-. . 
+. 
+Hello
+. 
+         50
+. 
         50
-. . 
+. 
+100
+. 
        100
-. . 
+. 
+.T.
+. 
 .T.
 . X           N  100
 MSG         C  "Hello"

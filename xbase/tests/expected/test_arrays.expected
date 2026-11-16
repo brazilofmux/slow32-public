@@ -3,7 +3,11 @@ xBase interpreter 1.0
 
 . 
 --- 1D Arrays ---
-. . . . . 
+. . 
+First
+. 
+Last
+. . 
 First
 . 
 Middle
@@ -13,7 +17,13 @@ Last
 NIL
 . . 
 --- 2D Arrays ---
-. . . . . 
+. . 
+Top-Left
+. 
+Bottom-Right
+. 
+42
+. 
 Top-Left
 . 
 Bottom-Right
@@ -21,7 +31,13 @@ Bottom-Right
         42
 . . 
 --- Mixed Types ---
-. . . . . 
+. . 
+100
+. 
+.T.
+. 
+01/01/26
+. 
        100
 . 
 .T.

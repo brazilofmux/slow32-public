@@ -4,23 +4,30 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Type (C/N/D/L/M): Field name: 
 Database BIGNUM.DBF created with 3 field(s).
-. . . Database BIGNUM.DBF opened with 0 record(s).
-. Record 1 added.
-. . 
+. . . . . 
+      1 record replaced
+. 
   3000000000
 . 
    12.50
-. . 
+. 
+      1 record replaced
+. 
  -2500000000
-. . 
+. 
+      1 record replaced
+. 
            8
-. . 
+. 
+      1 record replaced
+. 
   /  /  
 . 
 .T.
-. . 
+. 
+      1 record replaced
+. 
 02/28/86
 . 
 .T.
-. Database closed.
-. 
+. . 

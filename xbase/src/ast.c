@@ -81,7 +81,7 @@ static ast_node_t *node_binop(ast_op_t op, ast_node_t *left, ast_node_t *right) 
      * at compile time (10/5 shows 2); at run time / and % take SET
      * DECIMALS (24/4 from variables shows 6.00) */
     if ((op == OP_DIV || op == OP_MOD) && int_literal(left) && int_literal(right) &&
-        right->literal.num != 0.0) {
+        right->literal.num != 0.0 && !val_dbase_widths()) {   /* Clipper's: dBASE shows 24/4 as 6.00 */
         double q = op == OP_DIV ? left->literal.num / right->literal.num
                                 : fmod(left->literal.num, right->literal.num);
         if (q == floor(q)) {
@@ -1011,7 +1011,8 @@ int ast_eval_elem(expr_ctx_t *ctx, const char *name, const value_t *row_v,
 static int unop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t *result) {
     if (op == OP_NEGATE) {
         if (child->type != VAL_NUM) { ctx->error = "Unary minus requires number"; return -1; }
-        *result = val_num_dec(-child->num, child->ndec, child->nwidth);
+        *result = val_num_dec(-child->num, child->ndec,
+                              val_dbase_widths() ? val_int_width(child) + 1 : child->nwidth);   /* the sign's column (dBASE) */
         return 0;
     }
     if (op == OP_NOT) {
@@ -1027,6 +1028,22 @@ static int unop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *child, value_t
  * the two, * their sum, / and ** SET DECIMALS unless the quotient is whole */
 static value_t num_result(ast_op_t op, double r, const value_t *left, const value_t *right) {
     int dl = left->ndec, dr = right->ndec;
+    if (val_dbase_widths()) {
+        /* dBASE III's, measured against it: integer widths n, decimals d */
+        int nl = val_int_width(left), nr = val_int_width(right);
+        int big = nl > nr ? nl : nr, dmax = dl > dr ? dl : dr;
+        switch (op) {
+        case OP_ADD: case OP_SUB: case OP_MOD:   /* the wider, and one */
+            return val_num_dec(r, dmax, big + 1);
+        case OP_MUL:                             /* both, and one */
+            return val_num_dec(r, dl + dr, nl + nr + 1);
+        case OP_DIV: {                           /* each over the other's decimals, and one */
+            int a = nl + dr, b = nr + dl, d = dmax > val_set_decimals ? dmax : val_set_decimals;
+            return val_num_dec(r, d, (a > b ? a : b) + 1);
+        }
+        default: break;
+        }
+    }
     switch (op) {
     case OP_ADD: case OP_SUB: return val_num_dec(r, dl > dr ? dl : dr, 0);
     case OP_MUL:              return val_num_dec(r, dl + dr, 0);
@@ -1264,7 +1281,25 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
     return -1;
 }
 
+/* A value into a variable as it is (a GET's, at its picture's width) */
+int ast_store_value(expr_ctx_t *ctx, const char *name, const value_t *val) {
+    if (!ctx->vars || memvar_set(ctx->vars, name, val) != 0) {
+        ctx->error = "Too many memory variables";
+        return -1;
+    }
+    return 0;
+}
+
+/* An assignment's (x := e): a number as a variable holds it, dBASE's
+ * widths in the interpreter (val_dbase_stored) */
+int ast_store_raw;   /* a GET's set-block running: its := stores as ast_store_value */
+
 int ast_store_name(expr_ctx_t *ctx, const char *name, const value_t *val) {
+    value_t w;
+    if (val->type == VAL_NUM && val_dbase_widths() && !ast_store_raw) {
+        w = val_dbase_stored(val);
+        val = &w;
+    }
     if (!ctx->vars || memvar_set(ctx->vars, name, val) != 0) {
         ctx->error = "Too many memory variables";
         return -1;

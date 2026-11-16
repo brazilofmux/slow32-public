@@ -54,5 +54,7 @@ typedef struct set_options {
 void set_init(set_options_t *opts);
 void set_execute(set_options_t *opts, const char *arg);
 void set_display(const set_options_t *opts);
+/* SET HEADING: as set, else the dialect's own (dBASE III on, Clipper off) */
+int set_heading_on(const set_options_t *opts);
 
 #endif

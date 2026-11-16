@@ -4,13 +4,13 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: 
 Database TEST.DBF created with 1 field(s).
-. Database TEST.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
+. . . 
+      1 record replaced
 . . 
-         2
-. Zap complete.
+      1 record replaced
 . 
+         2
+. . 
          0
 . 
 .T.

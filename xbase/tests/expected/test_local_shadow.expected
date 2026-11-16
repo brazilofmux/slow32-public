@@ -3,9 +3,13 @@ xBase interpreter 1.0
 
 . 
 outer
+inner
+outer
 outer
 sub
+sub
 outer
+sub2
 sub
 sub2
 . 

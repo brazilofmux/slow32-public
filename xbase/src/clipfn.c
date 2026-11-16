@@ -874,7 +874,8 @@ static int fn_exp(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 static int fn_log(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_NUM || args[0].num <= 0) { ctx->error = "LOG requires a positive number"; return -1; }
-    *result = val_num_dec(log(args[0].num), val_set_decimals, 0);
+    *result = val_num_dec(log(args[0].num), val_set_decimals,
+                          val_dbase_widths() ? val_int_width(&args[0]) : 0);   /* the argument's width (dBASE) */
     return 0;
 }
 

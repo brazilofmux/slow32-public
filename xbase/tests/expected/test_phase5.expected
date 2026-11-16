@@ -9,15 +9,25 @@ xBase interpreter 1.0
         15
 . 
 Type mismatch in +
-. . . . . . 
+. . 
+0
+. 
+. . 
+        15
+Type mismatch in * or /
+. 
         15
 . 
 Type mismatch in * or /
 . . . . *** No database in use
 . 
         36
-. . Do suspended
+. . 
+1
+Do suspended
 . 
          1
-. . *** Variable not found: step
+. 
+2
+. *** Variable not found: step
 . 

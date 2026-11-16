@@ -4,18 +4,24 @@ xBase interpreter 1.0
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: 
 Database PEOPLE.DBF created with 2 field(s).
-. Database PEOPLE.DBF opened with 0 record(s).
-. Record 1 added.
-. . Record 2 added.
-. . Record 3 added.
-. . 3 record(s) indexed.
+. . . 
+      1 record replaced
+. . 
+      1 record replaced
+. . 
+      1 record replaced
+. 
+   00% indexed  100% indexed           3 Records indexed
 . . 
 Alice  25
-. . 
-Bob  35
-. . 
-Charlie  30
-. . 
-Charlie  30
-. Database closed.
 . 
+Record No.      3
+. 
+Bob  35
+. 
+Record No.      1
+. 
+Charlie  30
+. . 
+Charlie  30
+. . 
