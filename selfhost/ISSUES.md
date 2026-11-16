@@ -4178,6 +4178,27 @@ program cut down (xbc's C; stage08 cc on slow32-dbt, M5):
 
 Reproduce: the old test is `git show 526c10de:xbc/tests/dupspan.prg`;
 `XBC_WORK=dir XBC_CC=stage08 bash xbc/compile-prg.sh dupspan.prg d.s32x`
-leaves dir/dupspan.c.  Not yet looked into: which pass (the narration
-cc.s32x writes on stderr has per-pass lines to time).  clang compiles
-the same C in seconds.
+leaves dir/dupspan.c.  clang compiles the same C in seconds.
+
+Profiled (2026-11-16): `slow32 -p` over cc.s32x on the 1,000-record
+straight program (39.6 G instructions), charged to functions by the
+executable's symbol table.  Nearly all of it is four "for each X, look
+at the whole function" loops, none of them inherent to what the pass
+computes:
+
+- 46% `ra_csplit_on_inst` / `ra_csplit_on_dom` (+2% `ra_csplit_on_phis`,
+  5% `ra_after_mark`): `ra_mark_after_uses` walks every instruction a
+  call dominates, once per call -- calls x instructions, in a function
+  that is nearly all calls.  What it asks (which values are used after
+  this call) is liveness at the call, one backward pass for all calls.
+- 16% `ho_dead_slots`: an instruction with an argument list and
+  `hi_nargs(i) == 0` -- meant for a kind it does not know -- marks every
+  ALLOCA bad by scanning the whole function; a call with no arguments
+  (`cl_append_blank()`) takes that path, so each one costs a full scan
+  (and makes the pass give up on the function).
+- 11% `ho_phi_drop_pred`: each dropped edge scans every instruction for
+  the block's phis instead of walking the block's phi list.
+- 3% `hl_get_alloca_id`: a linear search of the function's allocas per
+  lookup.
+
+The register allocator's own coloring (`gc_simplify`) is 4%.
