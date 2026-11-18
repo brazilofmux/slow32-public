@@ -1,6 +1,10 @@
 # SLOW-32 Project
 
-A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
+A fictional 32-bit RISC CPU with a complete toolchain. It failed to be slow.
+
+Work started in August 2025. The name was a hedge: a software CPU is usually
+about a tenth of native. A custom dynamic binary translator made it usably
+fast — dangerously fast.
 
 - **Purpose**: Educational CPU design and sandboxed compute engine
 - **Status**: Active. Two independent C compilers (an LLVM backend and a
@@ -367,9 +371,11 @@ make runtime      # Builds crt0.s32o, locales.s32o, libs32.s32a, libc_debug.s32a
 
 ## History
 
-The first version of SLOW-32 went from specification to a working C compiler
-in under two hours.  Everything above — the self-hosting bootstrap chain, the
-second compiler, the graphics stack, DOOM — came after.
+The first version went from specification to a working C compiler in under
+two hours, in August 2025. The rest of the tree — the self-hosting
+bootstrap, a second C compiler, the graphics stack, DOOM — came after that
+afternoon. The engines and the numbers are in
+[docs/EMULATORS.md](docs/EMULATORS.md).
 
 ## License
 
