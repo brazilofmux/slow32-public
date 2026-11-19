@@ -14,6 +14,8 @@
  * that is valid UTF-8 is UTF-8, anything else is CP437 (ruling 6). */
 
 #define CP_437  437
+#define CP_850  850      /* tables only: the program's text is CP437 or UTF-8 */
+#define CP_1252 1252
 #define CP_UTF8 65001
 
 int cp_current(void);
@@ -55,6 +57,17 @@ int cp_columns(const char *s, int n);
 int cp_key(unsigned cp);
 int cp_key_char(int key);
 
+/* A table's codepage from its header's mark (byte 29, as FoxPro 2.5 and
+ * dBASE IV write it): 0x01 CP437, 0x02 CP850, 0x03 Windows 1252; 0 for
+ * none, or one not known -- such a table is in the program's codepage */
+int cp_from_mark(unsigned char mark);
+
+/* Text in codepage from as codepage to: what fits of it in out (cap
+ * bytes, NUL included), never splitting a character; the bytes written.
+ * A character to lacks is the nearest it has (libutf's approximations;
+ * ruling 2), '?' when it has none. */
+int cp_convert(const char *s, int n, int from, int to, char *out, int cap);
+
 /* Program text held in codepage from, as codepage to; malloc'd.  NULL when
  * nothing changes (ASCII, or the same codepage) or memory is short. */
 char *cp_transcode(const char *s, int from, int to);
@@ -67,7 +80,7 @@ int cp_file_is_utf8(FILE *fp);
 
 /* A line of text from outside, in place (size: its buffer), into the
  * program's codepage; from_utf8 says what it was in.  A character the
- * codepage lacks becomes '?'. */
+ * codepage lacks becomes the nearest it has (ruling 2), '?' at the last. */
 void cp_source_line(char *line, int size, int from_utf8);
 
 /* The same line of a program file into UTF-8 instead, whatever the

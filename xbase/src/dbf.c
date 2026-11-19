@@ -6,7 +6,7 @@
 #include "dbf.h"
 #include "area.h"
 #include "util.h"
-#include "util.h"
+#include "codepage.h"
 
 #define DBF_CACHE_RECORDS 256
 #define DBF_CACHE_JUMP_RECORDS 8   /* window read on a non-sequential miss */
@@ -220,6 +220,7 @@ int dbf_open(dbf_t *db, const char *filename) {
     db->record_count = read_le32(hdr + 4);
     db->header_size = read_le16(hdr + 8);
     db->record_size = read_le16(hdr + 10);
+    db->codepage = cp_from_mark(hdr[29]);   /* the language driver id FoxPro and dBASE IV write */
 
     /* Number of fields = (header_size - 32 - 1) / 32 */
     nfields = (db->header_size - 33) / 32;
@@ -528,6 +529,23 @@ int dbf_find_field(const dbf_t *db, const char *name) {
     return -1;
 }
 
+/* The codepage a table's text is in: its mark's, or the program's */
+static int table_cp(const dbf_t *db) {
+    return db->codepage ? db->codepage : cp_current();
+}
+
+/* text in the table's codepage into the program's, in place (buf of size
+ * bytes); nothing to do for ASCII or when the two are one */
+static void from_table(const dbf_t *db, char *buf, int len, int size) {
+    int i;
+    char tmp[4096];
+    if (table_cp(db) == cp_current()) return;
+    for (i = 0; i < len && (unsigned char)buf[i] < 0x80; i++) ;
+    if (i == len) return;
+    cp_convert(buf, len, table_cp(db), cp_current(), tmp, size < (int)sizeof(tmp) ? size : (int)sizeof(tmp));
+    strcpy(buf, tmp);
+}
+
 int dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize) {
     int len;
 
@@ -540,6 +558,7 @@ int dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize) {
     /* +1 to skip deletion flag byte */
     memcpy(buf, db->record_buf + 1 + db->fields[idx].offset, len);
     buf[len] = '\0';
+    from_table(db, buf, len, bufsize);
     return 0;
 }
 
@@ -550,8 +569,21 @@ int dbf_set_field_raw(dbf_t *db, int idx, const char *value) {
     if (db->current_record == 0) return -1;
 
     len = db->fields[idx].length;
+    {   /* into the table's codepage (codepage.h), cut on a character */
+        static char conv[4096];
+        int i, n = (int)strlen(value);
+        for (i = 0; i < n && (unsigned char)value[i] < 0x80; i++) ;
+        if (i < n && table_cp(db) != cp_current()) {
+            cp_convert(value, n, cp_current(), table_cp(db), conv, (int)sizeof(conv));
+            value = conv;
+        }
+    }
     vlen = strlen(value);
-    if (vlen > len) vlen = len;
+    if (vlen > len) {
+        vlen = len;
+        if (table_cp(db) == CP_UTF8)   /* not through a character: back to its first byte */
+            while (vlen > 0 && ((unsigned char)value[vlen] & 0xC0) == 0x80) vlen--;
+    }
 
     /* Copy value, pad with spaces */
     memcpy(db->record_buf + 1 + db->fields[idx].offset, value, vlen);
@@ -673,6 +705,29 @@ void dbf_memo_close(dbf_t *db) {
     db->memo_fp = NULL;
 }
 
+/* A memo's text as read: soft returns (0x8D) made CR -- on a character's
+ * first byte only, so the 8D inside a UTF-8 character (c-caron is C4 8D)
+ * stays -- then into the program's codepage (codepage.h) */
+static int memo_text_done(const dbf_t *db, char *buf, int n, int bufsize) {
+    int i = 0;
+    while (i < n) {
+        if ((unsigned char)buf[i] == 0x8D) { buf[i++] = 0x0D; continue; }
+        if (table_cp(db) == CP_UTF8 && (unsigned char)buf[i] >= 0xC0) {
+            i++;
+            while (i < n && ((unsigned char)buf[i] & 0xC0) == 0x80) i++;
+        } else i++;
+    }
+    if (table_cp(db) != cp_current()) {
+        char *tmp = malloc((size_t)bufsize);
+        if (tmp) {
+            cp_convert(buf, n, table_cp(db), cp_current(), tmp, bufsize);
+            strcpy(buf, tmp);
+            free(tmp);
+        }
+    }
+    return 0;
+}
+
 int dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize) {
     int pos, n, i;
     unsigned char chunk[MEMO_BLOCK_SIZE];
@@ -694,21 +749,20 @@ int dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize) {
             /* Check for 0x1A terminator (single or double) */
             if (chunk[i] == 0x1A) {
                 buf[n] = '\0';
-                return 0;
+                return memo_text_done(db, buf, n, bufsize);
             }
-            /* Convert soft CR (0x8D) to regular CR (0x0D) */
             if (n < bufsize - 1) {
-                buf[n++] = (chunk[i] == 0x8D) ? 0x0D : chunk[i];
+                buf[n++] = (char)chunk[i];
             } else {
                 /* Buffer full — stop reading */
                 buf[n] = '\0';
-                return 0;
+                return memo_text_done(db, buf, n, bufsize);
             }
         }
     }
 
     buf[n] = '\0';
-    return 0;
+    return memo_text_done(db, buf, n, bufsize);
 }
 
 int dbf_memo_write(dbf_t *db, const char *text, int len) {
@@ -724,8 +778,17 @@ int dbf_memo_write(dbf_t *db, const char *text, int len) {
     /* Seek to write position */
     fseek(db->memo_fp, (long)start_block * MEMO_BLOCK_SIZE, 0);
 
-    /* Write text */
-    fwrite(text, 1, len, db->memo_fp);
+    /* Write text, in the table's codepage (codepage.h) */
+    if (table_cp(db) != cp_current()) {
+        int cap = len * 4 + 1;
+        char *conv = malloc((size_t)cap);
+        if (conv) {
+            len = cp_convert(text, len, cp_current(), table_cp(db), conv, cap);
+            fwrite(conv, 1, len, db->memo_fp);
+            free(conv);
+        } else fwrite(text, 1, len, db->memo_fp);
+    } else
+        fwrite(text, 1, len, db->memo_fp);
 
     /* Write 0x1A 0x1A terminator */
     fwrite("\x1A\x1A", 1, 2, db->memo_fp);

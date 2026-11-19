@@ -6,8 +6,10 @@
 #include <string.h>
 
 #include "codepage.h"
+#include "cptables.h"
 #include "../../common/s32utf.h"
 #include "../../common/s32cp437.h"
+#include "utf/charset_approx.c"   /* libutf's approximations (sync-libutf.sh): one unit, no build change */
 
 static int g_cp = CP_437;
 
@@ -154,6 +156,88 @@ int cp_file_is_utf8(FILE *fp) {
     return r;
 }
 
+/* ---- the single-byte codepages ---- */
+
+int cp_from_mark(unsigned char mark) {
+    return mark == 0x01 ? CP_437 : mark == 0x02 ? CP_850 : mark == 0x03 ? CP_1252 : 0;
+}
+
+static uint32_t byte_to_cp(int cp, unsigned char b) {
+    if (b < 0x80) return b;
+    if (cp == CP_850) return cp850_hi[b - 0x80];
+    if (cp == CP_1252) return cp1252_hi[b - 0x80];
+    return s32_cp437_to_cp(b);
+}
+
+static int cp_to_byte(int cp, uint32_t u) {
+    int i;
+    const unsigned short *t;
+    if (u < 0x80) return (int)u;
+    if (cp == CP_437) return s32_cp437_from_cp(u);
+    t = cp == CP_850 ? cp850_hi : cp1252_hi;
+    for (i = 0; i < 128; i++) if (t[i] == u) return 0x80 + i;
+    return -1;
+}
+
+/* one character's UTF-8 through a libutf DFA: the byte it maps to */
+static int dfa_byte(const unsigned char *itt, const unsigned short *sot, const unsigned short *sbt,
+                    int accept, const unsigned char *p) {
+    int state = 0;
+    do {
+        unsigned char col = itt[*p++];
+        unsigned short off = sot[state];
+        for (;;) {
+            int y = sbt[off];
+            if (y < 128) {                       /* a run */
+                if (col < y) { state = sbt[off + 1]; break; }
+                col = (unsigned char)(col - y);
+                off += 2;
+            } else {                             /* a copy */
+                y = 256 - y;
+                if (col < y) { state = sbt[off + col + 1]; break; }
+                col = (unsigned char)(col - y);
+                off = (unsigned short)(off + y + 1);
+            }
+        }
+    } while (state < accept);
+    return state - accept;
+}
+
+/* code point u in single-byte codepage cp: exactly, else the nearest
+ * (ruling 2): CP437 by libutf's CP437 table, CP850 and 1252 by its
+ * Latin-1 table then exactly; '?' at the last */
+static int approx_byte(int cp, uint32_t u) {
+    unsigned char e[4];
+    int b = cp_to_byte(cp, u);
+    if (b >= 0) return b;
+    if (u > 0x10FFFF || (u >= 0xD800 && u <= 0xDFFF)) return '?';
+    s32u_encode(u, e);
+    if (cp == CP_437) return dfa_byte(tr_cp437_itt, tr_cp437_sot, tr_cp437_sbt, TR_CP437_ACCEPTING_STATES_START, e);
+    b = dfa_byte(tr_latin1_itt, tr_latin1_sot, tr_latin1_sbt, TR_LATIN1_ACCEPTING_STATES_START, e);
+    b = cp_to_byte(cp, (uint32_t)b);   /* Latin-1's byte is its code point */
+    return b >= 0 ? b : '?';
+}
+
+int cp_convert(const char *s, int n, int from, int to, char *out, int cap) {
+    const unsigned char *p = (const unsigned char *)s;
+    int i = 0, o = 0;
+    while (i < n) {
+        uint32_t u;
+        unsigned char e[4];
+        int k, m;
+        if (from == CP_UTF8) { k = (int)s32u_decode(p + i, (size_t)(n - i), &u); }
+        else { u = byte_to_cp(from, p[i]); k = 1; }
+        if (to == CP_UTF8) m = s32u_encode(u, e);
+        else { e[0] = (unsigned char)approx_byte(to, u); m = 1; }
+        if (o + m > cap - 1) break;
+        memcpy(out + o, e, (size_t)m);
+        o += m;
+        i += k;
+    }
+    out[o] = '\0';
+    return o;
+}
+
 /* UTF-8 to CP437, in place: never longer */
 static void utf8_to_437(char *s) {
     unsigned char *p = (unsigned char *)s, *o = p;
@@ -161,11 +245,9 @@ static void utf8_to_437(char *s) {
     while (*p) {
         uint32_t cp;
         size_t k;
-        int b;
         if (*p < 0x80) { *o++ = *p++; n--; continue; }
         k = s32u_decode(p, n, &cp);
-        b = s32_cp437_from_cp(cp);
-        *o++ = (unsigned char)(b < 0 ? '?' : b);
+        *o++ = (unsigned char)approx_byte(CP_437, cp);   /* the nearest (ruling 2) */
         p += k;
         n -= k;
     }

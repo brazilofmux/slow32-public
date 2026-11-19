@@ -1,0 +1,13 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+437        437      65001 [Müller]          6
+437 back ["Gödel"]
+1252       1252 [Müller]
+1252 back [Ærø €5]
+none          0 [Müller]
+none cut [日本]          2
+437 bytes         34        148         34
+1252 bytes        146        111         63
+. 

@@ -1,8 +1,8 @@
 # xBase and UTF-8
 
-Status: plan with rulings, 2026-11-19.  Steps 0-3 (the terminal edge, the
-setting, the string functions, the screen and its editors) are built;
-steps 4-5 (tables, indexes) are not.
+Status: plan with rulings, 2026-11-19.  Steps 0-4 (the terminal edge, the
+setting, the string functions, the screen and its editors, tables) are
+built; step 5 (index keys) is not.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -146,8 +146,9 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
 6. **Source files** are judged per file: valid UTF-8 is UTF-8, anything
    else CP437.  A literal means the characters the file holds.
 7. **A new table in UTF-8 mode** leaves the header's codepage byte 0 ("not
-   stated") and is taken as UTF-8 by a program in UTF-8 mode; FoxPro to be
-   asked what it does with an unknown mark before this is final.
+   stated") and is taken as UTF-8 by a program in UTF-8 mode.  FoxPro 2.6
+   does the same with an unmarked table: read raw, in its own codepage
+   (checked 2026-11-19, step 4).
 
 ## Order of work
 
@@ -204,7 +205,22 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    test_codepage_utf8.  A field's width stays in characters (a CJK
    character takes two columns of it); a GET on a table field is still the
    field's bytes wide until step 4.
-4. Tables: the cut at a boundary, the header's codepage byte, translation
-   on read and write.  FoxPro cases.
+4. **Tables -- built 2026-11-19.**  A table's codepage is its header's mark
+   (byte 29: 0x01 CP437, 0x02 CP850, 0x03 Windows 1252); none, or one not
+   known, is the program's.  dbf_get_field_raw and the memo reader convert
+   into the program's codepage, dbf_set_field_raw and the memo writer into
+   the table's -- a character it lacks as the nearest (libutf's CP437 and
+   Latin-1 approximation DFAs, vendored by xbase/sync-libutf.sh; CP850 and
+   1252 exactly from src/cptables.h, gen-cptables.py), '?' at the last --
+   and a UTF-8 field is cut before a character that would not fit, never
+   through it.  field_format_char pads and cuts in characters; the table
+   settles the bytes.  A memo's soft return is taken on a character's first
+   byte only.  CPCURRENT() is 437 or 65001, CPDBF() the mark or 0.  FoxPro
+   2.6 with CODEPAGE=1252 agrees: a CP437-marked table's "M\x81ller" reads
+   as 1252's "Müller", its ü is written back as 0x81, an unmarked table is
+   read raw.  (Without CODEPAGE= FoxPro's CPCURRENT() is 0 and it converts
+   nothing; foxrun has no way to give it a CONFIG.FPW yet.)  Test:
+   test_codepage_tables (fixtures in xbase/tests/codepage, mkcptables.py).
+   Record-to-record copies (COPY TO, PACK) move bytes as they are.
 5. Indexes: the cut at a boundary.  Collation as a separate option, if
    wanted.

@@ -6,16 +6,25 @@
 #include "util.h"
 #include "date.h"
 #include "command.h"
+#include "codepage.h"
 
+/* A character field's value: field_len characters (codepage.h), cut or
+ * padded with blanks -- in CP437 field_len bytes, as ever.  In UTF-8 the
+ * bytes are the table's to settle (dbf_set_field_raw converts and cuts on
+ * a character); buf holds 256, so never past 255 bytes, nor through a
+ * character. */
 int field_format_char(char *buf, int field_len, const char *value) {
-    int i, vlen;
-    vlen = strlen(value);
-    if (vlen > field_len) vlen = field_len;
-    for (i = 0; i < vlen; i++)
-        buf[i] = value[i];
-    for (; i < field_len; i++)
-        buf[i] = ' ';
-    buf[field_len] = '\0';
+    int n = (int)strlen(value), b, chars, o;
+    b = cp_offset(value, n, field_len);
+    if (b > 255) {
+        b = 255;
+        while (b > 0 && ((unsigned char)value[b] & 0xC0) == 0x80) b--;
+    }
+    memcpy(buf, value, (size_t)b);
+    o = b;
+    chars = cp_chars(value, b);
+    while (chars < field_len && o < 255) { buf[o++] = ' '; chars++; }
+    buf[o] = '\0';
     return 0;
 }
 

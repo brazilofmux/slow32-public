@@ -27,6 +27,8 @@ typedef struct {
     uint32_t current_record;         /* 1-based; 0 = no current record */
     char record_buf[DBF_MAX_RECORD_SIZE];
     int record_dirty;
+    int codepage;   /* its header's mark (codepage.h): CP_437, CP_850, CP_1252, or 0 --
+                       none, the program's -- what field text is converted from and to */
     int header_dirty;                /* record_count changed, needs write */
     int end_dirty;                   /* records appended: the 0x1A end byte moves at close */
     int modified;                    /* written to: the header's last-update date is stamped at close */

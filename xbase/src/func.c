@@ -722,6 +722,22 @@ static int fn_bchr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* FoxPro's names for asking (ruling 1): CPCURRENT() the program's
+ * codepage, 437 or 65001 (UTF-8, Windows' number for it); CPDBF() the
+ * current table's mark -- 437, 850, 1252 -- or 0 for a table without one,
+ * which is read in the program's (docs/plans/xbase-utf8.md) */
+static int fn_cpcurrent(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(cp_current());
+    return 0;
+}
+
+static int fn_cpdbf(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    *result = val_num(ctx->db && dbf_is_open(ctx->db) ? ctx->db->codepage : 0);
+    return 0;
+}
+
 /* KEYCHAR(nKey): the character a key stands for, "" for a key that is
  * none (an arrow, a function key, Alt-A).  In UTF-8 a character past
  * U+00FF comes from INKEY() as its code point plus 65536, so it can be
@@ -2846,6 +2862,8 @@ static const func_entry_t func_table[] = {
     { "LIKE",      fn_like },
     { "CHRTRAN",   fn_chrtran },
     { "KEYCHAR",   fn_keychar },
+    { "CPCURRENT", fn_cpcurrent },
+    { "CPDBF",     fn_cpdbf },
     { "BLEN",      fn_blen },
     { "BSUBSTR",   fn_bsubstr },
     { "BASC",      fn_basc },
