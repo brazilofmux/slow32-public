@@ -7,7 +7,8 @@ formats, viewer socket, test contract — numbers pinned).
 
 Captured 2026-08-16. The hose carries bytes; the tube shows pictures.
 Sibling document to [hose.md](hose.md), same rules: the host composes
-machines, guests see services, absence is a legal answer.
+machines, guests see services, absence is a legal answer. Keys are
+records the guest pulls: [input-queue.md](input-queue.md).
 
 ## The amendment
 

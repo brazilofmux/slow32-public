@@ -1,6 +1,7 @@
 # The hose
 
 How two SLOW-32 programs talk, and how they do not.
+Input is the other direction: [input-queue.md](input-queue.md).
 
 Captured 2026-08-15 after the 1987-desk conversation asked the
 obvious question: Kermit is a file protocol for a wire — what is

@@ -365,6 +365,7 @@ make runtime      # Builds crt0.s32o, locales.s32o, libs32.s32a, libc_debug.s32a
 - [Improvements](docs/IMPROVEMENTS.md) - Known issues and suggested fixes
 - [The 1987 Desk](docs/plans/1987-desk.md) - Period software we should (and should not) import
 - [The hose](docs/plans/hose.md) - How two SLOW-32 programs talk (sockets, not shared memory)
+- [The input queue](docs/plans/input-queue.md) - Events are records the guest pulls; the host does not call in
 - [Engine Room](docs/plans/engine-room.md) - DBT and codegen performance work
 - [COBOL](cobol/README.md), [Fortran 77](fortran/README.md), [Forth](forth/README.md), [Self-hosting](selfhost/README.md) - the larger fronts each have their own README, as do the interpreters: [xBase](xbase/README.md) (and its compiler, [s32-xbc](xbc/README.md)), [SLOW BASIC](sbasic/README.md), [Lua](lua/README.md), [Prolog](prolog/README.md), [ISLISP](islisp/README.md)
 - [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference, including the main test harnesses
