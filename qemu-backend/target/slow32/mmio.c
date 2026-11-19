@@ -373,7 +373,7 @@ typedef struct {
 
 typedef struct {
     bool armed;
-    int64_t deadline_us;    /* g_get_monotonic_time() */
+    int64_t deadline_ns;    /* slow32_mono_ns() */
     uint32_t cookie;
 } Slow32Timer;
 
@@ -1754,6 +1754,82 @@ static const Slow32BuiltinService *slow32_find_builtin_service(const char *name)
     return NULL;
 }
 
+/*
+ * The guest's clock.  By default the host's.  S32_CLOCK=step makes it a
+ * clock the test owns (slow-32 docs/plans/input-queue.md, the first edge),
+ * as in tools/emulator/mmio_ring.c: it starts at S32_CLOCK_EPOCH (seconds
+ * since the POSIX epoch), moves one S32_CLOCK_STEP (nanoseconds) at every
+ * service point, by a SLEEP's interval at once, and to the deadline when a
+ * POLL or FDPOLL would otherwise wait for it.  Every engine reaches the same
+ * service points in the same order, so a program that mixes input with time
+ * prints the same bytes on each.  GETTZ is still the host's zone.
+ */
+#define S32_CLOCK_EPOCH_DEFAULT 946684800ull    /* 2000-01-01T00:00:00Z */
+#define S32_CLOCK_STEP_DEFAULT  1000000ull      /* 1 ms */
+
+static struct {
+    bool stepped;
+    uint64_t now_ns;        /* since the run began: the monotonic clock */
+    uint64_t epoch_s;       /* the wall clock is this plus now_ns */
+    uint64_t quantum_ns;    /* added at every service point */
+} slow32_clock;
+
+static uint64_t slow32_clock_env_u64(const char *name, uint64_t dflt,
+                                     uint64_t lowest)
+{
+    const char *s = getenv(name);
+    char *end;
+    unsigned long long v;
+
+    if (!s || !*s) {
+        return dflt;
+    }
+    errno = 0;
+    v = strtoull(s, &end, 10);
+    if (errno || *end || v < lowest || s[0] == '-') {
+        fprintf(stderr, "%s=%s: not a number of %s\n", name, s,
+                lowest ? "nanoseconds above zero" : "seconds");
+        exit(2);
+    }
+    return (uint64_t)v;
+}
+
+static void slow32_clock_init(void)
+{
+    const char *mode = getenv("S32_CLOCK");
+
+    slow32_clock.stepped = false;
+    slow32_clock.now_ns = 0;
+    if (mode && *mode && strcmp(mode, "host") != 0) {
+        if (strcmp(mode, "step") != 0) {
+            fprintf(stderr, "S32_CLOCK=%s: the clock is host or step\n", mode);
+            exit(2);
+        }
+        slow32_clock.stepped = true;
+    }
+    slow32_clock.epoch_s = slow32_clock_env_u64("S32_CLOCK_EPOCH",
+                                                S32_CLOCK_EPOCH_DEFAULT, 0);
+    slow32_clock.quantum_ns = slow32_clock_env_u64("S32_CLOCK_STEP",
+                                                   S32_CLOCK_STEP_DEFAULT, 1);
+}
+
+/* the clock moves to t, never back */
+static void slow32_clock_advance_to(uint64_t t)
+{
+    if (t > slow32_clock.now_ns) {
+        slow32_clock.now_ns = t;
+    }
+}
+
+/* the monotonic clock timers and POLL run on, in nanoseconds */
+static int64_t slow32_mono_ns(void)
+{
+    if (slow32_clock.stepped) {
+        return (int64_t)slow32_clock.now_ns;
+    }
+    return g_get_monotonic_time() * 1000;
+}
+
 static void slow32_mmio_init_default_args(Slow32MMIOContext *ctx)
 {
     ctx->args_argc = 1;
@@ -1834,6 +1910,7 @@ void slow32_mmio_context_init(Slow32CPU *cpu)
 {
     g_assert(cpu->mmio == NULL);
     cpu->mmio = g_new0(Slow32MMIOContext, 1);
+    slow32_clock_init();
     cpu->mmio->args_blob = g_byte_array_sized_new(16);
     cpu->mmio->envp_blob = g_byte_array_sized_new(16);
     slow32_mmio_init_default_args(cpu->mmio);
@@ -2176,7 +2253,16 @@ static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
     clockid_t clk = req->status == S32_MMIO_CLOCK_MONOTONIC ? CLOCK_MONOTONIC
                   : req->status == S32_MMIO_CLOCK_PROCESS ? CLOCK_PROCESS_CPUTIME_ID
                   : CLOCK_REALTIME;
-    if (clock_gettime(clk, &ts) != 0) {
+    if (slow32_clock.stepped) {
+        /* one clock, stepped: the wall clock is it from the epoch,
+         * monotonic and processor time are it from the start */
+        uint64_t ns = slow32_clock.now_ns;
+        if (clk == CLOCK_REALTIME) {
+            ns += slow32_clock.epoch_s * 1000000000ull;
+        }
+        ts.tv_sec = (time_t)(ns / 1000000000ull);
+        ts.tv_nsec = (long)(ns % 1000000000ull);
+    } else if (clock_gettime(clk, &ts) != 0) {
         slow32_mmio_fail(resp, EINVAL);
         return;
     }
@@ -2316,8 +2402,8 @@ static bool slow32_timer_earliest(Slow32MMIOContext *ctx, int64_t *deadline)
         if (!ctx->timers[i].armed) {
             continue;
         }
-        if (!any || ctx->timers[i].deadline_us < *deadline) {
-            *deadline = ctx->timers[i].deadline_us;
+        if (!any || ctx->timers[i].deadline_ns < *deadline) {
+            *deadline = ctx->timers[i].deadline_ns;
         }
         any = true;
     }
@@ -2326,16 +2412,16 @@ static bool slow32_timer_earliest(Slow32MMIOContext *ctx, int64_t *deadline)
 
 static void slow32_deliver_timers(Slow32MMIOContext *ctx, const CPUSlow32State *env)
 {
-    int64_t now = g_get_monotonic_time();
+    int64_t now = slow32_mono_ns();
 
     for (;;) {
         int best = -1;
 
         for (unsigned i = 0; i < S32_MMIO_TIMER_MAX; i++) {
-            if (!ctx->timers[i].armed || ctx->timers[i].deadline_us > now) {
+            if (!ctx->timers[i].armed || ctx->timers[i].deadline_ns > now) {
                 continue;
             }
-            if (best < 0 || ctx->timers[i].deadline_us < ctx->timers[best].deadline_us) {
+            if (best < 0 || ctx->timers[i].deadline_ns < ctx->timers[best].deadline_ns) {
                 best = (int)i;
             }
         }
@@ -2382,8 +2468,8 @@ static void slow32_mmio_handle_timer_start(Slow32MMIOContext *ctx,
     }
     uint64_t secs = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
     ctx->timers[slot].armed = true;
-    ctx->timers[slot].deadline_us = g_get_monotonic_time() +
-        (int64_t)(secs * 1000000ull + interval.nanoseconds / 1000u);
+    ctx->timers[slot].deadline_ns = slow32_mono_ns() +
+        (int64_t)(secs * 1000000000ull + interval.nanoseconds);
     ctx->timers[slot].cookie = req->status;
     resp->status = (uint32_t)slot;
 }
@@ -2457,10 +2543,12 @@ static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
             pf[np].events = POLLIN; pf[np].revents = 0; np++;
         }
         int timeout = -1;
-        if (timed) {
-            int64_t now = g_get_monotonic_time();
+        if (timed && slow32_clock.stepped) {
+            timeout = 0;    /* look once; the clock jumps below, nothing sleeps */
+        } else if (timed) {
+            int64_t now = slow32_mono_ns();
             if (deadline > now) {
-                int64_t ms = (deadline - now) / 1000;
+                int64_t ms = (deadline - now) / 1000000;
                 timeout = ms > 86400000 ? 86400000 : (int)ms;
             } else {
                 timeout = 0;
@@ -2490,6 +2578,12 @@ static void slow32_mmio_handle_poll(Slow32MMIOContext *ctx,
                 break;
             }
         }
+        /* Stepped, nothing was ready: the time a host would have slept
+         * passes at once, and the earliest timer is due. */
+        if (slow32_clock.stepped && timed &&
+            ctx->dpc_head == slow32_mmio_readl(env, S32_MMIO_DPC_TAIL_OFFSET)) {
+            slow32_clock_advance_to((uint64_t)deadline);
+        }
         slow32_deliver_timers(ctx, env);
         slow32_deliver_posts(ctx, env);
     }
@@ -2512,7 +2606,13 @@ static void slow32_mmio_handle_sleep(const CPUSlow32State *env,
                                     (uint8_t *)&interval, sizeof(interval));
         if (interval.nanoseconds < 1000000000u) {
             uint64_t secs = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
-            g_usleep((gulong)(secs * 1000000ull + interval.nanoseconds / 1000u));
+            if (slow32_clock.stepped) {
+                /* the interval passes at once */
+                slow32_clock_advance_to(slow32_clock.now_ns +
+                                        secs * 1000000000ull + interval.nanoseconds);
+            } else {
+                g_usleep((gulong)(secs * 1000000ull + interval.nanoseconds / 1000u));
+            }
         }
     }
     slow32_mmio_copy_to_guest(env, req->offset,
@@ -2721,7 +2821,15 @@ static void slow32_mmio_handle_fdpoll(Slow32MMIOContext *ctx,
         pf[np].revents = 0;
         which[np++] = i;
     }
-    if (s32_host_poll(pf, np, now ? 0 : (int)(int32_t)req->status) < 0) {
+    int timeout = now ? 0 : (int)(int32_t)req->status;
+    /* Stepped: look without waiting; if nothing is ready the timeout's
+     * worth of time passes at once (below).  No end stays no end. */
+    uint64_t stepped_wait_ns = 0;
+    if (slow32_clock.stepped && timeout > 0) {
+        stepped_wait_ns = (uint64_t)timeout * 1000000ull;
+        timeout = 0;
+    }
+    if (s32_host_poll(pf, np, timeout) < 0) {
         slow32_mmio_fail(resp, errno > 0 ? errno : EIO);
         return;
     }
@@ -2732,6 +2840,9 @@ static void slow32_mmio_handle_fdpoll(Slow32MMIOContext *ctx,
         if (w[i].revents) {
             ready++;
         }
+    }
+    if (ready == 0 && stepped_wait_ns) {
+        slow32_clock_advance_to(slow32_clock.now_ns + stepped_wait_ns);
     }
     if (req->length) {
         slow32_mmio_copy_to_guest(env, offset, (const uint8_t *)w, req->length);
@@ -4267,6 +4378,9 @@ void slow32_mmio_process(Slow32CPU *cpu)
         return;
     }
 
+    if (slow32_clock.stepped) {
+        slow32_clock.now_ns += slow32_clock.quantum_ns;   /* a service point is a tick */
+    }
     slow32_deliver_timers(ctx, env);
     slow32_deliver_posts(ctx, env);
 

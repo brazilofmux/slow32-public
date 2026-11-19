@@ -1114,7 +1114,8 @@ directory stream on a duplicate of it (§8.6).
 | 0x36 | FDPOLL | `length` = n × 8 (n ≤ 128); n `pollfd` at `off`; `status` = timeout in milliseconds, as i32 (negative: no end) | Waits until one of the descriptors is ready, or the timeout. `revents` written in place at `off`; `status` = the number of entries with any; `length` = the request's | `EINVAL` (`length` not a multiple of 8, n > 128, past the buffer); poll errno |
 
 The local time zone is the host's (normally the host `TZ` setting).
-`GETTIME`/`SLEEP` use the host's real clocks and are not deterministic.
+`GETTIME`/`SLEEP` use the host's real clocks and are not deterministic,
+unless the host runs the step clock (`S32_CLOCK=step`, §8.16).
 
 ##### 8.8.3 `pollfd` (8 bytes) — the guest's `struct pollfd`
 | Offset | Type | Field |
@@ -1744,6 +1745,7 @@ These change what a guest observes but are chosen by whoever runs the host.
 | `S32_EMU` | emulator used by EXEC if the host's own path is unknown |
 | `S32_TERM_KEYMARK` | the term service writes `ESC ] 9999 BEL` to stdout before each byte it reads from the keyboard (READ_KEY, READ_CHAR), so a harness can cut a full-screen program's output into one screen per key |
 | `S32_TUBE_KEYS`, `S32_TUBE_DUMP`, `S32_TUBE_DUMP_FULL`, `S32_TUBE_PORT` | tube key injection, headless journal, port-file path (`docs/TUBE.md` sections 2, 6, 7) |
+| `S32_CLOCK=step`, `S32_CLOCK_EPOCH=SECS`, `S32_CLOCK_STEP=NS` | the step clock: every clock GETTIME offers reads one virtual clock, which starts at EPOCH (seconds since the POSIX epoch; default 946684800, 2000-01-01) for the wall clock and 0 for the others, and moves STEP nanoseconds (default 1000000) at every service point (§8.3.1, before its first delivery), by SLEEP's interval at once, and, when POLL (§8.12) or FDPOLL finds nothing ready, to the earliest timer's deadline or by FDPOLL's timeout, without waiting. Timers run on it. A wait with no deadline and no timeout still blocks on its fds. `S32_CLOCK=host` or unset is the host's clocks; any other value, a STEP of 0, or a malformed number stops the host with status 2. GETTZ is unaffected |
 | `TZ`, umask, current directory, environment | host process state seen through GETTZ, OPEN/MKDIR modes, relative paths, ENVP/GETENV |
 
 Host diagnostics are not guest output and a host need not reproduce them.

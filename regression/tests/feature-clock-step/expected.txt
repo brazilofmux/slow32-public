@@ -1,0 +1,13 @@
+ok the wall clock starts at S32_CLOCK_EPOCH
+today is 1987-01-01 00:00
+ok one service point is one 1 ms quantum
+ok sleep(2) moves the clock 2 s
+ok usleep(250000) moves it 250 ms
+ok a 1 s timer fires
+ok the wait for it jumps the clock 1 s
+ok poll with nothing to watch times out
+ok and its 300 ms pass at once
+ok with nothing armed a wait still ends (EAGAIN)
+ok the wall clock moved with it
+all ok
+

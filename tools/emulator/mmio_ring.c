@@ -276,6 +276,60 @@ static bool stdin_prefix_active(void) {
     return lseek(g_stdin_prefix_fd, 0, SEEK_CUR) < st.st_size;
 }
 
+/* The guest's clock.  By default the host's.  S32_CLOCK=step makes it a
+ * clock the test owns (docs/plans/input-queue.md, the first edge): it
+ * starts at S32_CLOCK_EPOCH (seconds since the POSIX epoch), moves one
+ * S32_CLOCK_STEP (nanoseconds) at every service point, by a SLEEP's
+ * interval at once, and to the deadline when a POLL or FDPOLL would
+ * otherwise wait for it.  Every engine reaches the same service points in
+ * the same order, so a program that mixes input with time prints the same
+ * bytes on each.  Input is files or nothing then: a wait on an fd that is
+ * not ready does not move the clock, and live input is not ordered against
+ * time.  GETTZ is still the host's zone. */
+#define S32_CLOCK_EPOCH_DEFAULT 946684800ull    /* 2000-01-01T00:00:00Z */
+#define S32_CLOCK_STEP_DEFAULT  1000000ull      /* 1 ms */
+
+static struct {
+    bool stepped;
+    uint64_t now_ns;        /* since the run began: the monotonic clock */
+    uint64_t epoch_s;       /* the wall clock is this plus now_ns */
+    uint64_t quantum_ns;    /* added at every service point */
+} g_clock;
+
+static uint64_t clock_env_u64(const char *name, uint64_t dflt, uint64_t lowest) {
+    const char *s = getenv(name);
+    if (!s || !*s) return dflt;
+    char *end;
+    errno = 0;
+    unsigned long long v = strtoull(s, &end, 10);
+    if (errno || *end || v < lowest || s[0] == '-') {
+        fprintf(stderr, "%s=%s: not a number of %s\n", name, s,
+                lowest ? "nanoseconds above zero" : "seconds");
+        exit(2);
+    }
+    return (uint64_t)v;
+}
+
+static void clock_init(void) {
+    const char *mode = getenv("S32_CLOCK");
+    g_clock.stepped = false;
+    g_clock.now_ns = 0;
+    if (mode && *mode && strcmp(mode, "host") != 0) {
+        if (strcmp(mode, "step") != 0) {
+            fprintf(stderr, "S32_CLOCK=%s: the clock is host or step\n", mode);
+            exit(2);
+        }
+        g_clock.stepped = true;
+    }
+    g_clock.epoch_s = clock_env_u64("S32_CLOCK_EPOCH", S32_CLOCK_EPOCH_DEFAULT, 0);
+    g_clock.quantum_ns = clock_env_u64("S32_CLOCK_STEP", S32_CLOCK_STEP_DEFAULT, 1);
+}
+
+/* the clock moves to t, never back */
+static void clock_advance_to(uint64_t t) {
+    if (t > g_clock.now_ns) g_clock.now_ns = t;
+}
+
 /* read(2) on a guest fd's host fd, with the stdin prefix in front of fd 0. */
 static ssize_t host_read(int host_fd, void *buf, size_t n) {
     if (host_fd == STDIN_FILENO) {
@@ -2437,6 +2491,7 @@ static const char *legacy_opcode_service(const io_descriptor_t *req) {
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio) {
     maybe_init_trace_flag();
+    clock_init();
     /* a write to a pipe or socket whose reader has gone is EPIPE for the
      * guest, not a signal that kills the emulator */
     signal(SIGPIPE, SIG_IGN);
@@ -2741,6 +2796,7 @@ void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t ad
 // not take yet.
 
 static uint64_t mmio_mono_ns(void) {
+    if (g_clock.stepped) return g_clock.now_ns;
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
@@ -2964,7 +3020,9 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
             pf[np].events = POLLIN; pf[np].revents = 0; np++;
         }
         int timeout = -1;
-        if (timed) {
+        if (timed && g_clock.stepped) {
+            timeout = 0;        /* look once; the clock jumps below, nothing sleeps */
+        } else if (timed) {
             uint64_t now = mmio_mono_ns();
             if (deadline > now) {
                 uint64_t ms = (deadline - now) / 1000000ull;
@@ -3007,6 +3065,10 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
             io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], why };
             if (!mmio_dpc_push(mmio, &e)) break;
         }
+        /* Stepped, nothing was ready: the time a host would have slept
+         * passes at once, and the earliest timer is due. */
+        if (g_clock.stepped && timed && mmio->dpc_head == mmio->dpc_tail)
+            clock_advance_to(deadline);
         mmio_deliver_timers(mmio);
         mmio_deliver_posts(mmio);
     }
@@ -3110,6 +3172,13 @@ static void mmio_fdpoll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descri
         which[np++] = i;
     }
     int timeout = now ? 0 : (int)(int32_t)req->status;
+    /* Stepped: look without waiting; if nothing is ready the timeout's
+     * worth of time passes at once (below).  No end stays no end. */
+    uint64_t stepped_wait_ns = 0;
+    if (g_clock.stepped && timeout > 0) {
+        stepped_wait_ns = (uint64_t)timeout * 1000000ull;
+        timeout = 0;
+    }
     /* A prefixed stdin is readable now, whatever the real fd 0 says. */
     bool prefix_in = false;
     if (stdin_prefix_active()) {
@@ -3124,6 +3193,7 @@ static void mmio_fdpoll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descri
     for (nfds_t k = 0; k < np; k++) w[which[k]].revents = guest_poll_events(pf[k].revents);
     uint32_t ready = 0;
     for (uint32_t i = 0; i < n; i++) if (w[i].revents) ready++;
+    if (ready == 0 && stepped_wait_ns) clock_advance_to(g_clock.now_ns + stepped_wait_ns);
     if (req->length) memcpy(mmio->data_buffer + offset, w, req->length);
     resp->status = ready;
     resp->length = req->length;
@@ -3890,7 +3960,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             struct timespec ts;
-            if (clock_gettime(clk, &ts) != 0) {
+            if (g_clock.stepped) {
+                /* one clock, stepped: the wall clock is it from the epoch,
+                 * monotonic and processor time are it from the start */
+                uint64_t ns = g_clock.now_ns;
+                if (clk == CLOCK_REALTIME) ns += g_clock.epoch_s * 1000000000ull;
+                ts.tv_sec = (time_t)(ns / 1000000000ull);
+                ts.tv_nsec = (long)(ns % 1000000000ull);
+            } else if (clock_gettime(clk, &ts) != 0) {
                 mmio_fail(&resp, EINVAL);
                 break;
             }
@@ -3963,7 +4040,12 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             };
             struct timespec rem_ts = {0, 0};
 
-            int rc = nanosleep(&req_ts, &rem_ts);
+            /* stepped: the interval passes at once, and nothing interrupts it */
+            int rc = 0;
+            if (g_clock.stepped)
+                clock_advance_to(g_clock.now_ns + seconds * 1000000000ull + interval.nanoseconds);
+            else
+                rc = nanosleep(&req_ts, &rem_ts);
             if (rc == -1) {
                 if (errno == EINTR) {
                     uint64_t rem_secs = (rem_ts.tv_sec < 0) ? 0ull : (uint64_t)rem_ts.tv_sec;
@@ -5250,6 +5332,7 @@ write_response:
 
 // Process pending requests
 void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
+    if (g_clock.stepped) g_clock.now_ns += g_clock.quantum_ns;   /* a service point is a tick */
     mmio_deliver_timers(mmio);
     mmio_deliver_posts(mmio);
     /* A request is taken only when its response has room: with the

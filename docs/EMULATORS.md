@@ -227,6 +227,25 @@ rest), published for amd64 and arm64 as `hurriedreformist/slow32:<variant>`:
 ./scripts/run-in-docker.sh --qemu program.s32x        # QEMU TCG
 ```
 
+## A clock the test owns (`S32_CLOCK=step`)
+
+All four engines (the three C ones through `mmio_ring.c`, and
+`qemu-system-slow32` in its own `mmio.c`) read `S32_CLOCK=step`. The
+guest's time then stops being the host's: it starts at a fixed instant
+(`S32_CLOCK_EPOCH`, seconds since the POSIX epoch, default 2000-01-01),
+moves 1 ms (`S32_CLOCK_STEP`, nanoseconds) at every service point, and
+jumps rather than waits: `SLEEP` returns at once with its interval
+passed, and a `POLL` or `FDPOLL` that finds nothing ready moves the
+clock to the next deadline or by its timeout. Every engine reaches the
+same service points in the same order, so a program that mixes input
+with time (a frame loop, a timeout, a scheduler) prints the same bytes
+on each, and its sleeps cost nothing. Input should come from files
+(`S32_STDIN_PREFIX`, `S32_TUBE_KEYS`, a redirected stdin): live input
+is not ordered against virtual time. The exact rules are SPEC §8.16;
+the reasons are `docs/plans/input-queue.md`; the test is
+`regression/tests/feature-clock-step`, which a regression test opts
+into with `S32_CLOCK=step` in its `env.txt`.
+
 ## Putting a file in front of stdin (`S32_STDIN_PREFIX`)
 
 The engines built in this tree (`slow32`, `slow32-fast`, `slow32-dbt`;

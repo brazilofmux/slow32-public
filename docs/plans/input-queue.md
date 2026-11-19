@@ -256,10 +256,11 @@ declines a screen.
 
 A queue you cannot fill from a file is not a queue this tree will
 keep. Stdin has `S32_STDIN_PREFIX`. Tube keys have `S32_TUBE_KEYS`
-and `KEYE`. Time has nothing yet: DPC timers, `GETTIME` and `SLEEP`
-follow the host's clocks, so scripted guests prefer a prefix file
-and a finite loop over a wall-clock sleep. The first edge below is
-the clock a test can own.
+and `KEYE`. Time has the step clock: with `S32_CLOCK=step`, DPC
+timers, `GETTIME` and `SLEEP` follow a clock that moves at service
+points, not the host's (the first edge below, built). Without it
+they follow the host, and scripted guests prefer a prefix file and a
+finite loop over a wall-clock sleep.
 
 The differential harnesses compare engines on bytes. A new record
 kind is a new expected file, not a new thread.
@@ -267,8 +268,9 @@ kind is a new expected file, not a new thread.
 ## Three edges
 
 Places where the rules above hold but the machine does not yet let
-a program, or a test, do the obvious thing. Each is proposed, not
-built. None adds an opcode, a callback, or a merged device.
+a program, or a test, do the obvious thing. The first is built; the
+other two are proposed. None adds an opcode, a callback, or a merged
+device.
 
 ### 1. Time is the one input a test cannot inject
 
@@ -313,12 +315,26 @@ deterministic; under `step`, input is files or nothing. It is not a
 guest timer interrupt: time still moves only when the guest stops
 at a service point. Without the variable, nothing changes.
 
-**Where it lands.** `tools/emulator/mmio_ring.c` (the interpreter,
-`slow32-fast` and the DBT share it) and the qemu backend's own
-`mmio.c`, which has `GETTIME`, `SLEEP` and timers too. Then two
-tests: Kermit's timeout path on a prefix file, on all four engines;
-and Asteroids on a key file, the same frames on the three C engines
-(tube cases skip qemu, which has no tube: [TUBE.md](../TUBE.md) §7).
+**Built (2026-11-19).** In `tools/emulator/mmio_ring.c` (the
+interpreter, `slow32-fast` and the DBT share it) and the qemu
+backend's own `mmio.c`, whose timers moved from microseconds to
+nanoseconds on the way so the four engines jump to the same instant.
+The rules are [SPEC.md](../SPEC.md) §8.16. A bad value
+(`S32_CLOCK=stpe`, a step of 0, a negative epoch) stops every engine
+with status 2 rather than quietly running on the host's clock. The
+test is `regression/tests/feature-clock-step` (`env.txt` sets the
+clock and a 1987 epoch): the epoch on the wall clock, one quantum
+per service point, `sleep`, `usleep`, a DPC timer and `poll`'s
+timeout each moving the clock by their interval, all four engines
+agreeing, in no real time. With the host clock the same test fails
+and is killed by the harness's timeout during its first `sleep`.
+The heap loop above, run on a file, prints the same lines on every
+engine and its 300 ms of waiting take none.
+
+Still to write as tests: Kermit's timeout path on a prefix file, on
+all four engines; and Asteroids on a key file, the same frames on
+the three C engines (tube cases skip qemu, which has no tube:
+[TUBE.md](../TUBE.md) §7).
 
 ### 2. A key or a clock, from the tube
 
