@@ -1,0 +1,26 @@
+* tables, an index tag, SCAN, SCATTER, a recursive function, number display
+SET DATE AMERICAN
+CREATE TABLE PEOPLE (NAME C(20), AGE N(3), BORN D)
+INSERT INTO PEOPLE VALUES ("Ada", 36, CTOD("12/10/15"))
+APPEND BLANK
+REPLACE NAME WITH "Grace", AGE WITH 85, BORN WITH CTOD("12/09/06")
+INDEX ON NAME TAG NAME
+GO TOP
+SCAN
+  ? NAME, AGE, DTOC(BORN)
+ENDSCAN
+GO TOP
+SCATTER MEMVAR
+? "scattered:", m.name
+? "count:", RECCOUNT()
+? "fact(10):", fact(10)
+? "str:", STR(3.14159, 8, 3), TRANSFORM(1234.5, "9,999.99")
+? 7 / 2, 10 / 3, 2 ^ 10, MOD(-7, 3), INT(-3.5), ROUND(2.5, 0)
+USE
+
+FUNCTION fact
+PARAMETERS n
+IF n <= 1
+  RETURN 1
+ENDIF
+RETURN n * fact(n - 1)

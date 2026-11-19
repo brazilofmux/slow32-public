@@ -404,6 +404,18 @@ cd ~/slow-32 && bash xbc/tests/run-stage08.sh
 # 1.1 directory> (the script says what goes in it); exit 2 without.
 cd ~/slow-32/xbase/tests/dbase3 && DBASE3=... ./ndxfuzz.py run -n 50
 
+# Its FoxPro sibling: programs run by FoxPro 2.6 for Windows itself, on
+# Windows 3.11 under dos-monster, all cases in one boot (~2 s), each
+# directory back with OUT.TXT (SET ALTERNATE), ERR.TXT (ON ERROR, passed
+# over) and every table, index and memo FoxPro wrote; `diff` holds xbase
+# to the same OUT.TXT and error count.  A difference is a question, not a
+# verdict: xbase follows dBASE III where FoxPro does not.  FoxPro needs a
+# five-byte patch (fpw26/*.gft, applied with ~/graft) for its start-up
+# timing loop, which overflows on a fast host.  Needs FPW26=<a FoxPro 2.6
+# for Windows directory> and a Win 3.11 disk (the script says what);
+# exit 2 without.
+cd ~/slow-32/xbase/tests/foxpro && FPW26=... ./foxrun.py diff cases/*
+
 # And for a C LIBRARY change -- either one: the tree has two, runtime/
 # (clang-built programs) and selfhost/stage08/libc (the kit's), with some
 # sources built into both (printf, dtoa, time_std.c, strerror.c).  Each
