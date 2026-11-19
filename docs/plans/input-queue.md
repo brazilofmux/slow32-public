@@ -106,6 +106,84 @@ Tests do not sit on a human: `S32_STDIN_PREFIX` feeds stdin,
 `S32_TERM_KEYMARK` marks each term read so a harness can cut a
 screen per key.
 
+## One thread, a task heap, and the queue
+
+The desk loop grown up: one thread that runs scheduled work *and*
+answers input, with nothing calling in. A Win32 program does this
+with `MsgWaitForMultipleObjects` and its timeout set to the next
+deadline. Here the same loop is three calls.
+
+Scheduled work lives in a min-heap in the guest's own memory, keyed
+on when it is due, so the next job is always on top. The host never
+sees the heap. It sees one timer, armed for the top.
+
+```c
+for (;;) {
+    while (nheap > 0 && heap[0].due <= now_ns()) {
+        job_t j = pop();                    /* run what is due; a job may push more */
+        j.run(j.arg);
+    }
+    if (nheap > 0 && (timer < 0 || heap[0].due != armed_for)) {
+        if (timer >= 0) s32_timer_cancel(timer);    /* one already queued goes stale */
+        long long d = heap[0].due - now_ns();
+        if (d < 0) d = 0;
+        timer = s32_timer_start(d / 1000000000LL, d % 1000000000LL, ++cookie);
+        armed_for = heap[0].due;
+    }
+    s32_dpc_t e;
+    if (s32_dpc_wait_on(fds, nfds, &e) < 0)
+        break;                              /* EAGAIN: no timer, no fd -- nothing can arrive */
+    if (e.kind == S32_DPC_TIMER) {
+        if (e.cookie == cookie) timer = -1; /* ours fired; due jobs run at the top */
+        continue;                           /* a stale one is dropped, not unread */
+    }
+    if (e.kind == S32_DPC_READY && e.id == 0) {
+        char buf[80];
+        int n = read(0, buf, sizeof buf);
+        if (n <= 0) { nfds = 0; continue; } /* end of input: stop watching it */
+        /* ... handle the input ... */
+    }
+}
+```
+
+`now_ns` is `clock_gettime(CLOCK_MONOTONIC)`; `push` and `pop` are an
+ordinary binary heap. Built with clang and run with a line arriving
+on stdin between two jobs, it prints the same interleaving on the
+interpreter, `slow32-fast` and the DBT, and ends by itself when the
+heap is empty and stdin is closed.
+
+Four things make it work, and each is already in the tree:
+
+- **One host timer, any number of jobs.** The host gives a program
+  eight timers (`S32_MMIO_TIMER_MAX`), a fixed partition. The heap
+  is why eight is enough: the program needs one, for the top. A
+  program that asks for more timers wants a heap.
+- **Stale timers by cookie.** Re-arming does not race the old timer.
+  Each arm carries a new cookie; an entry with an old one is dropped.
+  Kermit does the same for its packet timeout (`kermit.c`).
+- **The end is a status.** With stdin closed and the heap empty,
+  nothing is armed and nothing is watched, so `s32_dpc_wait_on`
+  answers `EAGAIN` and the loop ends. It cannot sleep forever.
+- **Input is a record.** The readable fd arrives on the same ring as
+  the timer. The program reads it when it chooses, between jobs, so
+  a job is never interrupted halfway.
+
+**Beside `s32sched.h`.** The tree's cooperative scheduler
+(`runtime/include/s32sched.h`, test `feature-dpc-sched`) answers a
+different question: several tasks, each a protothread that awaits
+I/O or a timer, so one task's computation overlaps another's I/O.
+It spends a host timer on each task that awaits one, which is why
+it stops at eight tasks. The heap answers "many things due at
+different times, one thread". The two compose: a scheduler that kept
+its timer waits on a heap would arm one host timer for all of them.
+
+**And the edges (below).** Edge 2 is what this loop is missing for a tube
+program: put the tube key queue in `fds` and a game has the same
+loop. Edge 1 is what makes the loop a test: under the step clock,
+the order in which jobs run and input is answered is the same on
+every engine, so a desk program with a scheduler can be held to
+bytes.
+
 ## The glass
 
 The viewer may be as event-driven as it likes. `s32-crt` and
