@@ -1,5 +1,6 @@
 /* codepage.c -- the program's codepage, and text crossing into it
  * (codepage.h; docs/plans/xbase-utf8.md). */
+#include <locale.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +11,84 @@
 
 static int g_cp = CP_437;
 
+static void utf8_to_437(char *s);
+static void cp437_to_utf8(char *s, int size);
+
 int cp_current(void) { return g_cp; }
+
+void cp_set(int cp) {
+    g_cp = cp == CP_UTF8 ? CP_UTF8 : CP_437;
+    setlocale(LC_CTYPE, g_cp == CP_UTF8 ? "C.UTF-8" : "C");
+}
+
+const char *cp_name(int cp) { return cp == CP_UTF8 ? "UTF8" : "CP437"; }
+
+int cp_by_name(const char *name) {
+    char u[16];
+    int i;
+    for (i = 0; name[i] && i < 15; i++) {
+        char c = name[i];
+        u[i] = (char)(c >= 'a' && c <= 'z' ? c - 32 : c);
+    }
+    u[i] = '\0';
+    if (!strcmp(u, "UTF8") || !strcmp(u, "UTF-8")) return CP_UTF8;
+    if (!strcmp(u, "CP437") || !strcmp(u, "437")) return CP_437;
+    return 0;
+}
+
+int cp_decode(const char *s, int n, unsigned *cp) {
+    uint32_t c;
+    size_t k;
+    if (g_cp != CP_UTF8 || (unsigned char)s[0] < 0x80) { *cp = (unsigned char)s[0]; return 1; }
+    k = s32u_decode((const unsigned char *)s, (size_t)n, &c);
+    *cp = c;
+    return (int)k;
+}
+
+int cp_encode(unsigned cp, char *out) {
+    if (g_cp != CP_UTF8) { out[0] = (char)cp; return 1; }
+    return s32u_encode(cp, (unsigned char *)out);
+}
+
+int cp_chars(const char *s, int n) {
+    int i = 0, count = 0;
+    if (g_cp != CP_UTF8) return n;
+    while (i < n) {
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        count++;
+    }
+    return count;
+}
+
+int cp_offset(const char *s, int n, int k) {
+    int i = 0;
+    if (g_cp != CP_UTF8) return k < 0 ? 0 : k > n ? n : k;
+    while (k > 0 && i < n) {
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        k--;
+    }
+    return i;
+}
+
+char *cp_transcode(const char *s, int from, int to) {
+    const unsigned char *p;
+    size_t n = strlen(s);
+    char *out;
+    for (p = (const unsigned char *)s; *p && *p < 0x80; p++) ;
+    if (!*p || from == to) return NULL;
+    out = malloc(n * 3 + 1);              /* a CP437 byte is at most three in UTF-8 */
+    if (!out) return NULL;
+    if (from == CP_UTF8) {                /* to CP437: never longer */
+        memcpy(out, s, n + 1);
+        utf8_to_437(out);
+    } else {
+        memcpy(out, s, n + 1);
+        cp437_to_utf8(out, (int)(n * 3 + 1));
+    }
+    return out;
+}
 
 int cp_is_utf8(const char *s, size_t n) {
     const unsigned char *p = (const unsigned char *)s;

@@ -1038,6 +1038,58 @@ void prog_preprocess(char *line, memvar_store_t *store) {
 /* ---- Load program file ---- */
 static void prog_free(program_t *prog);
 
+/* The programs in memory, for SET CODEPAGE: their text is held in the
+ * program's codepage (codepage.h), so a switch converts it.  A line it
+ * replaces may be the statement doing the switching, so the old lines
+ * are freed at the next switch, not at this one. */
+static program_t **loaded_progs;
+static int n_loaded_progs, cap_loaded_progs;
+static char **retired_lines;
+static int n_retired_lines;
+
+static void prog_register(program_t *prog) {
+    if (n_loaded_progs == cap_loaded_progs) {
+        int cap = cap_loaded_progs ? cap_loaded_progs * 2 : 16;
+        program_t **grown = realloc(loaded_progs, (size_t)cap * sizeof *grown);
+        if (!grown) return;
+        loaded_progs = grown;
+        cap_loaded_progs = cap;
+    }
+    loaded_progs[n_loaded_progs++] = prog;
+}
+
+static void prog_unregister(program_t *prog) {
+    int i;
+    for (i = 0; i < n_loaded_progs; i++)
+        if (loaded_progs[i] == prog) { loaded_progs[i] = loaded_progs[--n_loaded_progs]; return; }
+}
+
+void prog_codepage_changed(int from, int to) {
+    int i, j, n = 0;
+    char **retire = NULL;
+    for (i = 0; i < n_retired_lines; i++) free(retired_lines[i]);
+    free(retired_lines);
+    retired_lines = NULL;
+    n_retired_lines = 0;
+    for (i = 0; i < n_loaded_progs; i++) n += loaded_progs[i]->nlines;
+    if (n) retire = malloc((size_t)n * sizeof *retire);
+    for (i = 0; i < n_loaded_progs; i++) {
+        program_t *prog = loaded_progs[i];
+        if (!prog->orig) continue;   /* all ASCII: the same in both */
+        for (j = 0; j < prog->nlines; j++) {
+            char *t;
+            if (!prog->orig[j]) continue;
+            t = cp_transcode(prog->orig[j], prog->src_cp, to);   /* from the file's text */
+            if (!t) t = strdup(prog->orig[j]);
+            if (!t) continue;
+            if (retire) retire[n_retired_lines++] = prog->lines[j];
+            else free(prog->lines[j]);
+            prog->lines[j] = t;
+        }
+    }
+    retired_lines = retire;
+}
+
 static program_t *prog_load(const char *filename) {
     FILE *fp;
     char path[128];
@@ -1096,7 +1148,6 @@ static program_t *prog_load(const char *filename) {
     int src_utf8 = cp_file_is_utf8(fp);   /* the program's codepage from the file's (codepage.h) */
     while (prog_fgets(line, sizeof(line), fp)) {
         trim_right(line);
-        cp_source_line(line, (int)sizeof(line), src_utf8);
         fileline++;
 
         /* Line continuation: ; at end */
@@ -1105,7 +1156,6 @@ static program_t *prog_load(const char *filename) {
             if (!prog_fgets(next, sizeof(next), fp)) break;
             fileline++;
             trim_right(next);
-            cp_source_line(next, (int)sizeof(next), src_utf8);
             /* The continuation's indentation is one blank: it separates the
              * tokens ("22" then ".AND." on the next line; joined tight they
              * lexed as the number 22. and a word) */
@@ -1124,8 +1174,10 @@ static program_t *prog_load(const char *filename) {
         if (prog->nlines >= capacity) {
             char **nl = (char **)realloc(prog->lines, (size_t)capacity * 2 * sizeof(char *));
             int *ns = nl ? (int *)realloc(prog->srcline, (size_t)capacity * 2 * sizeof(int)) : NULL;
+            char **no = ns && prog->orig ? (char **)realloc(prog->orig, (size_t)capacity * 2 * sizeof(char *)) : NULL;
             if (nl) prog->lines = nl;
-            if (!nl || !ns) {   /* refused whole, not run in part */
+            if (no) { prog->orig = no; memset(no + capacity, 0, (size_t)capacity * sizeof(char *)); }
+            if (!nl || !ns || (prog->orig && !no)) {   /* refused whole, not run in part */
                 prog_error(ERR_OUT_OF_MEMORY, "Out of memory reading the program");
                 fclose(fp);
                 prog_free(prog);
@@ -1136,18 +1188,30 @@ static program_t *prog_load(const char *filename) {
         }
 
         {
+            /* normalized in the file's own codepage (it touches only ASCII),
+             * then held in the program's (codepage.h); a line past ASCII
+             * keeps the file's text too, so a SET CODEPAGE converts from it
+             * and loses nothing */
             char norm[MAX_LINE_LEN];
-            prog->lines[prog->nlines] = strdup(prog_normalize_line(line, &blocks, norm, (int)sizeof(norm)));
+            const char *text = prog_normalize_line(line, &blocks, norm, (int)sizeof(norm));
+            char *held = cp_transcode(text, src_utf8 ? CP_UTF8 : CP_437, cp_current());
+            const unsigned char *hp;
+            for (hp = (const unsigned char *)text; *hp && *hp < 0x80; hp++) ;
+            if (*hp && !prog->orig) prog->orig = (char **)calloc((size_t)capacity, sizeof(char *));
+            if (*hp && prog->orig) prog->orig[prog->nlines] = strdup(text);
+            prog->lines[prog->nlines] = held ? held : strdup(text);
             prog->srcline[prog->nlines] = fileline;
         }
         prog->nlines++;
     }
 
     fclose(fp);
+    prog->src_cp = src_utf8 ? CP_UTF8 : CP_437;
     /* its routines known now, before the first call: one named as a
      * built-in is the program's from the start (func_register_override),
      * not only after some other routine's call has built the table */
     find_procedure(prog, "");
+    prog_register(prog);
     return prog;
 }
 
@@ -1156,10 +1220,16 @@ static void prog_free(program_t *prog) {
     if (prog) { free(prog->kind); prog->kind = NULL; }
     int i;
     if (!prog) return;
+    prog_unregister(prog);
     if (prog->lines) {
         for (i = 0; i < prog->nlines; i++)
             free(prog->lines[i]);
         free(prog->lines);
+    }
+    if (prog->orig) {
+        for (i = 0; i < prog->nlines; i++)
+            free(prog->orig[i]);
+        free(prog->orig);
     }
     free(prog->srcline);
     free(prog);

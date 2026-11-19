@@ -38,3 +38,6 @@
 #define _SET_MCENTER     37
 #define _SET_SCROLLBREAK 38
 #define _SET_COUNT       38
+
+/* Past Clipper's: the program's codepage, "CP437" or "UTF8" (SET CODEPAGE) */
+#define _SET_CODEPAGE    100

@@ -12,6 +12,8 @@
 #include <stdarg.h>
 #include <unistd.h>
 #include "clipfn.h"
+#include "codepage.h"
+#include "set.h"
 #include "ast.h"
 #include "func.h"
 #include "area.h"
@@ -1344,7 +1346,9 @@ static const set_entry_t set_entries[] = {
     { 25, "MARGIN", 'N' }, { 26, "BELL", 'L' }, { 27, "CONFIRM", 'L' }, { 28, "ESCAPE", 'L' },
     { 29, "INSERT", 'L' }, { 30, "EXIT", 'L' }, { 31, "INTENSITY", 'L' }, { 32, "SCOREBOARD", 'L' },
     { 33, "DELIMITERS", 'L' }, { 34, "DELIMCHARS", 'C' }, { 35, "WRAP", 'L' }, { 36, "MESSAGE", 'N' },
-    { 37, "MCENTER", 'L' }, { 38, "SCROLLBREAK", 'L' }, { 0, NULL, 0 } };
+    { 37, "MCENTER", 'L' }, { 38, "SCROLLBREAK", 'L' },
+    { 100, "CODEPAGE", 'C' },   /* past Clipper's: SET CODEPAGE (docs/plans/xbase-utf8.md) */
+    { 0, NULL, 0 } };
 
 /* Settings this interpreter does not act on are remembered here */
 static value_t set_shadow[40];
@@ -1414,6 +1418,7 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
     case 30: fn_readexit(ctx, NULL, 0, &v); return v;
     case 35: return val_logic(o->wrap);
     case 36: return vnum(o->message_row < 0 ? 0 : o->message_row);
+    case 100: return val_str(cp_name(cp_current()));
     default: return set_shadow[e->code];
     }
 }
@@ -1459,6 +1464,7 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
     case 20: if (v->type == VAL_CHAR) run_cmd("SET DEVICE TO %s", strcasecmp(v->str, "PRINTER") == 0 ? "PRINT" : v->str); return;
     case 29: fn_readinsert(ctx, v, 1, &r); return;
     case 30: fn_readexit(ctx, v, 1, &r); return;
+    case 100: if (v->type == VAL_CHAR && cp_by_name(v->str)) set_codepage(cp_by_name(v->str)); return;
     default:
         if (e->kind == 'L') set_shadow[e->code] = val_logic(truth_arg(v));
         else set_shadow[e->code] = *v;

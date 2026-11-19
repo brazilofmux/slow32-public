@@ -18,6 +18,30 @@
 
 int cp_current(void);
 
+/* Switch the program's codepage (SET CODEPAGE, XBASE_CODEPAGE): the C
+ * library's character classes follow (LC_CTYPE C.UTF-8 or C).  The
+ * terminal and the loaded program text are the callers' (set.c). */
+void cp_set(int cp);
+
+/* A codepage's name, and back: "CP437", "UTF8"; 0 for a name not known */
+const char *cp_name(int cp);
+int cp_by_name(const char *name);
+
+/* Characters in the program's codepage: in CP437 a byte is one; in UTF-8
+ * a code point is (ruling 4).  cp_chars counts them in s[0..n);
+ * cp_offset is the byte where character k (0-based) starts, n past the
+ * end; cp_decode reads the character at s (n >= 1 bytes there) into *cp
+ * and returns its bytes; cp_encode writes one, returning its bytes (at
+ * most 4). */
+int cp_chars(const char *s, int n);
+int cp_offset(const char *s, int n, int k);
+int cp_decode(const char *s, int n, unsigned *cp);
+int cp_encode(unsigned cp, char *out);
+
+/* Program text held in codepage from, as codepage to; malloc'd.  NULL when
+ * nothing changes (ASCII, or the same codepage) or memory is short. */
+char *cp_transcode(const char *s, int from, int to);
+
 /* s holds bytes past 0x7F, and all of it is well-formed UTF-8 */
 int cp_is_utf8(const char *s, size_t n);
 

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include "screen.h"
+#include "codepage.h"
 #include "keys.h"
 #include "command.h"
 #include "program.h"
@@ -71,9 +72,18 @@ void screen_init(void) {
      * byte as its CP437 character and gives keys back as CP437 bytes
      * (docs/SPEC.md 8.14.7; docs/plans/xbase-utf8.md).  An older host
      * refuses, and the bytes go through as they are. */
-    if (scr.term_available) term_set_charset(TERM_CHARSET_CP437);
+    screen_codepage_changed();
 #else
     scr.term_available = 0;
+#endif
+}
+
+/* The terminal's charset as the program's codepage says (docs/SPEC.md
+ * 8.14.7): CP437 bytes shown as their characters, or UTF-8 as it is */
+void screen_codepage_changed(void) {
+#if HAS_TERM
+    if (scr.term_available)
+        term_set_charset(cp_current() == CP_UTF8 ? TERM_CHARSET_UTF8 : TERM_CHARSET_CP437);
 #endif
 }
 

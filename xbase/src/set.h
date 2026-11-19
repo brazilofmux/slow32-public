@@ -60,4 +60,7 @@ void set_display(const set_options_t *opts);
 /* SET HEADING: as set, else the dialect's own (dBASE III on, Clipper off) */
 int set_heading_on(const set_options_t *opts);
 
+/* SET CODEPAGE: switch the program's codepage (codepage.h) */
+void set_codepage(int cp);
+
 #endif

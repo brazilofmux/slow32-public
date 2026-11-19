@@ -28,6 +28,11 @@ typedef struct {
     /* What each line begins with, decided once (0 = not yet); lines holding a
      * macro character are never cached, their text can change per execution */
     unsigned char *kind;
+    /* The file's own text of each line past ASCII (NULL for the others, or
+     * the whole array when none is), and the file's codepage: SET CODEPAGE
+     * converts from these (codepage.h) */
+    char **orig;
+    int src_cp;
 } program_t;
 
 /* Call stack frame */
@@ -253,6 +258,8 @@ void prog_set_procedure(const char *filename);
 
 /* Get name of loaded procedure file (NULL if none) */
 const char *prog_get_procedure_name(void);
+/* SET CODEPAGE: the loaded programs' text converted (codepage.h) */
+void prog_codepage_changed(int from, int to);
 
 /* Get memvar store (for program.c to access command.c's store) */
 memvar_store_t *prog_get_memvar_store(void);

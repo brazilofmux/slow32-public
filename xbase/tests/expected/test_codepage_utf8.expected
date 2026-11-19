@@ -1,0 +1,18 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+len         23          1          0
+substr Ça luťoučký  日本
+left/right Ça  日本
+at/rat          8         22         19
+upper ÇA VA? ŽLUŤOUČKÝ KŮŇ 日本
+lower ça va? žluťoučký kůň 日本
+proper Élan Vital École
+pad [   né] [né···] [  日  ]
+stuff naï-ïve
+chr/asc é        233      26085 日
+is .T. .T. .T. .F.
+chrtran cafe creme
+back          1        130
+. 

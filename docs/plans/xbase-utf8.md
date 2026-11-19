@@ -1,7 +1,7 @@
 # xBase and UTF-8
 
-Status: plan with rulings, 2026-11-19.  Step 0 (the terminal edge) is built;
-the rest is not.
+Status: plan with rulings, 2026-11-19.  Steps 0-2 (the terminal edge, the
+setting and the string functions) are built; 3-5 are not.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -163,9 +163,25 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    `cp_literal("...")`, converted at run time to the codepage then in
    force.  Test: test_codepage (xbase), feature-term-charset (every
    engine).
-1. Vendor libutf (`xbase/sync-libutf.sh`), and the CP850 table into
-   `~/utf/gen` first.
-2. The setting, and the string functions under it.  Harbour probes.
+1. **libutf -- not needed yet.**  Case and character classes come from
+   the C library (`<wctype.h>`, both libraries, Unicode's tables in a
+   UTF-8 locale): the setting switches LC_CTYPE to C.UTF-8.  libutf is
+   wanted for the approximations into an old codepage (step 4) and for
+   collation; CP850 goes into `~/utf/gen` then.
+2. **The setting and the string functions -- built 2026-11-19.**
+   `SET CODEPAGE TO "UTF8"` / `"CP437"`, `SET(_SET_CODEPAGE)` (100, past
+   Clipper's 38, in xbc's set.ch), XBASE_CODEPAGE for the start.  A switch
+   converts every loaded program's text from the file's own (each line past
+   ASCII keeps it), so a UTF-8 program that switches on its first line has
+   lost nothing to the CP437 load; it also sets LC_CTYPE and the terminal's
+   charset.  LEN, SUBSTR, LEFT, RIGHT, AT, RAT, STUFF, PADL/R/C, CHRTRAN
+   count characters (one code path: in CP437 a character is a byte);
+   UPPER, LOWER, PROPER, ISALPHA, ISUPPER, ISLOWER are Unicode's; CHR and
+   ASC are code points.  TRIM, $, STRTRAN, OCCURS, REPLICATE need nothing.
+   Harbour's UTF8EX agrees but for LEN of a literal (2 for "é": a
+   compile-time byte count, not followed) and CHR/ASC (bytes: ruling 3).
+   Tests: test_codepage_utf8 (xbase), utf8mode (xbc).  TRANSFORM and the
+   MEMO* line functions count columns: step 3.
 3. The screen: width-aware layout, the GET editor and MEMOEDIT by
    character.  Harbour probes.
 4. Tables: the cut at a boundary, the header's codepage byte, translation

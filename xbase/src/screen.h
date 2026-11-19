@@ -50,6 +50,9 @@ void screen_init(void);
 /* Shutdown screen subsystem (release terminal service) */
 void screen_shutdown(void);
 
+/* The program's codepage changed: the terminal's charset with it */
+void screen_codepage_changed(void);
+
 /* @SAY command */
 void screen_say(int row, int col, const char *expr_str, const char *picture);
 

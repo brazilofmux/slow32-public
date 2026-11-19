@@ -7,9 +7,21 @@
 #include "ast.h"
 #include "command.h"
 #include "screen.h"
+#include "codepage.h"
+#include "program.h"
 
 int set_heading_on(const set_options_t *opts) {
     return opts->heading > 0 || (opts->heading < 0 && val_dbase_widths());
+}
+
+/* The program's codepage switched: its loaded text converted, the C
+ * library's classes and the terminal's charset with it */
+void set_codepage(int cp) {
+    int old = cp_current();
+    if (cp == old) return;
+    prog_codepage_changed(old, cp);
+    cp_set(cp);
+    screen_codepage_changed();
 }
 
 void set_init(set_options_t *opts) {
@@ -31,6 +43,11 @@ void set_init(set_options_t *opts) {
     opts->device = 0;  /* SCREEN */
     opts->century = 0;
     opts->date_format_upper = 0;
+    {   /* the codepage a run starts in: CP437 unless XBASE_CODEPAGE says */
+        const char *e = getenv("XBASE_CODEPAGE");
+        int cp = e ? cp_by_name(e) : 0;
+        if (cp) cp_set(cp);
+    }
     opts->escape = 1;
     opts->echo = 0;
     opts->margin = 0;
@@ -264,6 +281,19 @@ void set_execute(set_options_t *opts, const char *arg) {
     }
     if (str_imatch(p, "HELP")) {
         parse_on_off(p + 4);
+        return;
+    }
+    if (str_imatch(p, "CODEPAGE")) {   /* SET CODEPAGE TO "UTF8" | "CP437" (docs/plans/xbase-utf8.md) */
+        char name[16];
+        int i = 0, cp;
+        p = skip_ws(p + 8);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        if (*p == '"' || *p == '\'') p++;
+        while (*p && *p != '"' && *p != '\'' && *p != ' ' && i < 15) name[i++] = *p++;
+        name[i] = '\0';
+        cp = cp_by_name(name);
+        if (!cp) { printf("Unknown codepage: %s\n", name); return; }
+        set_codepage(cp);
         return;
     }
     if (str_imatch(p, "CENTURY")) {

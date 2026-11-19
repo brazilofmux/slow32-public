@@ -8,7 +8,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#include <wctype.h>
 #include "func.h"
+#include "codepage.h"
 #include "getsys.h"
 #include "clipfn.h"
 #include "ast.h"
@@ -299,18 +301,24 @@ static int fn_substr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         ctx->error = "SUBSTR requires (string, start [, length])";
         return -1;
     }
-    slen = val_len(&args[0]);
-    start = (int)args[1].num - 1; /* 1-based to 0-based */
-    if ((int)args[1].num < 0) start = slen + (int)args[1].num;   /* from the end (Clipper) */
-    if (start < 0) start = 0;
-    if (start >= slen) { *result = val_str(""); return 0; }
-    len = slen - start;
-    if (nargs >= 3 && args[2].type == VAL_NUM) {
-        int req = (int)args[2].num;
-        if (req < len) len = req;
+    {   /* in characters: a byte in CP437, a code point in UTF-8 (codepage.h) */
+        const char *s = val_text(&args[0]);
+        int n = val_len(&args[0]), b, e;
+        slen = cp_chars(s, n);
+        start = (int)args[1].num - 1; /* 1-based to 0-based */
+        if ((int)args[1].num < 0) start = slen + (int)args[1].num;   /* from the end (Clipper) */
+        if (start < 0) start = 0;
+        if (start >= slen) { *result = val_str(""); return 0; }
+        len = slen - start;
+        if (nargs >= 3 && args[2].type == VAL_NUM) {
+            int req = (int)args[2].num;
+            if (req < len) len = req;
+        }
+        if (len < 0) len = 0;
+        b = cp_offset(s, n, start);
+        e = b + cp_offset(s + b, n - b, len);
+        *result = val_strn(s + b, e - b);
     }
-    if (len < 0) len = 0;
-    *result = val_strn(val_text(&args[0]) + start, len);
     return 0;
 }
 
@@ -357,38 +365,39 @@ static int fn_alltrim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     return 0;
 }
 
-static int fn_upper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    int len, i;
-    char *buf;
-    if (nargs < 1 || args[0].type != VAL_CHAR) {
-        ctx->error = "UPPER requires (string)";
-        return -1;
-    }
-    len = val_len(&args[0]);
-    buf = malloc((size_t)len + 1);
+/* A string's characters mapped one by one (towupper, towlower): in CP437
+ * the C locale's, ASCII alone; in UTF-8 Unicode's (codepage.h).  A
+ * character's bytes may grow in UTF-8 (U+0250 to U+2C6F), never past
+ * double. */
+static int str_map_case(expr_ctx_t *ctx, const value_t *v, value_t *result, int upper) {
+    const char *s = val_text(v);
+    int n = val_len(v), i = 0, o = 0;
+    char *buf = malloc((size_t)n * 2 + 4);
     if (!buf) { ctx->error = "Out of memory"; return -1; }
-    memcpy(buf, val_text(&args[0]), (size_t)len);
-    for (i = 0; i < len; i++) if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
-    *result = val_strn(buf, len);
+    while (i < n) {
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        o += cp_encode(upper ? (unsigned)towupper((wint_t)c) : (unsigned)towlower((wint_t)c), buf + o);
+    }
+    *result = val_strn(buf, o);
     free(buf);
     return 0;
 }
 
+static int fn_upper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "UPPER requires (string)";
+        return -1;
+    }
+    return str_map_case(ctx, &args[0], result, 1);
+}
+
 static int fn_lower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    int len, i;
-    char *buf;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "LOWER requires (string)";
         return -1;
     }
-    len = val_len(&args[0]);
-    buf = malloc((size_t)len + 1);
-    if (!buf) { ctx->error = "Out of memory"; return -1; }
-    memcpy(buf, val_text(&args[0]), (size_t)len);
-    for (i = 0; i < len; i++) if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;
-    *result = val_strn(buf, len);
-    free(buf);
-    return 0;
+    return str_map_case(ctx, &args[0], result, 0);
 }
 
 static int fn_at(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
@@ -398,7 +407,7 @@ static int fn_at(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     at = val_find(&args[1], &args[0], 0);
-    *result = val_num(at >= 0 ? (double)(at + 1) : 0.0);
+    *result = val_num(at >= 0 ? (double)(cp_chars(val_text(&args[1]), at) + 1) : 0.0);
     return 0;
 }
 
@@ -411,7 +420,7 @@ static int fn_len(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "LEN requires (string)";
         return -1;
     }
-    *result = val_num((double)val_len(&args[0]));
+    *result = val_num((double)cp_chars(val_text(&args[0]), val_len(&args[0])));
     return 0;
 }
 
@@ -456,8 +465,9 @@ static int fn_replicate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
 /* PADR / PADL / PADC: the string in width columns, padded with c (a
  * blank) or cut; the centre's extra column goes to the right */
 static int str_pad(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result, int side, const char *who) {
-    int width, slen, lpad = 0, rpad = 0, start = 0;
-    char pad = ' ', *buf;
+    int width, slen, n, lpad = 0, rpad = 0, start = 0, plen = 1, i, o;
+    const char *s, *pad = " ";
+    char *buf;
     if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
         ctx->error = who;
         return -1;
@@ -465,23 +475,32 @@ static int str_pad(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result, i
     width = (int)args[1].num;
     if (width < 0) width = 0;
     if (width > 65535) width = 65535;
-    if (nargs >= 3 && args[2].type == VAL_CHAR && val_len(&args[2]) > 0) pad = val_text(&args[2])[0];
-    slen = val_len(&args[0]);
+    if (nargs >= 3 && args[2].type == VAL_CHAR && val_len(&args[2]) > 0) {
+        unsigned c;
+        pad = val_text(&args[2]);
+        plen = cp_decode(pad, val_len(&args[2]), &c);   /* its first character */
+    }
+    s = val_text(&args[0]);
+    n = val_len(&args[0]);
+    slen = cp_chars(s, n);                 /* in characters (codepage.h) */
     if (slen >= width) {
+        int b;
         if (side < 0) start = slen - width;
         else if (side == 0) start = (slen - width) / 2;
-        *result = val_strn(val_text(&args[0]) + start, width);
+        b = cp_offset(s, n, start);
+        *result = val_strn(s + b, cp_offset(s + b, n - b, width));
         return 0;
     }
     if (side < 0) lpad = width - slen;
     else if (side > 0) rpad = width - slen;
     else { lpad = (width - slen) / 2; rpad = width - slen - lpad; }
-    buf = malloc((size_t)width + 1);
+    buf = malloc((size_t)(lpad + rpad) * (size_t)plen + (size_t)n + 1);
     if (!buf) { ctx->error = "Out of memory"; return -1; }
-    memset(buf, pad, (size_t)lpad);
-    memcpy(buf + lpad, val_text(&args[0]), (size_t)slen);
-    memset(buf + lpad + slen, pad, (size_t)rpad);
-    *result = val_strn(buf, width);
+    o = 0;
+    for (i = 0; i < lpad; i++) { memcpy(buf + o, pad, (size_t)plen); o += plen; }
+    memcpy(buf + o, s, (size_t)n); o += n;
+    for (i = 0; i < rpad; i++) { memcpy(buf + o, pad, (size_t)plen); o += plen; }
+    *result = val_strn(buf, o);
     free(buf);
     return 0;
 }
@@ -506,9 +525,8 @@ static int fn_left(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     n = (int)args[1].num;
     slen = val_len(&args[0]);
-    if (n > slen) n = slen;
     if (n < 0) n = 0;
-    *result = val_strn(val_text(&args[0]), n);
+    *result = val_strn(val_text(&args[0]), cp_offset(val_text(&args[0]), slen, n));   /* n characters */
     return 0;
 }
 
@@ -520,9 +538,14 @@ static int fn_right(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     n = (int)args[1].num;
     slen = val_len(&args[0]);
-    if (n > slen) n = slen;
     if (n < 0) n = 0;
-    *result = val_strn(val_text(&args[0]) + (slen - n), n);
+    {   /* the last n characters */
+        const char *s = val_text(&args[0]);
+        int chars = cp_chars(s, slen), b;
+        if (n > chars) n = chars;
+        b = cp_offset(s, slen, chars - n);
+        *result = val_strn(s + b, slen - b);
+    }
     return 0;
 }
 
@@ -644,13 +667,15 @@ static int fn_val(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 static int fn_chr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char c;
     if (nargs < 1 || args[0].type != VAL_NUM) {
         ctx->error = "CHR requires (number)";
         return -1;
     }
-    c = (char)(int)args[0].num;
-    *result = val_strn(&c, 1);   /* CHR(0) is a one-character string */
+    {   /* a byte in CP437; in UTF-8 the code point's character (ruling 3) */
+        char buf[4];
+        int n = cp_encode((unsigned)(int)args[0].num & (cp_current() == CP_UTF8 ? 0x1FFFFFu : 0xFFu), buf);
+        *result = val_strn(buf, n);   /* CHR(0) is a one-character string */
+    }
     return 0;
 }
 
@@ -659,7 +684,11 @@ static int fn_asc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "ASC requires (string)";
         return -1;
     }
-    *result = val_num(val_len(&args[0]) > 0 ? (double)(unsigned char)val_text(&args[0])[0] : 0.0);
+    {   /* the first character's number: a byte, or a code point (ruling 3) */
+        unsigned c = 0;
+        if (val_len(&args[0]) > 0) cp_decode(val_text(&args[0]), val_len(&args[0]), &c);
+        *result = val_num((double)c);
+    }
     return 0;
 }
 
@@ -1099,10 +1128,16 @@ static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     ilen = val_len(&args[3]);
     start = (int)args[1].num;
     del = (int)args[2].num;
-    if (start < 1) start = 1;
-    if (start > slen + 1) start = slen + 1;
-    if (del < 0) del = 0;
-    if (start - 1 + del > slen) del = slen - (start - 1);
+    {   /* start and del count characters (codepage.h); bytes from here */
+        int chars = cp_chars(s, slen), b;
+        if (start < 1) start = 1;
+        if (start > chars + 1) start = chars + 1;
+        if (del < 0) del = 0;
+        if (start - 1 + del > chars) del = chars - (start - 1);
+        b = cp_offset(s, slen, start - 1);
+        del = cp_offset(s + b, slen - b, del);
+        start = b + 1;
+    }
     total = slen - del + ilen;
     buf = malloc((size_t)total + 1);
     if (!buf) { ctx->error = "Out of memory"; return -1; }
@@ -1341,8 +1376,11 @@ static int fn_isalpha(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
         *result = val_logic(0); return 0;
     }
-    { char c = args[0].str[0];
-      *result = val_logic((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')); }
+    {   /* the first character: ASCII in CP437, Unicode's letters in UTF-8 */
+        unsigned c;
+        cp_decode(args[0].str, val_len(&args[0]), &c);
+        *result = val_logic(c < 0x80 ? ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) : iswalpha((wint_t)c) != 0);
+    }
     return 0;
 }
 
@@ -1351,7 +1389,11 @@ static int fn_isupper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
         *result = val_logic(0); return 0;
     }
-    { char c = args[0].str[0]; *result = val_logic(c >= 'A' && c <= 'Z'); }
+    {   /* the first character (codepage.h) */
+        unsigned c;
+        cp_decode(args[0].str, val_len(&args[0]), &c);
+        *result = val_logic(c < 0x80 ? (c >= 'A' && c <= 'Z') : iswupper((wint_t)c) != 0);
+    }
     return 0;
 }
 
@@ -1360,7 +1402,11 @@ static int fn_islower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
         *result = val_logic(0); return 0;
     }
-    { char c = args[0].str[0]; *result = val_logic(c >= 'a' && c <= 'z'); }
+    {   /* the first character (codepage.h) */
+        unsigned c;
+        cp_decode(args[0].str, val_len(&args[0]), &c);
+        *result = val_logic(c < 0x80 ? (c >= 'a' && c <= 'z') : iswlower((wint_t)c) != 0);
+    }
     return 0;
 }
 
@@ -1740,7 +1786,7 @@ static int fn_rat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (sublen == 0 || sublen > slen) { *result = val_num(0); return 0; }
     for (i = slen - sublen; i >= 0; i--) {
         if (memcmp(s + i, sub, (size_t)sublen) == 0) {
-            *result = val_num((double)(i + 1));
+            *result = val_num((double)(cp_chars(s, i) + 1));   /* in characters */
             return 0;
         }
     }
@@ -1749,28 +1795,30 @@ static int fn_rat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 }
 
 static int fn_proper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    char buf[256];
-    int i, cap_next;
-    (void)ctx;
+    const char *s;
+    char *buf;
+    int n, i = 0, o = 0, cap_next = 1;
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "PROPER requires (string)";
         return -1;
     }
-    str_copy(buf, args[0].str, sizeof(buf));
-    cap_next = 1;
-    for (i = 0; buf[i]; i++) {
-        if (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '-' || buf[i] == '\'') {
+    s = val_text(&args[0]);
+    n = val_len(&args[0]);
+    buf = malloc((size_t)n * 2 + 4);   /* as str_map_case */
+    if (!buf) { ctx->error = "Out of memory"; return -1; }
+    while (i < n) {   /* character by character (codepage.h) */
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        if (c == ' ' || c == '\t' || c == '-' || c == '\'') {
             cap_next = 1;
         } else {
-            if (cap_next) {
-                if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
-                cap_next = 0;
-            } else {
-                if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;
-            }
+            c = cap_next ? (unsigned)towupper((wint_t)c) : (unsigned)towlower((wint_t)c);
+            cap_next = 0;
         }
+        o += cp_encode(c, buf + o);
     }
-    *result = val_str(buf);
+    *result = val_strn(buf, o);
+    free(buf);
     return 0;
 }
 
@@ -2282,22 +2330,24 @@ static int fn_chrtran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         ctx->error = "CHRTRAN requires (string, from, to)";
         return -1;
     }
-    {
-        const char *s = args[0].str;
-        const char *from = args[1].str;
-        const char *to = args[2].str;
-        int tolen = strlen(to);
-        while (*s && bi < (int)sizeof(buf) - 1) {
-            const char *f = strchr(from, *s);
-            if (f) {
-                int pos = (int)(f - from);
-                if (pos < tolen)
-                    buf[bi++] = to[pos];
-                /* else: delete character (no replacement) */
-            } else {
-                buf[bi++] = *s;
+    {   /* character by character (codepage.h): the k-th of from becomes the
+         * k-th of to, or goes when to is shorter */
+        const char *s = args[0].str, *from = args[1].str, *to = args[2].str;
+        int n = (int)strlen(s), nf = (int)strlen(from), nt = (int)strlen(to), i = 0;
+        while (i < n && bi < (int)sizeof(buf) - 4) {
+            unsigned c, f;
+            int k = cp_decode(s + i, n - i, &c), j = 0, pos = 0, found = -1;
+            while (j < nf) {
+                j += cp_decode(from + j, nf - j, &f);
+                if (f == c) { found = pos; break; }
+                pos++;
             }
-            s++;
+            if (found < 0) { memcpy(buf + bi, s + i, (size_t)k); bi += k; }
+            else {
+                int b = cp_offset(to, nt, found);
+                if (b < nt) { unsigned t; int tk = cp_decode(to + b, nt - b, &t); memcpy(buf + bi, to + b, (size_t)tk); bi += tk; }
+            }
+            i += k;
         }
         buf[bi] = '\0';
     }
