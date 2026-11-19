@@ -12,7 +12,6 @@ save_game:                              # @save_game
 	stw sp+36, r13
 	stw sp+32, r14
 	stw sp+28, r15
-	stw sp+24, r16
 	add r12, r4, r0
 	add r14, r3, r0
 	lui r4, %hi(.L.str)
@@ -20,8 +19,7 @@ save_game:                              # @save_game
 	add r3, r12, r0
 	jal r31, fopen
 	addi r11, r0, -1
-	addi r16, r0, 0
-	beq r1, r16, .LBB0_5
+	beq r1, r0, .LBB0_5
 .LBB0_1:
 	add r13, r1, r0
 	lui r3, %hi(.L.str.1)
@@ -44,7 +42,7 @@ save_game:                              # @save_game
 .LBB0_3:
 	add r3, r13, r0
 	jal r31, fclose
-	add r11, r16, r0
+	add r11, r0, r0
 	jal r0, .LBB0_5
 .LBB0_4:
 	add r3, r13, r0
@@ -53,7 +51,6 @@ save_game:                              # @save_game
 	jal r31, remove
 .LBB0_5:
 	add r1, r11, r0
-	ldw r16, sp+24
 	ldw r15, sp+28
 	ldw r14, sp+32
 	ldw r13, sp+36
@@ -70,19 +67,18 @@ save_game:                              # @save_game
 	.type	load_game,@function
 load_game:                              # @load_game
 # %bb.0:
-	addi sp, sp, -80
+	addi sp, sp, -64
 	stw sp+0, lr
-	stw sp+76, r11
-	stw sp+72, r12
-	stw sp+68, r13
-	stw sp+64, r14
-	stw sp+60, r15
-	stw sp+56, r16
-	stw sp+52, r17
-	stw sp+48, r18
-	stw sp+44, r19
-	stw sp+40, r20
-	stw sp+36, r21
+	stw sp+60, r11
+	stw sp+56, r12
+	stw sp+52, r13
+	stw sp+48, r14
+	stw sp+44, r15
+	stw sp+40, r16
+	stw sp+36, r17
+	stw sp+32, r18
+	stw sp+28, r19
+	stw sp+24, r20
 	add r12, r4, r0
 	add r11, r3, r0
 	lui r16, 1
@@ -97,11 +93,10 @@ load_game:                              # @load_game
 	add r3, r12, r0
 	jal r31, fopen
 	addi r13, r0, -1
-	addi r21, r0, 0
-	beq r1, r21, .LBB1_6
+	beq r1, r0, .LBB1_6
 .LBB1_1:
 	add r14, r1, r0
-	addi r3, sp, 30
+	addi r3, sp, 18
 	addi r4, r0, 1
 	addi r15, r0, 6
 	add r5, r15, r0
@@ -111,10 +106,10 @@ load_game:                              # @load_game
 .LBB1_2:
 	lui r4, %hi(.L.str.1)
 	addi r4, r4, %lo(.L.str.1)
-	addi r3, sp, 30
+	addi r3, sp, 18
 	addi r5, r0, 6
 	jal r31, memcmp
-	bne r1, r21, .LBB1_5
+	bne r1, r0, .LBB1_5
 .LBB1_3:
 	addi r15, r16, 1240
 	addi r4, r0, 1
@@ -132,30 +127,29 @@ load_game:                              # @load_game
 	stw r19+0, r20
 	addi r1, r16, 996
 	add r1, r11, r1
-	stw r1+0, r21
+	stw r1+0, r0
 	addi r1, r16, 1040
 	add r1, r11, r1
-	stb r1+0, r21
-	add r13, r21, r0
+	stb r1+0, r0
+	add r13, r0, r0
 	jal r0, .LBB1_6
 .LBB1_5:
 	add r3, r14, r0
 	jal r31, fclose
 .LBB1_6:
 	add r1, r13, r0
-	ldw r21, sp+36
-	ldw r20, sp+40
-	ldw r19, sp+44
-	ldw r18, sp+48
-	ldw r17, sp+52
-	ldw r16, sp+56
-	ldw r15, sp+60
-	ldw r14, sp+64
-	ldw r13, sp+68
-	ldw r12, sp+72
-	ldw r11, sp+76
+	ldw r20, sp+24
+	ldw r19, sp+28
+	ldw r18, sp+32
+	ldw r17, sp+36
+	ldw r16, sp+40
+	ldw r15, sp+44
+	ldw r14, sp+48
+	ldw r13, sp+52
+	ldw r12, sp+56
+	ldw r11, sp+60
 	ldw lr, sp+0
-	addi sp, sp, 80
+	addi sp, sp, 64
 	jalr r0, r31, 0
 .Lfunc_end1:
 	.size	load_game, .Lfunc_end1-load_game
@@ -175,10 +169,9 @@ record_score:                           # @record_score
 	addi r4, r4, %lo(.L.str.3)
 	add r3, r1, r0
 	jal r31, fopen
-	add r11, r1, r0
-	addi r1, r0, 0
-	beq r11, r1, .LBB2_7
+	beq r1, r0, .LBB2_4
 .LBB2_1:
+	add r11, r1, r0
 	lui r1, 1
 	addi r3, r1, 996
 	add r3, r12, r3
@@ -187,18 +180,24 @@ record_score:                           # @record_score
 	add r4, r12, r4
 	ldw r5, r4+0
 	addi r4, r0, 1
-	beq r3, r4, .LBB2_4
+	beq r3, r4, .LBB2_5
 .LBB2_2:
 	addi r4, r0, 2
-	bne r3, r4, .LBB2_5
+	bne r3, r4, .LBB2_6
 .LBB2_3:
 	addi r1, r1, 536
 	add r1, r12, r1
 	ldw r6, r1+0
 	lui r4, %hi(.L.str.4)
 	addi r4, r4, %lo(.L.str.4)
-	jal r0, .LBB2_6
+	jal r0, .LBB2_7
 .LBB2_4:
+	ldw r12, sp+24
+	ldw r11, sp+28
+	ldw lr, sp+0
+	addi sp, sp, 32
+	jalr r0, r31, 0
+.LBB2_5:
 	addi r3, r1, 1000
 	add r6, r12, r3
 	addi r1, r1, 548
@@ -206,24 +205,22 @@ record_score:                           # @record_score
 	ldw r7, r1+0
 	lui r4, %hi(.L.str.5)
 	addi r4, r4, %lo(.L.str.5)
-	jal r0, .LBB2_6
-.LBB2_5:
+	jal r0, .LBB2_7
+.LBB2_6:
 	addi r1, r1, 548
 	add r1, r12, r1
 	ldw r6, r1+0
 	lui r4, %hi(.L.str.6)
 	addi r4, r4, %lo(.L.str.6)
-.LBB2_6:
+.LBB2_7:
 	add r3, r11, r0
 	jal r31, fprintf
 	add r3, r11, r0
-	jal r31, fclose
-.LBB2_7:
 	ldw r12, sp+24
 	ldw r11, sp+28
 	ldw lr, sp+0
 	addi sp, sp, 32
-	jalr r0, r31, 0
+	jal r0, fclose
 .Lfunc_end2:
 	.size	record_score, .Lfunc_end2-record_score
                                         # -- End function
@@ -239,41 +236,38 @@ show_scores:                            # @show_scores
 	stw sp+164, r13
 	stw sp+160, r14
 	stw sp+156, r15
-	stw sp+152, r16
 	add r11, r4, r0
 	lui r4, %hi(.L.str.7)
 	addi r4, r4, %lo(.L.str.7)
 	jal r31, fopen
-	addi r15, r0, 0
-	beq r1, r15, .LBB3_5
+	beq r1, r0, .LBB3_5
 .LBB3_1:
 	add r12, r1, r0
 	lui r4, %hi(.L.str.8)
 	addi r4, r4, %lo(.L.str.8)
 	add r3, r11, r0
 	jal r31, fprintf
-	addi r16, r0, 10
+	addi r15, r0, 10
 	addi r13, r0, 128
 	lui r14, %hi(.L.str.9)
 	addi r14, r14, %lo(.L.str.9)
 .LBB3_2:
-	addi r3, sp, 24
+	addi r3, sp, 28
 	add r4, r13, r0
 	add r5, r12, r0
 	jal r31, fgets
-	beq r1, r15, .LBB3_4
+	beq r1, r0, .LBB3_4
 .LBB3_3:
-	addi r5, sp, 24
+	addi r5, sp, 28
 	add r3, r11, r0
 	add r4, r14, r0
 	jal r31, fprintf
-	addi r16, r16, -1
-	bne r16, r15, .LBB3_2
+	addi r15, r15, -1
+	bne r15, r0, .LBB3_2
 .LBB3_4:
 	add r3, r12, r0
 	jal r31, fclose
 .LBB3_5:
-	ldw r16, sp+152
 	ldw r15, sp+156
 	ldw r14, sp+160
 	ldw r13, sp+164
@@ -336,5 +330,5 @@ show_scores:                            # @show_scores
 	.asciz	"  %s"
 	.size	.L.str.9, 5
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e507704cf3c4d36284ffcb21f50e8531ceb63f7f)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 77f07727152e39f179dfe39786aa3bcae0860790)"
 	.section	".note.GNU-stack","",@progbits
