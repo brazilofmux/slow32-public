@@ -375,7 +375,8 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_SET_CURSOR   15  // Cursor style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar (version 2)
 #define S32_TERM_GET_LFLAG    16  // A descriptor's local modes: offset = guest fd; status = S32_TERM_LF_* (version 3)
 #define S32_TERM_SET_LFLAG    17  // Set them: offset = guest fd; status = S32_TERM_LF_* | when << 16 (version 3)
-#define S32_TERM_OPCODE_COUNT 18  // Total opcodes for term service
+#define S32_TERM_SET_CHARSET  18  // Charset: status 0 UTF-8, 437 CP437 (version 4)
+#define S32_TERM_OPCODE_COUNT 19  // Total opcodes for term service
 
 // The local modes GET_LFLAG and SET_LFLAG carry, in the machine's own bits
 // (<termios.h> c_lflag); the host maps them to its own termios

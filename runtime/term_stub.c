@@ -38,6 +38,11 @@ int term_set_cursor(int style) {
     return -1;
 }
 
+int term_set_charset(int charset) {
+    (void)charset;
+    return -1;
+}
+
 int term_set_raw(int raw) {
     (void)raw;
     return -1;

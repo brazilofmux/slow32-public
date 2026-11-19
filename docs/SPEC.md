@@ -1339,7 +1339,7 @@ Engines without a tube (qemu) answer NVAL.
 ### 8.13 Service negotiation (0xF0–0xF4)
 
 Negotiated services are reached through opcodes 0x80–0xEF that the host
-allocates. Three services exist: `"term"` (18 opcodes, version 3), `"tube"`
+allocates. Three services exist: `"term"` (19 opcodes, version 4), `"tube"`
 (16 opcodes, version 1) and `"crypto"` (8 opcodes, version 1, §8.17; absent
 from a host built without a platform crypto library).
 
@@ -1350,7 +1350,7 @@ greater than n before using it, and do without it otherwise: a host
 built before the addition grants the shorter range, and an opcode past
 the range belongs to nobody (or to another session).  `"term"` version 1
 (before 2026-10-04) was sub-opcodes 0–14, version 2 (before 2026-10-25)
-0–15.
+0–15, version 3 (before 2026-11-19) 0–17.
 
 #### 8.13.1 Wire format (as implemented)
 
@@ -1423,7 +1423,7 @@ denying `fs` or `env` leaves `printf` and `argv` working. A non-empty allow
 list denies every name not on it, including the fixed ones.
 
 
-### 8.14 Term service (`"term"`, 18 opcodes)
+### 8.14 Term service (`"term"`, 19 opcodes)
 
 Sub-opcodes (opcode = base + n). Requests carry arguments in `status`
 unless noted; responses are `status` 0, `length` 0 unless noted. For the
@@ -1450,11 +1450,12 @@ sub-opcodes that use the data buffer (GET_SIZE, READ_KEY, PUTS) an
 | 15 | SET_CURSOR | `status` = style: 0 hidden, 1 the terminal's own, 2 block, 3 underline, 4 bar | Version 2. Emits the style's bytes (§8.14.5) at once, inside an update as well as outside. Cursor style := status. `EINVAL`, and nothing emitted or changed, for any other value of the whole 32-bit `status`. |
 | 16 | GET_LFLAG | `off` = a guest fd | Version 3. `status` = that terminal's local modes now, in the machine's bits (§8.14.6). `EBADF` if the fd is not open, `ENOTTY` if it is not a terminal. Nothing changes. |
 | 17 | SET_LFLAG | `off` = a guest fd; `status` = bits \| when<<16 | Version 3. Sets the terminal's local modes the bits name (§8.14.6) and clears the others the machine has, leaving the host's remaining modes as they are; when 0, 1, 2 is `TCSANOW`, `TCSADRAIN`, `TCSAFLUSH`. Errors as GET_LFLAG; `EINVAL` for a bit above 0x40 or a when above 2; `ENOMEM` once four terminals have been changed and this is a fifth. |
+| 18 | SET_CHARSET | `status` = 0 UTF-8, 437 CP437 | Version 4. The terminal's charset := status (§8.14.7); a UTF-8 sequence PUTC or PUTS was part way through is dropped. Emits nothing. `EINVAL`, and nothing changed, for any other value of the whole 32-bit `status`. |
 
-Unused sub-opcodes cannot occur (the range is exactly 18). All term output
+Unused sub-opcodes cannot occur (the range is exactly 19). All term output
 goes to host standard output and is flushed after every request; `ESC` is
-byte 0x1B. Session cleanup (release or exit) restores the saved termios if
-raw mode is on, then each terminal SET_LFLAG changed as it was before the
+byte 0x1B. Session cleanup (release or exit) sets the charset back to UTF-8,
+emitting nothing, and restores the saved termios if raw mode is on, then each terminal SET_LFLAG changed as it was before the
 first change (`TCSANOW`); it emits nothing, unless the cursor style is not
 1, in which case it then emits style 1's bytes (§8.14.5) and flushes. (A guest
 that set style 1 itself has already emitted them.) An update still open
@@ -1643,8 +1644,9 @@ stdin prefix file (§8.16); host stdin read one byte at a time with `read(2)`.
 READ_CHAR decodes as §8.14.2: it reads bytes until a code point completes; if a
 byte cuts a sequence short it returns U+FFFD and keeps that byte for the next
 read; at end of input inside a sequence it returns U+FFFD; at end of input
-otherwise `0xFFFFFFFD`. The term service's input is separate from tube key
-events (§8.15).
+otherwise `0xFFFFFFFD`. READ_KEY reads one byte, unless the charset is CP437
+(§8.14.7). The term service's input is separate from tube key events
+(§8.15).
 
 
 #### 8.14.5 Cursor style
@@ -1688,6 +1690,32 @@ carried: a guest reads them as 0 and cannot change them (SET_MODE's raw mode
 is the way to those). Cleanup's restore (above) happens only where the
 session ends: an engine that a signal kills before it can end the session
 leaves the modes as the guest set them.
+
+#### 8.14.7 Charset
+
+The session keeps a charset, initially 0 (UTF-8), which everything above
+assumes.  SET_CHARSET 437 makes it code page 437, the IBM PC's, for a
+guest whose text is in it (an xBase program, a DOS-era screen): the
+terminal then does the conversion a real terminal's charset setting does.
+
+- **Output.** Each byte PUTC and PUTS send is one character: bytes
+  0x00–0x7F are themselves (controls included), 0x80–0xFF the code points
+  of Unicode's `CP437.TXT` (the table is `common/s32cp437.h`).  Outside an
+  update the terminal is sent that code point's UTF-8; the shadow is fed
+  the code point directly, in place of §8.14.2's decoding, and the rest of
+  §8.14.2 is unchanged.  The repaints (§8.14.3) emit the shadow's code
+  points as UTF-8, as always.
+- **Round the service.** A WRITE to the guest's fd 1 or 2, and PUTCHAR,
+  are converted the same way when that host descriptor is a terminal
+  (`isatty`); the WRITE reports all its bytes written.  To a file or a
+  pipe they stay bytes: a program's data is not the terminal's.
+- **Keys.** READ_KEY reads one character as READ_CHAR does (§8.14.4) and
+  returns its CP437 byte: the byte whose code point it is, or `?` (0x3F)
+  when CP437 has none (U+FFFD included).  Escape sequences are ASCII and
+  read as before.  READ_CHAR and KEY_AVAIL are unchanged.
+
+The charset is the session's: cleanup returns it to UTF-8, and a new
+session starts there.  Only 0 and 437 are defined.
 
 ### 8.15 Tube service (`"tube"`, 16 opcodes)
 
@@ -1890,7 +1918,7 @@ writing).
   version, word3 = SVC status`); it is a blob in the data buffer
   `[result, base, count, version]` (16 bytes on grant, 4 bytes otherwise) with
   descriptor `status` 0.
-- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 18 opcodes (15 before 2026-10-04, 16 before 2026-10-25), tube 16.
+- "opcode_count (e.g. 8 — so term is 0x80-0x87)": term has 19 opcodes (15 before 2026-10-04, 16 before 2026-10-25, 18 before 2026-11-19), tube 16.
 - Response codes: SVC_OK is not "at requested opcode base"; SVC_VERSION_ERR
   is never returned.
 - "Versioning (Resolved)": the guest cannot request a minimum version.

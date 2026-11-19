@@ -30,6 +30,16 @@ int term_set_raw(int raw);
 #define TERM_CURSOR_BAR       4
 int term_set_cursor(int style);
 
+/* The terminal's charset (docs/SPEC.md 8.14.7): TERM_CHARSET_UTF8, the
+ * default, or TERM_CHARSET_CP437 -- each byte this program writes to its
+ * terminal (term_putc/term_puts, and stdout or stderr when it is the
+ * terminal) is one CP437 character, shown as such, and each key reads back
+ * as its CP437 byte, '?' for one CP437 lacks.  Returns 0, or -1 when the
+ * host's term service is older than the charset (version 4) or refuses. */
+#define TERM_CHARSET_UTF8   0
+#define TERM_CHARSET_CP437  437
+int term_set_charset(int charset);
+
 /* Get terminal dimensions. */
 void term_get_size(int *rows, int *cols);
 

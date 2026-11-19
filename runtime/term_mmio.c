@@ -68,6 +68,11 @@ int term_set_cursor(int style) {
     return s32_mmio_request(term_base_opcode + 15, 0, 0, (unsigned int)style) == 0 ? 0 : -1;
 }
 
+int term_set_charset(int charset) {
+    if (!term_initialized || term_opcode_count <= 18) return -1;   /* a host from before the opcode */
+    return s32_mmio_request(term_base_opcode + 18, 0, 0, (unsigned int)charset) == 0 ? 0 : -1;
+}
+
 int term_set_raw(int raw) {
     if (!term_initialized) return -1;
     return s32_mmio_request(term_base_opcode + 0, 0, 0, (unsigned int)raw) == 0 ? 0 : -1;

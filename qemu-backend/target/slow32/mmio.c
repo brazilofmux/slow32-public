@@ -35,6 +35,7 @@
 #include "cpu.h"
 #include "mmio.h"
 #include "s32utf.h"   /* copied from slow-32 common/, with s32utf_tables.h */
+#include "s32cp437.h"     /* copied from slow-32 common/ */
 
 #define S32_MMIO_REQ_HEAD_OFFSET    0x0000u
 #define S32_MMIO_REQ_TAIL_OFFSET    0x0004u
@@ -237,7 +238,8 @@ static inline int s32_mmio_sockaddr_in_fits(uint32_t offset)
 #define S32_TERM_SET_CURSOR   15
 #define S32_TERM_GET_LFLAG    16
 #define S32_TERM_SET_LFLAG    17
-#define S32_TERM_OPCODE_COUNT 18
+#define S32_TERM_SET_CHARSET  18
+#define S32_TERM_OPCODE_COUNT 19
 
 /* the machine's local-mode bits (slow-32 common/mmio_ring_layout.h) */
 #define S32_TERM_LF_ECHO      0x01u
@@ -710,10 +712,30 @@ static const struct { uint32_t s32; tcflag_t host; } slow32_term_lflag_map[] = {
  * cell it paints. */
 static bool slow32_term_cursor_lost = true;
 
+/* The terminal's charset (SET_CHARSET; slow-32 docs/SPEC.md 8.14.7): 0
+ * UTF-8, or 437, when each byte the guest sends its terminal is one CP437
+ * character, written as UTF-8, and each key comes back as a CP437 byte.
+ * WRITE and PUTCHAR to a terminal on fd 1 or 2 heed it too. */
+static int slow32_term_charset;
+
+/* bytes to the terminal, as the charset says */
+static void slow32_term_out_bytes(const uint8_t *p, size_t n)
+{
+    if (slow32_term_charset != 437) {
+        slow32_console_write(p, n);
+        return;
+    }
+    for (size_t i = 0; i < n; i++) {
+        unsigned char b[4];
+        slow32_console_write(b, (size_t)s32u_encode(s32_cp437_to_cp(p[i]), b));
+    }
+}
+
 static void *slow32_term_create(void)
 {
     Slow32TermState *ts = g_new0(Slow32TermState, 1);
     slow32_term_cursor_lost = true;
+    slow32_term_charset = 0;
     ts->key_pushback = -1;
     ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) &&
@@ -772,6 +794,7 @@ static void slow32_term_cleanup(void *state)
     if (ts->cursor_style != 1) {
         slow32_term_emit_cursor(1);     /* the terminal gets its cursor back */
     }
+    slow32_term_charset = 0;
     for (int i = 0; i < ts->save_depth; i++) {
         g_free(ts->save_stack[i].cells);
     }
@@ -938,6 +961,10 @@ static void slow32_term_shadow_putc(Slow32TermState *ts, int ch)
     if (!ts->cells) {
         return;
     }
+    if (slow32_term_charset == 437) {
+        slow32_term_shadow_cp(ts, s32_cp437_to_cp((unsigned char)ch));
+        return;
+    }
     for (;;) {
         uint32_t cp;
         int r = s32u_dec_byte(&ts->dec, (unsigned)ch, &cp);
@@ -971,6 +998,28 @@ static bool slow32_term_key_byte(Slow32TermState *ts, unsigned char *b)
         return true;
     }
     return read(STDIN_FILENO, b, 1) == 1;
+}
+
+/* one character of keyboard input: its UTF-8 bytes read whole and decoded
+ * as s32utf.h does (U+FFFD for what is not UTF-8); a byte that cut a
+ * sequence short is kept for the next read.  false at end of input. */
+static bool slow32_term_read_char(Slow32TermState *ts, uint32_t *cp)
+{
+    s32u_dec d = { 0, 0, 0, 0 };
+    *cp = 0;
+    for (;;) {
+        unsigned char b;
+        if (!slow32_term_key_byte(ts, &b)) {
+            return s32u_dec_end(&d, cp) != 0;
+        }
+        int r = s32u_dec_byte(&d, b, cp);
+        if (r == 2) {
+            ts->key_pushback = b;
+        }
+        if (r) {
+            return true;
+        }
+    }
 }
 
 static void slow32_term_emit_cell(const Slow32TermCell *c)
@@ -1160,6 +1209,21 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_READ_KEY: {
         unsigned char ch;
+        if (slow32_term_charset == 437) {
+            /* one character, as its CP437 byte ('?' for one CP437 lacks) */
+            uint32_t cp;
+            if (!slow32_term_read_char(ts, &cp)) {
+                resp->status = S32_MMIO_STATUS_EOF;
+                resp->length = 0;
+                break;
+            }
+            int b = s32_cp437_from_cp(cp);
+            ch = (unsigned char)(b < 0 ? '?' : b);
+            slow32_mmio_copy_to_guest(env, req->offset, &ch, 1);
+            resp->length = 1;
+            resp->status = (uint32_t)ch;
+            break;
+        }
         if (slow32_term_key_byte(ts, &ch)) {
             slow32_mmio_copy_to_guest(env, req->offset, &ch, 1);
             resp->length = 1;
@@ -1172,28 +1236,8 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
 
     case S32_TERM_READ_CHAR: {
-        /* one character: its UTF-8 bytes read whole and decoded as
-         * s32utf.h does (U+FFFD for what is not UTF-8); a byte that cut a
-         * sequence short is kept for the next read */
-        s32u_dec d = { 0, 0, 0, 0 };
-        uint32_t cp = 0;
-        int got = 0;
-        for (;;) {
-            unsigned char b;
-            if (!slow32_term_key_byte(ts, &b)) {
-                got = s32u_dec_end(&d, &cp);
-                break;
-            }
-            int r = s32u_dec_byte(&d, b, &cp);
-            if (r == 2) {
-                ts->key_pushback = b;
-            }
-            if (r) {
-                got = 1;
-                break;
-            }
-        }
-        if (!got) {
+        uint32_t cp;
+        if (!slow32_term_read_char(ts, &cp)) {
             resp->status = S32_MMIO_STATUS_EOF;
             resp->length = 0;
             break;
@@ -1225,7 +1269,8 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     case S32_TERM_PUTC: {
         int ch = (int)(req->status & 0xFF);
         if (!ts->in_update) {
-            slow32_console_write_byte(ch);
+            uint8_t b = (uint8_t)ch;
+            slow32_term_out_bytes(&b, 1);
         }
         slow32_term_shadow_putc(ts, ch);
         resp->status = S32_MMIO_STATUS_OK;
@@ -1240,7 +1285,7 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         if (len > 0) {
             slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, len);
             if (!ts->in_update) {
-                slow32_console_write(ctx->scratch, len);
+                slow32_term_out_bytes(ctx->scratch, len);
             }
             for (uint32_t i = 0; i < len; i++) {
                 slow32_term_shadow_putc(ts, ctx->scratch[i]);
@@ -1564,6 +1609,17 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         break;
     }
 
+    case S32_TERM_SET_CHARSET:
+        /* 0 UTF-8, 437 CP437; a sequence part way through is dropped */
+        if (req->status != 0 && req->status != 437) {
+            slow32_mmio_fail(resp, EINVAL);
+            break;
+        }
+        slow32_term_charset = (int)req->status;
+        memset(&ts->dec, 0, sizeof ts->dec);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+
     default:
         slow32_mmio_fail(resp, EINVAL);
         break;
@@ -1725,7 +1781,7 @@ static const Slow32BuiltinService builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 3,
+        .version = 4,
         .create = slow32_term_create,
         .cleanup = slow32_term_cleanup,
         .handle = slow32_term_handle,
@@ -3096,7 +3152,11 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_PUTCHAR:
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 1);
-        slow32_console_write_byte(ctx->scratch[0]);
+        if (slow32_term_charset && isatty(STDOUT_FILENO)) {
+            slow32_term_out_bytes(ctx->scratch, 1);
+        } else {
+            slow32_console_write_byte(ctx->scratch[0]);
+        }
         slow32_term_cursor_lost = true;
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 1;
@@ -3135,6 +3195,19 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, to_write);
         if (host_fd == STDOUT_FILENO || host_fd == STDERR_FILENO) {
             slow32_term_cursor_lost = true;
+            if (slow32_term_charset && isatty(host_fd)) {
+                /* the terminal's charset: converted whole, all reported
+                 * written */
+                for (uint32_t i = 0; i < to_write; i++) {
+                    unsigned char b[4];
+                    int n = s32u_encode(s32_cp437_to_cp(ctx->scratch[i]), b);
+                    if (write(host_fd, b, (size_t)n) < 0) {
+                        break;
+                    }
+                }
+                resp->length = resp->status = to_write;
+                break;
+            }
         }
         ssize_t written = write(host_fd, ctx->scratch, to_write);
         if (written < 0) {

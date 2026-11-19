@@ -2,6 +2,7 @@
 #include "mmio_ring.h"
 #include "slow32.h"
 #include "../../common/s32utf.h"
+#include "../../common/s32cp437.h"
 #include "../../common/s32_errno.h"
 #include "../../common/s32_host_poll.h"
 #include "../../common/s32_crypto_host.h"
@@ -615,6 +616,23 @@ static const struct { uint32_t s32; tcflag_t host; } term_lflag_map[] = {
 // cell it paints.
 static bool term_cursor_lost = true;
 
+// The terminal's charset (SET_CHARSET; docs/SPEC.md 8.14.7): 0 UTF-8, or
+// 437, when each byte the guest sends its terminal is one CP437 character,
+// written to the host as UTF-8, and each key comes back as a CP437 byte.
+// The session's, but WRITE and PUTCHAR to a terminal on fd 1 or 2 heed it
+// too, so it lives here beside term_cursor_lost.
+static int term_charset;
+
+// bytes to a host terminal stream, as the charset says: raw, or each CP437
+// byte as its character's UTF-8
+static void term_out_bytes(FILE *f, const uint8_t *p, size_t n) {
+    if (term_charset != 437) { fwrite(p, 1, n, f); return; }
+    for (size_t i = 0; i < n; i++) {
+        unsigned char b[4];
+        fwrite(b, 1, (size_t)s32u_encode(s32_cp437_to_cp(p[i]), b), f);
+    }
+}
+
 static void term_emit_cursor(int style) {
     static const int shape[5] = { 0, 0, 2, 4, 6 };
     if (style == 0) fputs("\033[?25l", stdout);
@@ -626,6 +644,7 @@ static void *term_create(void) {
     term_state_t *ts = calloc(1, sizeof(term_state_t));
     if (!ts) return NULL;
     term_cursor_lost = true;
+    term_charset = 0;
     ts->key_pushback = -1;
     ts->cursor_style = 1;
     if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
@@ -666,6 +685,7 @@ static void term_cleanup(void *state) {
         tcsetattr(ts->lflag_saved[i].fd, TCSANOW, &ts->lflag_saved[i].before);
     }
     if (ts->cursor_style != 1) term_emit_cursor(1);    // the terminal gets its cursor back
+    term_charset = 0;
     for (int i = 0; i < ts->save_depth; i++) {
         free(ts->save_stack[i].cells);
     }
@@ -774,6 +794,7 @@ static void term_shadow_cp(term_state_t *ts, uint32_t cp) {
 // and a byte that cut a sequence short decoded again)
 static void term_shadow_putc(term_state_t *ts, int ch) {
     if (!ts->cells) return;
+    if (term_charset == 437) { term_shadow_cp(ts, s32_cp437_to_cp((unsigned char)ch)); return; }
     for (;;) {
         uint32_t cp;
         int r = s32u_dec_byte(&ts->dec, (unsigned)ch, &cp);
@@ -809,6 +830,21 @@ static bool term_key_byte(term_state_t *ts, unsigned char *b) {
     ssize_t n = stdin_prefix_read(b, 1);
     if (n != 1) n = read(STDIN_FILENO, b, 1);
     return n == 1;
+}
+
+// one character of keyboard input: its UTF-8 bytes read whole and decoded
+// as s32utf.h does (U+FFFD for what is not UTF-8); a byte that cut a
+// sequence short is kept for the next read.  false at end of input.
+static bool term_read_char(term_state_t *ts, uint32_t *cp) {
+    s32u_dec d = { 0, 0, 0, 0 };
+    *cp = 0;
+    for (;;) {
+        unsigned char b;
+        if (!term_key_byte(ts, &b)) return s32u_dec_end(&d, cp) != 0;
+        int r = s32u_dec_byte(&d, b, cp);
+        if (r == 2) ts->key_pushback = b;
+        if (r) return true;
+    }
 }
 
 static void term_blank_cells(term_cell_t *cells, int start, int end) {
@@ -972,8 +1008,23 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             break;
         }
         case S32_TERM_READ_KEY: {
-            // Blocking read of one byte
+            // Blocking read of one byte; with charset 437, of one character,
+            // as its CP437 byte ('?' for one CP437 lacks)
             unsigned char ch;
+            if (term_charset == 437) {
+                uint32_t cp;
+                if (!term_read_char(ts, &cp)) {
+                    resp->status = S32_MMIO_STATUS_EOF;
+                    resp->length = 0;
+                    break;
+                }
+                int b = s32_cp437_from_cp(cp);
+                ch = (unsigned char)(b < 0 ? '?' : b);
+                mmio->data_buffer[offset] = ch;
+                resp->length = 1;
+                resp->status = (uint32_t)ch;
+                break;
+            }
             if (term_key_byte(ts, &ch)) {
                 mmio->data_buffer[offset] = ch;
                 resp->length = 1;
@@ -985,20 +1036,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             break;
         }
         case S32_TERM_READ_CHAR: {
-            // Blocking read of one character: its UTF-8 bytes read whole and
-            // decoded as s32utf.h does (U+FFFD for what is not UTF-8); a
-            // byte that cut a sequence short is kept for the next read
-            s32u_dec d = { 0, 0, 0, 0 };
-            uint32_t cp = 0;
-            int got = 0;
-            for (;;) {
-                unsigned char b;
-                if (!term_key_byte(ts, &b)) { got = s32u_dec_end(&d, &cp); break; }
-                int r = s32u_dec_byte(&d, b, &cp);
-                if (r == 2) ts->key_pushback = b;
-                if (r) { got = 1; break; }
-            }
-            if (!got) { resp->status = S32_MMIO_STATUS_EOF; resp->length = 0; break; }
+            uint32_t cp;
+            if (!term_read_char(ts, &cp)) { resp->status = S32_MMIO_STATUS_EOF; resp->length = 0; break; }
             resp->length = 0;
             resp->status = cp;
             break;
@@ -1026,7 +1065,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
         case S32_TERM_PUTC: {
             int ch = (int)(req->status & 0xFF);
             if (!ts->in_update) {
-                fputc(ch, stdout);
+                uint8_t b = (uint8_t)ch;
+                term_out_bytes(stdout, &b, 1);
                 fflush(stdout);
             }
             term_shadow_putc(ts, ch);
@@ -1040,7 +1080,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 len = S32_MMIO_DATA_CAPACITY - off;
             if (len > 0) {
                 if (!ts->in_update)
-                    fwrite(mmio->data_buffer + off, 1, len, stdout);
+                    term_out_bytes(stdout, mmio->data_buffer + off, len);
                 for (uint32_t i = 0; i < len; i++)
                     term_shadow_putc(ts, mmio->data_buffer[off + i]);
             }
@@ -1328,6 +1368,16 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
+        case S32_TERM_SET_CHARSET:
+            // status: 0 UTF-8, 437 CP437; a sequence part way through is dropped
+            if (req->status != 0 && req->status != 437) {
+                mmio_fail(resp, EINVAL);
+                break;
+            }
+            term_charset = (int)req->status;
+            memset(&ts->dec, 0, sizeof ts->dec);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
         default:
             mmio_fail(resp, EINVAL);
             break;
@@ -2436,7 +2486,7 @@ static const builtin_service_t builtin_services[] = {
     {
         .name = "term",
         .opcode_count = S32_TERM_OPCODE_COUNT,
-        .version = 3,
+        .version = 4,
         .create = term_create,
         .cleanup = term_cleanup,
         .handle = term_handle,
@@ -3450,7 +3500,8 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         case S32_MMIO_OP_PUTCHAR: {
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
             uint8_t ch = mmio->data_buffer[offset];
-            fputc(ch, stdout);
+            if (term_charset && isatty(STDOUT_FILENO)) term_out_bytes(stdout, &ch, 1);
+            else fputc(ch, stdout);
             fflush(stdout);
             term_cursor_lost = true;
             resp.status = 0;
@@ -3478,6 +3529,16 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             }
 
             if (host_fd == STDOUT_FILENO || host_fd == STDERR_FILENO) term_cursor_lost = true;
+            if (term_charset && (host_fd == STDOUT_FILENO || host_fd == STDERR_FILENO) && isatty(host_fd)) {
+                // the terminal's charset (docs/SPEC.md 8.14.7): converted
+                // whole, and the guest told all its bytes went
+                FILE *f = host_fd == STDOUT_FILENO ? stdout : stderr;
+                fflush(f);
+                term_out_bytes(f, mmio->data_buffer + offset, to_write);
+                fflush(f);
+                resp.length = resp.status = to_write;
+                break;
+            }
             ssize_t written = write(host_fd, mmio->data_buffer + offset, to_write);
             if (written < 0) {
                 mmio_fail(&resp, errno > 0 ? errno : EIO);
