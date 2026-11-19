@@ -234,3 +234,43 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    20 with dBASE III PLUS.  Collation by language (libutf's UCA, 53 CLDR
    locales) is a separate option, not built; an index built that way would
    have to say so in its header.
+
+## Known limits (2026-11-19, after step 5)
+
+What was built falls short of the rulings, or leaves open, in these places.
+None is needed by anything running today; each is recorded so it is not
+mistaken for done.
+
+- **The GET cursor steps by code point, not by grapheme cluster.**  Ruling
+  4 asked for clusters at the cursor.  Precomposed text (NFC, what
+  keyboards send) is one code point a character, so it is not seen in
+  practice; a decomposed "e" plus U+0301 takes two steps.  The editors'
+  character arrays would hold clusters instead (s32utf.h's
+  s32u_clu_step finds the boundaries).
+- **xbase's own shadow drops combining marks.**  A mark written as a code
+  point of its own (width 0) reaches the terminal but not the shadow, so
+  RESTSCREEN of such a region paints the base letter alone.  The term
+  service's shadow keeps them (docs/SPEC.md 8.14.1); xbase's cells would
+  need marks too.
+- **Widths in characters, not columns, in three places:** a GET's field
+  width, MEMOEDIT's wrap width, and a character field's width.  A CJK
+  character counts one there and takes two columns on the screen.
+  Ruling 4 gives layout to columns; these are the remaining exceptions.
+- **Record-to-record copies move bytes** (COPY TO, PACK, and the like).
+  A copy of a marked table into a new one keeps the source's bytes but
+  not its mark: the copy is then read in the program's codepage.  The
+  fix is to write the source's mark into the new header, or to convert.
+- **SET CODEPAGE converts program text, not values.**  Strings already in
+  variables, arrays and fields read before the switch stay in the old
+  codepage, as in Harbour and FoxPro.  Deliberate; written down because it
+  surprises.
+- **The soft return is also a letter.**  141 (0x8D) is the soft return in
+  memo text and also "ì" in CP437 and CP850 -- Clipper's own ambiguity,
+  kept.  UTF-8 is safe: the byte is taken only on a character boundary.
+- **The FoxPro evidence for step 4 was a manual run.**  foxrun gives
+  FoxPro no CONFIG.FPW, and without CODEPAGE= FoxPro converts nothing, so
+  a foxrun case cannot hold xbase to it yet.  The run: FPW26 copied with
+  CONFIG.FPW `CODEPAGE=1252`, CPT437.DBF from xbase/tests/codepage.
+- **Collation by language** (libutf's UCA, 53 CLDR locales) is not built;
+  keys sort by byte, which is code point order in UTF-8.  An index built
+  by language would have to say so in its header.
