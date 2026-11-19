@@ -11,3 +11,8 @@ SET EXACT ON
 ? "G", "abc" = "ab", "ab" = "abc"
 SET EXACT OFF
 ? "H", "abc" = "ab", "ab" = "abc"
+SET EXACT ON
+? "I", "abc" = "abc  ", "abc  " = "abc", "abc" = " abc", "   " = ""
+? "J", "abc" < "abc  ", "abc" >= "abc  ", "abc" <> "abc  "
+SET EXACT OFF
+? "K", "abc" = "", "" = "abc", "abc  " = "abc", "abc" < "abc  "

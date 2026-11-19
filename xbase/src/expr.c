@@ -366,12 +366,10 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 double d = result->num - right.num;
                 cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
             } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                if (op == TOK_EXACT_EQ)
-                    cmp = strcmp(result->str, right.str);  /* always exact */
-                else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                    cmp = strncmp(result->str, right.str, strlen(right.str));
-                else
-                    cmp = strcmp(result->str, right.str);
+                int mode = op == TOK_EXACT_EQ ? STR_CMP_EXACT   /* always exact */
+                         : ctx->opts && !((set_options_t *)ctx->opts)->exact ? STR_CMP_PREFIX
+                         : STR_CMP_SET_EXACT;
+                cmp = str_compare(val_text(result), val_len(result), val_text(&right), val_len(&right), mode);
             } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
                 int32_t d = result->date - right.date;
                 cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;

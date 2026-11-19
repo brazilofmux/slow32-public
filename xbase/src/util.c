@@ -97,6 +97,19 @@ void path_normalize(char *s) {
     }
 }
 
+int str_compare(const char *a, int la, const char *b, int lb, int mode) {
+    int n, cmp;
+    if (mode == STR_CMP_SET_EXACT) {
+        while (la > 0 && a[la - 1] == ' ') la--;
+        while (lb > 0 && b[lb - 1] == ' ') lb--;
+    }
+    n = la < lb ? la : lb;
+    cmp = memcmp(a, b, (size_t)n);
+    if (cmp != 0) return cmp;
+    if (mode == STR_CMP_PREFIX) return la < lb ? -1 : 0;
+    return la - lb;
+}
+
 int str_nicmp(const char *a, const char *b, int n) {
     int i;
     for (i = 0; i < n && *a && *b; i++, a++, b++) {

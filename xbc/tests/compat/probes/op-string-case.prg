@@ -6,3 +6,9 @@ LOCAL a := {"b", "B", "a", "A"}
 ? ASCAN(a, "A"), ASCAN(a, "a")
 ASORT(a)
 ? a[1], a[2], a[3], a[4]
+* SET EXACT ON: trailing blanks do not count; == counts them
+SET EXACT ON
+? "abc" = "abc  ", "abc  " = "abc", "abc" = " abc", "   " = "", "abc" == "abc  "
+? "abc" < "abc  ", "abc" >= "abc  ", "abc" <> "abc  "
+SET EXACT OFF
+? "abc" = "", "" = "abc", "abc  " = "abc", "abc" < "abc  "

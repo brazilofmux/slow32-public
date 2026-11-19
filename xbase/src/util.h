@@ -49,6 +49,14 @@ void str_copy(char *dst, const char *src, int n);
 /* Case-insensitive strncmp (compares up to n chars) */
 int str_nicmp(const char *a, const char *b, int n);
 
+/* Two character values compared as dBASE III, FoxPro and Clipper compare
+ * them: byte for byte, case and all.  STR_CMP_EXACT is ==, length and
+ * all; STR_CMP_SET_EXACT is SET EXACT ON, trailing blanks not counted;
+ * STR_CMP_PREFIX is SET EXACT OFF, the right side's length (a null right
+ * side is equal).  Returns <0, 0, >0. */
+enum { STR_CMP_EXACT, STR_CMP_SET_EXACT, STR_CMP_PREFIX };
+int str_compare(const char *a, int la, const char *b, int lb, int mode);
+
 /* Identifier character tests */
 int is_ident_start(char c);
 int is_ident_char(char c);

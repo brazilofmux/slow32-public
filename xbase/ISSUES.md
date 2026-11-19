@@ -854,20 +854,31 @@ removes.
 `"abc" = "ABC"`, `==`, `<`, `>`, ASCAN, ASORT, LOOKUP() and a report's
 group breaks all folded a-z to A-Z before comparing, in both engines,
 from the first commit of the interpreter (February).  dBASE III, FoxPro
-2.6 and Clipper compare bytes: FoxPro (foxrun case strcase) and Harbour
-(probe op-string-case) both answer .F. .F. .F. .T. where xbase answered
-.T. .T. .F. .F.  Long texts and texts holding a NUL already compared by
+2.6 and Clipper compare bytes: the Clipper guide's = ("the comparison is
+based on the underlying ASCII code"), and dBASE III PLUS 1.1 and FoxPro
+(foxrun case strcase) run, answer .F. .F. .F. .T. to "abc" against
+"ABC" by =, ==, < and >, where xbase answered .T. .T. .F. .F.  Long texts and texts holding a NUL already compared by
 memcmp, so the same comparison gave two answers by length.  The fold
 also compared signed bytes, so anything past 127 sorted below "A".  All
-of them use strcmp / strncmp now.  Found by the UTF-8 survey
+of them compare bytes now.
+
+SET EXACT ON was wrong beside it: "abc" = "abc  " was .F.  The guide
+("must match exactly, except for trailing blanks"), dBASE III PLUS and
+FoxPro all say .T., and < / >= treat the two as equal; == still counts
+the blanks.  Both evaluators now go through one str_compare (util.c),
+==, SET EXACT ON and SET EXACT OFF its three modes, by length, so a
+long text compares as a short one does.  Found by the UTF-8 survey
 (docs/plans/xbase-utf8.md).  The ledger's reports, compiled by xbc, are
 byte-identical before and after.
 
 It uncovered one dependence: CA's DATE.PRG tests
 `SUBSTR(SET(_SET_DATEFORMAT), -4) == "YYYY"`, which had passed only by
-the fold.  Clipper (Harbour, and the sample's own test) spells the
-format in capitals once SET CENTURY has switched it: "mm/dd/yy", then
+the fold.  The guide's SET CENTURY says only that it "modifies the
+current date format"; CA's own sample, which ships with Clipper to
+"handle SET CENTURY", is the evidence that Clipper spells the format in
+capitals once SET CENTURY has switched it: "mm/dd/yy", then
 "MM/DD/YYYY", and a format set by name or by SET() is as given again.
+Harbour does the same.
 Probe fn-set-dateformat-century.
 
 Seen, not done: SET(_SET_DATEFORMAT, x) takes only the twelve named

@@ -1220,24 +1220,10 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
             }
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
-            if (!left->ext && !right->ext) {   /* inline texts: as before */
-                if (op == OP_EXACT_EQ)
-                    cmp = strcmp(left->str, right->str);
-                else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                    cmp = strncmp(left->str, right->str, strlen(right->str));
-                else
-                    cmp = strcmp(left->str, right->str);
-            } else {   /* long or NUL-holding texts: byte for byte, by length */
-                int ll = val_len(left), rl = val_len(right);
-                int n = ll < rl ? ll : rl;
-                cmp = memcmp(val_text(left), val_text(right), (size_t)n);
-                if (cmp == 0) {
-                    if (op != OP_EXACT_EQ && ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                        cmp = ll < rl ? -1 : 0;   /* = compares the right's length */
-                    else
-                        cmp = ll - rl;
-                }
-            }
+            int mode = op == OP_EXACT_EQ ? STR_CMP_EXACT
+                     : ctx->opts && !((set_options_t *)ctx->opts)->exact ? STR_CMP_PREFIX
+                     : STR_CMP_SET_EXACT;
+            cmp = str_compare(val_text(left), val_len(left), val_text(right), val_len(right), mode);
         } else if (left->type == VAL_DATE && right->type == VAL_DATE) {
             int32_t d = left->date - right->date;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
