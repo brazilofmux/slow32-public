@@ -25,6 +25,18 @@ GO 2
 REPLACE NAME WITH "日本語"
 ? "none cut", "[" + TRIM(NAME) + "]", LEN(TRIM(NAME))
 USE
+* index keys are the table's bytes: CP437's for CPW437, found by UTF-8 SEEKs
+USE CPW437
+INDEX ON NAME TO CPW437
+SEEK "Müller"
+? "437 seek", FOUND(), RECNO()
+SEEK "Mü"
+? "437 prefix", FOUND(), RECNO()
+USE CPWNONE
+INDEX ON NAME TO CPWNONE
+SEEK "日本"
+? "none seek", FOUND(), RECNO()
+USE
 SET CODEPAGE TO "CP437"
 USE CPW437
 GO 2

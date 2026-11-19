@@ -66,6 +66,8 @@ typedef struct {
     int key_len;            /* key length in memory: a numeric/date key is 16
                                characters that sort as the double does */
     int key_type;           /* 0=char, 1=numeric or date */
+    int codepage;           /* its table's mark (codepage.h), 0 for none -- the
+                               program's: a key is held in the table's codepage */
     int disk_key_len;       /* key length in the file (8 for numeric/date) */
     int item_size;          /* bytes per item in a page */
     int keys_per_page;      /* the header's keys per page */

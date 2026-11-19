@@ -1,8 +1,7 @@
 # xBase and UTF-8
 
-Status: plan with rulings, 2026-11-19.  Steps 0-4 (the terminal edge, the
-setting, the string functions, the screen and its editors, tables) are
-built; step 5 (index keys) is not.
+Status: built, 2026-11-19 -- every step below.  Collation by language
+(libutf's UCA) is the one piece left, and only if wanted.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -222,5 +221,16 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    nothing; foxrun has no way to give it a CONFIG.FPW yet.)  Test:
    test_codepage_tables (fixtures in xbase/tests/codepage, mkcptables.py).
    Record-to-record copies (COPY TO, PACK) move bytes as they are.
-5. Indexes: the cut at a boundary.  Collation as a separate option, if
-   wanted.
+5. **Index keys -- built 2026-11-19.**  A character key is held in its
+   table's codepage, as dBASE reads the file's keys: index_build converts
+   each key before it is measured and stored, and every key the program
+   hands in (INSERT, REMOVE, SEEK, the UNIQUE check) passes through
+   key_pad, which converts, pads, and cuts a UTF-8 key before a character
+   that would not fit.  A SEEK's prefix is its converted text's length.
+   The index knows its table's mark from the table (index_build, and SET
+   INDEX / USE ... INDEX opening the file).  UTF-8 keys in byte order sort
+   by code point.  Test: test_codepage_tables (a CP437-marked table indexed
+   and sought in UTF-8 mode: the file holds "M\x81ller").  ndxfuzz 20 of
+   20 with dBASE III PLUS.  Collation by language (libutf's UCA, 53 CLDR
+   locales) is a separate option, not built; an index built that way would
+   have to say so in its header.

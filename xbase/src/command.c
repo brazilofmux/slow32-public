@@ -1139,6 +1139,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             str_copy(ndxfile, index_names[k], sizeof(ndxfile));
             ensure_ndx_ext(ndxfile, sizeof(ndxfile));
             if (index_read(&wa->indexes[slot], ndxfile) == 0) {
+                wa->indexes[slot].codepage = wa->db.codepage;   /* its keys are the table's bytes */
                 index_compile_key_ast(&wa->indexes[slot], &memvar_store);
                 wa->num_indexes++;
             } else {
@@ -5456,6 +5457,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
                     str_copy(filename, resolved, sizeof(filename));
             }
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
+                cur_wa()->indexes[slot].codepage = cur_wa()->db.codepage;   /* its keys are the table's bytes */
                 index_compile_key_ast(&cur_wa()->indexes[slot], &memvar_store);
                 cur_wa()->num_indexes++;
                 if (talk_other()) printf("Index %s opened (%d entries).\n", filename,

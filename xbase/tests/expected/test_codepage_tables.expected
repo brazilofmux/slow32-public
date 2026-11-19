@@ -8,6 +8,9 @@ xBase interpreter 1.0
 1252 back [Ærø €5]
 none          0 [Müller]
 none cut [日本]          2
+437 seek .T.          1
+437 prefix .T.          1
+none seek .T.          2
 437 bytes         34        148         34
 1252 bytes        146        111         63
 . 

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "index.h"
+#include "codepage.h"
 #include "util.h"
 #include "date.h"
 #include "ast.h"
@@ -567,6 +568,37 @@ static ndx_page_t *bt_find_leaf(index_t *idx, const char *key) {
 }
 
 /* ---- Key existence check (for UNIQUE validation) ---- */
+/* A key from the program as the index holds it: in its table's codepage
+ * (codepage.h; dBASE reads the file's keys as the table's bytes), padded
+ * with blanks or cut to key_len -- a UTF-8 key before a character that
+ * would not fit.  Returns the bytes the key's own text took. */
+/* a character key from the program into its table's codepage, in place
+ * (buf of size bytes): what the index stores and compares */
+static void key_to_table(const index_t *idx, char *buf, int size) {
+    char conv[MAX_INDEX_KEY * 4 + 1];
+    int len = (int)strlen(buf), tcp = idx->codepage ? idx->codepage : cp_current(), i;
+    for (i = 0; i < len && (unsigned char)buf[i] < 0x80; i++) ;
+    if (i == len || idx->key_type != 0 || tcp == cp_current()) return;
+    cp_convert(buf, len, cp_current(), tcp, conv, size < (int)sizeof(conv) ? size : (int)sizeof(conv));
+    strcpy(buf, conv);
+}
+
+static int key_pad(const index_t *idx, const char *key, char *padded) {
+    char conv[MAX_INDEX_KEY * 4 + 1];
+    int len, tcp = idx->codepage ? idx->codepage : cp_current();
+    str_copy(conv, key, (int)sizeof(conv));
+    key_to_table(idx, conv, (int)sizeof(conv));
+    key = conv;
+    len = (int)strlen(key);
+    memset(padded, ' ', idx->key_len);
+    if (len > idx->key_len) {
+        len = idx->key_len;
+        if (tcp == CP_UTF8) while (len > 0 && ((unsigned char)key[len] & 0xC0) == 0x80) len--;
+    }
+    memcpy(padded, key, (size_t)len);
+    return len;
+}
+
 int index_key_exists(index_t *idx, const char *key, uint32_t exclude_recno) {
     char padded[MAX_INDEX_KEY];
     ndx_page_t *leaf;
@@ -574,12 +606,7 @@ int index_key_exists(index_t *idx, const char *key, uint32_t exclude_recno) {
 
     if (!idx->active || idx->nentries == 0) return 0;
 
-    memset(padded, ' ', idx->key_len);
-    {
-        int len = strlen(key);
-        if (len > idx->key_len) len = idx->key_len;
-        memcpy(padded, key, len);
-    }
+    key_pad(idx, key, padded);
 
     leaf = bt_find_leaf(idx, padded);
     if (!leaf) return 0;
@@ -618,12 +645,11 @@ int index_seek(index_t *idx, const char *key, int match_len) {
         return 0;
     }
 
-    /* Pad key to key_len */
-    memset(padded, ' ', idx->key_len);
+    /* Pad key to key_len, in the table's codepage; a prefix's length is
+     * its converted text's */
     {
-        int len = strlen(key);
-        if (len > idx->key_len) len = idx->key_len;
-        memcpy(padded, key, len);
+        int len = key_pad(idx, key, padded);
+        if (match_len > 0 && match_len == (int)strlen(key)) match_len = len;
     }
 
     /* For match comparison: use match_len if specified, else full key_len */
@@ -918,13 +944,8 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
 
     if (!idx->active) return -1;
 
-    /* Pad key */
-    memset(padded, ' ', idx->key_len);
-    {
-        int len = strlen(key);
-        if (len > idx->key_len) len = idx->key_len;
-        memcpy(padded, key, len);
-    }
+    /* Pad key, in the table's codepage */
+    key_pad(idx, key, padded);
 
     /* Handle empty tree */
     if (idx->num_pages <= 1) {
@@ -1156,12 +1177,7 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
 
     if (!idx->active || idx->nentries == 0) return -1;
 
-    memset(padded, ' ', idx->key_len);
-    {
-        int len = strlen(key);
-        if (len > idx->key_len) len = idx->key_len;
-        memcpy(padded, key, len);
-    }
+    key_pad(idx, key, padded);   /* in the table's codepage */
 
     removed = bt_remove(idx, idx->root_page, padded, recno, last);
     if (!removed) return -1;
@@ -1533,6 +1549,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     int status = -1;   /* -2: the key or FOR expression failed, ctx->error says why */
 
     if (!dbf_is_open(db)) return -1;
+    idx->codepage = db->codepage;   /* keys in the table's codepage (key_pad) */
 
     /* Close any previous state */
     free_all_pages(idx);
@@ -1638,6 +1655,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         }
 
         index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
+        key_to_table(idx, keybuf, (int)sizeof(keybuf));   /* the table's bytes (codepage.h) */
         {
             int len = strlen(keybuf);
             if (idx->key_type == 0 && len > max_len) max_len = len;
