@@ -177,6 +177,36 @@ it stops at eight tasks. The heap answers "many things due at
 different times, one thread". The two compose: a scheduler that kept
 its timer waits on a heap would arm one host timer for all of them.
 
+**The server: TinyMUX.** The same shape, at the size of a real
+network server, is `GanlAdapter::run_main_loop()` in
+[TinyMUX](https://github.com/brazilofmux/tinymux)
+(`mux/src/ganl_adapter.cpp`). Each pass asks the scheduler
+`WhenNext`, makes that the timeout, waits in ganl's
+`processEvents` (epoll, kqueue or IOCP underneath), dispatches the
+network events, and then calls `RunTasks`. The scheduler
+(`CScheduler`, `mux/modules/engine/timer.cpp`) is the heap above,
+grown up, and it adds two lessons:
+
+- *Every deadline shortens the wait.* TinyMUX issue 1074 was a
+  deadline outside the heap: the grace period for a new client to
+  show its protocol. `WhenNext` did not know of it, so the server
+  could sleep for minutes and a silent client was never aged out.
+  The fix shortens the timeout by hand. Here the rule is simpler:
+  a deadline goes in the heap, or it is not kept.
+- *Due is not next.* `CScheduler` has two heaps. `ReadyTasks` moves
+  what is due from the time heap to a priority heap, and `RunTasks`
+  takes at most `active_q_chunk` tasks from it per pass; while ready
+  tasks remain, `WhenNext` answers "now", so the loop comes straight
+  back. A long queue of commands cannot starve the network. The
+  one-heap loop above runs everything due before it looks at input
+  again: right for a desk program, wrong for a server.
+
+It is also more than an analogy. netmux built for SLOW-32 serves
+telnet under the DBT (2026-10-31). There ganl uses its `select`
+engine, the guest's `select` is `FDPOLL`, and the timeout `WhenNext`
+computed is `FDPOLL`'s timeout: this loop, on this machine, without
+a callback anywhere.
+
 **And the edges (below).** Edge 2 is what this loop is missing for a tube
 program: put the tube key queue in `fds` and a game has the same
 loop. Edge 1 is what makes the loop a test: under the step clock,
