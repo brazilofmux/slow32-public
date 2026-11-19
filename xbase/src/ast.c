@@ -1222,11 +1222,11 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
         } else if (left->type == VAL_CHAR && right->type == VAL_CHAR) {
             if (!left->ext && !right->ext) {   /* inline texts: as before */
                 if (op == OP_EXACT_EQ)
-                    cmp = str_icmp(left->str, right->str);
+                    cmp = strcmp(left->str, right->str);
                 else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                    cmp = str_nicmp(left->str, right->str, strlen(right->str));
+                    cmp = strncmp(left->str, right->str, strlen(right->str));
                 else
-                    cmp = str_icmp(left->str, right->str);
+                    cmp = strcmp(left->str, right->str);
             } else {   /* long or NUL-holding texts: byte for byte, by length */
                 int ll = val_len(left), rl = val_len(right);
                 int n = ll < rl ? ll : rl;

@@ -1376,6 +1376,10 @@ static const char *date_format_text(const set_options_t *o, char *buf, int size)
     int i = (int)o->date_format;
     if (i < 0 || i > 6) i = 0;
     snprintf(buf, (size_t)size, "%s", o->century ? four[i] : two[i]);
+    if (o->date_format_upper) {   /* SET CENTURY rewrote it: "MM/DD/YYYY" (Harbour; CA's DATE.PRG asks) */
+        char *p;
+        for (p = buf; *p; p++) if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
+    }
     return buf;
 }
 
@@ -1440,8 +1444,9 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
         if (v->type != VAL_CHAR) return;
         for (i = 0; fm[i].text; i++) {
             if (strcasecmp(fm[i].text, v->str) == 0) {
-                run_cmd("SET DATE %s", fm[i].name);
+                /* century first: SET DATE then leaves the text as given */
                 run_cmd("SET CENTURY %s", strstr(v->str, "yyyy") || strstr(v->str, "YYYY") ? "ON" : "OFF");
+                run_cmd("SET DATE %s", fm[i].name);
                 return;
             }
         }

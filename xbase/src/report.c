@@ -414,7 +414,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             if (ast_eval_dynamic(def->group_expr, ectx, &gv) == 0)
                 val_to_string(&gv, cur_group, sizeof(cur_group));
 
-            if (str_icmp(cur_group, prev_group_val) != 0 && !first_record) {
+            if (strcmp(cur_group, prev_group_val) != 0 && !first_record) {
                 /* Group break */
                 if (has_subgroups && has_totals) {
                     print_totals_line(def, subgroup_totals,
@@ -430,7 +430,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
                 }
             }
 
-            if (str_icmp(cur_group, prev_group_val) != 0) {
+            if (strcmp(cur_group, prev_group_val) != 0) {
                 /* Print group header */
                 if (def->group_header[0]) {
                     print_margin(outfile, def->left_margin);
@@ -451,7 +451,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
             if (ast_eval_dynamic(def->subgroup_expr, ectx, &sv) == 0)
                 val_to_string(&sv, cur_subgroup, sizeof(cur_subgroup));
 
-            if (str_icmp(cur_subgroup, prev_subgroup_val) != 0 && !first_record) {
+            if (strcmp(cur_subgroup, prev_subgroup_val) != 0 && !first_record) {
                 if (has_totals) {
                     print_totals_line(def, subgroup_totals,
                                       "* Subtotal *", outfile, def->left_margin);
@@ -460,7 +460,7 @@ void report_generate(frm_def_t *def, dbf_t *db, expr_ctx_t *ectx,
                 }
             }
 
-            if (str_icmp(cur_subgroup, prev_subgroup_val) != 0) {
+            if (strcmp(cur_subgroup, prev_subgroup_val) != 0) {
                 if (def->subgroup_header[0]) {
                     print_margin(outfile, def->left_margin);
                     fprintf(outfile, "* %s %s\n", def->subgroup_header, cur_subgroup);

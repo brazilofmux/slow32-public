@@ -30,6 +30,7 @@ void set_init(set_options_t *opts) {
     opts->date_format = DATE_AMERICAN;
     opts->device = 0;  /* SCREEN */
     opts->century = 0;
+    opts->date_format_upper = 0;
     opts->escape = 1;
     opts->echo = 0;
     opts->margin = 0;
@@ -194,7 +195,8 @@ void set_execute(set_options_t *opts, const char *arg) {
         else if (str_imatch(p, "GERMAN"))  opts->date_format = DATE_GERMAN;
         else if (str_imatch(p, "ITALIAN")) opts->date_format = DATE_ITALIAN;
         else if (str_imatch(p, "JAPAN"))   opts->date_format = DATE_JAPAN;
-        else printf("Unknown date format.\n");
+        else { printf("Unknown date format.\n"); return; }
+        opts->date_format_upper = 0;
         return;
     }
 
@@ -266,7 +268,10 @@ void set_execute(set_options_t *opts, const char *arg) {
     }
     if (str_imatch(p, "CENTURY")) {
         val = parse_on_off(p + 7);
-        if (val >= 0) opts->century = val;
+        if (val >= 0 && val != opts->century) {
+            opts->century = val;
+            opts->date_format_upper = 1;   /* the format rewritten, in capitals */
+        }
         return;
     }
     if (str_imatch(p, "PATH")) {

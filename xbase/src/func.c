@@ -1953,7 +1953,7 @@ static int val_compare(const value_t *a, const value_t *b) {
         return 0;
     }
     if (a->type == VAL_CHAR && b->type == VAL_CHAR) {
-        return str_icmp(a->str, b->str);
+        return strcmp(a->str, b->str);
     }
     if (a->type == VAL_DATE && b->type == VAL_DATE) {
         if (a->date < b->date) return -1;
@@ -2474,7 +2474,7 @@ static int fn_lookup(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
             if (ctx->db->record_buf[0] == '*') continue;
             dbf_get_field_raw(ctx->db, search_idx, fval, sizeof(fval));
             trim_right(fval);
-            if (str_icmp(fval, search_val) == 0) {
+            if (strcmp(fval, search_val) == 0) {
                 char rval[256];
                 dbf_get_field_raw(ctx->db, ret_idx, rval, sizeof(rval));
                 trim_right(rval);

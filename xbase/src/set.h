@@ -29,6 +29,9 @@ typedef struct set_options {
     date_format_t date_format;
     int device;       /* 0 = SCREEN, 1 = PRINT */
     int century;      /* 0=OFF (2-digit year), 1=ON (4-digit year) */
+    int date_format_upper;   /* SET CENTURY switched since the format was set:
+                                Clipper's SET(_SET_DATEFORMAT) then reads
+                                "MM/DD/YYYY", not "mm/dd/yyyy" (clipfn.c) */
     int escape;       /* 1=ON (Esc interrupts programs) */
     int echo;         /* 1=ON (echo lines during DO) */
     int margin;       /* left margin for printer output (0-254) */

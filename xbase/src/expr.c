@@ -367,11 +367,11 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
             } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
                 if (op == TOK_EXACT_EQ)
-                    cmp = str_icmp(result->str, right.str);  /* always exact */
+                    cmp = strcmp(result->str, right.str);  /* always exact */
                 else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                    cmp = str_nicmp(result->str, right.str, strlen(right.str));
+                    cmp = strncmp(result->str, right.str, strlen(right.str));
                 else
-                    cmp = str_icmp(result->str, right.str);
+                    cmp = strcmp(result->str, right.str);
             } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
                 int32_t d = result->date - right.date;
                 cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;

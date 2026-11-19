@@ -848,3 +848,31 @@ is now its key only while the condition holds (compiled the first time,
 for an index opened from its file): changing into it inserts, out of it
 removes.
 
+
+### Strings compared without regard to case — RESOLVED 2026-11-19
+
+`"abc" = "ABC"`, `==`, `<`, `>`, ASCAN, ASORT, LOOKUP() and a report's
+group breaks all folded a-z to A-Z before comparing, in both engines,
+from the first commit of the interpreter (February).  dBASE III, FoxPro
+2.6 and Clipper compare bytes: FoxPro (foxrun case strcase) and Harbour
+(probe op-string-case) both answer .F. .F. .F. .T. where xbase answered
+.T. .T. .F. .F.  Long texts and texts holding a NUL already compared by
+memcmp, so the same comparison gave two answers by length.  The fold
+also compared signed bytes, so anything past 127 sorted below "A".  All
+of them use strcmp / strncmp now.  Found by the UTF-8 survey
+(docs/plans/xbase-utf8.md).  The ledger's reports, compiled by xbc, are
+byte-identical before and after.
+
+It uncovered one dependence: CA's DATE.PRG tests
+`SUBSTR(SET(_SET_DATEFORMAT), -4) == "YYYY"`, which had passed only by
+the fold.  Clipper (Harbour, and the sample's own test) spells the
+format in capitals once SET CENTURY has switched it: "mm/dd/yy", then
+"MM/DD/YYYY", and a format set by name or by SET() is as given again.
+Probe fn-set-dateformat-century.
+
+Seen, not done: SET(_SET_DATEFORMAT, x) takes only the twelve named
+formats, and SET DATE FORMAT TO "yyyy.mm.dd" is not taken at all.  And
+six Harbour comparisons differ before this change and after it:
+cls-tbrowse-pan (getColumn: no such column), cmd-report-form and
+ca-frmrun (a .FRM's expressions), cmd-list-printer, cmd-set-printer,
+stmt-local-scope.

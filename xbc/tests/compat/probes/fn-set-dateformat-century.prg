@@ -1,0 +1,16 @@
+* Functions: SET(_SET_DATEFORMAT) after SET CENTURY switches it -- the
+* format rewritten in capitals ("MM/DD/YYYY"), which CA's DATE.PRG tests
+#include "set.ch"
+? Set(_SET_DATEFORMAT)
+SET CENTURY ON
+? Set(_SET_DATEFORMAT)
+SET CENTURY OFF
+? Set(_SET_DATEFORMAT)
+SET DATE GERMAN
+? Set(_SET_DATEFORMAT)
+SET CENTURY OFF
+? Set(_SET_DATEFORMAT)
+SET CENTURY ON
+? Set(_SET_DATEFORMAT)
+Set(_SET_DATEFORMAT, "dd/mm/yyyy")
+? Set(_SET_DATEFORMAT)
