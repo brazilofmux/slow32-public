@@ -1396,10 +1396,16 @@ static uint64_t tube_fnv1a64(const uint8_t *p, size_t n) {
     return h;
 }
 
+/* The event's reserved byte is the host's: bit 0 (S32_TUBE_KEY_LOST) says
+ * events were dropped before this one (docs/TUBE.md 2), so a guest that
+ * took a key's down and lost its up can clear what it holds.  Whatever a
+ * viewer or a key file put there is cleared. */
 static void tube_key_push(tube_state_t *ts, tube_key_t ev) {
+    ev.reserved = 0;
     if (ts->key_count == TUBE_KEY_QUEUE) {
-        ts->key_head = (ts->key_head + 1u) % TUBE_KEY_QUEUE;
+        ts->key_head = (ts->key_head + 1u) % TUBE_KEY_QUEUE;   /* the oldest goes */
         ts->key_count--;
+        ts->keys[ts->key_head].reserved |= S32_TUBE_KEY_LOST;   /* and the next one says so */
     }
     uint32_t tail = (ts->key_head + ts->key_count) % TUBE_KEY_QUEUE;
     ts->keys[tail] = ev;

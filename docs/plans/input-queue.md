@@ -24,7 +24,7 @@ Three devices, on purpose. They are not one stream.
 | Device | Guest ask | Record | Wait |
 |---|---|---|---|
 | Stdin / term | `GETCHAR`, `read` on fd 0, `term_getkey`, `term_getchar` | one byte, or one UTF-8 code point | blocks. `term_kbhit` does not. `term_wait_key(ms)` waits in the host |
-| Tube keys | `tube_keys` / `TUBE_KEYS` | 4 bytes: `u16 code`, `u8 down`, `u8 reserved` | never blocks. Count 0 means empty |
+| Tube keys | `tube_keys` / `TUBE_KEYS` | 4 bytes: `u16 code`, `u8 down`, `u8 flags` | never blocks. Count 0 means empty |
 | DPC ring | `s32_dpc_poll` / `s32_dpc_wait` | `s32_dpc_t`: kind, length, id, cookie | `poll` does not block. `wait` sleeps until a timer or a posted read can complete |
 
 Readiness of an fd is a fourth shape, `FDPOLL`: the guest names the
@@ -46,7 +46,8 @@ keys are the viewer queue only. [TUBE.md](../TUBE.md) says they are
 not merged, and that stays. A program that wants both has two
 devices, the way a 1987 machine had a keyboard and a serial port.
 
-Tube queue cap is 256 events; overflow drops the oldest. Leftover
+Tube queue cap is 256 events; overflow drops the oldest and flags the
+oldest kept (`TUBE_KEY_LOST`, the third edge). Leftover
 events stay queued. A term read consumes the byte. A DPC harvest
 consumes the entry; `s32_dpc_unread` puts one back for a waiter that
 is not the sole consumer. Stale timers are dropped, not unread.
@@ -69,8 +70,8 @@ is which call you made.
 - **Tube key.** Make and break. Printable ASCII is itself. Extended
   codes start at `0x100` (`UP`, `DOWN`, `LEFT`, `RIGHT`, shifts,
   controls, alts, `F1`–`F12`). Unknown codes are still queued; the
-  guest decides. `down` is 0 or 1. `reserved` is 0 on write and
-  ignored on read.
+  guest decides. `down` is 0 or 1. `flags` is the host's: bit 0,
+  `TUBE_KEY_LOST`, marks the first event after a drop; the rest are 0.
 - **DPC.** A timer that fired (`id`, `cookie`) or a posted read that
   finished (`id` is the guest buffer, `length` is the byte count,
   `cookie` is what the guest posted). A readiness DPC is the same
@@ -269,8 +270,8 @@ kind is a new expected file, not a new thread.
 ## Three edges
 
 Places where the rules above hold but the machine does not yet let
-a program, or a test, do the obvious thing. The first two are built;
-the third is proposed. None adds an opcode, a callback, or a merged
+a program, or a test, do the obvious thing. All three are built
+(2026-11-19); each says how. None adds an opcode, a callback, or a merged
 device.
 
 ### 1. Time is the one input a test cannot inject
@@ -413,6 +414,12 @@ a program needs to catch up. Coalescing make/break pairs would hide repeats a ga
 One bit in a byte that is already reserved is the smallest true
 statement.
 
-**Where it lands.** `tube_key_push` in `mmio_ring.c`, the event
-table in [TUBE.md](../TUBE.md), a test that preloads 300 events and
-checks the bit on the first one returned.
+**Built (2026-11-19).** `tube_key_push` in `mmio_ring.c`: dropping
+the oldest sets `TUBE_KEY_LOST` (0x01; `tube.h`) on the new oldest,
+and the byte, renamed `flags`, is cleared on every event coming in,
+so a viewer or a key file cannot set the bit. Contract:
+[TUBE.md](../TUBE.md) §2. The test, `feature-tube-keys-lost`, has a
+live viewer send 300 numbered events in one write: 256 are read, the
+first is event 44 with the bit, none after it has it, the last is
+299, and event 100, sent with 0xFE in the byte, arrives with 0 -- a
+mutant that skips the clearing fails it.

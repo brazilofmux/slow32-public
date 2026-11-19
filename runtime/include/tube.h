@@ -61,7 +61,12 @@ int  tube_flip(uint32_t generation);
 uint32_t tube_info(void);
 uint32_t tube_status(void);
 
-/* Copy up to nbytes (multiple of 4) key events. Returns event count. */
+/* Copy up to nbytes (multiple of 4) key events. Returns event count.
+ * An event is 4 bytes: u16 code, u8 down, u8 flags.  The queue holds 256
+ * and drops the oldest when full; the oldest event kept then carries
+ * TUBE_KEY_LOST in its flags byte, so a guest that saw a key go down and
+ * lost its release can let go of the keys it thinks are held. */
+#define TUBE_KEY_LOST 0x01u
 int  tube_keys(void *buf, uint32_t nbytes);
 
 #ifdef __cplusplus

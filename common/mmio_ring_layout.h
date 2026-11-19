@@ -429,6 +429,7 @@ typedef struct s32_mmio_envp_info {
 
 #define S32_TUBE_LIST_MAX_WORDS 65536u
 #define S32_TUBE_KEY_QUEUE      256u
+#define S32_TUBE_KEY_LOST       0x01u   // a key event's reserved byte: events were dropped before it
 
 #define S32_TUBE_VOP_END      0u
 #define S32_TUBE_VOP_MOVE     1u

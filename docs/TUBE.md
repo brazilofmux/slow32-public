@@ -168,16 +168,23 @@ failure. Headless is the common case: `OPEN` succeeds, no
 
 Key make/break events flow viewer → emulator → queue → guest. Each
 event is 4 bytes, packed, little-endian: `u16 code, u8 down, u8
-reserved`. `TUBE_KEYS.length` is a byte budget, a multiple of 4 —
+flags`. `TUBE_KEYS.length` is a byte budget, a multiple of 4 —
 not an event count. `status` out is the number of events copied.
 Leftover events stay queued. Queue cap: 256 events; overflow drops
-oldest.
+oldest, and the oldest event kept then has bit 0 of `flags` set
+(`TUBE_KEY_LOST`, 0x01): events were dropped before this one. A guest
+that saw a key go down and may have lost its release lets go of the
+keys it thinks are held there.
 
 Codes: printable ASCII 32–126 as themselves; `ESC=27, ENTER=13,
 TAB=9, BS=8`; extended keys from 0x100: `UP=0x100, DOWN, LEFT,
 RIGHT, LSHIFT, RSHIFT, LCTRL, LALT, F1..F12` (0x108–0x113). Unknown
-codes are still queued; the guest decides. `reserved` is 0 on write
-and ignored on read.
+codes are still queued; the guest decides. `flags` is the host's:
+whatever a viewer's `KEYE` or an `S32_TUBE_KEYS` file puts there is
+cleared on the way in, so `TUBE_KEY_LOST` means only what it says;
+bits 1-7 are 0, and a guest ignores bits it does not know (a guest
+written before 2026-11-19 ignores the whole byte, as it was told
+to). (`regression/tests/feature-tube-keys-lost`.)
 
 `TUBE_KEYS` is the viewer queue only. `term_getkey` / `term_kbhit`
 are host stdin. They are not merged. A guest that wants both has two
