@@ -6,6 +6,7 @@
 #include "command.h"
 #include "program.h"
 #include "screen.h"
+#include "codepage.h"
 #include "field.h"
 #include "util.h"
 #include "index.h"
@@ -167,31 +168,32 @@ static int edit_cell(browse_state_t *bs, int field_idx,
     if (width > flen) width = flen;
     if (width > 250) width = 250;
 
-    if (trigger_key > 0 && trigger_key >= 32 && trigger_key < 127) {
+    /* The value edited as characters (codepage.h): a byte each in CP437,
+     * a code point in UTF-8; the field holds flen bytes of them */
+    {
+    unsigned cb[256];
+    int n = 0, bi = 0, blen = (int)strlen(buf);
+    while (bi < blen && n < 255) bi += cp_decode(buf + bi, blen - bi, &cb[n++]);
+
+    if (trigger_key > 0 && cp_key_char(trigger_key) >= 0 && cp_key_char(trigger_key) != 127) {
         /* Start with the trigger character */
-        buf[0] = (char)trigger_key;
-        buf[1] = '\0';
+        cb[0] = (unsigned)cp_key_char(trigger_key);
+        n = 1;
         pos = 1;
     } else {
-        pos = strlen(buf);
+        pos = n;
     }
 
     for (;;) {
-        int key;
+        int key, i, cols = 0;
         /* Draw field value in reverse video */
-        len = strlen(buf);
         term_begin_update();
         screen_tgoto(screen_row, screen_col);
         screen_tattr(7);
-        {
-            int i;
-            for (i = 0; i < width; i++) {
-                if (i < len) screen_tputc(buf[i]);
-                else screen_tputc(' ');
-            }
-        }
-        /* Position cursor */
-        screen_tgoto(screen_row, screen_col + pos);
+        for (i = 0; i < width; i++) screen_tputc(i < n ? (int)cb[i] : ' ');
+        /* Position cursor: the width of the characters before it */
+        for (i = 0; i < pos && i < n; i++) cols += cp_width(cb[i]);
+        screen_tgoto(screen_row, screen_col + cols);
         term_end_update();
 
         key = screen_getkey();
@@ -200,17 +202,19 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         if (key == 27) { /* Escape - cancel */
             str_copy(buf, original, sizeof(buf));
             /* Redraw original */
-            len = strlen(buf);
+            len = (int)strlen(buf);
             screen_tgoto(screen_row, screen_col);
             screen_tattr(0);
             {
-                int i;
+                int k = 0, c = 0;
+                unsigned ch;
                 for (i = 0; i < width; i++) {
-                    if (i < len) screen_tputc(buf[i]);
-                    else screen_tputc(' ');
+                    if (k < len) { k += cp_decode(buf + k, len - k, &ch); c = (int)ch; }
+                    else c = ' ';
+                    screen_tputc(c);
                 }
             }
-    
+
             return 0;
         }
 
@@ -223,7 +227,8 @@ static int edit_cell(browse_state_t *bs, int field_idx,
 
         if (key == 8) { /* Backspace */
             if (pos > 0) {
-                memmove(buf + pos - 1, buf + pos, strlen(buf) - pos + 1);
+                memmove(cb + pos - 1, cb + pos, (size_t)(n - pos) * sizeof cb[0]);
+                n--;
                 pos--;
             }
             continue;
@@ -234,27 +239,30 @@ static int edit_cell(browse_state_t *bs, int field_idx,
             continue;
         }
         if (key == K_RIGHT) {
-            if (pos < (int)strlen(buf)) pos++;
+            if (pos < n) pos++;
             continue;
         }
         if (key == K_HOME) { pos = 0; continue; }
-        if (key == K_END)  { pos = strlen(buf); continue; }
+        if (key == K_END)  { pos = n; continue; }
         if (key == K_DEL) {
-            len = strlen(buf);
-            if (pos < len) {
-                memmove(buf + pos, buf + pos + 1, len - pos);
+            if (pos < n) {
+                memmove(cb + pos, cb + pos + 1, (size_t)(n - pos - 1) * sizeof cb[0]);
+                n--;
             }
             continue;
         }
 
         /* Type-specific input validation */
-        if (key >= 32 && key < 127) {
+        if (cp_key_char(key) >= 0) {
+            unsigned ch = (unsigned)cp_key_char(key);
+            char e[4];
+            int bytes = 0;
             if (type == 'L') {
                 /* Toggle T/F */
                 if (key == 'T' || key == 't' || key == 'Y' || key == 'y')
-                    str_copy(buf, "T", sizeof(buf));
+                    cb[0] = 'T', n = 1;
                 else if (key == 'F' || key == 'f' || key == 'N' || key == 'n')
-                    str_copy(buf, "F", sizeof(buf));
+                    cb[0] = 'F', n = 1;
                 pos = 1;
                 continue;
             }
@@ -262,18 +270,27 @@ static int edit_cell(browse_state_t *bs, int field_idx,
                 if (key != '-' && key != '.' && key != ' ' &&
                     (key < '0' || key > '9')) continue;
             }
-            /* Insert character if room */
-            len = strlen(buf);
-            if (len < flen) {
-                memmove(buf + pos + 1, buf + pos, len - pos + 1);
-                buf[pos] = (char)key;
+            for (i = 0; i < n; i++) bytes += cp_encode(cb[i], e);
+            /* Insert character if room: the field's bytes */
+            if (bytes + cp_encode(ch, e) <= flen && n < 255) {
+                memmove(cb + pos + 1, cb + pos, (size_t)(n - pos) * sizeof cb[0]);
+                cb[pos] = ch;
+                n++;
                 pos++;
-            } else if (pos < len) {
+            } else if (pos < n) {
                 /* Overwrite mode at capacity */
-                buf[pos] = (char)key;
-                if (pos < len) pos++;
+                if (bytes - cp_encode(cb[pos], e) + cp_encode(ch, e) <= flen) {
+                    cb[pos] = ch;
+                    pos++;
+                }
             }
         }
+    }
+    {   /* the characters as the field's text again */
+        int i, k = 0;
+        for (i = 0; i < n && k < (int)sizeof(buf) - 5; i++) k += cp_encode(cb[i], buf + k);
+        buf[k] = '\0';
+    }
     }
 
     /* Accept: format and store */
@@ -396,14 +413,7 @@ static void edit_paint_record(browse_state_t *bs)
 
         if (r == bs->cur_field)
             screen_tattr(7);
-        {
-            int dlen = strlen(display);
-            int j;
-            for (j = 0; j < w; j++) {
-                if (j < dlen) screen_tputc(display[j]);
-                else screen_tputc(' ');
-            }
-        }
+        screen_tputs_cols(display, w);
         if (r == bs->cur_field)
             screen_tattr(0);
     }
@@ -639,10 +649,7 @@ static void browse_paint_row(browse_state_t *bs, int row, int highlight_col)
         if (row == bs->cur_row && c == (bs->cur_field - bs->first_field))
             screen_tattr(7);
 
-        for (j = 0; j < bs->col_w[c]; j++) {
-            if (j < dlen) screen_tputc(display[j]);
-            else screen_tputc(' ');
-        }
+        screen_tputs_cols(display, bs->col_w[c]);
 
         if (row == bs->cur_row && c == (bs->cur_field - bs->first_field))
             screen_tattr(0);

@@ -16,3 +16,10 @@ is .T. .T. .T. .F.
 chrtran cafe creme
 back          1        130
 . 
+transform NAÏVE a-日- ÉA
+mlcount          4          3
+memoline [日本語] [の文  ] [aé  ]
+mlpos          4          7
+hardcr          8 .T.
+memotran Brač;nač x
+. 

@@ -1,9 +1,8 @@
 # xBase and UTF-8
 
-Status: plan with rulings, 2026-11-19.  Steps 0-2 (the terminal edge, the
-setting and the string functions) are built, and step 3's keys, screen
-and GET editors; MEMOEDIT, BROWSE, the menus, TRANSFORM and steps 4-5 are
-not.
+Status: plan with rulings, 2026-11-19.  Steps 0-3 (the terminal edge, the
+setting, the string functions, the screen and its editors) are built;
+steps 4-5 (tables, indexes) are not.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -195,9 +194,15 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    functions BLEN, BSUBSTR, BASC, BCHR.  Both GET editors (the Get object,
    the interpreter's READ) edit characters: a field is so many characters,
    the cursor stands at the width of those before it, a picture takes
-   Unicode's letters (A, !, @!).  Tests: test_get_utf8, test_screen_utf8.
-   Still bytes: MEMOEDIT, BROWSE's cell editor, ACHOICE/MENU widths,
-   TRANSFORM, MEMOLINE/MLCOUNT.  A GET on a table field is still the
+   Unicode's letters (A, !, @!).  MEMOEDIT and BROWSE's cell editor edit
+   characters too, and paint by width; ACHOICE and the DEFINE POPUP/PAD
+   menus measure by width; TRANSFORM's template is by character; MEMOLINE,
+   MLCOUNT wrap at a width in columns, and MLPOS, MLCTOPOS, MPOSTOLC count
+   characters.  The soft return stays the byte 141: HARDCR, MEMOTRAN and
+   MEMOEDIT take it only on a character's boundary, so the 8D inside
+   c-caron (C4 8D) is left alone.  Tests: test_get_utf8, test_screen_utf8,
+   test_codepage_utf8.  A field's width stays in characters (a CJK
+   character takes two columns of it); a GET on a table field is still the
    field's bytes wide until step 4.
 4. Tables: the cut at a boundary, the header's codepage byte, translation
    on read and write.  FoxPro cases.

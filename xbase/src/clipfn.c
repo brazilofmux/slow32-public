@@ -616,10 +616,13 @@ static int memo_line(const char *s, int width, int n, const char **start, int *l
     while (*p || line == 0) {
         const char *e = p, *brk = NULL;
         int col = 0, broke = 0;
-        while (*e && *e != '\r' && *e != '\n' && col < width) {
+        while (*e && *e != '\r' && *e != '\n') {   /* the width in columns (codepage.h) */
+            unsigned c;
+            int k = cp_decode(e, (int)strlen(e), &c), w = cp_width(c);
+            if (col + w > width) break;
             if (*e == ' ') brk = e;
-            e++;
-            col++;
+            e += k;
+            col += w;
         }
         if (*e && *e != '\r' && *e != '\n') {
             /* wrapped: back to the last blank -- or, lWrap .F., right at
@@ -661,7 +664,10 @@ static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     } else {
         len = 0;   /* past the last line: blanks, the width wide */
     }
-    while (len < width && len < (int)sizeof(r.str) - 1) r.str[len++] = ' ';   /* padded to the width */
+    {   /* padded to the width, in columns (codepage.h) */
+        int cols = cp_columns(r.str, len);
+        while (cols < width && len < (int)sizeof(r.str) - 1) { r.str[len++] = ' '; cols++; }
+    }
     r.str[len] = '\0';
     r = val_str(r.str);
     *result = r;
@@ -678,10 +684,13 @@ static int fn_mlpos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLPOS requires (string, width, line)"; return -1; }
-    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 4)))
-        *result = vnum((int)(st - val_text(&args[0])) + 1);
-    else
-        *result = vnum((int)strlen(val_text(&args[0])) + 1);
+    {   /* positions in characters (codepage.h) */
+        const char *t = val_text(&args[0]);
+        if (memo_line(t, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 4)))
+            *result = vnum(cp_chars(t, (int)(st - t)) + 1);
+        else
+            *result = vnum(cp_chars(t, (int)strlen(t)) + 1);
+    }
     return 0;
 }
 
@@ -689,10 +698,13 @@ static int fn_mlctopos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     const char *st;
     int len;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MLCTOPOS requires (string, width, line, col)"; return -1; }
-    if (memo_line(val_text(&args[0]), arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 5)))
-        *result = vnum((int)(st - val_text(&args[0])) + 1 + arg_num(args, nargs, 3, 0));
-    else
-        *result = vnum((int)strlen(val_text(&args[0])) + 1);
+    {   /* positions in characters (codepage.h) */
+        const char *t = val_text(&args[0]);
+        if (memo_line(t, arg_num(args, nargs, 1, 79), arg_num(args, nargs, 2, 1), &st, &len, arg_wrap(args, nargs, 5)))
+            *result = vnum(cp_chars(t, (int)(st - t)) + 1 + arg_num(args, nargs, 3, 0));
+        else
+            *result = vnum(cp_chars(t, (int)strlen(t)) + 1);
+    }
     return 0;
 }
 
@@ -704,14 +716,19 @@ static int fn_mpostolc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MPOSTOLC requires (string, width, pos)"; return -1; }
     lc[0] = vnum(1);
     lc[1] = vnum(0);
-    while (memo_line(val_text(&args[0]), width, n, &st, &len, arg_wrap(args, nargs, 4))) {
-        int off = (int)(st - val_text(&args[0])) + 1;
-        if (pos >= off && pos <= off + len) {
-            lc[0] = vnum(n);
-            lc[1] = vnum(pos - off);
-            break;
+    {   /* pos and the column in characters, offsets in bytes (codepage.h) */
+        const char *t = val_text(&args[0]);
+        int tn = (int)strlen(t);
+        pos = cp_offset(t, tn, pos - 1) + 1;
+        while (memo_line(t, width, n, &st, &len, arg_wrap(args, nargs, 4))) {
+            int off = (int)(st - t) + 1;
+            if (pos >= off && pos <= off + len) {
+                lc[0] = vnum(n);
+                lc[1] = vnum(cp_chars(st, pos - off));
+                break;
+            }
+            n++;
         }
-        n++;
     }
     return ast_make_array(ctx, lc, 2, result);
 }
@@ -722,8 +739,15 @@ static int fn_hardcr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     char *p;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "HARDCR requires a string"; return -1; }
     r = args[0];
-    for (p = r.str; *p; p++) {
-        if ((unsigned char)*p == 141) *p = '\r';
+    {   /* character by character: in UTF-8 a 141 inside a character is not
+         * a soft return (codepage.h) */
+        int n = (int)strlen(r.str), i = 0;
+        p = r.str;
+        while (i < n) {
+            unsigned c;
+            if ((unsigned char)p[i] == 141) { p[i++] = '\r'; continue; }
+            i += cp_decode(p + i, n - i, &c);
+        }
     }
     *result = r;
     return 0;
@@ -736,13 +760,16 @@ static int fn_memotran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     const char *s, *hard = arg_str(args, nargs, 1, ";"), *soft = arg_str(args, nargs, 2, " ");
     int o = 0;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOTRAN requires a string"; return -1; }
-    for (s = val_text(&args[0]); *s && o < (int)sizeof(r.str) - 1; s++) {
+    for (s = val_text(&args[0]); *s && o < (int)sizeof(r.str) - 1; ) {
+        unsigned c;
+        int k;
         if ((*s == '\r' || (unsigned char)*s == 141) && s[1] == '\n') {
             r.str[o++] = (*s == '\r' ? hard : soft)[0];
-            s++;
-        } else {
-            r.str[o++] = *s;
+            s += 2;
+            continue;
         }
+        k = cp_decode(s, (int)strlen(s), &c);   /* a character whole (codepage.h) */
+        while (k-- > 0 && o < (int)sizeof(r.str) - 1) r.str[o++] = *s++;
     }
     r.str[o] = '\0';
     *result = r;
@@ -1111,19 +1138,25 @@ static int achoice_near(achoice_t *a, int i, int dir) {
 
 static void achoice_paint(achoice_t *a) {
     int r;
-    char line[256];
+    char line[1024];
     if (!screen_term_available()) return;
     for (r = 0; r < a->rows; r++) {
-        int i = a->first + r;
-        int len = 0;
+        /* the item in the list's columns, by width (codepage.h) */
+        int i = a->first + r, k = 0, cols = 0;
         if (i < a->nitems && a->items->el[i].type == VAL_CHAR) {
             const char *t = a->items->el[i].str;
-            len = (int)strlen(t);
-            if (len > a->width) len = a->width;
-            memcpy(line, t, len);
+            int n = (int)strlen(t);
+            while (k < n && k < (int)sizeof(line) - 5) {
+                unsigned c;
+                int b = cp_decode(t + k, n - k, &c);
+                if (cols + cp_width(c) > a->width) break;
+                cols += cp_width(c);
+                k += b;
+            }
+            memcpy(line, t, (size_t)k);
         }
-        memset(line + len, ' ', a->width - len);
-        line[a->width] = '\0';
+        while (cols < a->width && k < (int)sizeof(line) - 1) { line[k++] = ' '; cols++; }
+        line[k] = '\0';
         screen_color_pair(i == a->cur ? 2 : (i < a->nitems && !achoice_selectable(a, i)) ? 5 : 1);
         screen_out_at(a->top + r, a->left, line);
     }

@@ -143,6 +143,7 @@ int screen_term_available(void);
 void screen_tgoto(int row, int col);
 void screen_tputs(const char *s);
 void screen_tputc(int ch);
+void screen_tputs_cols(const char *s, int cols);   /* s cut or padded to cols columns */
 void screen_tattr(int attr);
 void screen_tcolor(int fg, int bg);
 void screen_tclear(int mode);

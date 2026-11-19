@@ -26,6 +26,7 @@
 #include "set.h"
 #include "gc.h"
 #include "getsys.h"
+#include "codepage.h"
 
 #define ME_IDLE          0
 #define ME_UNKEY         1
@@ -39,10 +40,12 @@
 #define ME_WORDRIGHT   100
 #define ME_BOTTOMRIGHT 101
 
-#define SOFT_CR ((char)0x8D)
+/* The soft return: CHR(141) before the LF, a byte in the text whatever
+ * the codepage; inside the editor the character 0x8D */
+#define SOFT_CR 0x8Du
 
 typedef struct {
-    char *s;
+    unsigned *s;        /* characters (codepage.h): a byte each in CP437, a code point in UTF-8 */
     int len, cap;
     int soft;           /* ends with a soft return (word wrap) */
 } me_line_t;
@@ -65,17 +68,17 @@ typedef struct {
 static void line_reserve(me_line_t *l, int need) {
     if (need + 1 <= l->cap) return;
     l->cap = (need + 1) * 2;
-    l->s = realloc(l->s, (size_t)l->cap);
+    l->s = realloc(l->s, (size_t)l->cap * sizeof *l->s);
 }
 
-static void line_set(me_line_t *l, const char *s, int len) {
+static void line_set(me_line_t *l, const unsigned *s, int len) {
     line_reserve(l, len);
-    memcpy(l->s, s, (size_t)len);
+    if (len) memcpy(l->s, s, (size_t)len * sizeof *s);
     l->len = len;
-    l->s[len] = '\0';
+    l->s[len] = 0;
 }
 
-static void lines_insert(me_t *m, int at, const char *s, int len, int soft) {
+static void lines_insert(me_t *m, int at, const unsigned *s, int len, int soft) {
     me_line_t *l;
     if (m->n == m->cap) {
         m->cap = m->cap ? m->cap * 2 : 64;
@@ -93,12 +96,20 @@ static void lines_delete(me_t *m, int at) {
     free(m->lines[at].s);
     memmove(m->lines + at, m->lines + at + 1, (size_t)(m->n - at - 1) * sizeof(me_line_t));
     m->n--;
-    if (m->n == 0) lines_insert(m, 0, "", 0, 0);
+    if (m->n == 0) lines_insert(m, 0, NULL, 0, 0);
 }
 
-static void load_text(me_t *m, const char *t, int len) {
-    int start = 0, i;
-    for (i = 0; i < len; i++) {
+static void load_text(me_t *m, const char *text, int len) {
+    /* the text as characters first (codepage.h); the soft return's byte
+     * kept as itself */
+    unsigned *t = malloc(((size_t)len + 1) * sizeof *t);
+    int n = 0, start = 0, i = 0;
+    if (!t) { lines_insert(m, m->n, NULL, 0, 0); return; }
+    while (i < len) {
+        if ((unsigned char)text[i] == SOFT_CR) { t[n++] = SOFT_CR; i++; }
+        else i += cp_decode(text + i, len - i, &t[n++]);
+    }
+    for (i = 0; i < n; i++) {
         if (t[i] == '\n') {
             int end = i, soft = 0;
             if (end > start && t[end - 1] == '\r') end--;
@@ -107,21 +118,22 @@ static void load_text(me_t *m, const char *t, int len) {
             start = i + 1;
         }
     }
-    lines_insert(m, m->n, t + start, len - start, 0);
+    lines_insert(m, m->n, t + start, n - start, 0);
+    free(t);
 }
 
 static value_t text_value(me_t *m) {
     int total = 0, i, k = 0;
     char *buf;
     value_t v;
-    for (i = 0; i < m->n; i++) total += m->lines[i].len + 2;
+    for (i = 0; i < m->n; i++) total += m->lines[i].len * 4 + 2;
     buf = malloc((size_t)total + 1);
     if (!buf) return val_str("");
     for (i = 0; i < m->n; i++) {
-        memcpy(buf + k, m->lines[i].s, (size_t)m->lines[i].len);
-        k += m->lines[i].len;
+        int j;
+        for (j = 0; j < m->lines[i].len; j++) k += cp_encode(m->lines[i].s[j], buf + k);
         if (i < m->n - 1) {
-            buf[k++] = m->lines[i].soft ? SOFT_CR : '\r';
+            buf[k++] = m->lines[i].soft ? (char)SOFT_CR : '\r';
             buf[k++] = '\n';
         }
     }
@@ -146,10 +158,10 @@ static int wrap_line(me_t *m, int i) {
     {
         int was_soft = l->soft;
         int rest = l->len - cut;
-        char *tail = malloc((size_t)rest + 1);
-        memcpy(tail, l->s + cut, (size_t)rest);
+        unsigned *tail = malloc(((size_t)rest + 1) * sizeof *tail);
+        memcpy(tail, l->s + cut, (size_t)rest * sizeof *tail);
         l->len = cut;
-        l->s[cut] = '\0';
+        l->s[cut] = 0;
         l->soft = 1;
         lines_insert(m, i + 1, tail, rest, was_soft);
         free(tail);
@@ -163,7 +175,7 @@ static void reform_paragraph(me_t *m, int i) {
     while (m->lines[i].soft && i + 1 < m->n) {
         me_line_t *a = &m->lines[i], *b = &m->lines[i + 1];
         line_reserve(a, a->len + b->len);
-        memcpy(a->s + a->len, b->s, (size_t)b->len + 1);
+        memcpy(a->s + a->len, b->s, ((size_t)b->len + 1) * sizeof *b->s);
         a->len += b->len;
         a->soft = b->soft;
         lines_delete(m, i + 1);
@@ -184,17 +196,23 @@ static void reform_all(me_t *m) {
 
 static void me_paint(me_t *m) {
     int r;
-    char line[1024];
+    char line[4096];
     for (r = 0; r < m->rows; r++) {
-        int li = m->topline + r, k;
-        for (k = 0; k < m->cols && k < (int)sizeof(line) - 1; k++) {
-            int c = m->leftcol + k;
-            char ch = ' ';
+        /* the window's columns filled by width (codepage.h): a character
+         * that would cross its edge is a blank */
+        int li = m->topline + r, k = 0, cols = 0, c = m->leftcol;
+        while (cols < m->cols && k < (int)sizeof(line) - 5) {
+            unsigned ch = ' ';
+            int w;
             if (li < m->n && c < m->lines[li].len) {
                 ch = m->lines[li].s[c];
-                if (ch == '\t' || (unsigned char)ch < 32) ch = ' ';
+                if (ch == '\t' || ch < 32 || ch == SOFT_CR) ch = ' ';
             }
-            line[k] = ch;
+            c++;
+            w = cp_width(ch);
+            if (cols + w > m->cols) ch = ' ', w = 1;
+            k += cp_encode(ch, line + k);
+            cols += w;
         }
         line[k] = '\0';
         screen_out_at(m->top + r, m->left, line);
@@ -212,7 +230,11 @@ static int me_follow(me_t *m) {
 }
 
 static void me_park(me_t *m) {
-    screen_setpos(m->top + m->row - m->topline, m->left + m->col - m->leftcol);
+    /* the cursor at the width of the characters before it in the window */
+    const me_line_t *l = &m->lines[m->row];
+    int c, cols = 0;
+    for (c = m->leftcol; c < m->col; c++) cols += c < l->len ? cp_width(l->s[c]) : 1;
+    screen_setpos(m->top + m->row - m->topline, m->left + cols);
 }
 
 /* ---- the user function ---- */
@@ -250,17 +272,18 @@ static void fix_col(me_t *m) {
     if (m->col < 0) m->col = 0;
 }
 
-static void type_char(me_t *m, char ch) {
+static void line_pad(me_line_t *l, int to) {   /* blanks up to column to */
+    line_reserve(l, to);
+    while (l->len < to) l->s[l->len++] = ' ';
+    l->s[l->len] = 0;
+}
+
+static void type_char(me_t *m, unsigned ch) {
     me_line_t *l = cur(m);
-    if (m->col > l->len) {   /* past the end: blanks up to the cursor */
-        line_reserve(l, m->col);
-        memset(l->s + l->len, ' ', (size_t)(m->col - l->len));
-        l->len = m->col;
-        l->s[l->len] = '\0';
-    }
+    if (m->col > l->len) line_pad(l, m->col);   /* past the end: blanks up to the cursor */
     if (me_insert_mode(m) || m->col >= l->len) {
         line_reserve(l, l->len + 1);
-        memmove(l->s + m->col + 1, l->s + m->col, (size_t)(l->len - m->col) + 1);
+        memmove(l->s + m->col + 1, l->s + m->col, ((size_t)(l->len - m->col) + 1) * sizeof *l->s);
         l->len++;
     }
     l->s[m->col] = ch;
@@ -279,12 +302,12 @@ static void do_return(me_t *m) {
         lines_insert(m, m->row + 1, l->s + at, l->len - at, l->soft);
         l = cur(m);
         l->len = at;
-        l->s[at] = '\0';
+        l->s[at] = 0;
         l->soft = 0;
         m->changed = 1;
     } else if (m->row == m->n - 1) {
         if (!m->edit) return;
-        lines_insert(m, m->n, "", 0, 0);
+        lines_insert(m, m->n, NULL, 0, 0);
         m->changed = 1;
     }
     m->row++;
@@ -296,7 +319,7 @@ static void join_next(me_t *m, int i) {
     if (i + 1 >= m->n) return;
     b = &m->lines[i + 1];
     line_reserve(a, a->len + b->len);
-    memcpy(a->s + a->len, b->s, (size_t)b->len + 1);
+    memcpy(a->s + a->len, b->s, ((size_t)b->len + 1) * sizeof *b->s);
     a->len += b->len;
     a->soft = b->soft;
     lines_delete(m, i + 1);
@@ -305,10 +328,10 @@ static void join_next(me_t *m, int i) {
 static void do_delete(me_t *m) {
     me_line_t *l = cur(m);
     if (m->col < l->len) {
-        memmove(l->s + m->col, l->s + m->col + 1, (size_t)(l->len - m->col));
+        memmove(l->s + m->col, l->s + m->col + 1, (size_t)(l->len - m->col) * sizeof *l->s);
         l->len--;
     } else {
-        if (m->col > l->len) { line_reserve(l, m->col); memset(l->s + l->len, ' ', (size_t)(m->col - l->len)); l->len = m->col; l->s[l->len] = '\0'; }
+        if (m->col > l->len) line_pad(l, m->col);
         join_next(m, m->row);
     }
     m->changed = 1;
@@ -326,7 +349,7 @@ static void do_backspace(me_t *m) {
     }
 }
 
-static int is_word(char c) { return c != ' ' && c != '\t'; }
+static int is_word(unsigned c) { return c != ' ' && c != '\t'; }
 
 static void word_left(me_t *m) {
     me_line_t *l = cur(m);
@@ -360,7 +383,7 @@ static void delete_word_right(me_t *m) {
     e = c;
     while (e < l->len && is_word(l->s[e])) e++;
     while (e < l->len && !is_word(l->s[e])) e++;
-    memmove(l->s + c, l->s + e, (size_t)(l->len - e) + 1);
+    memmove(l->s + c, l->s + e, ((size_t)(l->len - e) + 1) * sizeof *l->s);
     l->len -= e - c;
     m->changed = 1;
 }
@@ -474,7 +497,7 @@ static int edit_key(me_t *m, int key) {
     if (key == K_TAB) { tab_key(m); return 1; }
     if (key == K_DEL) { if (m->edit) do_delete(m); return 1; }
     if (key == K_BS) { if (m->edit) do_backspace(m); return 1; }
-    if (key >= 32 && key <= 255) { if (m->edit) type_char(m, (char)key); return 1; }
+    if (cp_key_char(key) >= 0) { if (m->edit) type_char(m, (unsigned)cp_key_char(key)); return 1; }   /* codepage.h */
     return 0;
 }
 
@@ -492,7 +515,10 @@ static int me_answer(me_t *m, int ans, int key, int *save) {
         return 0;
     }
     if (ans == ME_IGNORE) return 0;
-    if (ans == ME_DATA) { if (key >= 0 && key <= 255 && m->edit) type_char(m, (char)key); return 0; }
+    if (ans == ME_DATA) {
+        if (m->edit && (cp_key_char(key) >= 0 || (key >= 0 && key < 32))) type_char(m, (unsigned)(key >= 32 ? cp_key_char(key) : key));
+        return 0;
+    }
     if (ans == ME_TOGGLEWRAP) { m->wrap = !m->wrap; return 0; }
     if (ans == ME_TOGGLESCROLL) { m->scroll = !m->scroll; return 0; }
     if (ans == ME_WORDRIGHT) { word_right(m); return 0; }

@@ -253,6 +253,21 @@ void screen_tputs(const char *s) {
     term_puts(s);
 }
 
+/* s in cols columns: cut where the next character would cross them,
+ * blanks after (codepage.h: a double-width character takes two) */
+void screen_tputs_cols(const char *s, int cols) {
+    int n = (int)strlen(s), i = 0, used = 0;
+    while (i < n) {
+        unsigned c;
+        int k = cp_decode(s + i, n - i, &c), w = cp_width(c);
+        if (used + w > cols) break;
+        screen_tputc((int)c);
+        used += w;
+        i += k;
+    }
+    while (used++ < cols) screen_tputc(' ');
+}
+
 /* One character: a CP437 byte, or in UTF-8 a code point (codepage.h) */
 void screen_tputc(int ch) {
     if (cp_current() != CP_UTF8) ch &= 0xFF;   /* a char's sign: (char)0xC4 is the byte */

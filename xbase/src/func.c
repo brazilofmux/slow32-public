@@ -1394,34 +1394,42 @@ static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
             *result = val_str(buf);
             return 0;
         }
-        {
+        {   /* the template's positions are characters (codepage.h) */
             const char *v = val_text(&args[0]);
-            int vlen = val_len(&args[0]), tlen = (int)strlen(tmpl);
-            int cap = (vlen > tlen ? vlen : tlen) + 1;
+            int vbytes = val_len(&args[0]), tlen = (int)strlen(tmpl);
+            int vlen = cp_chars(v, vbytes);
+            int cap = ((vlen > tlen ? vlen : tlen) + 1) * 4;
             char *out = malloc((size_t)cap + 1);
-            int o = 0, vi = 0, t;
+            int o = 0, vi = 0, vb = 0, t, nch = 0;
             if (!out) { ctx->error = "Out of memory"; return -1; }
-            if (!tlen) {
-                memcpy(out, v, (size_t)vlen);
-                o = vlen;
-                if (upper) for (t = 0; t < o; t++) out[t] = (char)toupper((unsigned char)out[t]);
-            } else {
-                for (t = 0; t < tlen; t++) {
-                    char tc = tmpl[t];
-                    int symbol = strchr("ANX9#!anx", tc) != NULL;
+            for (t = 0; ; t++) {
+                unsigned c;
+                if (tlen) {
+                    char tc;
+                    int symbol;
+                    if (t >= tlen) break;
+                    tc = tmpl[t];
+                    symbol = strchr("ANX9#!anx", tc) != NULL;
                     if (!insert && vi >= vlen) break;
                     if (symbol) {
-                        char c = vi < vlen ? v[vi] : ' ';
+                        if (vi < vlen) vb += cp_decode(v + vb, vbytes - vb, &c); else c = ' ';
                         vi++;
-                        if (tc == '!' || upper) c = (char)toupper((unsigned char)c);
-                        out[o++] = c;
+                        if (tc == '!' || upper) c = (unsigned)towupper((wint_t)c);
                     } else {
-                        out[o++] = tc;
-                        if (!insert) vi++;
+                        c = (unsigned char)tc;
+                        if (!insert && vi < vlen) { unsigned skip; vb += cp_decode(v + vb, vbytes - vb, &skip); vi++; }
+                        else if (!insert) vi++;
                     }
+                } else {
+                    if (vi >= vlen) break;
+                    vb += cp_decode(v + vb, vbytes - vb, &c);
+                    vi++;
+                    if (upper) c = (unsigned)towupper((wint_t)c);
                 }
+                if (scroll > 0 && nch >= scroll) break;
+                o += cp_encode(c, out + o);
+                nch++;
             }
-            if (scroll > 0 && o > scroll) o = scroll;
             *result = val_strn(out, o);
             free(out);
         }

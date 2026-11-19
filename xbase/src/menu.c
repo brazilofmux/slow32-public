@@ -3,6 +3,7 @@
 #include "menu.h"
 #include "keys.h"
 #include "screen.h"
+#include "codepage.h"
 #include "command.h"
 #include "expr.h"
 #include "ast.h"
@@ -188,7 +189,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
     c1 = p->from_col;
     widest = 0;
     for (i = 0; i < p->nbar; i++) {
-        int len = (int)strlen(p->bars[i].prompt);
+        int len = cp_columns(p->bars[i].prompt, (int)strlen(p->bars[i].prompt));
         if (len > widest) widest = len;
     }
     inner_w = widest + 2;  /* 1 space padding each side */
@@ -223,7 +224,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                 /* Space padding + prompt + space padding */
                 screen_tputc(' ');
                 screen_tputs(p->bars[i].prompt);
-                plen = (int)strlen(p->bars[i].prompt);
+                plen = cp_columns(p->bars[i].prompt, (int)strlen(p->bars[i].prompt));
                 for (j = plen + 1; j < c2 - c1; j++)
                     screen_tputc(' ');
             }
@@ -464,7 +465,7 @@ static void compute_pad_positions(menu_t *m) {
             m->pads[i].row = 0;
             m->pads[i].col = next_col;
         }
-        next_col = m->pads[i].col + (int)strlen(m->pads[i].prompt) + 2;
+        next_col = m->pads[i].col + cp_columns(m->pads[i].prompt, (int)strlen(m->pads[i].prompt)) + 2;
     }
 }
 
@@ -658,7 +659,7 @@ done_term:
         }
         /* Clear pad bar region */
         for (i = 0; i < m->npad; i++) {
-            int plen = (int)strlen(m->pads[i].prompt) + 2;
+            int plen = cp_columns(m->pads[i].prompt, (int)strlen(m->pads[i].prompt)) + 2;
             int j;
             screen_tgoto(m->pads[i].row, m->pads[i].col);
             for (j = 0; j < plen; j++)

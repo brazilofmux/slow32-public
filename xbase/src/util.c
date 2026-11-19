@@ -64,7 +64,7 @@ int read_line(char *buf, int size) {
     /* keys typed ahead first: a program's look for Esc keeps them, and
      * the line went on without its first characters */
     while (read_line_typed_ahead && (c = read_line_typed_ahead()) != 0) {
-        if (c == 13) { buf[i] = '\0'; return i; }
+        if (c == 13 || c == '\n') { buf[i] = '\0'; return i; }   /* Enter, or a piped line's newline the Esc check read ahead */
         if (c > 0 && c < 256 && c != '\n' && cp_key_char(c) < 0 && i < size - 1) buf[i++] = (char)c;   /* a control */
         else if (cp_key_char(c) >= 0 && i < size - 4)   /* a character's bytes (codepage.h) */
             i += cp_encode((unsigned)cp_key_char(c), buf + i);

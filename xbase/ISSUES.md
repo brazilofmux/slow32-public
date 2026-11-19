@@ -887,3 +887,15 @@ six Harbour comparisons differ before this change and after it:
 cls-tbrowse-pan (getColumn: no such column), cmd-report-form and
 ca-frmrun (a .FRM's expressions), cmd-list-printer, cmd-set-printer,
 stmt-local-scope.
+
+### A piped line's newline, read ahead by the Esc check, joined two lines -- RESOLVED 2026-11-19
+
+With the term service on, the check for Esc while a program runs reads
+the keys waiting, and keeps those that are not Esc for what comes next.
+Piped input is keys too: the next lines were taken that way, and
+read_line, taking them back, ended a line only on 13 (Enter) and dropped
+10, so "DO CPU8TEXT" and "QUIT" were read as one command.  Old (the
+same condition was there before UTF-8), and only timing showed it: a
+program that ran long enough for the check to see the next lines.  A
+newline from what was read ahead ends the line now.  No test: it hangs
+on timing; seen when test_codepage_utf8 was run without --deny term.
