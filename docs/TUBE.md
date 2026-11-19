@@ -185,6 +185,14 @@ devices. `KEYS` is legal whenever the service is granted, including
 before `OPEN`; without a viewer and without injection the queue is
 empty and the copy returns count 0.
 
+`KEYS` never blocks. To wait for a key, name the queue in a
+wait-for-any: `S32_FD_TUBE_KEYS` in `s32_dpc_wait_on`'s list (`POLL`,
+SPEC §8.12.4), beside fds and timers. It is readable while events are
+queued, a viewer's keys wake the wait, and the readiness entry says
+only that keys are waiting -- they are still read with `KEYS`. So "a
+key or the next tick" is one call, as on the terminal; the queues stay
+separate. (`regression/tests/feature-tube-wait-keys`.)
+
 Injection, for tests that must not sit forever: `S32_TUBE_KEYS=<file>`
 is a host file of the same 4-byte records, preloaded into the queue
 at `OPEN` (then `KEYE` from a viewer appends). No viewer is required.

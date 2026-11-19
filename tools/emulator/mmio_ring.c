@@ -2980,8 +2980,27 @@ static void mmio_timer_cancel(mmio_ring_state_t *mmio, io_descriptor_t *req, io_
     resp->status = S32_MMIO_STATUS_OK;
 }
 
+/* The guest's tube session, if it holds one: what POLL's tube-keys name
+ * (S32_MMIO_POLL_TUBE_KEYS) waits on. */
+static tube_state_t *tube_for_poll(mmio_ring_state_t *mmio) {
+    for (int i = 0; i < S32_MAX_SERVICES; i++) {
+        svc_session_t *s = &mmio->services[i];
+        if (s->active && strcmp(s->name, "tube") == 0) return (tube_state_t *)s->state;
+    }
+    return NULL;
+}
+
+/* keys queued, or a viewer that is there or could come (OPEN listens):
+ * something a wait on the key queue may block for */
+static bool tube_keys_live(const tube_state_t *ts) {
+    return ts && (ts->key_count > 0 || ts->listen_fd >= 0 || ts->view_fd >= 0);
+}
+
 /* POLL: length 0 sleeps until the ring is non-empty. length/4 fds at
- * offset are wait-for-any (POLLIN). A pending POST owns that fd: no READY. */
+ * offset are wait-for-any (POLLIN). A pending POST owns that fd: no READY.
+ * S32_MMIO_POLL_TUBE_KEYS in the list is the tube's key queue: readable
+ * while keys are queued, and the viewer's socket is in the wait so its
+ * keys wake it. */
 static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descriptor_t *resp) {
     uint32_t nnamed = req->length / 4u;
     uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
@@ -2989,7 +3008,18 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
         offset > S32_MMIO_DATA_CAPACITY - req->length) { mmio_fail(resp, EINVAL); return; }
     uint32_t named[S32_MMIO_POLL_MAX_FDS];
     if (req->length) memcpy(named, mmio->data_buffer + offset, req->length);
+    tube_state_t *tube = NULL;      /* set when the list names the key queue and there is a tube */
+    uint32_t nfds_named = 0;        /* named entries that are fds */
     for (uint32_t i = 0; i < nnamed; i++) {          // not-open fds: reported at once
+        if (named[i] == S32_MMIO_POLL_TUBE_KEYS) {
+            tube = tube_for_poll(mmio);
+            if (!tube) {
+                io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], S32_MMIO_POLL_NVAL };
+                mmio_dpc_push(mmio, &e);
+            }
+            continue;
+        }
+        nfds_named++;
         if (host_fd_for_guest(mmio, named[i]) < 0) {
             io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], S32_MMIO_POLL_NVAL };
             mmio_dpc_push(mmio, &e);
@@ -3002,11 +3032,17 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
         uint64_t deadline = 0;
         bool timed = mmio_timer_earliest(mmio, &deadline);
         bool posted = mmio_posts_any(mmio);
-        if (!timed && !posted && nnamed == 0) { mmio_fail(resp, EAGAIN); return; }
+        /* nothing that could end the wait: a tube with no keys and no
+         * viewer to send any is no more a source than nothing is */
+        if (!timed && !posted && nfds_named == 0 && !tube_keys_live(tube)) {
+            mmio_fail(resp, EAGAIN);
+            return;
+        }
 
-        /* one wait set: pending-post fds (so a post completes) and named fds
-         * (so a readiness is reported), together */
-        struct pollfd pf[S32_MMIO_POST_MAX + S32_MMIO_POLL_MAX_FDS];
+        /* one wait set: pending-post fds (so a post completes), named fds
+         * (so a readiness is reported) and the tube's sockets (so a viewer's
+         * key wakes it), together */
+        struct pollfd pf[S32_MMIO_POST_MAX + S32_MMIO_POLL_MAX_FDS + 2];
         nfds_t np = 0;
         for (unsigned i = 0; i < S32_MMIO_POST_MAX; i++) {
             if (!mmio->posts[i].pending) continue;
@@ -3016,8 +3052,13 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
         }
         nfds_t named_start = np;
         for (uint32_t i = 0; i < nnamed; i++) {
-            pf[np].fd = host_fd_for_guest(mmio, named[i]);   /* <0: poll skips it, revents 0 */
+            /* <0: poll skips it, revents 0 (the tube's name is not an fd) */
+            pf[np].fd = named[i] == S32_MMIO_POLL_TUBE_KEYS ? -1 : host_fd_for_guest(mmio, named[i]);
             pf[np].events = POLLIN; pf[np].revents = 0; np++;
+        }
+        if (tube) {
+            if (tube->listen_fd >= 0) { pf[np].fd = tube->listen_fd; pf[np].events = POLLIN; pf[np].revents = 0; np++; }
+            if (tube->view_fd >= 0)   { pf[np].fd = tube->view_fd;   pf[np].events = POLLIN; pf[np].revents = 0; np++; }
         }
         int timeout = -1;
         if (timed && g_clock.stepped) {
@@ -3029,6 +3070,7 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
                 timeout = ms > 86400000ull ? 86400000 : (int)ms;
             } else timeout = 0;
         }
+        if (tube && tube->key_count > 0) timeout = 0;      /* keys already queued: ready now */
         /* A prefixed stdin is readable now, whatever the real fd 0 says. */
         bool prefix_in = false;
         if (stdin_prefix_active()) {
@@ -3053,7 +3095,14 @@ static void mmio_poll(mmio_ring_state_t *mmio, io_descriptor_t *req, io_descript
                 if (pf[i].fd == STDIN_FILENO) pf[i].revents |= POLLIN;
         }
 
+        if (tube) tube_pump(tube);      /* a viewer's KEYE frames onto the queue */
         for (uint32_t i = 0; i < nnamed; i++) {
+            if (named[i] == S32_MMIO_POLL_TUBE_KEYS) {
+                if (!tube || tube->key_count == 0) continue;
+                io_descriptor_t e = { S32_MMIO_OP_POLL, 0u, named[i], S32_MMIO_POLL_IN };
+                if (!mmio_dpc_push(mmio, &e)) break;
+                continue;
+            }
             if (mmio_post_owns(mmio, named[i])) continue;
             struct pollfd *pp = &pf[named_start + i];
             uint32_t why = 0;

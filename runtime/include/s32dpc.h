@@ -67,6 +67,13 @@ int s32_dpc_wait_on(const int *fds, unsigned nfds, s32_dpc_t *out);
 #define S32_DPC_NVAL  8u        /* not an open fd */
 #define S32_DPC_MAX_FDS 8       /* fds one wait may name */
 
+/* Not an fd: the tube's key queue, as s32_dpc_wait_on names it.  Readable
+ * ({S32_DPC_READY, id S32_FD_TUBE_KEYS, S32_DPC_IN}, level-triggered) while
+ * keys are queued; the keys are still read with tube_keys().  NVAL without
+ * the tube service.  So a game waits for "a key or the next tick" in one
+ * call: { S32_FD_TUBE_KEYS } and a timer. */
+#define S32_FD_TUBE_KEYS 0x10000
+
 #ifdef __cplusplus
 }
 #endif

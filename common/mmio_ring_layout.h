@@ -40,6 +40,13 @@ enum {
     S32_MMIO_POLL_ERR  = 1u << 2,   // error condition on the host fd
     S32_MMIO_POLL_NVAL = 1u << 3,   // not an open guest fd
 };
+// A name POLL takes beside fds, outside any fd a guest can hold: the tube's
+// key queue, readable while it is not empty (docs/TUBE.md 2; NVAL without
+// the tube service).  Readiness only -- the keys are still read with
+// TUBE_KEYS (docs/plans/input-queue.md, the second edge).
+enum {
+    S32_MMIO_POLL_TUBE_KEYS = 0x00010000u,
+};
 
 
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))

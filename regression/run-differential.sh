@@ -176,11 +176,26 @@ run_engine() {
     local name="$1" path="$2" s32x="$3" out="$4"
     shift 4
     local rc=0
+    # A test's inject.py is its tube viewer, as in run-tests.sh: one per
+    # engine run, on that run's own port file.  Without it every engine of
+    # feature-tube-vec-keys printed "no viewer" -- the test's own failure --
+    # and agreed (2026-11-19).
+    local viewer_pid="" viewer_env=()
+    if [ -n "$INJECT_PY" ] && [ "$name" != "qemu" ]; then
+        rm -f "$out.port"
+        python3 "$INJECT_PY" "$out.port" >"$out.inject" 2>&1 &
+        viewer_pid=$!
+        viewer_env=(S32_TUBE_PORT="$out.port")
+    fi
     if [ "$name" = "qemu" ]; then
         with_stdin env "${TEST_ENV[@]}" timeout "$TIMEOUT" "$path" -machine slow32-tcg -nographic -monitor none \
             -kernel "$s32x" >"$out" 2>&1 || rc=$?
     else
-        with_stdin env "${TEST_ENV[@]}" timeout "$TIMEOUT" "$path" "$s32x" "$@" >"$out" 2>&1 || rc=$?
+        with_stdin env "${TEST_ENV[@]}" "${viewer_env[@]}" timeout "$TIMEOUT" "$path" "$s32x" "$@" >"$out" 2>&1 || rc=$?
+    fi
+    if [ -n "$viewer_pid" ]; then
+        kill "$viewer_pid" 2>/dev/null
+        wait "$viewer_pid" 2>/dev/null
     fi
     echo "$rc"
 }
@@ -226,6 +241,15 @@ run_test() {
     STDIN_SH=""
     if [ -f "$test_path/stdin.sh" ]; then
         STDIN_SH="$test_path/stdin.sh"
+    fi
+    INJECT_PY=""
+    if [ -f "$test_path/inject.py" ]; then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo -e "${YELLOW}SKIP${NC} (python3 unavailable, needed by inject.py)"
+            SKIPPED=$((SKIPPED + 1))
+            return
+        fi
+        INJECT_PY="$test_path/inject.py"
     fi
     local run_args=()
     if [ -f "$test_path/args.txt" ]; then

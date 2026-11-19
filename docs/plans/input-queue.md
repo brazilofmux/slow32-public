@@ -37,7 +37,9 @@ posted read completes, or one of the named fds is readable, and a
 readable fd arrives on the DPC ring like everything else (kind
 `POLL`, spelled `S32_DPC_READY` in `s32dpc.h`). Stdin is fd 0, so
 "a key or a timeout" on the terminal is already one wait. The tube
-key queue is not an fd. That is the second edge below.
+key queue is not an fd, but `S32_FD_TUBE_KEYS` names it in the same
+list (the second edge below, built), so a tube program has the same
+one wait.
 
 Term input is host stdin (the prefix file, then `read(2)`). Tube
 keys are the viewer queue only. [TUBE.md](../TUBE.md) says they are
@@ -248,9 +250,8 @@ declines a screen.
   `FDPOLL` already waits on fds, and `s32_dpc_wait_on` waits on fds
   and the ring together. A guest names what it is waiting for. One
   select-everything opcode waits for a program that cannot say which
-  device it is waiting on. The one source `s32_dpc_wait_on` cannot
-  name yet is the tube key queue; the second edge below gives it a
-  name rather than an opcode.
+  device it is waiting on. The tube key queue, which is not an fd,
+  got a name in the list rather than an opcode (the second edge).
 
 ## Injection is the test contract
 
@@ -268,8 +269,8 @@ kind is a new expected file, not a new thread.
 ## Three edges
 
 Places where the rules above hold but the machine does not yet let
-a program, or a test, do the obvious thing. The first is built; the
-other two are proposed. None adds an opcode, a callback, or a merged
+a program, or a test, do the obvious thing. The first two are built;
+the third is proposed. None adds an opcode, a callback, or a merged
 device.
 
 ### 1. Time is the one input a test cannot inject
@@ -369,10 +370,24 @@ are waiting, not which. The keys are still read with `TUBE_KEYS`,
 devices; the program still says which one it is waiting on; no
 opcode is added, because `POLL`/`FDPOLL` already take a list.
 
-**Where it lands.** The readiness check in `mmio_ring.c` (the tube
-lives only there), `s32dpc.h` for the constant, [TUBE.md](../TUBE.md)
-for the contract. A test: `S32_TUBE_KEYS` preloads two events, the guest
-waits on the reserved fd and a long timer, and wakes on the keys.
+**Built (2026-11-19).** `S32_FD_TUBE_KEYS` is `0x10000` (in
+`s32dpc.h`; `S32_MMIO_POLL_TUBE_KEYS` on the wire), handled in
+`mmio_ring.c`'s POLL (the tube lives only there; qemu answers NVAL,
+as for no tube). The viewer's listening and connected sockets are in
+the wait, and the host pumps a viewer's key frames onto the queue
+when they wake it. A tube that has not been opened and holds no keys
+cannot produce one, so a wait on it alone is `EAGAIN`, not a hang.
+Rules: [SPEC.md](../SPEC.md) §8.12.4; contract:
+[TUBE.md](../TUBE.md) §2. The test, `feature-tube-wait-keys`, uses a
+live viewer rather than a preload, so the socket path is what it
+proves: NVAL before the tube exists; after `OPEN`, with a 30 s timer
+as the backstop, the wait wakes for the viewer's three keys in about
+a second; drained, a 50 ms timer wins.
+
+Building it found a hole in the harness: `run-differential.sh` never
+started a test's `inject.py`, so every engine of
+`feature-tube-vec-keys` printed its own failure ("no viewer") and the
+three C engines agreed. It starts the viewer per engine run now.
 
 ### 3. When the key queue overflows
 

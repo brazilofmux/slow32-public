@@ -1323,6 +1323,18 @@ Algorithm:
 A named fd that a pending POST_READ is reading never produces a readiness
 entry; the post completion is the wake-up.
 
+The value `0x00010000` (`S32_MMIO_POLL_TUBE_KEYS`; the guest's
+`S32_FD_TUBE_KEYS`), outside any guest fd, names the tube's key queue
+(`docs/TUBE.md` §2) in the same list. Without a tube session it is NVAL in
+step 1. With one, it counts in step 3 as something that can arrive while
+keys are queued or the tube has, or listens for, a viewer (a tube that has
+not been opened and holds no keys does not, and alone gives `EAGAIN`); the
+wait includes the viewer's sockets, the host takes a viewer's key frames
+onto the queue when they wake it, and `{0x34, 0, 0x00010000, 1}` is queued
+whenever the queue is not empty (level-triggered, as an fd's IN). The
+entry only says keys are waiting: they are read with `TUBE_KEYS`.
+Engines without a tube (qemu) answer NVAL.
+
 
 ### 8.13 Service negotiation (0xF0–0xF4)
 
