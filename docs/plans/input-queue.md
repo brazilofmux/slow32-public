@@ -331,10 +331,20 @@ and is killed by the harness's timeout during its first `sleep`.
 The heap loop above, run on a file, prints the same lines on every
 engine and its 300 ms of waiting take none.
 
-Still to write as tests: Kermit's timeout path on a prefix file, on
-all four engines; and Asteroids on a key file, the same frames on
-the three C engines (tube cases skip qemu, which has no tube:
-[TUBE.md](../TUBE.md) §7).
+Asteroids' own suite has a third case beside "idle" and "play": player
+mode, as a person runs it (no `--frames`, 33 ms slept a frame, the key
+file drained 16 events a frame, `q` after 240), under the step clock.
+Fifteen frames, the same last frame on the three C engines (tube cases
+skip qemu, which has no tube: [TUBE.md](../TUBE.md) §7), 0.00 s of
+real time against 0.62 s on the host clock. Before it, no test ran
+the path a player takes.
+
+Kermit is *not* a case for it, though this file first said so. Its
+input is not a file but a live TCP peer, another emulator process.
+Under the step clock any instant the peer's packet has not yet
+arrived would pass as a whole timeout: less deterministic, not more.
+Its suite provokes both timeout paths on the real wire (`-t 1 -x N`),
+which is the right test for a wire.
 
 ### 2. A key or a clock, from the tube
 

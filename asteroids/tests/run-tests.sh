@@ -40,10 +40,26 @@ open(sys.argv[1], "wb").write(
     b"".join(struct.pack("<HBB", c, d, 0) for c, d in evs))
 PY
 
+# Player mode, as a person runs it (no --frames): the game sleeps 33 ms a
+# frame and drains up to 16 queued events per frame, so the whole file is
+# queued at OPEN and 'q', after 240 events, ends it on the 15th frame.
+# Under the step clock (S32_CLOCK=step) the sleeps pass in virtual time:
+# the path a player takes, tested, in no real time.
+python3 - "$work/live.bin" <<'PY'
+import struct, sys
+evs = [(0x102, 1)] + [(32, d) for _ in range(119) for d in (1, 0)]
+evs += [(0x102, 0), (113, 1)]
+assert len(evs) <= 256
+open(sys.argv[1], "wb").write(
+    b"".join(struct.pack("<HBB", c, d, 0) for c, d in evs))
+PY
+
 IDLE_REPORT="report frames=120 score=0 lives=3 wave=1 rocks=4"
 IDLE_HASH="8d2350fcadef9b5f"
 PLAY_REPORT="report frames=320 score=280 lives=3 wave=1 rocks=12"
 PLAY_HASH="1096a16e0df00f45"
+LIVE_FRAMES=15
+LIVE_HASH="ddaac9f4e2ac2ad6"
 
 fail=0
 for EMU in $ENGINES; do
@@ -70,6 +86,18 @@ for EMU in $ENGINES; do
         echo "  OK  $name play: $h (score 280, rocks split)"
     else
         echo "  FAIL $name play: report='$out' hash=$h"
+        fail=1
+    fi
+
+    rm -rf "$work/live"
+    (cd "$work" && S32_CLOCK=step S32_TUBE_KEYS="$work/live.bin" S32_TUBE_DUMP="$work/live" \
+        "$EMU" "$AST_DIR/asteroids.s32x" --seed 7 >/dev/null 2>&1) || true
+    n="$(ls "$work/live" 2>/dev/null | grep -c '\.hash$' || true)"
+    h="$(cat "$work/live/$(printf '%06d' $((LIVE_FRAMES - 1))).hash" 2>/dev/null || echo missing)"
+    if [ "$n" = "$LIVE_FRAMES" ] && [ "$h" = "$LIVE_HASH" ]; then
+        echo "  OK  $name live: $h (player mode, step clock, q on frame $LIVE_FRAMES)"
+    else
+        echo "  FAIL $name live: frames=$n hash=$h"
         fail=1
     fi
 done
