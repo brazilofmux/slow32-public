@@ -1,0 +1,158 @@
+# xBase and UTF-8
+
+Status: survey and plan, 2026-11-19.  Nothing here is built yet.
+
+xbase (and xbc, whose programs link the interpreter's sources as
+`libxbase.s32a`, so one change serves both) treats text as bytes, one
+byte to a character, as dBASE III, Clipper 5.2 and FoxPro 2.6 did.  This
+page is what it would take to let a program work in UTF-8, the way
+Harbour does, without disturbing the byte-exact behaviour the oracles
+hold it to.
+
+## What happens today
+
+A run of the interpreter under `slow32-dbt` with a terminal, 2026-11-19:
+
+    @ 1,1 TO 3,8          ->  DA C4 C4 C4 C4 C4 C4 BF ...   (CP437 bytes, raw)
+    @ 5,1 SAY "café"      ->  63 61 66 C3 A9                 (UTF-8 through)
+    ? LEN("café")         ->  5
+    ? UPPER("café")       ->  CAFé
+
+The emulator's terminal service already reads its output as UTF-8
+(`common/s32utf.h`: clusters, double-width cells, U+FFFD for a byte that
+is not UTF-8), and so does every terminal it runs in.  So a box drawn
+with `@ ... TO`, a frame from `DISPBOX`, `CHR(196)`, or any text from an
+old table with accented letters arrives as invalid UTF-8 and is shown as
+U+FFFD.  Box drawing on a terminal is wrong now, before any of the rest
+of this page.
+
+## The model: Harbour's
+
+- Text stays bytes.  A setting names the codepage the program's strings
+  are in: CP437 by default (what the interpreter means today), or UTF-8.
+- With UTF-8, the string functions count characters (code points, as
+  Harbour's `UTF8EX` does), and byte versions stay available.
+- The terminal is always UTF-8.  The codepage is translated at the
+  terminal's edge, both ways: output into UTF-8, keys back into the
+  program's codepage.
+- A table carries its own codepage; the RDD translates between it and
+  the program's on read and write.
+- Off by default, so dBASE III PLUS, FoxPro 2.6 and Harbour's byte mode
+  keep holding the interpreter to what they print, byte for byte.
+
+## What the survey found, by area
+
+**Terminal edge** (`screen.c`: `term_puts`, `term_putc`, the shadow
+screen; `read_dbase_key`).  Every character reaches the terminal through
+two functions, and every key arrives through one.  The shadow screen
+(SAVESCREEN / RESTSCREEN) is one byte per cell plus an attribute, which
+is Clipper's screen-string format.  Translating at `term_puts` /
+`term_putc` leaves the shadow, the screen strings and everything above
+them as they are.  Keys: `getsys.c:982` and `memoedit.c:477` take any key
+32-255 as one character, so a typed `é` (C3 A9) is two characters today.
+
+**String functions** (`func.c`, `clipfn.c`).  Those that count or cut:
+LEN, SUBSTR, LEFT, RIGHT, AT, RAT, STUFF, PADL / PADR / PADC, TRIM /
+RTRIM / LTRIM / ALLTRIM, REPLICATE, SPACE, STRTRAN, CHRTRAN, OCCURS,
+TRANSFORM, MEMOLINE / MLCOUNT / MLPOS / MLCTOPOS / MPOSTOLC, WORD.  Case
+and class: UPPER, LOWER, PROPER, ISALPHA, ISUPPER, ISLOWER.  (The
+survey found that `=`, `==`, `<`, `>`, ASCAN, ASORT and LOOKUP() ignored
+case, which dBASE, FoxPro and Clipper do not; they compare bytes now,
+xbase ISSUES, 2026-11-19.  UTF-8 in byte order is code-point order, so
+comparison needs nothing more under the setting.)  CHR
+and ASC need a ruling (below).  SOUNDEX and DIFFERENCE are ASCII
+algorithms and stay so.
+
+**Screen layout** (`screen.c`, `getsys.c` 2,316 lines, `memoedit.c`,
+`browse.c`, `menu.c`, `report.c`, `label.c`).  Columns are counted as
+`strlen` throughout (about 90 calls across those files).  With UTF-8 a
+string's width is its display width: a CJK character takes two columns,
+a combining mark none.  The GET editor's cursor and picture positions
+are byte offsets into the buffer; they become character offsets, and
+the picture template's positions character positions.
+
+**Tables** (`dbf.c`, `field.c`).  `dbf_set_field_raw` cuts a value at
+the field's length in bytes (`dbf.c:553`), which can split a UTF-8
+character.  Field lengths stay bytes, as in Harbour; the cut moves back
+to a character boundary and the rest is padded with spaces.  The header's
+codepage byte (offset 29, the language driver id FoxPro 2.5 and dBASE IV
+write: 0x01 CP437, 0x02 CP850, 0x03 Windows 1252) is neither read nor
+written.
+
+**Indexes** (`index.c`).  Keys compare with `memcmp`.  UTF-8 in byte
+order is code-point order, so a UTF-8 index sorts consistently as it is
+and NDX stays byte-for-byte with dBASE.  The one defect is the same as
+in tables: a key cut at `key_len` can split a character.  Language-aware
+order is libutf's collation (53 CLDR locales) as an option for later;
+an index built that way would have to say so in its header.
+
+**Lexer** (`lex.c`).  Identifiers stay ASCII, as in Clipper.  String
+literals and comments pass through as bytes, which is all UTF-8 needs.
+
+## What exists to build it from
+
+- **libutf** (`~/utf`, vendored the way `runtime/sync-libutf.sh` and
+  `cobol/libcob/sync-libutf.sh` do it): `co_left`, `co_right`, `co_mid`,
+  `co_pos`, `co_lpos`, `co_trim`, `co_center`, `co_ljust`, `co_rjust`,
+  `co_repeat`, `co_reverse`, `co_visible_length`; the `tr_toupper` /
+  `tr_tolower` / `tr_totitle` tables; `co_console_width`,
+  `co_visual_width`, `co_cluster_width`; `utf_grapheme_next`; NFC;
+  collation; and UTF-8 to CP437 / Latin-1 / Latin-2 / ASCII
+  approximation, for writing into an old codepage.  The `co_*` functions
+  treat TinyMUX's colour code points (in the Private Use Area) as having
+  no width; whether that wants a switch for xbase is the first thing to
+  look at.
+- **TinyMUX** (`mux/include/stringutil.h`): `cp437_utf8[256]` and
+  `latin1_utf8[256]`, the exact reading direction, and `utf8_FirstByte`
+  with the backing-up-to-a-boundary logic a field cut needs.
+- **tapemgr** (`tools/mktables.py`): a mapping file of one line per byte
+  through libutf's DFA builder (`~/utf/gen/integers.cpp`) gives both
+  directions for any single-byte codepage, with a round-trip check.
+  CP850 (most of the non-US dBASE and Clipper world) is not in libutf
+  or TinyMUX; it is one mapping file this way, and belongs in `~/utf/gen`
+  beside CP437.
+
+## Oracles
+
+- **Harbour**, `slow32:harbour-oracle`: probes that select `UTF8EX`
+  answer the string functions and the screen.  The Clipper guides are
+  silent on all of this; Harbour is the reference for the UTF-8 mode.
+- **FoxPro 2.6 for Windows** (`xbase/tests/foxpro/foxrun.py`): FoxPro 2.5
+  brought codepage marks in the table header, CPCURRENT(), CPDBF() and
+  CPCONVERT().  It answers what a table's codepage byte means and what a
+  translation on read or write produces.  VFP6 the same, later.
+- dBASE III PLUS, as now, for everything with the setting off.
+
+## Rulings wanted
+
+1. The setting's name and form.  Harbour's is `SET(_SET_CODEPAGE)` /
+   `hb_cdpSelect()`; FoxPro's is `CODEPAGE=` in CONFIG.FPW.  Proposed:
+   `SET CODEPAGE TO "UTF8"` in commands and `SET(_SET_CODEPAGE)` for
+   xbc, default "CP437".
+2. A write into a table whose codepage cannot hold a character:
+   approximate quietly (libutf's tables: a curly quote becomes a straight
+   one) or raise an error.  Proposed: approximate, as FoxPro's
+   translation does.
+3. CHR(n) and ASC(c) with UTF-8: a byte, as now, or a code point.
+   Harbour keeps CHR a byte and adds hb_UTF8Chr(); proposed the same.
+4. Count code points or grapheme clusters.  Proposed: code points for
+   the string functions (Harbour's answer), clusters for the GET cursor.
+5. SAVESCREEN's string in UTF-8 mode: the screen's cells hold a code
+   point, not a byte.  Its format is private to the program, so any
+   shape that round-trips through RESTSCREEN will do.
+
+## Order of work
+
+0. **The terminal edge, setting off.**  CP437 to UTF-8 at `term_puts` /
+   `term_putc` and UTF-8 keys back into CP437, with the reading table
+   TinyMUX has.  Fixes the boxes and old tables now, changes nothing
+   above the terminal.  Expected files holding the raw bytes change.
+1. Vendor libutf (`xbase/sync-libutf.sh`), and the CP850 table into
+   `~/utf/gen` first.
+2. The setting, and the string functions under it.  Harbour probes.
+3. The screen: width-aware layout, the GET editor and MEMOEDIT by
+   character.  Harbour probes.
+4. Tables: the cut at a boundary, the header's codepage byte, translation
+   on read and write.  FoxPro cases.
+5. Indexes: the cut at a boundary.  Collation as a separate option, if
+   wanted.
