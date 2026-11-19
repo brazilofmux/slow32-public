@@ -97,8 +97,19 @@ filters, `s32run hello.s32x`. No queue discipline beyond EOF.
 a command: dBase `GET`, WordStar `^K`, a prompt that reads until
 Enter. It has an entry and an exit. When it returns, the outer loop
 is where it was. That is how a character-mode program stays
-writable. A dispatcher that owns `main` and calls the program back
-is the thickness this machine refuses.
+writable.
+
+What this machine refuses is the flood, not the loop: a stream of
+messages the program never asked for, most of them there only to be
+passed to a default handler. That is what became of the Windows
+message loop -- a simple loop at first, then hundreds of message
+kinds flowing through every program, nearly all of them handed back
+unread. Here a program names what it waits for, every record is one
+it asked for, and the kinds are few. An event-driven program is
+welcome on those terms, and so is a thin helper that hands it the
+next event from the loop it owns; a pump that delivers everything to
+everyone, and makes every program forward what it does not handle,
+is not.
 
 Pacing is the guest's. The tube has no vsync and no guest timer
 interrupt. `GETTIME` and `SLEEP` are host wall clock and host
