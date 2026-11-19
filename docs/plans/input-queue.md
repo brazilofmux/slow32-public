@@ -32,6 +32,13 @@ fds and a timeout, the host writes `revents` in place. A posted read
 (`s32` post) is a DPC whose bytes are already in the caller's buffer
 when the entry is harvested.
 
+`s32_dpc_wait_on` joins the two. It sleeps until a timer fires, a
+posted read completes, or one of the named fds is readable, and a
+readable fd arrives on the DPC ring like everything else (kind
+`POLL`, spelled `S32_DPC_READY` in `s32dpc.h`). Stdin is fd 0, so
+"a key or a timeout" on the terminal is already one wait. The tube
+key queue is not an fd. That is the second edge below.
+
 Term input is host stdin (the prefix file, then `read(2)`). Tube
 keys are the viewer queue only. [TUBE.md](../TUBE.md) says they are
 not merged, and that stays. A program that wants both has two
@@ -130,18 +137,133 @@ declines a screen.
   a longer event), not a new framework.
 - An opcode that sleeps until "anything." `term_wait_key` already
   waits on stdin. `s32_dpc_wait` already waits on the DPC ring.
-  `FDPOLL` already waits on fds. A guest that wants a key *or* a
-  timer asks both, or arms a short timer and drains the tube queue
-  when it fires. One select-everything opcode waits for a program
-  that cannot say which device it is waiting on.
+  `FDPOLL` already waits on fds, and `s32_dpc_wait_on` waits on fds
+  and the ring together. A guest names what it is waiting for. One
+  select-everything opcode waits for a program that cannot say which
+  device it is waiting on. The one source `s32_dpc_wait_on` cannot
+  name yet is the tube key queue; the second edge below gives it a
+  name rather than an opcode.
 
 ## Injection is the test contract
 
 A queue you cannot fill from a file is not a queue this tree will
 keep. Stdin has `S32_STDIN_PREFIX`. Tube keys have `S32_TUBE_KEYS`
-and `KEYE`. DPC timers fire from `s32_timer_start` under the test's
-own clock only as far as the host clock allows; scripted guests
-prefer a prefix file and a finite loop over a wall-clock sleep.
+and `KEYE`. Time has nothing yet: DPC timers, `GETTIME` and `SLEEP`
+follow the host's clocks, so scripted guests prefer a prefix file
+and a finite loop over a wall-clock sleep. The first edge below is
+the clock a test can own.
 
 The differential harnesses compare engines on bytes. A new record
 kind is a new expected file, not a new thread.
+
+## Three edges
+
+Places where the rules above hold but the machine does not yet let
+a program, or a test, do the obvious thing. Each is proposed, not
+built. None adds an opcode, a callback, or a merged device.
+
+### 1. Time is the one input a test cannot inject
+
+**The gap.** Keys and stdin come from files. Time does not.
+`GETTIME` and `SLEEP` use the host's clocks ([SPEC.md](../SPEC.md)
+§8.8: "not deterministic"), and DPC timers expire on them. So a
+desk program that mixes input with time cannot be held to bytes:
+Asteroids' frame loop (`usleep` between frames), libcob telling a
+lone ESC from an escape sequence by `term_wait_key(SCR_ESC_MS)`,
+Kermit resending a packet when its timer fires. The differential
+harnesses stop at exactly the programs this document is about.
+
+**The proposal.** An opt-in clock that advances at service points,
+not with the host. `S32_CLOCK=step` in the environment, beside
+`S32_STDIN_PREFIX` and `S32_TUBE_KEYS`:
+
+- Time starts at a fixed instant (`S32_CLOCK_EPOCH`, seconds since
+  the POSIX epoch; a fixed default), so a program's dates are the
+  same on every run and every host.
+- Every service point advances it by one quantum
+  (`S32_CLOCK_STEP`, nanoseconds; default 1 ms). A loop that spins
+  on `GETTIME` waiting for a second still ends, after a thousand
+  service points.
+- `SLEEP` advances it by the interval and returns at once.
+- A wait with nothing ready (`s32_dpc_wait`, `s32_dpc_wait_on`,
+  `FDPOLL`, `term_wait_key`) jumps it to the earliest armed timer's
+  deadline, or to the wait's own timeout, and goes on. A wait with
+  nothing armed and no timeout is `EAGAIN` or EOF, as it already is.
+- Every clock `GETTIME` offers (wall, monotonic, processor) reads
+  the one virtual clock. `GETTZ` still answers in the host's zone;
+  a test that prints local time sets `TZ` as well.
+
+**Why service points and not instructions.** dos-monster's
+`X86_VCLOCK` counts instructions. That works for one engine. Here
+the DBT does not count retired instructions, and the four engines
+would disagree. Service points they agree on already: the same
+program with the same injected input makes the same requests in the
+same order on every engine. That is what the harnesses compare.
+
+**What it does not do.** It does not make a live socket or a human
+deterministic; under `step`, input is files or nothing. It is not a
+guest timer interrupt: time still moves only when the guest stops
+at a service point. Without the variable, nothing changes.
+
+**Where it lands.** `tools/emulator/mmio_ring.c` (the interpreter,
+`slow32-fast` and the DBT share it) and the qemu backend's own
+`mmio.c`, which has `GETTIME`, `SLEEP` and timers too. Then two
+tests: Kermit's timeout path on a prefix file, on all four engines;
+and Asteroids on a key file, the same frames on the three C engines
+(tube cases skip qemu, which has no tube: [TUBE.md](../TUBE.md) §7).
+
+### 2. A key or a clock, from the tube
+
+**The gap.** A terminal program waits for a key or a timeout in one
+call: `term_wait_key(ms)`, or `s32_dpc_wait_on` on fd 0. A tube
+program cannot. `TUBE_KEYS` never blocks, the key queue is not an
+fd, and so a game that wants "the next key, or the next frame
+tick" arms a short timer and drains the queue when it fires. That
+is latency at best and a busy host at worst.
+
+**The proposal.** Give the key queue a name `s32_dpc_wait_on`
+accepts: a reserved descriptor, `S32_FD_TUBE_KEYS`, outside any fd
+range a guest can open. Named in the list, it is readable while the
+key queue is not empty, and it arrives as the same readiness entry
+an fd does (kind `POLL`, `id` the reserved value, cookie `IN`),
+level-triggered like the rest. Without the tube service granted it
+is `NVAL`.
+
+**Why this keeps the rules.** The readiness entry says *that* keys
+are waiting, not which. The keys are still read with `TUBE_KEYS`,
+4 bytes each, from the tube's own queue. Term and tube stay two
+devices; the program still says which one it is waiting on; no
+opcode is added, because `POLL`/`FDPOLL` already take a list.
+
+**Where it lands.** The readiness check in `mmio_ring.c` (the tube
+lives only there), `s32dpc.h` for the constant, [TUBE.md](../TUBE.md)
+for the contract. A test: `S32_TUBE_KEYS` preloads two events, the guest
+waits on the reserved fd and a long timer, and wakes on the keys.
+
+### 3. When the key queue overflows
+
+**The gap.** The queue holds 256 events and drops the oldest.
+Suppose the guest has already taken a key's *down*, then falls
+behind, and the matching *up* is among the events dropped. The
+program now believes the key is held. A text editor never notices.
+Doom turns forever.
+
+**The proposal.** Say that it happened, in the record that is
+already there. The event `reserved` byte is written 0 and ignored
+on read today. When the host drops events, it sets bit 0 of
+`reserved` on the oldest event it keeps: *events were lost before
+this one*. A guest that cares clears its held-key state there and
+reads on; a guest that does not, ignores the bit, as it ignores the
+byte now. [TUBE.md](../TUBE.md) already makes gaps visible for
+frames with generation numbers; this is the same idea for keys.
+
+**Why not something larger.** A separate overflow record would be a
+new kind for every guest to skip. Dropping the newest instead loses
+the latest *up* just as easily, and the newest events are the ones
+a program needs to catch up. Coalescing make/break pairs would hide repeats a game counts.
+One bit in a byte that is already reserved is the smallest true
+statement.
+
+**Where it lands.** `tube_key_push` in `mmio_ring.c`, the event
+table in [TUBE.md](../TUBE.md), a test that preloads 300 events and
+checks the bit on the first one returned.
