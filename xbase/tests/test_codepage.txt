@@ -1,0 +1,6 @@
+SET TALK OFF
+DO CPUTF8
+DO CPDOS
+? "typed utf8", LEN("Ã©tÃ©"), ASC("Ã©")
+? "typed cp437", LEN("‚t‚"), ASC("‚")
+QUIT

@@ -1,6 +1,7 @@
 # xBase and UTF-8
 
-Status: survey and plan, 2026-11-19.  Nothing here is built yet.
+Status: plan with rulings, 2026-11-19.  Step 0 (the terminal edge) is built;
+the rest is not.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -125,30 +126,43 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
   translation on read or write produces.  VFP6 the same, later.
 - dBASE III PLUS, as now, for everything with the setting off.
 
-## Rulings wanted
+## Rulings (user, 2026-11-19)
 
-1. The setting's name and form.  Harbour's is `SET(_SET_CODEPAGE)` /
-   `hb_cdpSelect()`; FoxPro's is `CODEPAGE=` in CONFIG.FPW.  Proposed:
-   `SET CODEPAGE TO "UTF8"` in commands and `SET(_SET_CODEPAGE)` for
-   xbc, default "CP437".
-2. A write into a table whose codepage cannot hold a character:
-   approximate quietly (libutf's tables: a curly quote becomes a straight
-   one) or raise an error.  Proposed: approximate, as FoxPro's
-   translation does.
-3. CHR(n) and ASC(c) with UTF-8: a byte, as now, or a code point.
-   Harbour keeps CHR a byte and adds hb_UTF8Chr(); proposed the same.
-4. Count code points or grapheme clusters.  Proposed: code points for
-   the string functions (Harbour's answer), clusters for the GET cursor.
-5. SAVESCREEN's string in UTF-8 mode: the screen's cells hold a code
-   point, not a byte.  Its format is private to the program, so any
-   shape that round-trips through RESTSCREEN will do.
+1. **The setting.**  `SET CODEPAGE TO "UTF8"` (and `"CP437"`), which can
+   change mid-run, readable as `SET(_SET_CODEPAGE)` in xbc, with an
+   environment default; FoxPro's names for asking: CPCURRENT(), CPDBF().
+2. **A write a table's codepage cannot hold** is approximated quietly
+   (libutf's tables: a curly quote becomes a straight one), as FoxPro's
+   conversions never stopped on a character.
+3. **CHR() and ASC() in UTF-8 mode** are code points: CHR(233) is e-acute.
+   (Bytes would make broken strings; CP437 numbering keeps a DOS habit in
+   the mode meant to leave it.  Old programs stay in CP437 mode.)
+4. **What counts as a character**, by job: code points for the string
+   functions, grapheme clusters for the GET cursor, display columns for
+   layout.
+5. **SAVESCREEN in UTF-8 mode** is fixed-size wider cells: a code point and
+   the attribute at a known offset.
+6. **Source files** are judged per file: valid UTF-8 is UTF-8, anything
+   else CP437.  A literal means the characters the file holds.
+7. **A new table in UTF-8 mode** leaves the header's codepage byte 0 ("not
+   stated") and is taken as UTF-8 by a program in UTF-8 mode; FoxPro to be
+   asked what it does with an unknown mark before this is final.
 
 ## Order of work
 
-0. **The terminal edge, setting off.**  CP437 to UTF-8 at `term_puts` /
-   `term_putc` and UTF-8 keys back into CP437, with the reading table
-   TinyMUX has.  Fixes the boxes and old tables now, changes nothing
-   above the terminal.  Expected files holding the raw bytes change.
+0. **The terminal edge -- built 2026-11-19.**  Not in xbase's ~400
+   console writes but in the machine: the term service has a charset
+   (version 4, SET_CHARSET; docs/SPEC.md 8.14.7, `common/s32cp437.h`), as
+   a real terminal does.  xbase declares CP437 when it takes the terminal
+   (screen.c); the terminal shows each byte as its CP437 character, and
+   gives keys back as CP437 bytes.  Output to a file or pipe stays bytes.
+   Program text (codepage.c) is held in the program's codepage: a file or
+   a typed line that is valid UTF-8 is converted on the way in (ruling 6),
+   so `"café"` in a UTF-8 .PRG is four characters and shows as itself.
+   xbc compiles from UTF-8 and emits each literal past ASCII as
+   `cp_literal("...")`, converted at run time to the codepage then in
+   force.  Test: test_codepage (xbase), feature-term-charset (every
+   engine).
 1. Vendor libutf (`xbase/sync-libutf.sh`), and the CP850 table into
    `~/utf/gen` first.
 2. The setting, and the string functions under it.  Harbour probes.

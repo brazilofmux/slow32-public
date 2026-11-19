@@ -8,6 +8,7 @@
 #include "command.h"
 #include "func.h"
 #include "memvar.h"
+#include "codepage.h"   /* cp_literal: literals past ASCII (s32-xbc) */
 
 void clip_init(void);
 void clip_fini(void);

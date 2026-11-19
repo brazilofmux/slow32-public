@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 
 #include "lex.h"
+#include "codepage.h"
 #include "report.h"
 #include "command.h"
 #include "func.h"
@@ -164,7 +165,14 @@ static void rtrim(char *s) {
     }
 }
 
-static void c_escape(FILE *out, const char *s) {
+/* A string with a byte past 0x7F is UTF-8 here (the source was made so);
+ * the program has it in its codepage at run time, through cp_literal */
+static int has_high(const char *s) {
+    for (; *s; s++) if ((unsigned char)*s >= 0x80) return 1;
+    return 0;
+}
+
+static void c_escape_plain(FILE *out, const char *s) {
     fputc('"', out);
     while (*s) {
         if (*s == '\\' || *s == '"') {
@@ -174,6 +182,16 @@ static void c_escape(FILE *out, const char *s) {
         s++;
     }
     fputc('"', out);
+}
+
+static void c_escape(FILE *out, const char *s) {
+    if (has_high(s)) {
+        fputs("cp_literal(", out);
+        c_escape_plain(out, s);
+        fputc(')', out);
+        return;
+    }
+    c_escape_plain(out, s);
 }
 
 static void emit_indent(FILE *out, int depth) {
@@ -266,6 +284,8 @@ static void sb_printf(sb_t *b, const char *fmt, ...) {
 }
 
 static void sb_cstr(sb_t *b, const char *s) {
+    int lit = has_high(s);
+    if (lit) sb_printf(b, "cp_literal(");
     sb_printf(b, "\"");
     for (; *s; s++) {
         if (*s == '\\' || *s == '"') {
@@ -277,6 +297,7 @@ static void sb_cstr(sb_t *b, const char *s) {
         }
     }
     sb_printf(b, "\"");
+    if (lit) sb_printf(b, ")");
 }
 
 static const char *op_name(ast_op_t op) {
@@ -2200,6 +2221,7 @@ static int load_prg(const char *path) {
     int in_text = 0;
     int in_block = 0;
     int cond[32], depth = 0, active, k;
+    int src_utf8;
     prog_block_stack_t blocks = { { 0 }, 0 };   /* bare END, WHILE, STATIC FUNCTION (program.c) */
 
     if (already_loaded(path)) {
@@ -2211,10 +2233,12 @@ static int load_prg(const char *path) {
         return -1;
     }
     mark_loaded(path);
+    src_utf8 = cp_file_is_utf8(in);   /* compiled from UTF-8 whatever the file's (codepage.h) */
     while (prog_fgets(buf, sizeof(buf), in)) {
         const char *p;
         int rc;
         rtrim(buf);
+        cp_line_to_utf8(buf, (int)sizeof(buf), src_utf8);
         lineno++;
         /* a continued statement is known by its last line, as Clipper
          * numbers it; each line it took is counted */
@@ -2224,6 +2248,7 @@ static int load_prg(const char *path) {
             }
             lineno++;
             rtrim(next);
+            cp_line_to_utf8(next, (int)sizeof(next), src_utf8);
             if (strlen(buf) + 1 + strlen(skip_ws(next)) < MAX_LINE - 1) {
                 size_t n = strlen(buf);
                 if (n > 0 && buf[n - 1] != ' ' && buf[n - 1] != '\t') strcat(buf, " ");   /* the indentation separates the tokens */

@@ -7,6 +7,7 @@
 #include "command.h"
 #include "func.h"
 #include "util.h"
+#include "codepage.h"
 #include "lex.h"
 #include "area.h"
 #include "set.h"
@@ -1092,8 +1093,10 @@ static program_t *prog_load(const char *filename) {
 
     prog_block_stack_t blocks = { { 0 }, 0 };   /* for bare END (prog_normalize_line) */
     int fileline = 0;
+    int src_utf8 = cp_file_is_utf8(fp);   /* the program's codepage from the file's (codepage.h) */
     while (prog_fgets(line, sizeof(line), fp)) {
         trim_right(line);
+        cp_source_line(line, (int)sizeof(line), src_utf8);
         fileline++;
 
         /* Line continuation: ; at end */
@@ -1102,6 +1105,7 @@ static program_t *prog_load(const char *filename) {
             if (!prog_fgets(next, sizeof(next), fp)) break;
             fileline++;
             trim_right(next);
+            cp_source_line(next, (int)sizeof(next), src_utf8);
             /* The continuation's indentation is one blank: it separates the
              * tokens ("22" then ".AND." on the next line; joined tight they
              * lexed as the number 22. and a word) */

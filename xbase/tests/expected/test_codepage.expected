@@ -1,0 +1,12 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. . 
+utf8          8        130        196 ?
+. 
+cp437          6        130        196
+. 
+typed utf8          3        130
+. 
+typed cp437          3        130
+. 

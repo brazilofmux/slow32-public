@@ -67,6 +67,11 @@ void screen_init(void) {
     /* Try to negotiate terminal service. If denied (e.g. --deny term),
      * fall back to console mode (newlines + spaces). */
     scr.term_available = (term_init() == 0) ? 1 : 0;
+    /* the program's text is CP437, as on the PC: the terminal shows each
+     * byte as its CP437 character and gives keys back as CP437 bytes
+     * (docs/SPEC.md 8.14.7; docs/plans/xbase-utf8.md).  An older host
+     * refuses, and the bytes go through as they are. */
+    if (scr.term_available) term_set_charset(TERM_CHARSET_CP437);
 #else
     scr.term_available = 0;
 #endif

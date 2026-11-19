@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #define UTIL_NO_PRINTF_WRAP
 #include "util.h"
+#include "codepage.h"
 
 void str_upper(char *s) {
     while (*s) {
@@ -77,7 +78,8 @@ int read_line(char *buf, int size) {
         buf[i++] = c;
     }
     buf[i] = '\0';
-    return i;
+    cp_source_line(buf, size, cp_is_utf8(buf, (size_t)i));   /* typed or piped: UTF-8 if it is (codepage.h) */
+    return (int)strlen(buf);
 }
 
 void str_copy(char *dst, const char *src, int n) {
