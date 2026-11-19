@@ -7,25 +7,22 @@ vfont_text:                             # @vfont_text
 # %bb.0:
 	addi sp, sp, -64
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 64
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, r18
-	stw fp+-36, r19
+	stw sp+60, r11
+	stw sp+56, r12
+	stw sp+52, r13
+	stw sp+48, r14
+	stw sp+44, r15
+	stw sp+40, r16
+	stw sp+36, r17
+	stw sp+32, r18
+	stw sp+28, r19
 	ldbu r14, r8+0
-	addi r1, r0, 0
-	beq r14, r1, .LBB0_11
+	beq r14, r0, .LBB0_11
 .LBB0_1:
-	slli r9, r7, 3
-	lui r10, %hi(glyphs)
-	addi r10, r10, %lo(glyphs)
+	slli r1, r7, 3
+	lui r9, %hi(glyphs)
+	addi r9, r9, %lo(glyphs)
+	addi r10, r0, 0
 	lui lr, 1
 	addi lr, lr, -1
 	lui r11, 65536
@@ -33,15 +30,15 @@ vfont_text:                             # @vfont_text
 	jal r0, .LBB0_3
 .LBB0_2:
 	addi r8, r13, 1
-	add r5, r5, r9
+	add r5, r5, r1
 	ldbu r14, r13+1
-	beq r14, r1, .LBB0_11
+	beq r14, r0, .LBB0_11
 .LBB0_3:
 	add r13, r8, r0
 	andi r8, r14, 255
-	add r15, r1, r0
+	add r15, r0, r0
 .LBB0_4:
-	add r14, r15, r10
+	add r14, r15, r9
 	ldbu r16, r14+0
 	beq r16, r8, .LBB0_7
 .LBB0_5:
@@ -49,58 +46,58 @@ vfont_text:                             # @vfont_text
 	addi r14, r0, 650
 	bne r15, r14, .LBB0_4
 .LBB0_6:
-	addi r14, r0, 0
+	add r14, r0, r0
 .LBB0_7:
-	beq r14, r1, .LBB0_2
+	beq r14, r0, .LBB0_2
 .LBB0_8:
 	ldbu r8, r14+1
-	beq r8, r1, .LBB0_2
+	beq r8, r0, .LBB0_2
 .LBB0_9:
 	addi r14, r14, 2
 .LBB0_10:
 	ldbu r15, r14+0
 	mul r15, r7, r15
 	add r15, r15, r5
-	sgt r16, r15, r1
-	sub r16, r1, r16
+	sgt r16, r15, r10
+	sub r16, r0, r16
 	and r15, r15, r16
-	slt r16, r15, lr
-	sub r16, r1, r16
-	xori r15, r15, 4095
-	and r15, r15, r16
+	xori r16, r15, 4095
+	slt r15, r15, lr
+	sub r15, r0, r15
+	and r15, r16, r15
 	xori r15, r15, 4095
 	ldbu r16, r14+1
 	mul r16, r7, r16
 	add r16, r16, r6
-	sgt r17, r16, r1
-	sub r17, r1, r17
+	sgt r17, r16, r10
+	sub r17, r0, r17
 	and r16, r16, r17
-	slt r17, r16, lr
-	sub r17, r1, r17
-	xori r16, r16, 4095
-	and r16, r16, r17
+	xori r17, r16, 4095
+	slt r16, r16, lr
+	sub r16, r0, r16
+	and r16, r17, r16
 	xori r16, r16, 4095
 	ldbu r17, r14+2
 	mul r17, r7, r17
 	add r17, r17, r5
-	sgt r18, r17, r1
-	sub r18, r1, r18
+	sgt r18, r17, r10
+	sub r18, r0, r18
 	and r17, r17, r18
-	slt r18, r17, lr
-	sub r18, r1, r18
-	xori r17, r17, 4095
-	and r17, r17, r18
+	xori r18, r17, 4095
+	slt r17, r17, lr
+	sub r17, r0, r17
+	and r17, r18, r17
 	xori r17, r17, 4095
 	ldbu r18, r14+3
 	mul r18, r7, r18
 	add r18, r18, r6
-	sgt r19, r18, r1
-	sub r19, r1, r19
+	sgt r19, r18, r10
+	sub r19, r0, r19
 	and r18, r18, r19
-	slt r19, r18, lr
-	sub r19, r1, r19
-	xori r18, r18, 4095
-	and r18, r18, r19
+	xori r19, r18, 4095
+	slt r18, r18, lr
+	sub r18, r0, r18
+	and r18, r19, r18
 	xori r18, r18, 4095
 	slli r15, r15, 16
 	slli r16, r16, 4
@@ -124,20 +121,19 @@ vfont_text:                             # @vfont_text
 	stw r16+0, r15
 	addi r8, r8, -1
 	addi r14, r14, 4
-	bne r8, r1, .LBB0_10
+	bne r8, r0, .LBB0_10
 	jal r0, .LBB0_2
 .LBB0_11:
-	ldw r19, fp+-36
-	ldw r18, fp+-32
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r19, sp+28
+	ldw r18, sp+32
+	ldw r17, sp+36
+	ldw r16, sp+40
+	ldw r15, sp+44
+	ldw r14, sp+48
+	ldw r13, sp+52
+	ldw r12, sp+56
+	ldw r11, sp+60
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 64
 	jalr r0, r31, 0
 .Lfunc_end0:
@@ -150,56 +146,51 @@ vfont_uint:                             # @vfont_uint
 # %bb.0:
 	addi sp, sp, -64
 	stw sp+0, lr
-	stw sp+4, fp
-	add fp, sp, r0
-	addi fp, fp, 64
-	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, r17
-	addi r1, r0, 0
-	stb fp+-29, r1
-	lui r10, 838861
-	addi r10, r10, -819
-	addi r11, r0, 10
-	addi lr, fp, -40
-	addi r12, r0, 9
-	addi r13, r0, 1
+	stw sp+60, r11
+	stw sp+56, r12
+	stw sp+52, r13
+	stw sp+48, r14
+	stw sp+44, r15
+	stw sp+40, r16
+	stb sp+39, r0
+	lui r1, 838861
+	addi r1, r1, -819
+	addi r10, r0, 10
+	addi lr, r0, 9
+	addi r11, r0, 1
+	add r12, r0, r0
 .LBB1_1:
-	add r15, r9, r1
-	mulhu r14, r8, r10
-	srli r14, r14, 3
-	mul r16, r14, r11
-	sub r16, r8, r16
-	ori  r16, r16, 48
-	add r17, lr, r1
-	stb r17+10, r16
-	sgtu r8, r8, r12
-	sgt r15, r15, r13
-	or  r8, r8, r15
-	addi r15, r1, -1
-	bne r8, r13, .LBB1_3
+	add r14, r9, r12
+	mulhu r13, r8, r1
+	srli r13, r13, 3
+	mul r15, r13, r10
+	sub r15, r8, r15
+	ori  r15, r15, 48
+	addi r16, sp, 28
+	add r16, r16, r12
+	stb r16+10, r15
+	sgtu r8, r8, lr
+	sgt r14, r14, r11
+	or  r8, r8, r14
+	addi r14, r12, -1
+	bne r8, r11, .LBB1_3
 .LBB1_2:
-	addi r16, r1, 11
-	add r1, r15, r0
-	add r8, r14, r0
-	bgtu r16, r13, .LBB1_1
+	addi r15, r12, 11
+	add r12, r14, r0
+	add r8, r13, r0
+	bgtu r15, r11, .LBB1_1
 .LBB1_3:
-	add r1, lr, r15
+	addi r1, sp, 28
+	add r1, r1, r14
 	addi r8, r1, 11
 	jal r31, vfont_text
-	ldw r17, fp+-28
-	ldw r16, fp+-24
-	ldw r15, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
-	ldw r11, fp+-4
+	ldw r16, sp+40
+	ldw r15, sp+44
+	ldw r14, sp+48
+	ldw r13, sp+52
+	ldw r12, sp+56
+	ldw r11, sp+60
 	ldw lr, sp+0
-	ldw fp, sp+4
 	addi sp, sp, 64
 	jalr r0, r31, 0
 .Lfunc_end1:
@@ -410,5 +401,5 @@ glyphs:
 	.zero	4
 	.size	glyphs, 650
 
-	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e34f541beea69553ff1fd655361b4faa1e656dc2)"
+	.ident	"clang version 24.0.0git (https://github.com/llvm/llvm-project.git 77f07727152e39f179dfe39786aa3bcae0860790)"
 	.section	".note.GNU-stack","",@progbits
