@@ -36,9 +36,11 @@ COPY xbase/src /build/xbase/src
 COPY xbc/build.sh xbc/build-lib.sh xbc/compile-prg.sh xbc/s32-xbc.c /build/xbc/
 COPY xbc/runtime /build/xbc/runtime
 COPY xbc/include /build/xbc/include
+# the shared text headers xbase/src/codepage.c includes (../../common/)
+COPY common/s32utf.h common/s32utf_tables.h common/s32cp437.h /build/common/
 ENV LLVM_BIN=/opt/llvm/bin S32_AS=/opt/slow32/bin/slow32asm S32_LD=/opt/slow32/bin/s32-ld \
     S32_AR=/opt/slow32/bin/s32-ar S32_RT=/opt/slow32/lib S32_RT_INCLUDE=/opt/slow32/include
-RUN bash xbase/build.sh >/dev/null && bash xbc/build.sh && bash xbc/build-lib.sh && \
+RUN bash xbase/build.sh && bash xbc/build.sh && bash xbc/build-lib.sh && \
     mkdir -p /build/c-include && \
     cp xbase/src/*.h xbc/runtime/cliprt.h /build/c-include/
 
