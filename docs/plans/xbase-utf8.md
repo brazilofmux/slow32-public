@@ -115,8 +115,10 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
 ## Oracles
 
 - **Harbour**, `slow32:harbour-oracle`: probes that select `UTF8EX`
-  answer the string functions and the screen.  The Clipper guides are
-  silent on all of this; Harbour is the reference for the UTF-8 mode.
+  show one worked answer for the string functions and the screen.  It is
+  a convenience, not the authority: the Clipper guides are silent on
+  UTF-8, so where Harbour's answer is wrong (by Unicode, or by what the
+  byte-mode products did) the ruling is ours and is written down here.
 - **FoxPro 2.6 for Windows** (`xbase/tests/foxpro/foxrun.py`): FoxPro 2.5
   brought codepage marks in the table header, CPCURRENT(), CPDBF() and
   CPCONVERT().  It answers what a table's codepage byte means and what a
