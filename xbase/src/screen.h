@@ -16,7 +16,7 @@ typedef struct {
     char picture[64];
     int width;
     val_type_t type;
-    char initial[256];
+    char initial[1024];   /* 255 characters of UTF-8 at most */
     int has_range;
     value_t range_lo, range_hi;
     char valid_expr[256];

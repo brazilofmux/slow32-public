@@ -17,6 +17,8 @@
 #include <strings.h>
 #include <ctype.h>
 #include <math.h>
+#include <wctype.h>
+#include "codepage.h"
 #include "getsys.h"
 #include "ast.h"
 #include "func.h"
@@ -302,7 +304,7 @@ static int m_get_setfocus(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *
         int k = 0;
         if (pic[0] == '@') { const char *p; for (p = pic + 1; *p && *p != ' '; p++) if (*p == 'K' || *p == 'k') k = 1; }
         iv_set(o, "clear", val_logic(iv_str(o, "type")[0] == 'N' || k));
-        iv_set(o, "pos", vnum(step_editable(o, 1, (int)strlen(iv_str(o, "buffer")))));
+        iv_set(o, "pos", vnum(step_editable(o, 1, cp_chars(iv_str(o, "buffer"), (int)strlen(iv_str(o, "buffer"))))));
     }
     *result = *self;
     return 0;
@@ -338,7 +340,7 @@ static int m_get_reset(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *arg
      * asks it after GetPostValidate has reset the Get */
     iv_set(o, "rejected", val_logic(0));
     iv_set(o, "typeOut", val_logic(0));
-    iv_set(o, "pos", vnum(step_editable(o, 1, (int)strlen(iv_str(o, "buffer")))));
+    iv_set(o, "pos", vnum(step_editable(o, 1, cp_chars(iv_str(o, "buffer"), (int)strlen(iv_str(o, "buffer"))))));
     *result = *self;
     return 0;
 }
@@ -399,89 +401,117 @@ static int step_editable(object_t *o, int pos, int len) {
 
 /* Get:clear, set by setFocus() for a number or @K: the first character
  * typed blanks the buffer, the template's literals kept */
-static void get_apply_clear(object_t *o, char *buf, int len, int *pos) {
+/* The buffer as characters (codepage.h): a byte each in CP437, a code
+ * point each in UTF-8.  The editing methods load it, work on c[] by
+ * 1-based position as Clipper's Get works on bytes, and store it back. */
+#define EDIT_MAX 512
+typedef struct { unsigned c[EDIT_MAX]; int n; } edit_t;
+
+static int edit_load(object_t *o, edit_t *e, int *pos) {
+    value_t *b = object_ivar(o, "buffer", 0);
+    const char *s;
+    int len, i = 0;
+    if (!b || b->type != VAL_CHAR) return 0;
+    s = b->str;
+    len = (int)strlen(s);
+    e->n = 0;
+    while (i < len && e->n < EDIT_MAX) i += cp_decode(s + i, len - i, &e->c[e->n++]);
+    *pos = (int)iv_num(o, "pos");
+    if (*pos < 1) *pos = 1;
+    return 1;
+}
+
+static void edit_store(object_t *o, const edit_t *e) {
+    char buf[EDIT_MAX * 4 + 1];
+    int i, k = 0;
+    for (i = 0; i < e->n; i++) k += cp_encode(e->c[i], buf + k);
+    iv_set(o, "buffer", val_strn(buf, k));
+}
+
+/* the buffer's length in characters */
+static int edit_len(object_t *o) {
+    const char *s = iv_str(o, "buffer");
+    return cp_chars(s, (int)strlen(s));
+}
+
+static void get_apply_clear(object_t *o, edit_t *e, int *pos) {
     char t[256];
     int k;
     if (!iv_logic(o, "clear")) return;
     get_template(o, t, sizeof(t));
-    for (k = 1; k <= len; k++) buf[k - 1] = tmpl_literal(t, k) ? t[k - 1] : ' ';
-    *pos = step_editable(o, 1, len);
+    for (k = 1; k <= e->n; k++) e->c[k - 1] = tmpl_literal(t, k) ? (unsigned char)t[k - 1] : ' ';
+    *pos = step_editable(o, 1, e->n);
     iv_set(o, "clear", val_logic(0));
 }
 
-static char *edit_buf(object_t *o, int *pos, int *len) {
-    value_t *b = object_ivar(o, "buffer", 0);
-    if (!b || b->type != VAL_CHAR) return NULL;
-    *pos = (int)iv_num(o, "pos");
-    *len = (int)strlen(b->str);
-    if (*pos < 1) *pos = 1;
-    return b->str;
-}
-
 /* A typed character under the picture's functions: @! makes it upper case */
-static char edit_char(object_t *o, const char *s) {
-    char c = s[0];
+static unsigned edit_char(object_t *o, const char *s) {
+    unsigned c;
     const char *pic = iv_str(o, "picture");
+    cp_decode(s, (int)strlen(s), &c);
     if (pic[0] == '@') {
         const char *p;
         for (p = pic + 1; *p && *p != ' '; p++) {
-            if (*p == '!') c = (char)toupper((unsigned char)c);
+            if (*p == '!') c = (unsigned)towupper((wint_t)c);
         }
     }
     return c;
 }
 
 static int m_get_overstrike(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx;
-    if (buf && nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0]) {
-        get_apply_clear(o, buf, len, &pos);
-        pos = step_editable(o, pos, len);
-        if (pos > len) {
+    if (nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0] && edit_load(o, &e, &pos)) {
+        get_apply_clear(o, &e, &pos);
+        pos = step_editable(o, pos, e.n);
+        if (pos > e.n) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
-            buf[pos - 1] = edit_char(o, args[0].str);
-            pos = step_editable(o, pos + 1, len);   /* a literal is stepped over */
+            e.c[pos - 1] = edit_char(o, args[0].str);
+            pos = step_editable(o, pos + 1, e.n);   /* a literal is stepped over */
             iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
-            if (pos > len) iv_set(o, "typeOut", val_logic(1));
+            if (pos > e.n) iv_set(o, "typeOut", val_logic(1));
         }
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
 }
 
 static int m_get_insert(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx;
-    if (buf && nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0]) {
-        get_apply_clear(o, buf, len, &pos);
-        pos = step_editable(o, pos, len);
-        if (pos > len) {
+    if (nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0] && edit_load(o, &e, &pos)) {
+        get_apply_clear(o, &e, &pos);
+        pos = step_editable(o, pos, e.n);
+        if (pos > e.n) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
-            memmove(buf + pos, buf + pos - 1, (size_t)(len - pos));
-            buf[pos - 1] = edit_char(o, args[0].str);
-            pos = step_editable(o, pos + 1, len);   /* a literal is stepped over */
+            memmove(e.c + pos, e.c + pos - 1, (size_t)(e.n - pos) * sizeof e.c[0]);
+            e.c[pos - 1] = edit_char(o, args[0].str);
+            pos = step_editable(o, pos + 1, e.n);   /* a literal is stepped over */
             iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
-            if (pos > len) iv_set(o, "typeOut", val_logic(1));
+            if (pos > e.n) iv_set(o, "typeOut", val_logic(1));
         }
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
 }
 
 static int m_get_delete(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf && pos <= len) {
-        memmove(buf + pos - 1, buf + pos, (size_t)(len - pos));
-        buf[len - 1] = ' ';
+    if (edit_load(o, &e, &pos) && pos <= e.n) {
+        memmove(e.c + pos - 1, e.c + pos, (size_t)(e.n - pos) * sizeof e.c[0]);
+        e.c[e.n - 1] = ' ';
         iv_set(o, "changed", val_logic(1));
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
@@ -500,7 +530,7 @@ static int m_get_backspace(expr_ctx_t *ctx, object_t *o, value_t *self, value_t 
 /* The word moves and deletions GETSYS.PRG's reader binds to Ctrl-Left,
  * Ctrl-Right, Ctrl-Backspace, Ctrl-T and Ctrl-Y: a word is a run of
  * non-blanks */
-static int word_start_before(const char *buf, int len, int pos) {   /* 1-based pos; the start of the word before it */
+static int word_start_before(const unsigned *buf, int len, int pos) {   /* 1-based pos; the start of the word before it */
     int i = pos - 1;   /* 0-based index just left of the cursor */
     if (i > len) i = len;
     while (i > 0 && buf[i - 1] == ' ') i--;
@@ -508,7 +538,7 @@ static int word_start_before(const char *buf, int len, int pos) {   /* 1-based p
     return i + 1;
 }
 
-static int word_start_after(const char *buf, int len, int pos) {
+static int word_start_after(const unsigned *buf, int len, int pos) {
     int i = pos - 1;
     while (i < len && buf[i] != ' ') i++;
     while (i < len && buf[i] == ' ') i++;
@@ -516,20 +546,20 @@ static int word_start_after(const char *buf, int len, int pos) {
 }
 
 static int m_get_wordleft(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf) iv_set(o, "pos", vnum(word_start_before(buf, len, pos)));
+    if (edit_load(o, &e, &pos)) iv_set(o, "pos", vnum(word_start_before(e.c, e.n, pos)));
     iv_set(o, "typeOut", val_logic(0));
     *result = *self;
     return 0;
 }
 
 static int m_get_wordright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf) iv_set(o, "pos", vnum(word_start_after(buf, len, pos)));
+    if (edit_load(o, &e, &pos)) iv_set(o, "pos", vnum(word_start_after(e.c, e.n, pos)));
     iv_set(o, "typeOut", val_logic(0));
     *result = *self;
     return 0;
@@ -537,53 +567,60 @@ static int m_get_wordright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t 
 
 static int m_get_delwordleft(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
     int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf && pos > 1) {
+    if (edit_load(o, &e, &pos) && pos > 1) {
+        unsigned *buf = e.c;
+        len = e.n;
         /* Harbour's rule: a blank just before the cursor goes first, then
          * the run of non-blanks before that */
         if (buf[pos - 2] == ' ') {
-            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1));
+            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1) * sizeof *buf);
             buf[len - 1] = ' ';
             pos--;
         }
         while (pos > 1 && buf[pos - 2] != ' ') {
-            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1));
+            memmove(buf + pos - 2, buf + pos - 1, (size_t)(len - pos + 1) * sizeof *buf);
             buf[len - 1] = ' ';
             pos--;
         }
         iv_set(o, "pos", vnum(pos));
         iv_set(o, "changed", val_logic(1));
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
 }
 
 static int m_get_delwordright(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos, len, i;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf && pos <= len) {
+    if (edit_load(o, &e, &pos) && pos <= e.n) {
         /* Harbour's rule: through the first blank after the cursor (the
          * word and one blank; on a blank, that blank alone) */
+        unsigned *buf = e.c;
         int n = 0;
+        len = e.n;
         while (pos - 1 + n < len && buf[pos - 1 + n] != ' ') n++;
         if (pos - 1 + n < len) n++;
-        memmove(buf + pos - 1, buf + pos - 1 + n, (size_t)(len - pos + 1 - n));
-        memset(buf + len - n, ' ', (size_t)n);
+        memmove(buf + pos - 1, buf + pos - 1 + n, (size_t)(len - pos + 1 - n) * sizeof *buf);
+        for (i = len - n; i < len; i++) buf[i] = ' ';
         iv_set(o, "changed", val_logic(1));
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
 }
 
 static int m_get_delend(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos, i;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf && pos <= len) {
-        memset(buf + pos - 1, ' ', (size_t)(len - pos + 1));
+    if (edit_load(o, &e, &pos) && pos <= e.n) {
+        for (i = pos - 1; i < e.n; i++) e.c[i] = ' ';
         iv_set(o, "changed", val_logic(1));
+        edit_store(o, &e);
     }
     *result = *self;
     return 0;
@@ -598,13 +635,13 @@ static int m_get_home(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args
 }
 
 static int m_get_end(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf) {
-        int e = len;
-        while (e > 0 && buf[e - 1] == ' ') e--;
-        iv_set(o, "pos", vnum(e < len ? e + 1 : len));
+    if (edit_load(o, &e, &pos)) {
+        int len = e.n, end = e.n;
+        while (end > 0 && e.c[end - 1] == ' ') end--;
+        iv_set(o, "pos", vnum(end < len ? end + 1 : len));
         iv_set(o, "typeOut", val_logic(0));
     }
     *result = *self;
@@ -621,11 +658,10 @@ static int m_get_left(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args
 }
 
 static int m_get_right(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos = (int)iv_num(o, "pos");
     (void)ctx; (void)args; (void)nargs;
-    if (buf) {
-        if (pos < len) iv_set(o, "pos", vnum(pos + 1));
+    if (object_ivar(o, "buffer", 0) && object_ivar(o, "buffer", 0)->type == VAL_CHAR) {
+        if (pos < edit_len(o)) iv_set(o, "pos", vnum(pos + 1));
         else iv_set(o, "typeOut", val_logic(1));
     }
     *result = *self;
@@ -633,12 +669,12 @@ static int m_get_right(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *arg
 }
 
 static int m_get_todecpos(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *args, int nargs, value_t *result) {
-    int pos, len;
-    char *buf = edit_buf(o, &pos, &len);
+    int pos, i;
+    edit_t e;
     (void)ctx; (void)args; (void)nargs;
-    if (buf) {
-        const char *d = strchr(buf, '.');
-        if (d) iv_set(o, "pos", vnum((int)(d - buf) + 2));
+    if (edit_load(o, &e, &pos)) {
+        for (i = 0; i < e.n; i++)
+            if (e.c[i] == '.') { iv_set(o, "pos", vnum(i + 2)); break; }
     }
     *result = *self;
     return 0;
@@ -979,15 +1015,14 @@ static void gs_applykey(expr_ctx_t *ctx, value_t *g, int key) {
     default:
         break;
     }
-    if (key >= 32 && key <= 255) {
+    if (cp_key_char(key) >= 0) {   /* a character (codepage.h: a key past U+00FF is moved up) */
         const char *type = iv_str(o, "type");
         if (type[0] == 'N' && (key == '.' || key == ',')) {
             gs_send(ctx, g, "TODECPOS", NULL, 0, NULL);
         } else {
-            char c[2];
+            char c[5];
             value_t on, a;
-            c[0] = (char)key;
-            c[1] = '\0';
+            c[cp_encode((unsigned)cp_key_char(key), c)] = '\0';
             a = val_str(c);
             (void)func_call(ctx, "READINSERT", NULL, 0, &on);
             ctx->error = NULL;
@@ -2163,11 +2198,12 @@ int object_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t 
             value_t *b = object_ivar(o, "buffer", 0);
             int row = (int)iv_num(o, "row"), col = (int)iv_num(o, "col");
             if (b && b->type == VAL_CHAR) {
-                int pos = (int)iv_num(o, "pos"), len = (int)strlen(b->str);
+                int n = (int)strlen(b->str), pos = (int)iv_num(o, "pos"), len = cp_chars(b->str, n);
                 screen_out_at(row, col, b->str);
                 if (pos < 1) pos = 1;
                 if (pos > len) pos = len;
-                screen_setpos(row, col + pos - 1);
+                /* the cursor's column: the characters before it, by width (codepage.h) */
+                screen_setpos(row, col + cp_columns(b->str, cp_offset(b->str, n, pos - 1)));
             }
         }
         return rc;

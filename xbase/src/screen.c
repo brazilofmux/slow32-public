@@ -3,6 +3,7 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <wctype.h>
 #include "screen.h"
 #include "codepage.h"
 #include "keys.h"
@@ -140,7 +141,10 @@ static void term_end_update(void) { }
  * value_t string holds 255 characters; a screen is 4,000 cells). */
 #define SHADOW_MAX_ROWS 128
 #define SHADOW_MAX_COLS 256
-typedef struct { unsigned char ch, attr; } shadow_cell_t;
+/* ch: a CP437 byte, or in UTF-8 a code point (codepage.h); wide: 0 a
+ * cell to itself, 1 the first of a double-width character, 2 its second
+ * (ch ' ', painted by the first) */
+typedef struct { unsigned ch; unsigned char attr, wide; } shadow_cell_t;
 static shadow_cell_t shadow[SHADOW_MAX_ROWS][SHADOW_MAX_COLS];
 static int shadow_row, shadow_col;
 static int shadow_fg = 7, shadow_bg = 0, shadow_bold, shadow_inverse;
@@ -171,14 +175,25 @@ static void shadow_init(void) {
     if (shadow_ready) return;
     shadow_ready = 1;
     for (r = 0; r < SHADOW_MAX_ROWS; r++)
-        for (c = 0; c < SHADOW_MAX_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = 0x87; }
+        for (c = 0; c < SHADOW_MAX_COLS; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = 0x87; shadow[r][c].wide = 0; }
 }
 
-static void shadow_put(int ch) {
+/* a cell overwritten: the other half of a double-width character it was
+ * part of goes blank, as a terminal does */
+static void shadow_unhalve(int r, int c) {
+    if (r < 0 || r >= scr_rows || c < 0 || c >= scr_cols) return;
+    if (shadow[r][c].wide == 1 && c + 1 < scr_cols) { shadow[r][c + 1].ch = ' '; shadow[r][c + 1].wide = 0; }
+    if (shadow[r][c].wide == 2 && c > 0) { shadow[r][c - 1].ch = ' '; shadow[r][c - 1].wide = 0; }
+    shadow[r][c].wide = 0;
+}
+
+static void shadow_put_cell(unsigned ch, int wide) {
     shadow_init();
     if (shadow_row >= 0 && shadow_row < scr_rows && shadow_col >= 0 && shadow_col < scr_cols) {
-        shadow[shadow_row][shadow_col].ch = (unsigned char)ch;
+        shadow_unhalve(shadow_row, shadow_col);
+        shadow[shadow_row][shadow_col].ch = ch;
         shadow[shadow_row][shadow_col].attr = shadow_attr();
+        shadow[shadow_row][shadow_col].wide = (unsigned char)wide;
     }
     if (shadow_row == scr_rows - 1 && shadow_col == scr_cols - 1) {
         shadow_col = scr_cols;   /* the screen's last cell: nothing follows it (see shadow_full) */
@@ -188,6 +203,19 @@ static void shadow_put(int ch) {
         shadow_col = 0;
         if (shadow_row < scr_rows - 1) shadow_row++;
     }
+}
+
+/* one character into the shadow: its width's cells (codepage.h) */
+static void shadow_put(unsigned ch) {
+    int w = cp_width(ch);
+    if (w == 0) return;                    /* a combining mark: on the terminal, not kept here */
+    if (w == 2) {
+        if (shadow_col + 1 >= scr_cols && !(shadow_row == scr_rows - 1)) { shadow_col = 0; shadow_row++; }
+        shadow_put_cell(ch, 1);
+        if (shadow_col > 0 && shadow_col < scr_cols) shadow_put_cell(' ', 2);
+        return;
+    }
+    shadow_put_cell(ch, 0);
 }
 
 void screen_tgoto(int row, int col) {
@@ -205,10 +233,13 @@ static int shadow_full(void) {
 }
 
 void screen_tputs(const char *s) {
-    const char *p;
-    for (p = s; *p; p++) {
-        if (*p == '\n') { shadow_col = 0; if (shadow_row < scr_rows - 1) shadow_row++; }
-        else if (*p == '\r') shadow_col = 0;
+    const char *p = s;
+    int n = (int)strlen(s);
+    while (*p) {
+        unsigned c;
+        int k = cp_decode(p, n - (int)(p - s), &c);   /* a character in the program's codepage */
+        if (c == '\n') { shadow_col = 0; if (shadow_row < scr_rows - 1) shadow_row++; }
+        else if (c == '\r') shadow_col = 0;
         else if (shadow_full()) {
             /* the rest of the string falls off the screen */
             size_t keep = (size_t)(p - s);
@@ -216,17 +247,24 @@ void screen_tputs(const char *s) {
             if (head) { memcpy(head, s, keep); head[keep] = '\0'; term_puts(head); free(head); }
             return;
         }
-        else shadow_put((unsigned char)*p);
+        else shadow_put(c);
+        p += k;
     }
     term_puts(s);
 }
 
+/* One character: a CP437 byte, or in UTF-8 a code point (codepage.h) */
 void screen_tputc(int ch) {
+    if (cp_current() != CP_UTF8) ch &= 0xFF;   /* a char's sign: (char)0xC4 is the byte */
     if (ch == '\n') { shadow_col = 0; if (shadow_row < scr_rows - 1) shadow_row++; }
     else if (ch == '\r') shadow_col = 0;
     else if (shadow_full()) return;
-    else shadow_put(ch);
-    term_putc(ch);
+    else shadow_put((unsigned)ch);
+    if (cp_current() == CP_UTF8 && ch >= 0x80) {
+        char b[5];
+        b[cp_encode((unsigned)ch, b)] = '\0';
+        term_puts(b);
+    } else term_putc(ch);
 }
 
 void screen_tattr(int attr) {
@@ -249,13 +287,14 @@ void screen_tclear(int mode) {
     a = shadow_attr();
     if (mode == 0) {
         for (r = 0; r < scr_rows; r++)
-            for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+            for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; shadow[r][c].wide = 0; }
         shadow_row = shadow_col = 0;
     } else if (shadow_row >= 0 && shadow_row < scr_rows) {
-        for (c = shadow_col > 0 ? shadow_col : 0; c < scr_cols; c++) { shadow[shadow_row][c].ch = ' '; shadow[shadow_row][c].attr = a; }
+        if (shadow_col > 0) shadow_unhalve(shadow_row, shadow_col);
+        for (c = shadow_col > 0 ? shadow_col : 0; c < scr_cols; c++) { shadow[shadow_row][c].ch = ' '; shadow[shadow_row][c].attr = a; shadow[shadow_row][c].wide = 0; }
         if (mode == 2)
             for (r = shadow_row + 1; r < scr_rows; r++)
-                for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; }
+                for (c = 0; c < scr_cols; c++) { shadow[r][c].ch = ' '; shadow[r][c].attr = a; shadow[r][c].wide = 0; }
     }
     term_clear(mode);
 }
@@ -264,6 +303,11 @@ void screen_tclear(int mode) {
  * row by row -- the character, then the attribute as the CGA byte
  * (background in the high nibble, intensity bit 3).  The terminal counts
  * its colours red 1, blue 4, the CGA the other way round. */
+/* A cell's bytes in a screen string: Clipper's two, or in UTF-8 four --
+ * the code point's 21 bits low byte first, the double-width half (0 1 2)
+ * in the third byte's top two bits, then the attribute (ruling 5) */
+#define SCREEN_CELL_BYTES (cp_current() == CP_UTF8 ? 4 : 2)
+
 static int cga_swap(int c) { return (c & 2) | ((c & 1) << 2) | ((c & 4) >> 2); }
 
 static unsigned char attr_to_cga(unsigned char a) {
@@ -290,11 +334,17 @@ value_t screen_save_region(int t, int l, int b, int r) {
     rows = b - t + 1;
     cols = r - l + 1;
     if (rows <= 0 || cols <= 0) return val_str("");
-    if (!(buf = malloc((size_t)rows * (size_t)cols * 2))) return val_str("");
+    if (!(buf = malloc((size_t)rows * (size_t)cols * SCREEN_CELL_BYTES))) return val_str("");
     for (i = 0; i < rows; i++)
         for (j = 0; j < cols; j++) {
-            buf[k++] = (char)shadow[t + i][l + j].ch;
-            buf[k++] = (char)attr_to_cga(shadow[t + i][l + j].attr);
+            const shadow_cell_t *cell = &shadow[t + i][l + j];
+            if (cp_current() == CP_UTF8) {   /* ruling 5: the code point, its half, the attribute */
+                buf[k++] = (char)(cell->ch & 0xFF);
+                buf[k++] = (char)((cell->ch >> 8) & 0xFF);
+                buf[k++] = (char)(((cell->ch >> 16) & 0x1F) | (cell->wide << 6));
+            } else
+                buf[k++] = (char)cell->ch;
+            buf[k++] = (char)attr_to_cga(cell->attr);
         }
     v = val_strn(buf, k);
     free(buf);
@@ -317,7 +367,12 @@ static void paint_region(int t, int l, int b, int r) {
                 if (cur & 0x40) term_set_attr(1);
                 term_set_color(cur & 7, (cur >> 3) & 7);
             }
-            term_putc(cell.ch);
+            if (cell.wide == 2) continue;          /* painted by its first half */
+            if (cp_current() == CP_UTF8 && cell.ch >= 0x80) {
+                char e[5];
+                e[cp_encode(cell.ch, e)] = '\0';
+                term_puts(e);
+            } else term_putc((int)cell.ch);
         }
     }
     term_set_attr(0);
@@ -338,11 +393,18 @@ void screen_restore_region(int t, int l, int b, int r, const value_t *saved) {
     cols = r - l + 1;
     if (b < t || cols <= 0) return;
     p = (const unsigned char *)val_text(saved);
-    n = val_len(saved) / 2;
+    n = val_len(saved) / SCREEN_CELL_BYTES;
     for (i = t; i <= b && k < n; i++)
         for (j = l; j <= r && k < n; j++, k++) {
-            shadow[i][j].ch = p[2 * k];
-            shadow[i][j].attr = attr_from_cga(p[2 * k + 1]);
+            const unsigned char *c = p + (size_t)k * SCREEN_CELL_BYTES;
+            if (cp_current() == CP_UTF8) {
+                shadow[i][j].ch = c[0] | (unsigned)c[1] << 8 | (unsigned)(c[2] & 0x1F) << 16;
+                shadow[i][j].wide = (unsigned char)(c[2] >> 6);
+            } else {
+                shadow[i][j].ch = c[0];
+                shadow[i][j].wide = 0;
+            }
+            shadow[i][j].attr = attr_from_cga(c[SCREEN_CELL_BYTES - 1]);
         }
     paint_region(t, l, b, r);
 }
@@ -479,7 +541,7 @@ void screen_out_at(int row, int col, const char *text) {
 #endif
     if (!screen_stream_quiet())
         printf("%s", text);
-    screen_update_pos(row, col, (int)strlen(text));
+    screen_update_pos(row, col, cp_columns(text, (int)strlen(text)));
 }
 
 void screen_setpos(int row, int col) {
@@ -573,7 +635,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         if (!screen_stream_quiet())
             printf("%s", formatted);
     }
-    screen_update_pos(row, col, (int)strlen(formatted));
+    screen_update_pos(row, col, cp_columns(formatted, (int)strlen(formatted)));
 }
 
 /* ---- @GET ---- */
@@ -643,7 +705,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     if (memvar_find(store, varname, &val) == 0) {
         val_to_string(&val, scr.gets[scr.ngets].initial, sizeof(scr.gets[scr.ngets].initial));
         scr.gets[scr.ngets].type = val.type;
-        scr.gets[scr.ngets].width = strlen(scr.gets[scr.ngets].initial);
+        scr.gets[scr.ngets].width = cp_chars(scr.gets[scr.ngets].initial, (int)strlen(scr.gets[scr.ngets].initial));   /* in characters (codepage.h) */
         /* a number's field is ten wide at least (STR()'s width); a string's
          * is its own length, as Clipper's Get makes it ("abc" is three) */
         if (val.type == VAL_NUM && scr.gets[scr.ngets].width < 10) scr.gets[scr.ngets].width = 10;
@@ -688,7 +750,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
             }
             scr.gets[scr.ngets].width = db->fields[fi].length;
             if (scr.gets[scr.ngets].type == VAL_DATE)   /* as SET DATE shows it (ten with CENTURY) */
-                scr.gets[scr.ngets].width = (int)strlen(scr.gets[scr.ngets].initial);
+                scr.gets[scr.ngets].width = cp_chars(scr.gets[scr.ngets].initial, (int)strlen(scr.gets[scr.ngets].initial));
         } else {
             scr.gets[scr.ngets].initial[0] = '\0';
             scr.gets[scr.ngets].type = VAL_CHAR;
@@ -712,8 +774,8 @@ static int get_picture_window(const char *picture, int value_width);
 
 /* The GET's value shown where it sits, cut to the picture's window */
 static void get_show_initial(const get_entry_t *g) {
-    char shown[256];
-    int w = get_picture_window(g->picture, (int)strlen(g->initial));
+    char shown[1024];   /* characters, so UTF-8's bytes (codepage.h) */
+    int w = get_picture_window(g->picture, cp_chars(g->initial, (int)strlen(g->initial)));
     str_copy(shown, g->initial, sizeof(shown));
     if (g->type == VAL_CHAR && g->picture[0]) {
         /* through the picture, as a Get displays its buffer: a template's
@@ -723,12 +785,12 @@ static void get_show_initial(const get_entry_t *g) {
         const char *sp = strchr(g->picture, ' ');
         if (g->picture[0] != '@' || (sp && sp[1])) {   /* a template, not functions alone */
             value_t a[2], r;
-            char full[256];   /* a field's blank value is "": as wide as its GET */
-            int n = (int)strlen(g->initial);
+            char full[1024];   /* a field's blank value is "": as wide as its GET */
+            int b = (int)strlen(g->initial), n = cp_chars(g->initial, b);
             str_copy(full, g->initial, sizeof(full));
-            if (n < g->width && g->width < (int)sizeof(full)) {
-                memset(full + n, ' ', (size_t)(g->width - n));
-                full[g->width] = '\0';
+            if (n < g->width && b + (g->width - n) < (int)sizeof(full)) {
+                memset(full + b, ' ', (size_t)(g->width - n));
+                full[b + g->width - n] = '\0';
             }
             a[0] = val_str(full);
             a[1] = val_str(g->picture);
@@ -747,7 +809,7 @@ static void get_show_initial(const get_entry_t *g) {
             memset(shown, ' ', (size_t)(w - n));
         }
     }
-    if (w < (int)strlen(shown)) shown[w] = '\0';
+    shown[cp_offset(shown, (int)strlen(shown), w)] = '\0';   /* w characters */
     goto_pos(g->row, g->col);
 #if HAS_TERM
     if (scr.term_available)
@@ -756,7 +818,7 @@ static void get_show_initial(const get_entry_t *g) {
 #endif
     if (!screen_stream_quiet())
         printf("%s", shown);
-    screen_update_pos(g->row, g->col, (int)strlen(shown));
+    screen_update_pos(g->row, g->col, cp_columns(shown, (int)strlen(shown)));
 }
 
 /* A GET from a Get object (READMODAL over its array): the value it shows
@@ -779,7 +841,7 @@ void screen_get_object(int row, int col, const char *name, const char *picture,
     g->getobj = *obj;
     val_to_string(initial, g->initial, sizeof(g->initial));
     g->type = initial->type;
-    g->width = (int)strlen(g->initial);
+    g->width = cp_chars(g->initial, (int)strlen(g->initial));   /* in characters (codepage.h) */
     if (g->width < 1) g->width = 1;
     get_show_initial(g);
     scr.ngets++;
@@ -814,7 +876,7 @@ void screen_get_expr(int row, int col, const char *target, const char *picture,
     if (ast_eval_dynamic(target, ctx, &v) != 0) { ctx->error = NULL; v = val_str(""); }
     val_to_string(&v, g->initial, sizeof(g->initial));
     g->type = v.type;
-    g->width = (int)strlen(g->initial);
+    g->width = cp_chars(g->initial, (int)strlen(g->initial));   /* in characters (codepage.h) */
     if (g->width < 1) g->width = 1;
     get_show_initial(g);
     scr.ngets++;
@@ -906,8 +968,12 @@ static int get_picture_literal(const get_picture_t *pic, int pos) {
 /* The character a key puts at pos under the picture, 0 to refuse it */
 static int get_picture_accept(const get_picture_t *pic, int pos, int key) {
     char t = pic->tmpl[0] && pos < (int)strlen(pic->tmpl) ? pic->tmpl[pos] : 'X';
-    int is_alpha = isalpha(key), is_digit = isdigit(key);
-    if (pic->upper || t == '!') key = toupper(key);
+    int is_alpha, is_digit;
+    key = cp_key_char(key);   /* the character (codepage.h) */
+    if (key < 0) return 0;
+    is_alpha = key < 0x80 ? isalpha(key) : iswalpha((wint_t)key) != 0;
+    is_digit = key < 0x80 && isdigit(key);
+    if (pic->upper || t == '!') key = (int)towupper((wint_t)key);
     if (pic->alpha && !is_alpha && key != ' ') return 0;
     switch (t) {
     case '9': return is_digit ? key : 0;
@@ -922,24 +988,39 @@ static int get_picture_accept(const get_picture_t *pic, int pos, int key) {
 
 /* The field as it shows during an edit: the edit below stale_hi, the old
  * text past it (dBASE III's numeric GET); the edit alone when stale_hi < 0 */
-static const char *get_shown(const char *buf, const char *stale, int stale_hi, int fwidth, char *out) {
+/* The editor's field is characters (codepage.h): a byte each in CP437,
+ * a code point each in UTF-8 */
+static const unsigned *get_shown(const unsigned *buf, const unsigned *stale, int stale_hi, int fwidth, unsigned *out) {
     int k;
     if (stale_hi < 0) return buf;
     for (k = 0; k < fwidth && k < 255; k++) out[k] = k < stale_hi ? buf[k] : stale[k];
-    out[k] = '\0';
     return out;
 }
 
-static void get_paint(const get_entry_t *g, const char *buf, int fwidth, int dwidth, int win, int pos) {
-    int fi;
+static void get_paint(const get_entry_t *g, const unsigned *buf, int fwidth, int dwidth, int win, int pos) {
+    int fi, cols = 0;
     term_begin_update();
     screen_tgoto(g->row, g->col);
     for (fi = 0; fi < dwidth; fi++) {
         int k = win + fi;
-        screen_tputc(k < fwidth ? buf[k] : ' ');
+        screen_tputc(k < fwidth ? (int)buf[k] : ' ');
     }
-    screen_tgoto(g->row, g->col + (pos - win));
+    for (fi = win; fi < pos && fi < fwidth; fi++) cols += cp_width(buf[fi]);   /* the cursor by width */
+    screen_tgoto(g->row, g->col + cols);
     term_end_update();
+}
+
+/* a string into the editor's characters, and back */
+static int get_cells(const char *s, unsigned *c, int max) {
+    int n = (int)strlen(s), i = 0, k = 0;
+    while (i < n && k < max) i += cp_decode(s + i, n - i, &c[k++]);
+    return k;
+}
+
+static void get_uncells(const unsigned *c, int n, char *out, int size) {
+    int i, k = 0;
+    for (i = 0; i < n && k < size - 5; i++) k += cp_encode(c[i], out + k);
+    out[k] = '\0';
 }
 
 /* An accepted value shown again in its field, through its picture -- a
@@ -1075,9 +1156,10 @@ void screen_read(void) {
         term_set_raw(1);
 
         for (i = 0; i < scr.ngets && !escaped; i++) {
-            char buf[256];
+            char buf[1024];   /* the field as text: 255 characters of UTF-8 at most */
+            unsigned cb[256];   /* the field as characters while it is edited (codepage.h) */
             int pos, len, key, nav = 0;   /* nav: -1 the GET before, 1 the READ is done */
-            char kept_edit[256];
+            char kept_edit[1024];
             int have_kept, refused = 0;
             str_copy(read_var, scr.gets[i].varname, sizeof(read_var));
             active_get = i;
@@ -1105,10 +1187,10 @@ void screen_read(void) {
              * "@KS30" made a field four wide). */
             get_picture_t pic;
             int fwidth, dwidth, win = 0, first_key = 1;
-            char shown[256];
-            char stale[256];    /* dBASE III: what the field showed, still shown past what is typed */
+            unsigned shown[256];
+            unsigned stale[256];    /* dBASE III: what the field showed, still shown past what is typed */
             int stale_hi = -1;  /* positions below it show the edit; -1: none */
-            char start_buf[256];   /* the field as editing began: left so, it is not assigned */
+            char start_buf[1024];   /* the field as editing began: left so, it is not assigned */
             parse_get_picture(scr.gets[i].picture, &pic);
             if (scr.gets[i].type == VAL_DATE && !pic.tmpl[0]) {
                 /* a date edits through the date format: digits where the
@@ -1135,8 +1217,7 @@ void screen_read(void) {
             dwidth = (pic.scroll > 0 && pic.scroll < fwidth) ? pic.scroll : fwidth;
             nav = 0;
 
-            str_copy(buf, scr.gets[i].initial, sizeof(buf));
-            len = strlen(buf);
+            len = get_cells(scr.gets[i].initial, cb, 255);
             if (scr.gets[i].type == VAL_NUM) {
                 /* a number sits right-justified in its field, and the
                  * first digit typed replaces it ("20" over 10 became 200
@@ -1145,40 +1226,38 @@ void screen_read(void) {
                  * shows it -- Teacher's Pet's Quicksilver build shows "10"
                  * as "1" is typed over 0, and takes 1 */
                 if (len < fwidth) {
-                    memmove(buf + (fwidth - len), buf, (size_t)len + 1);
-                    memset(buf, ' ', (size_t)(fwidth - len));
+                    int k;
+                    memmove(cb + (fwidth - len), cb, (size_t)len * sizeof cb[0]);
+                    for (k = 0; k < fwidth - len; k++) cb[k] = ' ';
                     len = fwidth;
                 }
                 pic.clear = 1;
             }
             /* Pad to field width */
-            while (len < fwidth && len < 255) { buf[len++] = ' '; }
-            buf[len] = '\0';
+            while (len < fwidth && len < 255) { cb[len++] = ' '; }
             if (pic.tmpl[0]) {
                 /* the template's literals stand in the field ("  /  /  ") */
                 int k;
                 for (k = 0; k < fwidth && pic.tmpl[k]; k++)
-                    if (get_picture_literal(&pic, k)) buf[k] = pic.tmpl[k];
+                    if (get_picture_literal(&pic, k)) cb[k] = (unsigned char)pic.tmpl[k];
             }
-            str_copy(start_buf, buf, sizeof(start_buf));
+            get_uncells(cb, fwidth, start_buf, (int)sizeof(start_buf));
             if (have_kept) {
                 /* edited again after a refused value: the text as it was
                  * typed, the cursor home (GETSYS's oGet:home()) */
-                str_copy(buf, kept_edit, sizeof(buf));
-                len = (int)strlen(buf);
-                while (len < fwidth && len < 255) buf[len++] = ' ';
-                buf[len] = '\0';
+                len = get_cells(kept_edit, cb, 255);
+                while (len < fwidth && len < 255) cb[len++] = ' ';
                 first_key = 0;
                 have_kept = 0;
             }
             pos = 0;  /* cursor at start of field (dBase convention) */
             while (pos < fwidth && pic.tmpl[0] && get_picture_literal(&pic, pos)) pos++;
 
-            get_paint(&scr.gets[i], buf, fwidth, dwidth, win, pos);
+            get_paint(&scr.gets[i], cb, fwidth, dwidth, win, pos);
 
             for (;;) {
                 key = screen_getkey();
-                if (!(key >= 32 && key <= 255)) stale_hi = -1;   /* edited otherwise: the field as it is */
+                if (cp_key_char(key) < 0) stale_hi = -1;   /* edited otherwise: the field as it is */
                 if (key != KEY_NONE && key != 0 && screen_check_key_handler(key)) {
                     /* a SET KEY handler ran; CLEAR GETS in it ends the READ,
                      * as Clipper's does (RL's F10: CLEAR GETS, exit_status := .T.) */
@@ -1190,7 +1269,7 @@ void screen_read(void) {
                 if (key == K_ESC) { /* Escape - cancel READ */
                     last_key = 27;
                     escaped = 1;
-                    str_copy(buf, scr.gets[i].initial, sizeof(buf));
+                    len = get_cells(scr.gets[i].initial, cb, 255);
                     break;
                 }
                 if (key == K_UP || key == K_SH_TAB) { last_key = key; nav = -1; break; }
@@ -1201,40 +1280,41 @@ void screen_read(void) {
                 else if (key == K_HOME) pos = 0;
                 else if (key == K_END) {
                     int e = fwidth;
-                    while (e > 0 && buf[e - 1] == ' ') e--;
+                    while (e > 0 && cb[e - 1] == ' ') e--;
                     pos = e < fwidth ? e : fwidth - 1;
                 } else if (key == K_INS) { get_insert_mode = !get_insert_mode; scoreboard_insert(get_insert_mode); }
                 else if (key == K_DEL) {
-                    memmove(buf + pos, buf + pos + 1, (size_t)(fwidth - pos - 1));
-                    buf[fwidth - 1] = ' ';
+                    memmove(cb + pos, cb + pos + 1, (size_t)(fwidth - pos - 1) * sizeof cb[0]);
+                    cb[fwidth - 1] = ' ';
                 } else if (key == K_BS || key == 127) {
                     if (pos > 0) {
                         pos--;
-                        memmove(buf + pos, buf + pos + 1, (size_t)(fwidth - pos - 1));
-                        buf[fwidth - 1] = ' ';
+                        memmove(cb + pos, cb + pos + 1, (size_t)(fwidth - pos - 1) * sizeof cb[0]);
+                        cb[fwidth - 1] = ' ';
                     }
                 } else if (key == K_CTRL_Y) {
-                    memset(buf + pos, ' ', (size_t)(fwidth - pos));
+                    int k;
+                    for (k = pos; k < fwidth; k++) cb[k] = ' ';
                 } else if (key == K_CTRL_U) {
-                    str_copy(buf, scr.gets[i].initial, sizeof(buf));
-                    len = strlen(buf);
-                    while (len < fwidth) buf[len++] = ' ';
-                    buf[len] = '\0';
-                } else if (key >= 32 && key <= 255) {
+                    len = get_cells(scr.gets[i].initial, cb, 255);
+                    while (len < fwidth) cb[len++] = ' ';
+                } else if (cp_key_char(key) >= 0) {
                     int ch = get_picture_accept(&pic, pos, key);
                     if (ch == 0) continue;   /* the template refuses it */
                     if (first_key && pic.clear) {
+                        int k;
                         if (!getsys_style() && scr.gets[i].type == VAL_NUM) {
-                            str_copy(stale, buf, sizeof(stale));
+                            memcpy(stale, cb, sizeof stale);
                             stale_hi = 0;
                         }
-                        memset(buf, ' ', (size_t)fwidth); pos = 0;
+                        for (k = 0; k < fwidth; k++) cb[k] = ' ';
+                        pos = 0;
                     }
                     first_key = 0;
                     if (get_insert_mode) {
-                        memmove(buf + pos + 1, buf + pos, (size_t)(fwidth - pos - 1));
+                        memmove(cb + pos + 1, cb + pos, (size_t)(fwidth - pos - 1) * sizeof cb[0]);
                     }
-                    buf[pos] = (char)ch;
+                    cb[pos] = (unsigned)ch;
                     pos++;
                     if (stale_hi >= 0 && pos > stale_hi) stale_hi = pos;
                     /* a literal in the template is stepped over */
@@ -1242,7 +1322,7 @@ void screen_read(void) {
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
                             last_key = 13;
-                            get_paint(&scr.gets[i], get_shown(buf, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, fwidth - 1);   /* the last character shows */
+                            get_paint(&scr.gets[i], get_shown(cb, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, fwidth - 1);   /* the last character shows */
                             break;  /* auto-advance: field full, CONFIRM OFF */
                         }
                         pos = fwidth - 1;
@@ -1251,8 +1331,9 @@ void screen_read(void) {
                 first_key = 0;
                 if (pos < win) win = pos;
                 if (pos >= win + dwidth) win = pos - dwidth + 1;
-                get_paint(&scr.gets[i], get_shown(buf, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, pos);
+                get_paint(&scr.gets[i], get_shown(cb, stale, stale_hi, fwidth, shown), fwidth, dwidth, win, pos);
             }
+            get_uncells(cb, fwidth, buf, (int)sizeof(buf));   /* the field as text again */
 
             if (escaped) break;  /* Escape exits READ without storing */
 
@@ -1510,14 +1591,17 @@ void screen_message(int row, const char *msg) {
 
 /* ---- @TO (box drawing) ---- */
 void screen_box(int r1, int c1, int r2, int c2, int dbl) {
-    /* Box characters: single vs double */
-    char h, v, tl, tr, bl, br;
+    /* Box characters: single vs double -- CP437's line-drawing set, the one
+     * DBU's frames are drawn with; in UTF-8 the same characters as code
+     * points (codepage.h) */
+    int h, v, tl, tr, bl, br;
 
-    /* the line-drawing set the terminal shows DBU's frames with (CP437) */
     if (dbl) {
-        h = (char)0xCD; v = (char)0xBA; tl = (char)0xC9; tr = (char)0xBB; bl = (char)0xC8; br = (char)0xBC;
+        h = cp_char_437(0xCD); v = cp_char_437(0xBA); tl = cp_char_437(0xC9);
+        tr = cp_char_437(0xBB); bl = cp_char_437(0xC8); br = cp_char_437(0xBC);
     } else {
-        h = (char)0xC4; v = (char)0xB3; tl = (char)0xDA; tr = (char)0xBF; bl = (char)0xC0; br = (char)0xD9;
+        h = cp_char_437(0xC4); v = cp_char_437(0xB3); tl = cp_char_437(0xDA);
+        tr = cp_char_437(0xBF); bl = cp_char_437(0xC0); br = cp_char_437(0xD9);
     }
 
 #if HAS_TERM
@@ -1553,12 +1637,12 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
 }
 
 void screen_box_frame(int r1, int c1, int r2, int c2, const char *frame) {
-    size_t n = strlen(frame);
-    char f[9];
-    int i;
+    int len = (int)strlen(frame), n = 0, i, k = 0;
+    unsigned fc[9], f[9];
+    while (k < len && n < 9) k += cp_decode(frame + k, len - k, &fc[n++]);   /* by character (codepage.h) */
     if (n == 0) return;
-    for (i = 0; i < 9; i++) f[i] = (size_t)i < n ? frame[i] : (i == 8 ? '\0' : frame[n - 1]);
-    if (n == 1) { for (i = 0; i < 8; i++) f[i] = frame[0]; f[8] = '\0'; }
+    for (i = 0; i < 9; i++) f[i] = i < n ? fc[i] : (i == 8 ? 0 : fc[n - 1]);
+    if (n == 1) { for (i = 0; i < 8; i++) f[i] = fc[0]; f[8] = 0; }
 #if HAS_TERM
     if (scr.term_available) {
         int r, c;
@@ -1638,7 +1722,7 @@ void screen_prompt(int row, int col, const char *text, const char *message) {
 #endif
     if (!screen_stream_quiet())
         printf("%s", text);
-    screen_update_pos(row, col, (int)strlen(text));
+    screen_update_pos(row, col, cp_columns(text, (int)strlen(text)));
 
     scr.nprompts++;
 }
@@ -2274,10 +2358,29 @@ void screen_print_at(int row, int col, const char *s) {
 /* Translate a raw key (possibly an escape sequence) to dBase key code.
  * In raw terminal mode, arrow keys arrive as ESC [ A/B/C/D sequences.
  * term_getkey() reads one byte at a time, so we must read the sequence. */
+/* A typed character's key (ruling (a), codepage.h): in UTF-8 its bytes
+ * read whole, first given, the rest from next(); in CP437 the byte */
+static int key_from_bytes(int first, int (*next)(void)) {
+    char b[4];
+    int n, i;
+    unsigned c;
+    if (cp_current() != CP_UTF8 || first < 0xC0) return first;
+    n = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : 2;
+    b[0] = (char)first;
+    for (i = 1; i < n; i++) {
+        int x = next();
+        if (x < 0) { n = i; break; }
+        b[i] = (char)x;
+    }
+    cp_decode(b, n, &c);
+    return cp_key(c);
+}
+
 #if HAS_TERM
 int read_dbase_key(void) {
     int ch = term_getkey();
     if (ch < 0) { input_ended = 1; return KEY_NONE; }
+    if (ch >= 0xC0 && cp_current() == CP_UTF8) return key_from_bytes(ch, term_getkey);
     if (ch == 27) {
         int ch2;
         /* Possible escape sequence -- check if more bytes follow */
@@ -2383,9 +2486,14 @@ static int typeahead[TYPEAHEAD_MAX];
 static int typeahead_head, typeahead_len;
 
 void screen_keyboard(const char *s) {
+    int n = (int)strlen(s), i = 0;
     typeahead_head = typeahead_len = 0;
     pushed_key = 0;
-    while (*s && typeahead_len < TYPEAHEAD_MAX) typeahead[typeahead_len++] = (unsigned char)*s++;
+    while (i < n && typeahead_len < TYPEAHEAD_MAX) {   /* each character its key (codepage.h) */
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        typeahead[typeahead_len++] = cp_key(c);
+    }
 }
 
 void screen_clear_typeahead(void) {
@@ -2502,6 +2610,7 @@ int screen_inkey(double timeout) {
     {
         int c = getchar();
         if (c < 0) return 0;
+        if (c >= 0xC0) c = key_from_bytes(c, getchar);
         if (c == '\n') c = 13;
         last_key = c;
         if (screen_check_key_handler(c)) return 0;
@@ -2528,6 +2637,7 @@ int screen_answer_key(void) {
 #endif
     fflush(stdout);
     k = getchar();
+    if (k >= 0xC0) k = key_from_bytes(k, getchar);
     return k < 0 ? -1 : k == '\n' ? 13 : k;
 }
 

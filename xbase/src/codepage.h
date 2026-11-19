@@ -38,6 +38,23 @@ int cp_offset(const char *s, int n, int k);
 int cp_decode(const char *s, int n, unsigned *cp);
 int cp_encode(unsigned cp, char *out);
 
+/* CP437 byte b as a character of the program's codepage: itself in
+ * CP437, its code point in UTF-8 (the box-drawing set, CHR's table) */
+int cp_char_437(unsigned char b);
+
+/* Display columns: a character's (0, 1 or 2 in UTF-8: Unicode's widths,
+ * s32utf.h; always 1 in CP437), and a string's s[0..n) */
+int cp_width(unsigned cp);
+int cp_columns(const char *s, int n);
+
+/* Keys (ruling (a)): a character typed is its code point as a key, those
+ * past U+00FF moved up by CP_KEY_HIGH so no key Clipper numbers (Alt-A
+ * is 286) means two things; cp_key_char is the character a key stands
+ * for, or -1 for one that is no character (an arrow, a function key) */
+#define CP_KEY_HIGH 65536
+int cp_key(unsigned cp);
+int cp_key_char(int key);
+
 /* Program text held in codepage from, as codepage to; malloc'd.  NULL when
  * nothing changes (ASCII, or the same codepage) or memory is short. */
 char *cp_transcode(const char *s, int from, int to);

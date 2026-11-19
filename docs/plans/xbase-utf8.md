@@ -1,7 +1,9 @@
 # xBase and UTF-8
 
 Status: plan with rulings, 2026-11-19.  Steps 0-2 (the terminal edge, the
-setting and the string functions) are built; 3-5 are not.
+setting and the string functions) are built, and step 3's keys, screen
+and GET editors; MEMOEDIT, BROWSE, the menus, TRANSFORM and steps 4-5 are
+not.
 
 xbase (and xbc, whose programs link the interpreter's sources as
 `libxbase.s32a`, so one change serves both) treats text as bytes, one
@@ -182,8 +184,21 @@ literals and comments pass through as bytes, which is all UTF-8 needs.
    compile-time byte count, not followed) and CHR/ASC (bytes: ruling 3).
    Tests: test_codepage_utf8 (xbase), utf8mode (xbc).  TRANSFORM and the
    MEMO* line functions count columns: step 3.
-3. The screen: width-aware layout, the GET editor and MEMOEDIT by
-   character.  Harbour probes.
+3. **The screen -- keys, the shadow and the GETs built 2026-11-19.**
+   Keys (ruling (a)): a typed UTF-8 character is read whole and comes from
+   INKEY() as its code point, plus 65536 past U+00FF (Alt-A stays 286);
+   KEYCHAR(n) gives a key's character, "" for none; KEYBOARD stuffs
+   characters.  The shadow's cells hold code points and know the two
+   halves of a double-width character; output advances by display width;
+   box frames split by character, @ TO draws CP437's rules as code points.
+   SAVESCREEN in UTF-8 is four bytes a cell (ruling 5), read with the byte
+   functions BLEN, BSUBSTR, BASC, BCHR.  Both GET editors (the Get object,
+   the interpreter's READ) edit characters: a field is so many characters,
+   the cursor stands at the width of those before it, a picture takes
+   Unicode's letters (A, !, @!).  Tests: test_get_utf8, test_screen_utf8.
+   Still bytes: MEMOEDIT, BROWSE's cell editor, ACHOICE/MENU widths,
+   TRANSFORM, MEMOLINE/MLCOUNT.  A GET on a table field is still the
+   field's bytes wide until step 4.
 4. Tables: the cut at a boundary, the header's codepage byte, translation
    on read and write.  FoxPro cases.
 5. Indexes: the cut at a boundary.  Collation as a separate option, if

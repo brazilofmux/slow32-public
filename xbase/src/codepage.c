@@ -72,6 +72,34 @@ int cp_offset(const char *s, int n, int k) {
     return i;
 }
 
+int cp_char_437(unsigned char b) {
+    return g_cp == CP_UTF8 ? (int)s32_cp437_to_cp(b) : b;
+}
+
+int cp_width(unsigned cp) {
+    if (g_cp != CP_UTF8) return 1;
+    return s32u_cp_width(cp);
+}
+
+int cp_columns(const char *s, int n) {
+    int i = 0, cols = 0;
+    if (g_cp != CP_UTF8) return n;
+    while (i < n) {
+        unsigned c;
+        i += cp_decode(s + i, n - i, &c);
+        cols += s32u_cp_width(c);
+    }
+    return cols;
+}
+
+int cp_key(unsigned cp) { return cp > 0xFF ? (int)cp + CP_KEY_HIGH : (int)cp; }
+
+int cp_key_char(int key) {
+    if (key >= CP_KEY_HIGH) return key - CP_KEY_HIGH;
+    if (key >= 32 && key <= 255 && key != 127) return key;
+    return -1;
+}
+
 char *cp_transcode(const char *s, int from, int to) {
     const unsigned char *p;
     size_t n = strlen(s);

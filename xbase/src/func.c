@@ -679,6 +679,65 @@ static int fn_chr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* Bytes, whatever the codepage (docs/plans/xbase-utf8.md): for what is
+ * not text -- a SAVESCREEN string, a record's raw bytes -- where in UTF-8
+ * the character functions would decode it.  BLEN(s), BSUBSTR(s, start
+ * [, count]) (1-based, negative from the end, as SUBSTR), BASC(s) the
+ * first byte's value, BCHR(n) the byte n. */
+static int fn_blen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BLEN requires (string)"; return -1; }
+    *result = val_num((double)val_len(&args[0]));
+    return 0;
+}
+
+static int fn_bsubstr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int start, len, slen;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
+        ctx->error = "BSUBSTR requires (string, start [, count])";
+        return -1;
+    }
+    slen = val_len(&args[0]);
+    start = (int)args[1].num - 1;
+    if ((int)args[1].num < 0) start = slen + (int)args[1].num;
+    if (start < 0) start = 0;
+    if (start >= slen) { *result = val_str(""); return 0; }
+    len = slen - start;
+    if (nargs >= 3 && args[2].type == VAL_NUM && (int)args[2].num < len) len = (int)args[2].num;
+    if (len < 0) len = 0;
+    *result = val_strn(val_text(&args[0]) + start, len);
+    return 0;
+}
+
+static int fn_basc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "BASC requires (string)"; return -1; }
+    *result = val_num(val_len(&args[0]) > 0 ? (double)(unsigned char)val_text(&args[0])[0] : 0.0);
+    return 0;
+}
+
+static int fn_bchr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char c;
+    if (nargs < 1 || args[0].type != VAL_NUM) { ctx->error = "BCHR requires (number)"; return -1; }
+    c = (char)(int)args[0].num;
+    *result = val_strn(&c, 1);
+    return 0;
+}
+
+/* KEYCHAR(nKey): the character a key stands for, "" for a key that is
+ * none (an arrow, a function key, Alt-A).  In UTF-8 a character past
+ * U+00FF comes from INKEY() as its code point plus 65536, so it can be
+ * told from Clipper's own key numbers (docs/plans/xbase-utf8.md). */
+static int fn_keychar(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[4];
+    int c;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "KEYCHAR requires (key)";
+        return -1;
+    }
+    c = cp_key_char((int)args[0].num);
+    *result = c < 0 ? val_str("") : val_strn(buf, cp_encode((unsigned)c, buf));
+    return 0;
+}
+
 static int fn_asc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_CHAR) {
         ctx->error = "ASC requires (string)";
@@ -2778,6 +2837,11 @@ static const func_entry_t func_table[] = {
     /* Tier 2: String functions */
     { "LIKE",      fn_like },
     { "CHRTRAN",   fn_chrtran },
+    { "KEYCHAR",   fn_keychar },
+    { "BLEN",      fn_blen },
+    { "BSUBSTR",   fn_bsubstr },
+    { "BASC",      fn_basc },
+    { "BCHR",      fn_bchr },
     { "DIFFERENCE", fn_difference },
     /* Tier 2: Date functions */
     { "GOMONTH",   fn_gomonth },
