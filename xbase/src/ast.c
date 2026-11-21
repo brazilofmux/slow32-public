@@ -644,9 +644,11 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
         lex_next(l);
         return node_literal(val_num_literal(t.num_val, t.text));
 
-    case TOK_STRING:
+    case TOK_STRING: {
+        value_t v = lex_string_value(&t);
         lex_next(l);
-        return node_literal(val_str(t.text));
+        return node_literal(v);
+    }
 
     case TOK_LOGIC:
         lex_next(l);

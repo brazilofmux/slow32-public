@@ -6,6 +6,7 @@
 #include "lex.h"
 #include "util.h"
 #include "date.h"
+#include "gc.h"
 
 void lexer_init(lexer_t *l, const char *input) {
     lexer_init_ext(l, input, NULL);
@@ -186,11 +187,48 @@ static void macro_expand_into(const char *src, memvar_store_t *store,
 void lex_macro_expand(const char *src, memvar_store_t *store, char *out, int size) {
     macro_expand_into(src, store, out, size, 0);
 }
+/* The text of a string literal up to its closing quote (the input's end
+ * if none): text takes the first 255 bytes, long_str the whole when it
+ * is longer */
+static void lex_string_body(lexer_t *l, token_t *t, char quote) {
+    char c, *big = NULL;
+    int i = 0, cap = 0;
+    while ((c = lex_get_char(l)) != '\0' && c != quote) {
+        if (i < (int)sizeof(t->text) - 1) t->text[i] = c;
+        else {
+            if (i >= cap) {
+                char *g;
+                cap = cap ? cap * 2 : 1024;
+                g = realloc(big, (size_t)cap + 1);
+                if (!g) break;
+                if (!big) memcpy(g, t->text, (size_t)i);
+                big = g;
+            }
+            big[i] = c;
+        }
+        i++;
+    }
+    if (big) {
+        big[i] = '\0';
+        gc_register(big, GC_TEXT, (size_t)cap + 1);   /* a token may be copied, and outlive this one */
+        t->long_str = big;
+        t->long_len = i;
+    }
+    if (i > (int)sizeof(t->text) - 1) i = (int)sizeof(t->text) - 1;
+    t->text[i] = '\0';
+    t->type = TOK_STRING;
+}
+
+value_t lex_string_value(const token_t *t) {
+    return t->long_str ? val_strn(t->long_str, t->long_len) : val_str(t->text);
+}
+
 token_type_t lex_next(lexer_t *l) {
     char c;
     token_t *t = &l->current;
     token_type_t prev = t->type;
     l->prev_type = prev;
+    t->long_str = NULL;   /* the last literal's: the collector's now */
 
     /* Skip whitespace */
     for (;;) {
@@ -251,13 +289,7 @@ token_type_t lex_next(lexer_t *l) {
 
     /* String literals */
     if (c == '"' || c == '\'') {
-        char quote = c;
-        int i = 0;
-        while ((c = lex_get_char(l)) != '\0' && c != quote && i < (int)sizeof(t->text) - 1) {
-            t->text[i++] = c;
-        }
-        t->text[i] = '\0';
-        t->type = TOK_STRING;
+        lex_string_body(l, t, c);
         return t->type;
     }
 
@@ -353,11 +385,7 @@ token_type_t lex_next(lexer_t *l) {
             if (prev == TOK_IDENT || prev == TOK_RPAREN || prev == TOK_RBRACKET || prev == TOK_RBRACE) {
                 t->type = TOK_LBRACKET;
             } else {
-                int i = 0;
-                while ((c = lex_get_char(l)) != '\0' && c != ']' && i < (int)sizeof(t->text) - 1)
-                    t->text[i++] = c;
-                t->text[i] = '\0';
-                t->type = TOK_STRING;
+                lex_string_body(l, t, ']');
             }
             break;
         case ']': t->type = TOK_RBRACKET; break;

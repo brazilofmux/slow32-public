@@ -472,7 +472,7 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
         return 0;
 
     case TOK_STRING:
-        *result = val_str(t.text);
+        *result = lex_string_value(&t);
         lex_next(l);
         return 0;
 

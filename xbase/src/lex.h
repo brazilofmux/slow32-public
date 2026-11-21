@@ -70,6 +70,10 @@ typedef enum {
 typedef struct {
     token_type_t type;
     char text[256];
+    /* A string literal longer than text holds: the whole of it (long_len
+     * bytes, on the collected heap), text keeping its first 255 */
+    char *long_str;
+    int long_len;
     double num_val;
     int logic_val;
     int32_t date_val;
@@ -99,6 +103,8 @@ typedef struct lexer {
 void lexer_init(lexer_t *l, const char *input);
 void lexer_init_ext(lexer_t *l, const char *input, memvar_store_t *store);
 token_type_t lex_next(lexer_t *l);
+/* A TOK_STRING's value, however long */
+value_t lex_string_value(const token_t *t);
 token_type_t lex_peek(lexer_t *l);
 
 /* Return remaining unconsumed input, expanding macros if necessary.

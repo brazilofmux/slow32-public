@@ -13,7 +13,9 @@
 #
 # Verdicts: AGREE; DIFFER (a gate failure: diff kept in out/oracle/);
 # NOCOMPILE (s32-xbc refuses it -- the progress measure, not a failure);
-# SKIP (the program reads the keyboard, which this harness does not feed).
+# SKIP (the program reads the keyboard, which this harness does not feed,
+# or a comment line "* oracle-skip: <why>" says the interpreter, a dBASE
+# III, is not its oracle).
 # Exit status 1 when anything DIFFERs.
 #
 # Programs compile through compile-prg.sh, whose environment picks the
@@ -171,6 +173,10 @@ for prg in "${CORPUS[@]}"; do
     first=$(grep -viE '^[[:space:]]*(\*|&&|NOTE\b|$)' "$prg" | head -1)
     if echo "$first" | grep -qiE '^[[:space:]]*(FUNCTION|PROCEDURE)\b'; then
         printf '%-28s SKIP (a library: reached through its caller)\n' "$name"; skip=$((skip+1)); continue
+    fi
+    why=$(grep -m1 -iE '^\*[[:space:]]*oracle-skip:' "$prg" | sed 's/^[^:]*:[[:space:]]*//')
+    if [ -n "$why" ]; then
+        printf '%-28s SKIP (%s)\n' "$name" "$why"; skip=$((skip+1)); continue
     fi
     haskeys=0
     if grep -qiE '^[[:space:]]*(ACCEPT|INPUT|WAIT|READ)\b|INKEY\(' "$prg"; then

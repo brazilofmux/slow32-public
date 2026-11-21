@@ -410,7 +410,7 @@ static int gen_expr(sb_t *b, int *ntmp, ast_node_t *node) {
             break;
         case VAL_CHAR:
             sb_printf(b, "t%d = val_str(", t);
-            sb_cstr(b, node->literal.str);
+            sb_cstr(b, val_text(&node->literal));
             sb_printf(b, "); ");
             break;
         case VAL_LOGIC:
