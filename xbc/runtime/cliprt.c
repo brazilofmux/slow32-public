@@ -387,7 +387,10 @@ void clip_register_fn(const char *name, clip_fn_t fn) {
 
 void clip_init(void) {
     char line[32];
-    gc_set_stack_base(line + sizeof(line));   /* the collector scans the stack up to here (main holds no values) */
+    /* No gc_set_stack_base here: the collector scans to the stack's top.
+     * The program's own statements are the generated main(), whose
+     * temporaries -- a ? line's values while it calls a function -- sit
+     * in main's frame, above this one. */
     dbf_init(&clip_db);
     prog_init();
     clip_prev_udf = func_get_udf_callback();

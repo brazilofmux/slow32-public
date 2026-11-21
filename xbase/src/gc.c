@@ -23,6 +23,11 @@ static gc_entry_t *table;
 static size_t cap, count;              /* slots, entries */
 static size_t bytes_live, bytes_since; /* registered bytes: all live, since the last collection */
 static size_t threshold = 4u << 20;    /* collect once this much is new */
+/* What an allocation costs beyond its bytes: the allocator's header and
+ * footer, and its slot here (two, at the table's load).  A short string
+ * is mostly this, and counted without it a 4 MB cycle of ten-byte
+ * strings was 384,000 of them and a 16 MB table. */
+#define GC_OVERHEAD 40
 static int trace = -1;
 static int stress = -1;                /* XBASE_GC_STRESS: collect at every safepoint */
 static char *stack_base;
@@ -55,6 +60,25 @@ static void insert_raw(gc_entry_t *t, size_t c, const gc_entry_t *e) {
     t[i] = *e;
 }
 
+/* Empty slot i of the table, keeping every probe chain whole: the
+ * entries after it in its cluster that may sit there move back (Knuth's
+ * Algorithm R) */
+static void delete_slot(size_t i) {
+    size_t j = i;
+    for (;;) {
+        size_t k;
+        j = (j + 1) & (cap - 1);
+        if (!table[j].p) break;
+        k = hash_ptr(table[j].p) & (cap - 1);
+        /* stays when its home k lies cyclically in (i, j] */
+        if (i <= j ? (i < k && k <= j) : (i < k || k <= j)) continue;
+        table[i] = table[j];
+        i = j;
+    }
+    table[i].p = NULL;
+    table[i].mark = 0;
+}
+
 static void grow(void) {
     size_t ncap = cap ? cap * 2 : 1024, i;
     gc_entry_t *nt = calloc(ncap, sizeof(gc_entry_t));
@@ -69,7 +93,10 @@ void gc_register(void *p, int kind, size_t bytes) {
     gc_entry_t e;
     if (!p) return;
     if ((count + 1) * 10 > cap * 7) grow();
-    if (!cap) return;
+    /* A table that could not grow is never filled: a probe would find no
+     * empty slot.  The block is then the program's for good. */
+    if (!cap || (count + 1) * 10 > cap * 9) return;
+    bytes += GC_OVERHEAD;
     e.p = p; e.bytes = bytes; e.kind = (unsigned char)kind; e.mark = 0; e.pinned = 0;
     insert_raw(table, cap, &e);
     count++;
@@ -169,8 +196,7 @@ static void mark_contents(void) {
 static void scan_range(const char *lo, const char *hi) {
     const char *p = lo + ((uintptr_t)lo & (sizeof(void *) - 1) ? sizeof(void *) - ((uintptr_t)lo & (sizeof(void *) - 1)) : 0);
     for (; p + sizeof(void *) <= hi; p += sizeof(void *)) {
-        void *w;
-        memcpy(&w, p, sizeof w);
+        void *w = *(void *const *)p;   /* aligned; a memcpy call a word was the scan's cost */
         if (w) mark_ptr(w);
     }
 }
@@ -201,7 +227,6 @@ extern char __data_start[], __bss_end[], __stack_top[];
 
 static void collect_from(char *stack_here) {
     size_t i, freed = 0, freed_bytes = 0, before = count;
-    gc_entry_t *nt;
     int r;
     if (nroots > roots_cap) return;   /* a root it could not list */
 #ifdef __slow32__
@@ -217,22 +242,25 @@ static void collect_from(char *stack_here) {
     }
     for (i = 0; i < cap; i++) if (table[i].p && table[i].pinned) mark_ptr(table[i].p);
     mark_contents();
-    /* sweep: the survivors into a fresh set */
-    nt = calloc(cap, sizeof(gc_entry_t));
-    if (!nt) return;
-    for (i = 0; i < cap; i++) {
-        if (!table[i].p) continue;
-        if (table[i].mark) {
-            table[i].mark = 0;
-            insert_raw(nt, cap, &table[i]);
-        } else {
+    /* sweep, in place: a second table of the first's size is memory the
+     * heap may not have when it matters most (with every string here, a
+     * table of a million slots), and a collection that could not finish
+     * was tried again at every statement.  A slot freed takes the rest of
+     * its cluster back with it (delete_slot), so the same slot is looked
+     * at again; marks are cleared after, so a survivor that moves back
+     * across the table's end is not taken for garbage. */
+    i = 0;
+    while (i < cap) {
+        if (table[i].p && !table[i].mark) {
             freed++;
             freed_bytes += table[i].bytes;
             free_entry(&table[i]);
+            delete_slot(i);
+        } else {
+            i++;
         }
     }
-    free(table);
-    table = nt;
+    for (i = 0; i < cap; i++) table[i].mark = 0;
     count -= freed;
     bytes_live -= freed_bytes;
     bytes_since = 0;
