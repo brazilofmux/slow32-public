@@ -972,3 +972,32 @@ Gates: xbc/tests/run-stage08.sh (stage08 against clang), the xbase suite,
 and the dBASE III / FoxPro oracles; these want clang, so the work is the
 MacBook's.  The slow machine is the check: re-run run_xbase.sh there and
 compare against the numbers above.
+
+**Step 1 done (2026-11-21).**  Nothing outside expr.c names `.str`: the
+107 reads in xbase/src went through val_text() (static inline in expr.h
+now, so a read costs what the field did); xbc/runtime and xbc's generated
+C had none.  val_text() returns `const char *`, and clang with
+-Wcast-qual and the discarded-qualifier warnings finds no caller that
+writes through it.  **What wrote into a value's text in place**, the list
+step 2 needed, was four functions in clipfn.c, all rewritten to make a
+new value:
+
+- DESCEND and HARDCR copied the value and rewrote `v.str`.  For a value
+  past 255 bytes that changed only the inline prefix, and the result kept
+  the old text in ext: HARDCR on a long memo left its soft returns, and
+  DESCEND of a long string was the string.  Had they reached ext, they
+  would have written into text the argument shared.
+- MEMOLINE and MEMOTRAN used a value's `str` as their scratch buffer;
+  MEMOTRAN's result was cut at 255 bytes, so a long memo lost its end.
+  It now sizes its buffer by its input (a pair becomes one byte, so never
+  longer).
+
+test_longval_text (LONGTXT.PRG) holds all three to a 308-byte value; the
+build before failed each.  The only writer of a value's text left is the
+constructor, val_strn().
+
+**Left for step 2**, fixed 255-byte limits that are not `.str` but follow
+from it: the `-` operator's trim-concatenation (ast.c) builds in a
+256-byte buffer; MEMOLINE's line is 255 bytes at most; and many callers
+copy a value's text into a 256-byte local (str_copy, snprintf) before
+using it.  Each is a cut at 255 today and stays one until it is looked at.

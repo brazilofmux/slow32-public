@@ -1,0 +1,11 @@
+SLOW-32 xBase
+xBase interpreter 1.0
+
+. 
+       308
+       308         13         13
+       306 b cd;ef
+       308        154        159
+.T.
+.T.
+. 

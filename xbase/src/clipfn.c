@@ -419,11 +419,14 @@ static int fn_dbusearea(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
 static int fn_descend(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1) { ctx->error = "DESCEND requires an argument"; return -1; }
     switch (args[0].type) {
-    case VAL_CHAR: {
-        value_t v = args[0];
-        char *p;
-        for (p = v.str; *p; p++) *p = (char)(256 - (unsigned char)*p);
-        *result = v;
+    case VAL_CHAR: {   /* a new value: a value's text is never written in place */
+        int n = val_len(&args[0]), i;
+        const char *s = val_text(&args[0]);
+        char small[256], *t = n < (int)sizeof small ? small : malloc((size_t)n + 1);
+        if (!t) { ctx->error = "DESCEND: out of memory"; return -1; }
+        for (i = 0; i < n; i++) t[i] = (char)(256 - (unsigned char)s[i]);
+        *result = val_strn(t, n);
+        if (t != small) free(t);
         return 0;
     }
     case VAL_NUM:
@@ -656,21 +659,20 @@ static int memo_lines(const char *s, int width, int wrap) {
 static int fn_memoline(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     const char *st;
     int len, width = arg_num(args, nargs, 1, 79), n = arg_num(args, nargs, 2, 1);
-    value_t r = val_str("");
+    char line[256];
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOLINE requires a string"; return -1; }
     if (memo_line(val_text(&args[0]), width, n, &st, &len, arg_wrap(args, nargs, 4))) {
-        snprintf(r.str, sizeof(r.str), "%.*s", len, st);
-        len = (int)strlen(r.str);
+        snprintf(line, sizeof line, "%.*s", len, st);
+        len = (int)strlen(line);
     } else {
         len = 0;   /* past the last line: blanks, the width wide */
     }
     {   /* padded to the width, in columns (codepage.h) */
-        int cols = cp_columns(r.str, len);
-        while (cols < width && len < (int)sizeof(r.str) - 1) { r.str[len++] = ' '; cols++; }
+        int cols = cp_columns(line, len);
+        while (cols < width && len < (int)sizeof line - 1) { line[len++] = ' '; cols++; }
     }
-    r.str[len] = '\0';
-    r = val_str(r.str);
-    *result = r;
+    line[len] = '\0';
+    *result = val_str(line);
     return 0;
 }
 
@@ -735,44 +737,47 @@ static int fn_mpostolc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 
 /* HARDCR: soft returns (141 10) made hard (13 10) */
 static int fn_hardcr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    value_t r;
-    char *p;
+    int n, i = 0;
+    char small[256], *p;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "HARDCR requires a string"; return -1; }
-    r = args[0];
-    {   /* character by character: in UTF-8 a 141 inside a character is not
-         * a soft return (codepage.h) */
-        int n = (int)strlen(r.str), i = 0;
-        p = r.str;
-        while (i < n) {
-            unsigned c;
-            if ((unsigned char)p[i] == 141) { p[i++] = '\r'; continue; }
-            i += cp_decode(p + i, n - i, &c);
-        }
+    n = val_len(&args[0]);   /* a new value: a value's text is never written in place */
+    p = n < (int)sizeof small ? small : malloc((size_t)n + 1);
+    if (!p) { ctx->error = "HARDCR: out of memory"; return -1; }
+    memcpy(p, val_text(&args[0]), (size_t)n);
+    while (i < n) {   /* character by character: in UTF-8 a 141 inside a
+                       * character is not a soft return (codepage.h) */
+        unsigned c;
+        if ((unsigned char)p[i] == 141) { p[i++] = '\r'; continue; }
+        i += cp_decode(p + i, n - i, &c);
     }
-    *result = r;
+    *result = val_strn(p, n);
+    if (p != small) free(p);
     return 0;
 }
 
 /* MEMOTRAN(string, [hard], [soft]): CR LF pairs replaced, hard ones by ;
  * and soft ones by a blank, as the guide has it */
 static int fn_memotran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    value_t r = val_str("");
     const char *s, *hard = arg_str(args, nargs, 1, ";"), *soft = arg_str(args, nargs, 2, " ");
-    int o = 0;
+    char small[256], *out;
+    int o = 0, n;
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMOTRAN requires a string"; return -1; }
-    for (s = val_text(&args[0]); *s && o < (int)sizeof(r.str) - 1; ) {
+    n = val_len(&args[0]);   /* never longer than the input: a pair becomes one byte */
+    out = n < (int)sizeof small ? small : malloc((size_t)n + 1);
+    if (!out) { ctx->error = "MEMOTRAN: out of memory"; return -1; }
+    for (s = val_text(&args[0]); *s; ) {
         unsigned c;
         int k;
         if ((*s == '\r' || (unsigned char)*s == 141) && s[1] == '\n') {
-            r.str[o++] = (*s == '\r' ? hard : soft)[0];
+            out[o++] = (*s == '\r' ? hard : soft)[0];
             s += 2;
             continue;
         }
         k = cp_decode(s, (int)strlen(s), &c);   /* a character whole (codepage.h) */
-        while (k-- > 0 && o < (int)sizeof(r.str) - 1) r.str[o++] = *s++;
+        while (k-- > 0 && *s) out[o++] = *s++;
     }
-    r.str[o] = '\0';
-    *result = r;
+    *result = val_strn(out, o);
+    if (out != small) free(out);
     return 0;
 }
 
