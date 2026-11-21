@@ -37,8 +37,6 @@ int val_set_fixed;
  * places, as Clipper gives a function's result */
 value_t val_num(double n) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_NUM;
     v.num = n;
     v.ndec = (n == floor(n) && fabs(n) < 1e15) ? 0 : (short)val_set_decimals;
@@ -48,8 +46,6 @@ value_t val_num(double n) {
 
 value_t val_num_dec(double n, int ndec, int nwidth) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_NUM;
     v.num = n;
     v.ndec = (short)(ndec < 0 ? 0 : ndec > 18 ? 18 : ndec);
@@ -124,29 +120,33 @@ void val_to_display(const value_t *v, char *buf, int size) {
     val_to_string(v, buf, size);
 }
 
+/* The empty string and the 256 one-byte strings, made often (SUBSTR(s,
+ * i, 1) a character at a time), are shared from here: no allocation,
+ * and the collector, not knowing them, leaves them be */
+static char one_byte[256][2];
+
 value_t val_strn(const char *s, int n) {
     value_t v;
     v.type = VAL_CHAR;
     v.ndec = v.nwidth = 0;
-    v.ext = NULL;
-    v.len = 0;
-    if (n < 0) n = 0;
-    if (n <= 255 && memchr(s, 0, (size_t)n) == NULL) {
-        memcpy(v.str, s, (size_t)n);
-        v.str[n] = '\0';
+    if (n <= 0) {
+        v.ext = one_byte[0] + 1;   /* "" */
+        v.len = 0;
+        return v;
+    }
+    if (n == 1) {
+        unsigned char c = (unsigned char)s[0];
+        one_byte[c][0] = (char)c;   /* the table fills as it is used: constant bytes */
+        v.ext = one_byte[c];
+        v.len = 1;
         return v;
     }
     v.ext = malloc((size_t)n + 1);
-    if (!v.ext) { v.str[0] = '\0'; return v; }
+    if (!v.ext) { v.ext = one_byte[0] + 1; v.len = 0; return v; }
     gc_register(v.ext, GC_TEXT, (size_t)n + 1);
     memcpy(v.ext, s, (size_t)n);
     v.ext[n] = '\0';
     v.len = n;
-    {
-        int k = n < 255 ? n : 255;
-        memcpy(v.str, s, (size_t)k);   /* the prefix; a NUL inside ends it for inline readers */
-        v.str[k] = '\0';
-    }
     return v;
 }
 
@@ -156,8 +156,6 @@ value_t val_str(const char *s) {
 
 value_t val_logic(int b) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_LOGIC;
     v.logic = b ? 1 : 0;
     return v;
@@ -165,8 +163,6 @@ value_t val_logic(int b) {
 
 value_t val_date(int32_t jdn) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_DATE;
     v.date = jdn;
     return v;
@@ -174,8 +170,6 @@ value_t val_date(int32_t jdn) {
 
 value_t val_nil(void) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_NIL;
     v.num = 0;
     return v;
@@ -183,8 +177,6 @@ value_t val_nil(void) {
 
 value_t val_object(object_t *o) {
     value_t v;
-    v.ext = NULL;
-    v.len = 0;
     v.type = VAL_OBJECT;
     v.ndec = 0;
     v.nwidth = 0;

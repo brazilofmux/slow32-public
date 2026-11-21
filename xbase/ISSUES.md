@@ -1002,6 +1002,62 @@ from it: the `-` operator's trim-concatenation (ast.c) builds in a
 copy a value's text into a 256-byte local (str_copy, snprintf) before
 using it.  Each is a cut at 255 today and stays one until it is looked at.
 
+**Step 2 done (2026-11-21).**  value_t is 16 bytes (type, ndec, nwidth,
+and an 8-byte union whose VAL_CHAR member is `ext` and `len`); the inline
+256 bytes are gone and every string is one representation.  val_strn()
+copies the text to the heap and registers it as GC_TEXT; a copy of the
+value shares the text.  The empty string and the 256 one-byte strings
+come from a static table, not the heap (SUBSTR(s, i, 1) a character at a
+time allocates nothing).  val_text() of anything not a string is "".
+
+Found on the way:
+
+- **A string literal past 255 bytes** was cut by the lexer (token_t's
+  256-byte text), and the rest of it read as more tokens; s32-xbc wrote
+  literals from the inline text, 255 again.  Fixed (a36f4535), compiled
+  programs' test xbc/tests/longlit; the interpreter's source lines still
+  end at 255 bytes (MAX_LINE_LEN), near dBASE III's 254.
+- **The collector's explicit roots were a fixed 64**: the 65th call deep
+  went unlisted and its arguments could be freed under it.  They grow
+  now (1f3271e9).
+- **A pin was a flag**: a tree's literal stayed for good after the tree
+  was freed, which with every literal on the heap is a leak per macro
+  line.  It is a count, ast_clone pins and ast_free unpins; 300,000
+  passes of `x = &m` hold 0 KB.
+- **The collector could not survive every string being registered.**
+  majesty's reports, interpreted, stopped dead in the sixth report: a
+  4 MB cycle of ten-byte strings was 384,000 registrations, a table of a
+  million slots (16 MB), and the sweep calloc'd a second table that size
+  in a fragmented 64 MB heap.  When that failed the sweep returned with
+  the count unreset, so every statement after did a full mark and failed
+  again -- no error, no output, 1,000 times the instructions a pass.  And
+  a table that could not grow went on filling until a probe found no
+  empty slot.  Now the sweep deletes in place (Knuth's Algorithm R, no
+  memory needed), a registration is charged its allocator header and
+  table slot (GC_OVERHEAD), a table that cannot grow is never filled
+  past 90% (the block is then not collected, never a hang), and the scan
+  reads each word with a load, not a call to memcpy.
+- **A compiled program's main body was outside the scan.**  clip_init
+  set the collector's stack base at its own frame ("main holds no
+  values"), but the program's statements are the generated main(), and
+  their temporaries sit in main's frame above it.  `? "char:", walk(1)`
+  had "char:" freed while walk() ran statements, and printed whatever
+  took its place.  Long strings and arrays were exposed before; with
+  every string on the heap, xbc/tests/ndxkeep under stress showed it.
+  The scan now runs to the stack's top.
+- **XBASE_GC_STRESS=1** collects at every statement boundary: a value
+  held where the collector does not look is freed at once.  The xbase
+  suite, xbc's tests and the oracle pass under it; it found the item
+  above, which every gate without it passed.
+
+majesty, M5 Max on the DBT: 12 of 12 reports identical
+to the build before, interpreted and compiled; compiled 4.7 s (4.6
+before), interpreted 17.35 s (17.0).  On the DBT, which copies natively,
+the 272-byte copies were cheap and short strings now cost an allocation,
+so it is even there; the gain is a value a sixteenth the size, and on
+slow32-fast, where memcpy was 46% of the samples above, it wants
+measuring (the slow machine).  The 255-byte limits listed above are unchanged.
+
 ### A zero showed as -0.00 in compiled programs, and in TRANSFORM everywhere — RESOLVED 2026-11-21
 
 A sum that should net to zero lands a hair below it in a double (0.3 -

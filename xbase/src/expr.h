@@ -18,14 +18,15 @@ typedef struct {
      * width, ten columns or the digits and one more) */
     short ndec;
     short nwidth;
-    /* A character value longer than 255 bytes, or holding a NUL, lives in
-     * ext (len bytes, NUL-terminated too); str then holds its first 255
-     * characters for readers that still take the inline text.  val_text()
-     * and val_len() see the whole value; val_strn() makes one. */
-    char *ext;
-    int32_t len;
     union {
-        char str[256];
+        /* VAL_CHAR: len bytes at ext, NULs among them allowed, and a NUL
+         * after.  The text is never written once made, so a copy of the
+         * value shares it; the collector frees it (GC_TEXT).  Read it
+         * with val_text() and val_len(), make it with val_strn(). */
+        struct {
+            char *ext;
+            int32_t len;
+        };
         double num;
         int32_t date;   /* JDN */
         int logic;      /* 0 or 1 */
@@ -101,11 +102,10 @@ value_t val_strn(const char *s, int n);         /* n bytes, NULs among them allo
  * way to a value's text: nothing writes into it in place (a value's text
  * may be shared), so a function that changes text makes a new value. */
 static inline const char *val_text(const value_t *v) {
-    return (v->type == VAL_CHAR && v->ext) ? v->ext : v->str;
+    return (v->type == VAL_CHAR && v->ext) ? v->ext : "";
 }
 static inline int val_len(const value_t *v) {
-    if (v->type != VAL_CHAR) return 0;
-    return v->ext ? v->len : (int)strlen(v->str);
+    return (v->type == VAL_CHAR && v->ext) ? v->len : 0;
 }
 value_t val_logic(int b);
 value_t val_date(int32_t jdn);
