@@ -899,3 +899,60 @@ same condition was there before UTF-8), and only timing showed it: a
 program that ran long enough for the check to see the next lines.  A
 newline from what was read ahead ends the line now.  No test: it hangs
 on timing; seen when test_codepage_utf8 was run without --deny term.
+
+### A value is 272 bytes, and compiled programs spend half their time copying them — OPEN 2026-11-21
+
+Measured on the import driver of `~/majesty/run_xbase.sh` (an xbc-compiled
+dBASE III program: APPEND FROM, then DO WHILE .NOT. EOF() loops of SEEK,
+REPLACE and small helper functions), stage08-built, on a slow Westmere machine (KVM):
+**29.7 billion instructions** -- 494 s on slow32-fast, 60 s on the DBT,
+about 4 s on the M5 Max.  The whole run_xbase.sh is ~1m54s here.
+
+PC sampled once a second under `slow32-fast -p 1` (495 samples):
+
+| leaf | samples | share |
+|---|---|---|
+| `llvm.memcpy` | 228 | 46% |
+| name lookup: `str_icmp`, `name_hash`, `memvar_norm`, `toupper`, `dbf_find_field`, `memvar_slot_ex`, `strcmp`, `memvar_find` | ~96 | 19% |
+| function lookup by name: `func_call`, `builtin_lookup`, `func_name_hash` | ~18 | 4% |
+
+**The memcpy is `value_t` itself** (expr.h): `char str[256]` inline in the
+union makes every value ~272 bytes, so every copy of a number or a logical
+moves 272 bytes.  The callers seen in the register dumps (every tenth
+sample) are spread across everything that makes or moves a value --
+`val_logic`, `val_str`, `val_num_dec`, `val_strn`, `memvar_find`,
+`memvar_set`, `fn_len`, `fn_eof`, `eval_field_from_db`, `binop_core`,
+`dbf_read_record` -- so it is the representation, not one hot spot.  xbc's
+generated C makes it worse: `t0 = val_str(...)` returns by value, `av[0] =
+t2` copies into argument arrays, `*val = store->vars[i].val` copies out of
+the store, each a whole value.  A memvar slot is ~300 bytes for the same
+reason.  The DBT's top block for the run is memvar_norm's loop (45M
+executions) only because memcpy's time is spread over many blocks.
+
+The 256 looks like dBASE III's 254-byte character limit carried into the
+type.  Long values already live in `ext` (val_text()/val_len() see them),
+so there are two representations of a string today.
+
+**The plan, slowly:**
+
+1. Hide the field: the ~114 direct `.str` uses in xbase/src and
+   xbc/runtime go through val_text() and its siblings, no change in
+   behaviour, in small commits, each held to the gates.
+2. Shrink it: once nothing reads `.str`, the inline buffer becomes a
+   pointer (or a short inline buffer), and value_t 16-24 bytes.  The
+   copies stay; they get ~15x cheaper.
+3. Separately, the name lookups (19%): every variable reference in
+   compiled code is `ast_eval_name(c, "name", ...)` by string, at run time
+   -- the current table's fields scanned by name (field-first), then
+   memvar_norm (upper-case copy through toupper), name_hash, a chain walk.
+   Each reference site can keep what it resolved: a `static` per site, as
+   clip_call's `clip_site_t` already does, keyed on a store generation
+   bumped in slot_link/slot_free plus current_depth and
+   memvar_locals_hidden (the only things that change what a name
+   resolves to; nothing outside memvar.c writes a slot).  The upper-cased
+   name and its hash once per site, not once per reference.
+
+Gates: xbc/tests/run-stage08.sh (stage08 against clang), the xbase suite,
+and the dBASE III / FoxPro oracles; these want clang, so the work is the
+MacBook's.  The slow machine is the check: re-run run_xbase.sh there and
+compare against the numbers above.
