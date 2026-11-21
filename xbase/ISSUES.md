@@ -929,6 +929,22 @@ the store, each a whole value.  A memvar slot is ~300 bytes for the same
 reason.  The DBT's top block for the run is memvar_norm's loop (45M
 executions) only because memcpy's time is spread over many blocks.
 
+**The 46% is slow32-fast's, where memcpy is SLOW-32 code.**  The DBT
+intercepts memcpy and llvm.memcpy.* with the host's (tools/dbt/dbt.c, the
+memcpy_names table), so on the engine run_xbase.sh uses, a 272-byte copy is
+one native call: the import is 60 s with the intercepts and 84 s with
+`-I` (none), so interpreting the copies costs 24 s there, and the native
+copies some unmeasured part of the 60.  Either way the fix is not a faster
+memcpy but no memcpy: a value small enough that a copy is a few word moves
+(as clang inlines a 16-byte struct copy; whether stage08 does is worth
+checking), with strings immutable and shared by pointer.  The collector
+(gc.h) already registers and frees the heap text of long strings
+(GC_TEXT), conservatively from the segments and stack, so that is a
+widening of what exists -- every string as GC_TEXT -- and needs no
+reference counts: no increment and decrement on each copy, and nothing
+for the conservative scan to disagree with.  What it does need is that
+nothing writes into a value's text in place, which step 1 below finds.
+
 The 256 looks like dBASE III's 254-byte character limit carried into the
 type.  Long values already live in `ext` (val_text()/val_len() see them),
 so there are two representations of a string today.
