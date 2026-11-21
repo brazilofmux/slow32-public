@@ -26,7 +26,8 @@
 enum { GC_ARRAY = 1, GC_BLOCK, GC_OBJECT, GC_TEXT };
 
 void gc_register(void *p, int kind, size_t bytes);   /* a new allocation of that kind */
-void gc_pin(void *p);                                /* never collected (a parser's literal) */
+void gc_pin(void *p);                                /* not collected while pinned (a tree's literal) */
+void gc_unpin(void *p);                              /* one pin fewer (the tree freed) */
 void gc_push_roots(void *values, int n);             /* n value_t in a heap buffer a C frame holds */
 void gc_pop_roots(void);
 void gc_safepoint(void);                             /* a statement boundary */

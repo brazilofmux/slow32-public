@@ -128,6 +128,8 @@ void ast_free(ast_node_t *node) {
 
     switch (node->type) {
     case AST_LITERAL:
+        if (node->literal.type == VAL_CHAR && node->literal.ext) gc_unpin(node->literal.ext);
+        break;
     case AST_FIELD:
     case AST_MEMVAR:
     case AST_REF:
@@ -284,6 +286,9 @@ static ast_node_t *ast_clone(const ast_node_t *n) {
     if (!c) return NULL;
     *c = *n;
     switch (n->type) {
+    case AST_LITERAL:   /* the copy holds the text too */
+        if (n->literal.type == VAL_CHAR && n->literal.ext) gc_pin(n->literal.ext);
+        break;
     case AST_ARRAY_ACCESS:
         c->array.index1 = ast_clone(n->array.index1);
         c->array.index2 = ast_clone(n->array.index2);

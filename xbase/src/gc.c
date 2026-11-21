@@ -15,7 +15,8 @@
 typedef struct {
     void *p;
     size_t bytes;
-    unsigned char kind, mark, pinned;
+    unsigned char kind, mark;
+    unsigned short pinned;   /* the trees holding it (gc_pin less gc_unpin) */
 } gc_entry_t;
 
 static gc_entry_t *table;
@@ -23,12 +24,13 @@ static size_t cap, count;              /* slots, entries */
 static size_t bytes_live, bytes_since; /* registered bytes: all live, since the last collection */
 static size_t threshold = 4u << 20;    /* collect once this much is new */
 static int trace = -1;
+static int stress = -1;                /* XBASE_GC_STRESS: collect at every safepoint */
 static char *stack_base;
 
 /* explicit roots: heap buffers of values a C frame holds for a moment */
-#define ROOT_MAX 64
-static struct { value_t *v; int n; } roots[ROOT_MAX];
-static int nroots;
+/* As deep as the calls go: a root dropped is a live value freed */
+static struct gc_roots { value_t *v; int n; } *roots;
+static int nroots, roots_cap;
 
 static size_t hash_ptr(const void *p) {
     uintptr_t x = (uintptr_t)p;
@@ -77,11 +79,22 @@ void gc_register(void *p, int kind, size_t bytes) {
 
 void gc_pin(void *p) {
     gc_entry_t *e = lookup(p);
-    if (e) e->pinned = 1;
+    if (e && e->pinned < 0xFFFF) e->pinned++;   /* at the top it stays pinned for good */
+}
+
+void gc_unpin(void *p) {
+    gc_entry_t *e = lookup(p);
+    if (e && e->pinned > 0 && e->pinned < 0xFFFF) e->pinned--;
 }
 
 void gc_push_roots(void *values, int n) {
-    if (nroots < ROOT_MAX) { roots[nroots].v = (value_t *)values; roots[nroots].n = n; }
+    if (nroots >= roots_cap) {
+        int nc = roots_cap ? roots_cap * 2 : 64;
+        struct gc_roots *g = realloc(roots, (size_t)nc * sizeof(*g));
+        if (g) { roots = g; roots_cap = nc; }
+    }
+    if (nroots < roots_cap) { roots[nroots].v = (value_t *)values; roots[nroots].n = n; }
+    /* else no memory for the list: nothing is collected until it is popped */
     nroots++;
 }
 
@@ -190,6 +203,7 @@ static void collect_from(char *stack_here) {
     size_t i, freed = 0, freed_bytes = 0, before = count;
     gc_entry_t *nt;
     int r;
+    if (nroots > roots_cap) return;   /* a root it could not list */
 #ifdef __slow32__
     scan_range(__data_start, __bss_end);
     scan_range(stack_here, stack_base ? stack_base : __stack_top);
@@ -197,7 +211,7 @@ static void collect_from(char *stack_here) {
     (void)stack_here;
     return;   /* a host build does not know its segments: nothing is freed */
 #endif
-    for (r = 0; r < nroots && r < ROOT_MAX; r++) {
+    for (r = 0; r < nroots; r++) {
         int k;
         for (k = 0; k < roots[r].n; k++) mark_value(&roots[r].v[k]);
     }
@@ -222,21 +236,31 @@ static void collect_from(char *stack_here) {
     count -= freed;
     bytes_live -= freed_bytes;
     bytes_since = 0;
-    threshold = bytes_live > (4u << 20) ? bytes_live : (4u << 20);
+    threshold = stress > 0 ? 1 : bytes_live > (4u << 20) ? bytes_live : (4u << 20);
     if (trace > 0)
         fprintf(stderr, "[gc: %lu of %lu freed, %lu KB live]\n",
                 (unsigned long)freed, (unsigned long)before, (unsigned long)(bytes_live >> 10));
 }
 
+/* A test that a program's values are all where the collector looks */
+static void read_env(void) {
+    const char *e = getenv("XBASE_GC_TRACE");
+    trace = e && *e && *e != '0';
+    e = getenv("XBASE_GC_STRESS");
+    stress = e && *e && *e != '0';
+    if (stress) threshold = 1;
+}
+
 void gc_collect(void) {
     jmp_buf regs;           /* the callee-saved registers, onto this frame */
     char here;
-    if (trace < 0) { const char *e = getenv("XBASE_GC_TRACE"); trace = e && *e && *e != '0'; }
+    if (trace < 0 || stress < 0) read_env();
     if (setjmp(regs) == 0) {
         collect_from(&here < (char *)&regs ? &here : (char *)&regs);
     }
 }
 
 void gc_safepoint(void) {
+    if (stress < 0) read_env();
     if (bytes_since >= threshold) gc_collect();
 }
