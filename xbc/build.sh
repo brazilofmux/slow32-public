@@ -10,6 +10,6 @@ if [ -x s32-xbc ] && [ -z "$(find s32-xbc.c $SRCS $DB/*.h -newer s32-xbc 2>/dev/
 fi
 echo "=== Building s32-xbc (host) ==="
 # s32-xbc.c held to -Wall -Wextra; xbase's sources built as they are
-gcc -Wall -Wextra -O2 -I$DB -fsyntax-only s32-xbc.c
-gcc -O2 -I$DB -w -o s32-xbc s32-xbc.c $SRCS -lm
+gcc -Wall -Wextra -O2 -D_GNU_SOURCE -I$DB -fsyntax-only s32-xbc.c
+gcc -O2 -D_GNU_SOURCE -I$DB -w -o s32-xbc s32-xbc.c $SRCS -lm
 echo "OK  ./s32-xbc"
