@@ -152,15 +152,6 @@ value_t val_str(const char *s) {
     return val_strn(s, (int)strlen(s));
 }
 
-const char *val_text(const value_t *v) {
-    return (v->type == VAL_CHAR && v->ext) ? v->ext : v->str;
-}
-
-int val_len(const value_t *v) {
-    if (v->type != VAL_CHAR) return 0;
-    return v->ext ? v->len : (int)strlen(v->str);
-}
-
 value_t val_logic(int b) {
     value_t v;
     v.ext = NULL;
@@ -355,7 +346,7 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 ctx->error = "$ requires strings";
                 return -1;
             }
-            *result = val_logic(strstr(right.str, result->str) != NULL);
+            *result = val_logic(strstr(val_text(&right), val_text(result)) != NULL);
             return 0;
         }
 

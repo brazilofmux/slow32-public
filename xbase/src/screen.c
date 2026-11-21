@@ -2005,7 +2005,7 @@ static void at_get_clause(int row, int col, const char *p) {
                 value_t pv;
                 expr_ctx_t *ctx = cmd_get_expr_ctx();
                 if (ast_eval_adv(ctx, &p, &pv) == 0 && pv.type == VAL_CHAR)
-                    str_copy(picture, pv.str, sizeof(picture));
+                    str_copy(picture, val_text(&pv), sizeof(picture));
                 else
                     ctx->error = NULL;
             }
@@ -2127,7 +2127,7 @@ void screen_at_cmd(const char *line) {
         if (!str_imatch(p, "BOX")) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
         p = skip_ws(p + 3);
         if (ast_eval_adv(ctx, &p, &fv) != 0 || fv.type != VAL_CHAR) { printf("Syntax: @ t,l,b,r BOX frame\n"); return; }
-        screen_box_frame(row, col, r2, c2, fv.str);
+        screen_box_frame(row, col, r2, c2, val_text(&fv));
         return;
     }
 

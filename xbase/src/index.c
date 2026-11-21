@@ -90,7 +90,7 @@ void index_format_key_value(int key_type, const value_t *val, char *buf, int siz
         if (val->type == VAL_NUM) n = val->num;
         /* a blank date is 1.0E+100 to dBASE: after every date */
         else if (val->type == VAL_DATE) n = val->date ? (double)val->date : 1e100;
-        else if (val->type == VAL_CHAR) n = atof(val->str);
+        else if (val->type == VAL_CHAR) n = atof(val_text(val));
         encode_sortable_double(n, tmp);
         str_copy(buf, tmp, size);
         return;

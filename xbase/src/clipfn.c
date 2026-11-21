@@ -36,7 +36,7 @@ static int arg_num(value_t *args, int nargs, int i, int dflt) {
 }
 
 static const char *arg_str(value_t *args, int nargs, int i, const char *dflt) {
-    return i < nargs && args[i].type == VAL_CHAR ? args[i].str : dflt;
+    return i < nargs && args[i].type == VAL_CHAR ? val_text(&args[i]) : dflt;
 }
 
 static int arg_logic(value_t *args, int nargs, int i, int dflt) {
@@ -61,7 +61,7 @@ static int nil_result(value_t *result) {
 /* The work area an alias or number names; the current one when none */
 static work_area_t *area_arg(value_t *args, int nargs, int i) {
     if (i < nargs && args[i].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[i].str);
+        int idx = area_resolve_alias(val_text(&args[i]));
         return idx >= 0 ? area_get(idx) : NULL;
     }
     if (i < nargs && args[i].type == VAL_NUM) {
@@ -161,10 +161,10 @@ static int fn_dbcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
             return -1;
         }
         memset(&fields[n], 0, sizeof(fields[n]));
-        snprintf(fields[n].name, sizeof(fields[n].name), "%s", f->el[0].str);
+        snprintf(fields[n].name, sizeof(fields[n].name), "%s", val_text(&f->el[0]));
         str_upper(fields[n].name);
         trim_right(fields[n].name);
-        fields[n].type = (char)toupper((unsigned char)f->el[1].str[0]);
+        fields[n].type = (char)toupper((unsigned char)val_text(&f->el[1])[0]);
         fields[n].length = (uint8_t)(f->len > 2 && f->el[2].type == VAL_NUM ? f->el[2].num : 10);
         fields[n].decimals = (uint8_t)(f->len > 3 && f->el[3].type == VAL_NUM ? f->el[3].num : 0);
         if (fields[n].type == 'D') fields[n].length = 8;
@@ -172,7 +172,7 @@ static int fn_dbcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
         if (fields[n].type == 'M') fields[n].length = 10;
         n++;
     }
-    snprintf(name, sizeof(name), "%s", args[0].str);
+    snprintf(name, sizeof(name), "%s", val_text(&args[0]));
     if (!strchr(name, '.')) strcat(name, ".DBF");
     if (cmd_create_table(name, fields, n) != 0)
         return nil_result(result);   /* the create error raised, or defaulted */
@@ -191,7 +191,7 @@ static int fn_dbcreateind(expr_ctx_t *ctx, value_t *args, int nargs, value_t *re
         ctx->error = "DBCREATEIND requires (filename, key expression)";
         return -1;
     }
-    run_cmd("INDEX ON %s TO %s%s", args[1].str, args[0].str, arg_logic(args, nargs, 3, 0) ? " UNIQUE" : "");
+    run_cmd("INDEX ON %s TO %s%s", val_text(&args[1]), val_text(&args[0]), arg_logic(args, nargs, 3, 0) ? " UNIQUE" : "");
     return nil_result(result);
 }
 
@@ -367,7 +367,7 @@ static int fn_dbsetindex(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
     for (i = 0; wa && i < wa->num_indexes; i++) {
         snprintf(list + strlen(list), sizeof(list) - strlen(list), "%s%s", i ? ", " : "", wa->indexes[i].filename);
     }
-    run_cmd("SET INDEX TO %s%s%s", list, list[0] ? ", " : "", args[0].str);
+    run_cmd("SET INDEX TO %s%s%s", list, list[0] ? ", " : "", val_text(&args[0]));
     return nil_result(result);
 }
 
@@ -493,7 +493,7 @@ static int setget_block(expr_ctx_t *ctx, const char *ref, value_t *result) {
 static int fn_fieldblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char ref[200];
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "FIELDBLOCK requires a field name"; return -1; }
-    snprintf(ref, sizeof(ref), "FIELD->%s", args[0].str);
+    snprintf(ref, sizeof(ref), "FIELD->%s", val_text(&args[0]));
     return setget_block(ctx, ref, result);
 }
 
@@ -503,14 +503,14 @@ static int fn_fieldwblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *re
     if (nargs < 2 || args[0].type != VAL_CHAR) { ctx->error = "FIELDWBLOCK requires (field name, work area)"; return -1; }
     wa = area_arg(args, nargs, 1);
     if (!wa || !wa->alias[0]) { ctx->error = "FIELDWBLOCK: no such work area"; return -1; }
-    snprintf(ref, sizeof(ref), "%s->%s", wa->alias, args[0].str);
+    snprintf(ref, sizeof(ref), "%s->%s", wa->alias, val_text(&args[0]));
     return setget_block(ctx, ref, result);
 }
 
 static int fn_memvarblock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char ref[200];
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "MEMVARBLOCK requires a variable name"; return -1; }
-    snprintf(ref, sizeof(ref), "M->%s", args[0].str);
+    snprintf(ref, sizeof(ref), "M->%s", val_text(&args[0]));
     return setget_block(ctx, ref, result);
 }
 
@@ -817,7 +817,7 @@ static int fn_memowrit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
 
 static int fn_ferase(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     if (nargs < 1 || args[0].type != VAL_CHAR) { ctx->error = "FERASE requires a file name"; return -1; }
-    *result = vnum(unlink(args[0].str) == 0 ? 0 : -1);
+    *result = vnum(unlink(val_text(&args[0])) == 0 ? 0 : -1);
     return 0;
 }
 
@@ -826,7 +826,7 @@ static int fn_frename(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
         ctx->error = "FRENAME requires (old name, new name)";
         return -1;
     }
-    *result = vnum(rename(args[0].str, args[1].str) == 0 ? 0 : -1);
+    *result = vnum(rename(val_text(&args[0]), val_text(&args[1])) == 0 ? 0 : -1);
     return 0;
 }
 
@@ -891,7 +891,7 @@ static int fn_isprinter(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
 
 static int fn_isdigit(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    *result = val_logic(nargs >= 1 && args[0].type == VAL_CHAR && isdigit((unsigned char)args[0].str[0]));
+    *result = val_logic(nargs >= 1 && args[0].type == VAL_CHAR && isdigit((unsigned char)val_text(&args[0])[0]));
     return 0;
 }
 
@@ -1026,7 +1026,7 @@ static int fn_alert(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     if (opts) {
         for (i = 0; i < opts->len && nopt < 16; i++)
-            if (opts->el[i].type == VAL_CHAR && opts->el[i].str[0]) optv[nopt++] = opts->el[i].str;
+            if (opts->el[i].type == VAL_CHAR && val_text(&opts->el[i])[0]) optv[nopt++] = val_text(&opts->el[i]);
     }
     if (nopt == 0) { optv[0] = "Ok"; nopt = 1; }
     for (i = 0; i < nopt; i++) optw += (int)strlen(optv[i]) + 2 + (i ? 2 : 0);
@@ -1123,7 +1123,7 @@ static int achoice_selectable(achoice_t *a, int i) {
     if (v.type == VAL_LOGIC) return v.logic;
     if (v.type == VAL_CHAR) {
         value_t r;
-        if (ast_eval_dynamic(v.str, a->ctx, &r) != 0) { a->ctx->error = NULL; return 1; }
+        if (ast_eval_dynamic(val_text(&v), a->ctx, &r) != 0) { a->ctx->error = NULL; return 1; }
         return r.type == VAL_LOGIC ? r.logic : 1;
     }
     return 1;
@@ -1144,7 +1144,7 @@ static void achoice_paint(achoice_t *a) {
         /* the item in the list's columns, by width (codepage.h) */
         int i = a->first + r, k = 0, cols = 0;
         if (i < a->nitems && a->items->el[i].type == VAL_CHAR) {
-            const char *t = a->items->el[i].str;
+            const char *t = val_text(&a->items->el[i]);
             int n = (int)strlen(t);
             while (k < n && k < (int)sizeof(line) - 5) {
                 unsigned c;
@@ -1188,7 +1188,7 @@ static int achoice_letter(achoice_t *a, int key) {
     for (n = 1; n <= a->nitems; n++) {
         i = (a->cur + n) % a->nitems;
         if (a->items->el[i].type == VAL_CHAR && achoice_selectable(a, i) &&
-            toupper((unsigned char)a->items->el[i].str[0]) == toupper(key))
+            toupper((unsigned char)val_text(&a->items->el[i])[0]) == toupper(key))
             return i;
     }
     return -1;
@@ -1213,10 +1213,10 @@ static int fn_achoice(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     a.items = nargs > 4 && args[4].type == VAL_ARRAY ? args[4].array : NULL;
     if (!a.items || a.bottom < a.top || a.right < a.left) { *result = vnum(0); return 0; }
     for (i = 0; i < a.items->len; i++)
-        if (a.items->el[i].type != VAL_CHAR || a.items->el[i].str[0] == '\0') break;
+        if (a.items->el[i].type != VAL_CHAR || val_text(&a.items->el[i])[0] == '\0') break;
     a.nitems = i;
     a.sel = nargs > 5 && (args[5].type == VAL_ARRAY || args[5].type == VAL_LOGIC) ? &args[5] : NULL;
-    a.userfunc = nargs > 6 && args[6].type == VAL_CHAR && args[6].str[0] ? args[6].str : NULL;
+    a.userfunc = nargs > 6 && args[6].type == VAL_CHAR && val_text(&args[6])[0] ? val_text(&args[6]) : NULL;
     init = arg_num(args, nargs, 7, 0);
     winrow = arg_num(args, nargs, 8, -1);
     a.rows = a.bottom - a.top + 1;
@@ -1458,7 +1458,7 @@ static value_t set_current(expr_ctx_t *ctx, const set_entry_t *e) {
 
 static int truth_arg(const value_t *v) {
     if (v->type == VAL_LOGIC) return v->logic;
-    if (v->type == VAL_CHAR) return strcasecmp(v->str, "ON") == 0;
+    if (v->type == VAL_CHAR) return strcasecmp(val_text(v), "ON") == 0;
     return 0;
 }
 
@@ -1481,23 +1481,23 @@ static void set_apply(expr_ctx_t *ctx, const set_entry_t *e, value_t *v) {
         int i;
         if (v->type != VAL_CHAR) return;
         for (i = 0; fm[i].text; i++) {
-            if (strcasecmp(fm[i].text, v->str) == 0) {
+            if (strcasecmp(fm[i].text, val_text(v)) == 0) {
                 /* century first: SET DATE then leaves the text as given */
-                run_cmd("SET CENTURY %s", strstr(v->str, "yyyy") || strstr(v->str, "YYYY") ? "ON" : "OFF");
+                run_cmd("SET CENTURY %s", strstr(val_text(v), "yyyy") || strstr(val_text(v), "YYYY") ? "ON" : "OFF");
                 run_cmd("SET DATE %s", fm[i].name);
                 return;
             }
         }
         return;
     }
-    case 6: if (v->type == VAL_CHAR) run_cmd("SET PATH TO %s", v->str); return;
+    case 6: if (v->type == VAL_CHAR) run_cmd("SET PATH TO %s", val_text(v)); return;
     case 12: fn_setcancel(ctx, v, 1, &r); return;
-    case 15: if (v->type == VAL_CHAR) run_cmd("SET COLOR TO %s", v->str); return;
+    case 15: if (v->type == VAL_CHAR) run_cmd("SET COLOR TO %s", val_text(v)); return;
     case 16: fn_setcursor(ctx, v, 1, &r); return;
-    case 20: if (v->type == VAL_CHAR) run_cmd("SET DEVICE TO %s", strcasecmp(v->str, "PRINTER") == 0 ? "PRINT" : v->str); return;
+    case 20: if (v->type == VAL_CHAR) run_cmd("SET DEVICE TO %s", strcasecmp(val_text(v), "PRINTER") == 0 ? "PRINT" : val_text(v)); return;
     case 29: fn_readinsert(ctx, v, 1, &r); return;
     case 30: fn_readexit(ctx, v, 1, &r); return;
-    case 100: if (v->type == VAL_CHAR && cp_by_name(v->str)) set_codepage(cp_by_name(v->str)); return;
+    case 100: if (v->type == VAL_CHAR && cp_by_name(val_text(v))) set_codepage(cp_by_name(val_text(v))); return;
     default:
         if (e->kind == 'L') set_shadow[e->code] = val_logic(truth_arg(v));
         else set_shadow[e->code] = *v;

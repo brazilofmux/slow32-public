@@ -39,7 +39,7 @@ static int fn_fcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     }
     for (int i = 0; i < MAX_LL_FILES; i++) {
         if (!ll_files[i]) {
-            ll_files[i] = fopen(args[0].str, "wb+");
+            ll_files[i] = fopen(val_text(&args[0]), "wb+");
             if (ll_files[i]) {
                 ll_error = 0;
                 *result = val_num((double)i + 1);
@@ -70,7 +70,7 @@ static int fn_fopen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     for (int i = 0; i < MAX_LL_FILES; i++) {
         if (!ll_files[i]) {
-            ll_files[i] = fopen(args[0].str, mode);
+            ll_files[i] = fopen(val_text(&args[0]), mode);
             if (ll_files[i]) {
                 ll_error = 0;
                 *result = val_num((double)i + 1);
@@ -652,7 +652,7 @@ static int fn_val(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     {
         /* as wide as its string, with the string's own decimals */
-        const char *s = args[0].str;
+        const char *s = val_text(&args[0]);
         const char *dot = strchr(s, '.');
         int len = (int)strlen(s), dec = 0, w;
         if (dot)
@@ -786,7 +786,7 @@ static int fn_type(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     ctx->error = NULL;
     prog_error_hush(1);
     memvar_locals_hidden++;   /* the text is a macro's: LOCALs are not there (Clipper's TYPE("x") of a LOCAL is "U") */
-    rc = ast_eval_dynamic(args[0].str, ctx, &v);
+    rc = ast_eval_dynamic(val_text(&args[0]), ctx, &v);
     memvar_locals_hidden--;
     prog_error_hush(0);
     if (rc != 0) {
@@ -961,7 +961,7 @@ static int fn_ctod(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "CTOD requires (string)";
         return -1;
     }
-    *result = val_date(date_from_display(args[0].str, cmd_get_date_format(), cmd_get_epoch()));
+    *result = val_date(date_from_display(val_text(&args[0]), cmd_get_date_format(), cmd_get_epoch()));
     return 0;
 }
 
@@ -1095,10 +1095,10 @@ static int fn_file(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     {
-        FILE *f = fopen(args[0].str, "r");
+        FILE *f = fopen(val_text(&args[0]), "r");
         if (!f) {
             char up[256];
-            str_copy(up, args[0].str, sizeof(up));
+            str_copy(up, val_text(&args[0]), sizeof(up));
             str_upper(up);
             f = fopen(up, "r");
         }
@@ -1348,7 +1348,7 @@ static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
     (void)ctx;
     if (nargs < 2) { *result = val_str(""); return 0; }
     if (args[0].type == VAL_NUM) {
-        transform_number(&args[0], args[1].type == VAL_CHAR ? args[1].str : "", formatted, (int)sizeof(formatted));
+        transform_number(&args[0], args[1].type == VAL_CHAR ? val_text(&args[1]) : "", formatted, (int)sizeof(formatted));
         *result = val_str(formatted);
         return 0;
     }
@@ -1456,12 +1456,12 @@ static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
 /* ---- ISALPHA / ISUPPER / ISLOWER ---- */
 static int fn_isalpha(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+    if (nargs < 1 || args[0].type != VAL_CHAR || val_text(&args[0])[0] == '\0') {
         *result = val_logic(0); return 0;
     }
     {   /* the first character: ASCII in CP437, Unicode's letters in UTF-8 */
         unsigned c;
-        cp_decode(args[0].str, val_len(&args[0]), &c);
+        cp_decode(val_text(&args[0]), val_len(&args[0]), &c);
         *result = val_logic(c < 0x80 ? ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) : iswalpha((wint_t)c) != 0);
     }
     return 0;
@@ -1469,12 +1469,12 @@ static int fn_isalpha(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
 
 static int fn_isupper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+    if (nargs < 1 || args[0].type != VAL_CHAR || val_text(&args[0])[0] == '\0') {
         *result = val_logic(0); return 0;
     }
     {   /* the first character (codepage.h) */
         unsigned c;
-        cp_decode(args[0].str, val_len(&args[0]), &c);
+        cp_decode(val_text(&args[0]), val_len(&args[0]), &c);
         *result = val_logic(c < 0x80 ? (c >= 'A' && c <= 'Z') : iswupper((wint_t)c) != 0);
     }
     return 0;
@@ -1482,12 +1482,12 @@ static int fn_isupper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
 
 static int fn_islower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
-    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+    if (nargs < 1 || args[0].type != VAL_CHAR || val_text(&args[0])[0] == '\0') {
         *result = val_logic(0); return 0;
     }
     {   /* the first character (codepage.h) */
         unsigned c;
-        cp_decode(args[0].str, val_len(&args[0]), &c);
+        cp_decode(val_text(&args[0]), val_len(&args[0]), &c);
         *result = val_logic(c < 0x80 ? (c >= 'a' && c <= 'z') : iswlower((wint_t)c) != 0);
     }
     return 0;
@@ -1521,7 +1521,7 @@ static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     const char *pattern = NULL;
 
     (void)ctx;
-    if (nargs >= 1 && args[0].type == VAL_CHAR) pattern = args[0].str;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) pattern = val_text(&args[0]);
 
     dir = opendir(path);
     if (!dir) {
@@ -1652,7 +1652,7 @@ static int fn_dbf(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     dbf_t *db;
     (void)ctx;
     if (nargs >= 1 && args[0].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[0].str);
+        int idx = area_resolve_alias(val_text(&args[0]));
         if (idx >= 0) db = &area_get(idx)->db;
         else { *result = val_str(""); return 0; }
     } else {
@@ -1669,7 +1669,7 @@ static int fn_used(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     dbf_t *db;
     (void)ctx;
     if (nargs >= 1 && args[0].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[0].str);
+        int idx = area_resolve_alias(val_text(&args[0]));
         if (idx >= 0) db = &area_get(idx)->db;
         else { *result = val_logic(0); return 0; }
     } else {
@@ -1689,7 +1689,7 @@ static int fn_field(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     n = (int)args[0].num;
     if (nargs >= 2 && args[1].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[1].str);
+        int idx = area_resolve_alias(val_text(&args[1]));
         if (idx >= 0) db = &area_get(idx)->db;
         else { *result = val_str(""); return 0; }
     } else {
@@ -1707,7 +1707,7 @@ static int fn_fcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     dbf_t *db;
     (void)ctx;
     if (nargs >= 1 && args[0].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[0].str);
+        int idx = area_resolve_alias(val_text(&args[0]));
         if (idx >= 0) db = &area_get(idx)->db;
         else { *result = val_num(0); return 0; }
     } else {
@@ -1730,7 +1730,7 @@ static int fn_fsize(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     db = &area_get_current()->db;
     if (!dbf_is_open(db)) { *result = val_num(0); return 0; }
-    idx = dbf_find_field(db, args[0].str);
+    idx = dbf_find_field(db, val_text(&args[0]));
     if (idx < 0) { *result = val_num(0); return 0; }
     *result = val_num((double)db->fields[idx].length);
     return 0;
@@ -1746,7 +1746,7 @@ static int fn_fieldnum(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resul
     }
     db = &area_get_current()->db;
     if (!dbf_is_open(db)) { *result = val_num(0); return 0; }
-    idx = dbf_find_field(db, args[0].str);
+    idx = dbf_find_field(db, val_text(&args[0]));
     *result = val_num((double)(idx >= 0 ? idx + 1 : 0));
     return 0;
 }
@@ -1761,7 +1761,7 @@ static int fn_ndx(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     n = (int)args[0].num;
     if (nargs >= 2 && args[1].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[1].str);
+        int idx = area_resolve_alias(val_text(&args[1]));
         if (idx >= 0) wa = area_get(idx);
         else { *result = val_str(""); return 0; }
     } else {
@@ -1797,7 +1797,7 @@ static int fn_order(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     work_area_t *wa;
     (void)ctx;
     if (nargs >= 1 && args[0].type == VAL_CHAR) {
-        int idx = area_resolve_alias(args[0].str);
+        int idx = area_resolve_alias(val_text(&args[0]));
         if (idx >= 0) wa = area_get(idx);
         else { *result = val_num(0); return 0; }
     } else {
@@ -1841,8 +1841,8 @@ static int fn_occurs(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         return -1;
     }
     {
-        const char *sub = args[0].str;
-        const char *s = args[1].str;
+        const char *sub = val_text(&args[0]);
+        const char *s = val_text(&args[1]);
         int sublen = strlen(sub);
         int count = 0;
         const char *p;
@@ -1958,7 +1958,7 @@ static int fn_soundex(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     {
         /* Standard Soundex: letter -> digit mapping */
         static const char map[] = "01230120022455012623010202";
-        const char *s = args[0].str;
+        const char *s = val_text(&args[0]);
         int i, bi = 1;
         char last;
         /* Skip to first letter */
@@ -2033,7 +2033,7 @@ static int fn_getenv(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         return -1;
     }
     {
-        const char *val = getenv(args[0].str);
+        const char *val = getenv(val_text(&args[0]));
         *result = val_str(val ? val : "");
     }
     return 0;
@@ -2084,7 +2084,7 @@ static int val_compare(const value_t *a, const value_t *b) {
         return 0;
     }
     if (a->type == VAL_CHAR && b->type == VAL_CHAR) {
-        return strcmp(a->str, b->str);
+        return strcmp(val_text(a), val_text(b));
     }
     if (a->type == VAL_DATE && b->type == VAL_DATE) {
         if (a->date < b->date) return -1;
@@ -2401,7 +2401,7 @@ static int fn_like(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     /* str_like(text, pattern): note LIKE(pattern, string) reverses args */
-    *result = val_logic(str_like(args[1].str, args[0].str));
+    *result = val_logic(str_like(val_text(&args[1]), val_text(&args[0])));
     return 0;
 }
 
@@ -2415,7 +2415,7 @@ static int fn_chrtran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     }
     {   /* character by character (codepage.h): the k-th of from becomes the
          * k-th of to, or goes when to is shorter */
-        const char *s = args[0].str, *from = args[1].str, *to = args[2].str;
+        const char *s = val_text(&args[0]), *from = val_text(&args[1]), *to = val_text(&args[2]);
         int n = (int)strlen(s), nf = (int)strlen(from), nt = (int)strlen(to), i = 0;
         while (i < n && bi < (int)sizeof(buf) - 4) {
             unsigned c, f;
@@ -2473,8 +2473,8 @@ static int fn_difference(expr_ctx_t *ctx, value_t *args, int nargs, value_t *res
         ctx->error = "DIFFERENCE requires (string1, string2)";
         return -1;
     }
-    compute_soundex(args[0].str, s1);
-    compute_soundex(args[1].str, s2);
+    compute_soundex(val_text(&args[0]), s1);
+    compute_soundex(val_text(&args[1]), s2);
     for (i = 0; i < 4; i++) {
         if (s1[i] == s2[i]) count++;
     }
@@ -2583,9 +2583,9 @@ static int fn_lookup(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         return 0;
     }
     {
-        const char *ret_name = args[0].str;
-        const char *search_val = args[1].str;
-        const char *search_name = args[2].str;
+        const char *ret_name = val_text(&args[0]);
+        const char *search_val = val_text(&args[1]);
+        const char *search_name = val_text(&args[2]);
         uint32_t saved_rec = ctx->db->current_record;
         uint32_t i;
         int found = 0;

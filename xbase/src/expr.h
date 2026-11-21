@@ -1,6 +1,8 @@
 #ifndef EXPR_H
 #define EXPR_H
 
+#include <string.h>
+
 #include "dbf.h"
 
 typedef enum { VAL_NIL, VAL_NUM, VAL_CHAR, VAL_DATE, VAL_LOGIC, VAL_ARRAY, VAL_BLOCK, VAL_OBJECT } val_type_t;
@@ -95,8 +97,16 @@ extern int val_set_fixed;
 value_t val_num(double n);
 value_t val_str(const char *s);
 value_t val_strn(const char *s, int n);         /* n bytes, NULs among them allowed */
-const char *val_text(const value_t *v);         /* a character value's whole text */
-int val_len(const value_t *v);                  /* its length, NULs counted */
+/* A character value's whole text, and its length, NULs counted.  The only
+ * way to a value's text: nothing writes into it in place (a value's text
+ * may be shared), so a function that changes text makes a new value. */
+static inline const char *val_text(const value_t *v) {
+    return (v->type == VAL_CHAR && v->ext) ? v->ext : v->str;
+}
+static inline int val_len(const value_t *v) {
+    if (v->type != VAL_CHAR) return 0;
+    return v->ext ? v->len : (int)strlen(v->str);
+}
 value_t val_logic(int b);
 value_t val_date(int32_t jdn);
 value_t val_nil(void);

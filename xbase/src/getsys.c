@@ -59,7 +59,7 @@ static int iv_logic(object_t *o, const char *name) {
 
 static const char *iv_str(object_t *o, const char *name) {
     value_t *p = object_ivar(o, name, 0);
-    return p && p->type == VAL_CHAR ? p->str : "";
+    return p && p->type == VAL_CHAR ? val_text(p) : "";
 }
 
 static value_t vnum(double n) {
@@ -71,7 +71,7 @@ static int arg_num(value_t *args, int nargs, int i, int dflt) {
 }
 
 static const char *arg_str(value_t *args, int nargs, int i, const char *dflt) {
-    return i < nargs && args[i].type == VAL_CHAR ? args[i].str : dflt;
+    return i < nargs && args[i].type == VAL_CHAR ? val_text(&args[i]) : dflt;
 }
 
 /* A block from source text, "{|| expr}" and the like (through the AST
@@ -132,7 +132,7 @@ static void get_format(expr_ctx_t *ctx, const value_t *v, const char *picture, c
     if (v->type == VAL_DATE) {
         value_t s;
         value_t a = *v;
-        if (func_call(ctx, "DTOC", &a, 1, &s) == 0 && s.type == VAL_CHAR) snprintf(out, size, "%s", s.str);
+        if (func_call(ctx, "DTOC", &a, 1, &s) == 0 && s.type == VAL_CHAR) snprintf(out, size, "%s", val_text(&s));
         else out[0] = '\0';
         return;
     }
@@ -412,7 +412,7 @@ static int edit_load(object_t *o, edit_t *e, int *pos) {
     const char *s;
     int len, i = 0;
     if (!b || b->type != VAL_CHAR) return 0;
-    s = b->str;
+    s = val_text(b);
     len = (int)strlen(s);
     e->n = 0;
     while (i < len && e->n < EDIT_MAX) i += cp_decode(s + i, len - i, &e->c[e->n++]);
@@ -462,13 +462,13 @@ static int m_get_overstrike(expr_ctx_t *ctx, object_t *o, value_t *self, value_t
     int pos;
     edit_t e;
     (void)ctx;
-    if (nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0] && edit_load(o, &e, &pos)) {
+    if (nargs >= 1 && args[0].type == VAL_CHAR && val_text(&args[0])[0] && edit_load(o, &e, &pos)) {
         get_apply_clear(o, &e, &pos);
         pos = step_editable(o, pos, e.n);
         if (pos > e.n) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
-            e.c[pos - 1] = edit_char(o, args[0].str);
+            e.c[pos - 1] = edit_char(o, val_text(&args[0]));
             pos = step_editable(o, pos + 1, e.n);   /* a literal is stepped over */
             iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
@@ -484,14 +484,14 @@ static int m_get_insert(expr_ctx_t *ctx, object_t *o, value_t *self, value_t *ar
     int pos;
     edit_t e;
     (void)ctx;
-    if (nargs >= 1 && args[0].type == VAL_CHAR && args[0].str[0] && edit_load(o, &e, &pos)) {
+    if (nargs >= 1 && args[0].type == VAL_CHAR && val_text(&args[0])[0] && edit_load(o, &e, &pos)) {
         get_apply_clear(o, &e, &pos);
         pos = step_editable(o, pos, e.n);
         if (pos > e.n) {
             iv_set(o, "typeOut", val_logic(1));
         } else {
             memmove(e.c + pos, e.c + pos - 1, (size_t)(e.n - pos) * sizeof e.c[0]);
-            e.c[pos - 1] = edit_char(o, args[0].str);
+            e.c[pos - 1] = edit_char(o, val_text(&args[0]));
             pos = step_editable(o, pos + 1, e.n);   /* a literal is stepped over */
             iv_set(o, "pos", vnum(pos));
             iv_set(o, "changed", val_logic(1));
@@ -712,7 +712,7 @@ int fn_getnew(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     object_t *o = get_new(ctx, arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
                           nargs >= 3 && args[2].type == VAL_BLOCK ? &args[2] : NULL,
                           arg_str(args, nargs, 3, ""), arg_str(args, nargs, 4, ""),
-                          nargs >= 6 && args[5].type == VAL_CHAR ? args[5].str : NULL);
+                          nargs >= 6 && args[5].type == VAL_CHAR ? val_text(&args[5]) : NULL);
     if (!o) { ctx->error = "Out of memory"; return -1; }
     *result = val_object(o);
     return 0;
@@ -1258,7 +1258,7 @@ int fn_maxcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 int fn_setcolor(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     *result = val_str(screen_color_spec());
-    if (nargs >= 1 && args[0].type == VAL_CHAR) screen_set_color(args[0].str);
+    if (nargs >= 1 && args[0].type == VAL_CHAR) screen_set_color(val_text(&args[0]));
     return 0;
 }
 
@@ -1292,7 +1292,7 @@ int fn_dispbox(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx;
     if (nargs >= 5) {
         if (args[4].type == VAL_NUM) dbl = args[4].num == 2;
-        else if (args[4].type == VAL_CHAR) dbl = (unsigned char)args[4].str[0] == 0xC9 || strstr(args[4].str, "\xe2\x95\x94") == args[4].str;
+        else if (args[4].type == VAL_CHAR) dbl = (unsigned char)val_text(&args[4])[0] == 0xC9 || strstr(val_text(&args[4]), "\xe2\x95\x94") == val_text(&args[4]);
     }
     screen_box(arg_num(args, nargs, 0, 0), arg_num(args, nargs, 1, 0),
                arg_num(args, nargs, 2, 0), arg_num(args, nargs, 3, 0), dbl);
@@ -1725,12 +1725,12 @@ static int tb_cell(expr_ctx_t *ctx, object_t *c, char *out, int size) {
     value_t v;
     value_t *pic = object_ivar(c, "picture", 0);
     if (eval_block(ctx, c, "block", NULL, 0, &v) != 0) return -1;
-    if (pic && pic->type == VAL_CHAR && pic->str[0]) {
+    if (pic && pic->type == VAL_CHAR && val_text(pic)[0]) {
         value_t a[2], r;
         a[0] = v;
         a[1] = *pic;
         if (func_call(ctx, "TRANSFORM", a, 2, &r) != 0) return -1;
-        snprintf(out, size, "%s", r.type == VAL_CHAR ? r.str : "");
+        snprintf(out, size, "%s", r.type == VAL_CHAR ? val_text(&r) : "");
     } else if (v.type == VAL_NUM) {
         val_to_display(&v, out, size);
     } else {
@@ -2198,12 +2198,12 @@ int object_send(expr_ctx_t *ctx, const value_t *base, const char *name, value_t 
             value_t *b = object_ivar(o, "buffer", 0);
             int row = (int)iv_num(o, "row"), col = (int)iv_num(o, "col");
             if (b && b->type == VAL_CHAR) {
-                int n = (int)strlen(b->str), pos = (int)iv_num(o, "pos"), len = cp_chars(b->str, n);
-                screen_out_at(row, col, b->str);
+                int n = (int)strlen(val_text(b)), pos = (int)iv_num(o, "pos"), len = cp_chars(val_text(b), n);
+                screen_out_at(row, col, val_text(b));
                 if (pos < 1) pos = 1;
                 if (pos > len) pos = len;
                 /* the cursor's column: the characters before it, by width (codepage.h) */
-                screen_setpos(row, col + cp_columns(b->str, cp_offset(b->str, n, pos - 1)));
+                screen_setpos(row, col + cp_columns(val_text(b), cp_offset(val_text(b), n, pos - 1)));
             }
         }
         return rc;

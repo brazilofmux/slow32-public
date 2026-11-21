@@ -856,7 +856,7 @@ static void cmd_select(const char *arg) {
         value_t v;
         if (ast_eval_dynamic(p, &expr_ctx, &v) != 0) { report_expr_error(); return; }
         if (v.type == VAL_NUM) snprintf(computed, sizeof(computed), "%d", (int)v.num);
-        else if (v.type == VAL_CHAR) str_copy(computed, v.str, sizeof(computed));
+        else if (v.type == VAL_CHAR) str_copy(computed, val_text(&v), sizeof(computed));
         else { prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area"); return; }
         p = computed;
     }
@@ -1014,7 +1014,7 @@ static int cmd_name_arg(const char **pp, char *out, int size) {
             *pp = p;
             return -1;
         }
-        str_copy(out, skip_ws(v.str), size);
+        str_copy(out, skip_ws(val_text(&v)), size);
         n = (int)strlen(out);
         while (n > 0 && (out[n - 1] == ' ' || out[n - 1] == '\t')) out[--n] = '\0';
     } else {
@@ -2460,7 +2460,7 @@ static void replace_set(dbf_t *db, replace_state_t *st, int idx, const value_t *
     switch (db->fields[idx].type) {
     case 'C':
         if (val->type == VAL_CHAR)
-            field_format_char(formatted, db->fields[idx].length, val->str);
+            field_format_char(formatted, db->fields[idx].length, val_text(val));
         else
             field_format_char(formatted, db->fields[idx].length, valbuf);
         break;
@@ -2480,7 +2480,7 @@ static void replace_set(dbf_t *db, replace_state_t *st, int idx, const value_t *
         } else field_format_logical(formatted, valbuf);
         break;
     case 'M': {
-        const char *memo_text = (val->type == VAL_CHAR) ? val->str : valbuf;
+        const char *memo_text = (val->type == VAL_CHAR) ? val_text(val) : valbuf;
         if (!st->memo_snap.valid)
             dbf_memo_snapshot(db, &st->memo_snap);
         int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
@@ -2848,7 +2848,7 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
         switch (db->fields[fi].type) {
         case 'C':
             if (val.type == VAL_CHAR)
-                field_format_char(formatted, db->fields[fi].length, val.str);
+                field_format_char(formatted, db->fields[fi].length, val_text(&val));
             else
                 field_format_char(formatted, db->fields[fi].length, valbuf);
             break;
@@ -2868,7 +2868,7 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
             } else field_format_logical(formatted, valbuf);
             break;
         case 'M': {
-            const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+            const char *memo_text = (val.type == VAL_CHAR) ? val_text(&val) : valbuf;
             if (!memo_snap.valid)
                 dbf_memo_snapshot(db, &memo_snap);
             int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
@@ -6560,7 +6560,7 @@ static void h_keyboard(dbf_t *db, lexer_t *l) {
     lex_next(l);
     lex_get_remaining(l, arg, sizeof(arg));
     if (ast_eval_dynamic(arg, &expr_ctx, &v) == 0 && v.type == VAL_CHAR)
-        screen_keyboard(v.str);
+        screen_keyboard(val_text(&v));
     else
         screen_clear_typeahead();
 }

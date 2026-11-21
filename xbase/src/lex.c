@@ -99,7 +99,7 @@ static char lex_get_char(lexer_t *l) {
             }
 
             if (memvar_find(l->store, name, &val) == 0 && val.type == VAL_CHAR) {
-                if (lex_push_macro(l, val.str) < 0) {
+                if (lex_push_macro(l, val_text(&val)) < 0) {
                     l->error = "Macro nesting overflow";
                     return '\0';
                 }
@@ -166,7 +166,7 @@ static void macro_expand_into(const char *src, memvar_store_t *store,
 
             if (memvar_find(store, name, &val) == 0 && val.type == VAL_CHAR) {
                 char expanded[256];
-                macro_expand_into(val.str, store, expanded, sizeof(expanded), depth + 1);
+                macro_expand_into(val_text(&val), store, expanded, sizeof(expanded), depth + 1);
                 {
                     int len = strlen(expanded);
                     if (d + len > end) len = (int)(end - d);

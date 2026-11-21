@@ -1103,18 +1103,18 @@ static int binop_core(expr_ctx_t *ctx, ast_op_t op, const value_t *left, const v
             int len;
             int left_len;
             int trimmed_spaces;
-            str_copy(buf, left->str, sizeof(buf));
+            str_copy(buf, val_text(left), sizeof(buf));
             left_len = strlen(buf);
             len = left_len;
             while (len > 0 && buf[len - 1] == ' ') len--;
             trimmed_spaces = left_len - len;
             buf[len] = '\0';
             {
-                int rlen = strlen(right->str);
+                int rlen = strlen(val_text(right));
                 int avail = (int)sizeof(buf) - 1 - len;
                 if (avail > 0) {
                     if (rlen > avail) rlen = avail;
-                    memcpy(buf + len, right->str, rlen);
+                    memcpy(buf + len, val_text(right), rlen);
                     len += rlen;
                 }
             }
@@ -1868,7 +1868,7 @@ int ast_eval_macro_value(expr_ctx_t *ctx, const value_t *text, value_t *result) 
     int rc;
     if (text->type != VAL_CHAR) { ctx->error = "Macro expression must be a string"; return -1; }
     memvar_locals_hidden++;   /* compiled at run time: the LOCALs are the compiler's */
-    rc = ast_eval_dynamic(text->str, ctx, result);
+    rc = ast_eval_dynamic(val_text(text), ctx, result);
     memvar_locals_hidden--;
     return rc;
 }
