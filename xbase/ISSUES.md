@@ -1054,9 +1054,12 @@ majesty, M5 Max on the DBT: 12 of 12 reports identical
 to the build before, interpreted and compiled; compiled 4.7 s (4.6
 before), interpreted 17.35 s (17.0).  On the DBT, which copies natively,
 the 272-byte copies were cheap and short strings now cost an allocation,
-so it is even there; the gain is a value a sixteenth the size, and on
-slow32-fast, where memcpy was 46% of the samples above, it wants
-measuring (the slow machine).  The 255-byte limits listed above are unchanged.
+so it is even there; the gain is a value a sixteenth the size, and
+slow32-fast, where memcpy was 46% of the samples above.  On the slow
+Westmere machine, everything stage08-built: the import driver 29.7 G ->
+17.4 G instructions (-41%), 494 s -> 326 s on slow32-fast; 60 s -> 62 s
+on the DBT (noise); run_xbase.sh 12 of 12 identical on both paths.  The
+255-byte limits listed above are unchanged.
 
 ### A zero showed as -0.00 in compiled programs, and in TRANSFORM everywhere — RESOLVED 2026-11-21
 
