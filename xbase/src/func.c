@@ -1244,6 +1244,12 @@ static void paren_field(char *f, int size) {
     strncat(f, ")", (size_t)size - strlen(f) - 1);
 }
 
+/* a formatted number with no digit but 0 */
+static int shows_zero(const char *s) {
+    for (; *s; s++) if (*s >= '1' && *s <= '9') return 0;
+    return 1;
+}
+
 static void transform_number(const value_t *v, const char *picture, char *out, int size) {
     const char *tpl = picture;
     int left = 0, paren = 0, cr = 0, db = 0, zero_blank = 0, euro = 0;
@@ -1288,8 +1294,12 @@ static void transform_number(const value_t *v, const char *picture, char *out, i
         snprintf(out, (size_t)size, "%s", left ? q : num);
         return;
     }
-    /* the digits, as many as the template has, the sign taken by the picture */
-    snprintf(num, sizeof(num), "%.*f", ndec, (paren || cr || db) ? fabs(v->num) : v->num);
+    /* the digits, as many as the template has, the sign taken by the
+     * picture.  A number shown as zero has no minus (val_unsign_zero),
+     * but keeps @('s parentheses: dBASE III PLUS shows -0.004 as 0.00,
+     * and with @( 99.99 as ( 0.00) */
+    snprintf(num, sizeof(num), "%.*f", ndec, fabs(v->num));
+    if (!(paren || cr || db) && !shows_zero(num)) snprintf(num, sizeof(num), "%.*f", ndec, v->num);
     {
         char *dot = strchr(num, '.');
         int intlen = dot ? (int)(dot - num) : (int)strlen(num);

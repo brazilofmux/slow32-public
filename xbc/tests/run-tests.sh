@@ -57,6 +57,7 @@ run_one ifnum || fail=1
 run_one funccase || fail=1
 run_one money || fail=1
 run_one utf8mode || fail=1
+run_one negzero || fail=1
 
 # The default handler with no key to come: the terminal service on, input
 # closed.  It must quit (status 1), not wait (the timeout's 124).

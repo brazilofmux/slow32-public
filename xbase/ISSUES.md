@@ -1001,3 +1001,38 @@ from it: the `-` operator's trim-concatenation (ast.c) builds in a
 256-byte buffer; MEMOLINE's line is 255 bytes at most; and many callers
 copy a value's text into a 256-byte local (str_copy, snprintf) before
 using it.  Each is a cut at 255 today and stays one until it is looked at.
+
+### A zero showed as -0.00 in compiled programs, and in TRANSFORM everywhere — RESOLVED 2026-11-21
+
+A sum that should net to zero lands a hair below it in a double (0.3 -
+0.1 - 0.2 is about -2.8E-17), and STR(n, w, 2) printed it as -0.00 in a
+compiled program and 0.00 interpreted: the ledger's running balances,
+compiled and interpreted, differed on four lines of three reports.  Seen
+by the slow machine's run (stage08-built xbc); clang-built xbc does the
+same, so the compiler was not in it.  val_unsign_zero (expr.c) drops the
+sign of a number shown as zero, and it came in (b82f1a3d) as one of the
+dBASE III display rules, which compiled programs do not follow; so STR
+kept the sign compiled.  TRANSFORM with a picture never called it, so
+TRANSFORM(-0.004, "99.99") was -0.00 on both paths.
+
+dBASE III PLUS (run under dos-monster) shows STR(-0.001, 10, 2) and
+TRANSFORM(-0.004, "99.99") as 0.00, and so does FoxPro 2.6 for the first
+and for the near-zero sum (FoxPro keeps the sign in TRANSFORM(-0.004,
+"99.99"), where dBASE does not; it also says the sum is not below zero,
+which dBASE's own arithmetic makes exactly zero).  The Clipper guides say
+nothing, and no Clipper ran here; Harbour shows 0.00.  Ruling (the user,
+2026-11-21): compiled programs drop the sign too.  A zero keeps @('s
+parentheses: dBASE shows TRANSFORM(-0.004, "@( 99.99") as ( 0.00).
+
+Test: test_negzero (NEGZERO.PRG; the build before fails its TRANSFORM
+lines) and xbc/tests/negzero (compiled; the build before printed -0.00 on
+four lines).  The ledger reports are byte-identical compiled and
+interpreted now; the interpreted ones are unchanged.
+
+**Open, found on the way: @('s layout.**  dBASE III PLUS puts the
+parentheses around the whole picture, the field two wider: -0.5 with
+"@( 99.99" is "( 0.50)", -12.5 is "(**.**)" and 0.5 is "  0.50 ".  Here
+"(" takes the field's first place and ")" is added: "(0.50)", "(*.**)",
+" 0.50".  What Clipper does is not known here (the guide says only that
+negative numbers are put in parentheses).  Interpreted, dBASE's is the
+answer; compiled, it wants a ruling.

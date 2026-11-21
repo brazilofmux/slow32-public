@@ -70,10 +70,12 @@ int val_dbase_widths(void) {
 }
 
 /* A number shown as zero has no sign, as dBASE III shows it (-1/300 is
- * 0.00, STR(-0.4) is 0); in place, in a formatted number */
+ * 0.00, STR(-0.4) is 0); in place, in a formatted number.  Compiled
+ * programs too: FoxPro 2.6 shows 0.00 for a sum a hair below zero, and
+ * nothing shows Clipper keeping the sign (xbase ISSUES, "-0.00"). */
 void val_unsign_zero(char *buf) {
     char *minus = strchr(buf, '-'), *q;
-    if (!minus || !val_dbase_widths()) return;
+    if (!minus) return;
     for (q = buf; *q; q++)
         if (*q >= '1' && *q <= '9') return;
     *minus = ' ';
