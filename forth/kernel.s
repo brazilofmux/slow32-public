@@ -13,7 +13,9 @@
 # r30: Frame Pointer
 # r31: Link Register
 
-# Direct Threaded Code implementation
+# Indirect threaded code: IP points to a list of XTs, each XT a cell
+# holding its code address, so NEXT is two dependent loads (W = *IP,
+# then *W) and a jump.
 
 # Entry point
 main:

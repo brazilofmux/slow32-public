@@ -1,16 +1,18 @@
 # SLOW-32 Forth Kernel
 
 ## Status
-The stage01 bootstrap seed: a DTC kernel in SLOW-32 assembly plus a Forth
-prelude, hosting asm.fth / cc.fth / link.fth / ar.fth and forthc.  Since the
-2026-10-10 pass it passes the Forth 2012 test suite as gforth ships it
-(`tests/run-forth2012.sh`; see "Forth 2012 conformance" below); the
-kernel's own suite is `tests/run-tests.sh` (26 tests).  Floating
-point and file-system words beyond what the tools need are out of scope.
+The stage01 bootstrap seed: an indirect-threaded kernel in SLOW-32
+assembly plus a Forth prelude, hosting asm.fth / cc.fth / link.fth /
+ar.fth and forthc.  Since the 2026-10-10 pass it passes the Forth 2012
+test suite as gforth ships it (`tests/run-forth2012.sh`; see "Forth 2012
+conformance" below); the kernel's own suite is `tests/run-tests.sh` (26
+tests).  Floating point and file-system words beyond what the tools need
+are out of scope.
 
 ## Architecture
 
-- **Direct Threaded Code**: IP points to a list of XTs.
+- **Indirect threaded code**: IP points to a list of XTs; NEXT loads W = *IP,
+  then the code address *W, and jumps to it.
 - **Registers**:
   - `r26`: IP
   - `r27`: RSP

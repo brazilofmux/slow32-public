@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assemble and link the DTC kernel, then run it with the prelude and stdin.
+# Assemble and link the indirect-threaded kernel, then run it with the prelude and stdin.
 # Tree paths by default; S32_AS / S32_LD / S32_RT / EMU point elsewhere (the
 # slow32:forth image builds under /opt/slow32), and FORTH_RUN=0 stops after
 # the link.

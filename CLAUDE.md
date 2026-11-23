@@ -161,7 +161,7 @@ substituted 1:1.
   driver (`s32f77 prog.f [more.f90 ...] -o prog.s32x`, modules first, then
   `s32run prog.s32x`; Fortran 77, 90 and 95). Same
   shape as cobol: built in a stage FROM toolchain, no C compiler inside.
-- `slow32:forth` (FROM base): the DTC kernel (assembled and linked from
+- `slow32:forth` (FROM base): the Forth kernel (assembled and linked from
   `forth/kernel.s` in a stage FROM base -- no C anywhere) with prelude and
   tube words, plus forthc, the native Forth compiler. `s32forth` is the
   interactive kernel (`podman run -i`), `s32forthc [--hosted] prog.fth`

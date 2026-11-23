@@ -1,4 +1,4 @@
-# SLOW-32 Forth Image: the DTC kernel and forthc, the native Forth compiler,
+# SLOW-32 Forth Image: the Forth kernel and forthc, the native Forth compiler,
 # on slow32:base.
 #
 #   slow32:base   emulators + as/ld/ar/utilities + runtime
